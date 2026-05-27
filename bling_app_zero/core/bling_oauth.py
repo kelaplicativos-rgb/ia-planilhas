@@ -16,6 +16,7 @@ from bling_app_zero.core.bling_token_store import clear_token, get_user_session_
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_oauth.py'
 AUTH_URL_DEFAULT = 'https://www.bling.com.br/Api/v3/oauth/authorize'
 TOKEN_URL_DEFAULT = 'https://www.bling.com.br/Api/v3/oauth/token'
+PUBLIC_REDIRECT_URI_DEFAULT = 'https://ia-planilhas-bling.streamlit.app'
 CLIENT_ID_DEFAULT = ''
 
 TOKEN_STATE_KEY = 'bling_oauth_token_response'
@@ -45,11 +46,8 @@ def client_secret() -> str:
 def redirect_uri() -> str:
     configured = _secret('redirect_uri', '')
     if configured:
-        return configured
-    try:
-        return st.context.url.split('?', 1)[0]
-    except Exception:
-        return ''
+        return configured.rstrip('/')
+    return PUBLIC_REDIRECT_URI_DEFAULT
 
 
 def authorize_url() -> str:
@@ -81,8 +79,13 @@ def build_authorization_url() -> str:
         'response_type': 'code',
         'client_id': cid,
         'state': state,
+        'redirect_uri': redirect_uri(),
     }
     return f'{authorize_url()}?{urlencode(params)}'
+
+
+def required_redirect_uri() -> str:
+    return redirect_uri()
 
 
 def is_connected() -> bool:
@@ -135,9 +138,7 @@ def exchange_code_for_token(code: str) -> tuple[bool, str]:
     if not secret:
         return False, 'Client Secret do Bling ainda não está configurado nos secrets do app.'
 
-    payload: dict[str, str] = {'grant_type': 'authorization_code', 'code': code}
-    if uri:
-        payload['redirect_uri'] = uri
+    payload: dict[str, str] = {'grant_type': 'authorization_code', 'code': code, 'redirect_uri': uri}
 
     headers = {
         'Accept': 'application/json',
@@ -212,4 +213,4 @@ def disconnect() -> None:
     add_audit_event('bling_oauth_disconnected', area='BLING_OAUTH', status='OK', details={'user_session_id': get_user_session_id(), 'responsible_file': RESPONSIBLE_FILE})
 
 
-__all__ = ['build_authorization_url', 'connection_status', 'disconnect', 'is_connected', 'process_oauth_callback']
+__all__ = ['build_authorization_url', 'connection_status', 'disconnect', 'is_connected', 'process_oauth_callback', 'required_redirect_uri']
