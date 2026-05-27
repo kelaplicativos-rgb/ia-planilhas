@@ -29,6 +29,25 @@ CADASTRO_SUPPLIER_PRICE_MASTER_RULE_NAME = 'REGRA_FILTRO_MESTRE_FORNECEDOR_PRECO
 UNIVERSAL_FINAL_KEY = 'df_final_universal'
 LEGACY_CADASTRO_FINAL_KEY = 'df_final_cadastro'
 BLING_IMPORTADOR_PRODUTOS_URL = 'https://www.bling.com.br/importador.produtos.php'
+HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
+CONTEXT_BLING_API = 'bling_api'
+CONTEXT_BLING_CSV = 'bling_csv'
+CONTEXT_UNIVERSAL = 'universal'
+CONTEXT_FINAL_KEYS = {
+    CONTEXT_BLING_API: 'df_final_bling_api',
+    CONTEXT_BLING_CSV: 'df_final_bling_csv',
+    CONTEXT_UNIVERSAL: UNIVERSAL_FINAL_KEY,
+}
+CONTEXT_MAPPING_KEYS = {
+    CONTEXT_BLING_API: 'mapping_bling_api',
+    CONTEXT_BLING_CSV: 'mapping_bling_csv',
+    CONTEXT_UNIVERSAL: 'mapping_universal',
+}
+CONTEXT_CONFIDENCE_KEYS = {
+    CONTEXT_BLING_API: 'mapping_confidence_bling_api',
+    CONTEXT_BLING_CSV: 'mapping_confidence_bling_csv',
+    CONTEXT_UNIVERSAL: 'mapping_confidence_universal',
+}
 
 CADASTRO_STOCK_OUTPUT_KEYS = [
     ESTOQUE_FINAL_KEY,
@@ -42,6 +61,14 @@ CADASTRO_STOCK_OUTPUT_KEYS = [
 CADASTRO_OUTPUT_KEYS = [
     UNIVERSAL_FINAL_KEY,
     LEGACY_CADASTRO_FINAL_KEY,
+    'df_final_bling_api',
+    'df_final_bling_csv',
+    'mapping_bling_api',
+    'mapping_bling_csv',
+    'mapping_universal',
+    'mapping_confidence_bling_api',
+    'mapping_confidence_bling_csv',
+    'mapping_confidence_universal',
     'mapping_cadastro',
     'mapping_confidence_cadastro',
     'df_origem_cadastro_precificada',
@@ -50,6 +77,21 @@ CADASTRO_OUTPUT_KEYS = [
     CADASTRO_MAPPING_CONFIRMED_KEY,
     CADASTRO_MAPPING_SIGNATURE_KEY,
 ]
+
+
+def _entry_context() -> str:
+    value = str(st.session_state.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower()
+    if value in CONTEXT_FINAL_KEYS:
+        return value
+    return CONTEXT_UNIVERSAL
+
+
+def _context_final_key() -> str:
+    return CONTEXT_FINAL_KEYS.get(_entry_context(), UNIVERSAL_FINAL_KEY)
+
+
+def _context_mapping_key() -> str:
+    return CONTEXT_MAPPING_KEYS.get(_entry_context(), 'mapping_universal')
 
 
 def valid_df(df: object) -> bool:
@@ -80,12 +122,36 @@ def get_universal_final_df() -> pd.DataFrame | None:
     return current if isinstance(current, pd.DataFrame) else None
 
 
+def get_context_final_df() -> pd.DataFrame | None:
+    key = _context_final_key()
+    current = st.session_state.get(key)
+    if valid_df(current):
+        return current
+    if key == UNIVERSAL_FINAL_KEY:
+        return get_universal_final_df()
+    legacy = st.session_state.get(LEGACY_CADASTRO_FINAL_KEY)
+    if valid_df(legacy):
+        return legacy
+    return current if isinstance(current, pd.DataFrame) else None
+
+
 def set_universal_final_df(df_final: pd.DataFrame | None) -> pd.DataFrame | None:
     if not isinstance(df_final, pd.DataFrame):
         return df_final
     fixed = df_final.copy()
     st.session_state[UNIVERSAL_FINAL_KEY] = fixed
     st.session_state[LEGACY_CADASTRO_FINAL_KEY] = fixed
+    return fixed
+
+
+def set_context_final_df(df_final: pd.DataFrame | None) -> pd.DataFrame | None:
+    if not isinstance(df_final, pd.DataFrame):
+        return df_final
+    fixed = df_final.copy()
+    st.session_state[_context_final_key()] = fixed
+    st.session_state[LEGACY_CADASTRO_FINAL_KEY] = fixed
+    if _entry_context() == CONTEXT_UNIVERSAL:
+        st.session_state[UNIVERSAL_FINAL_KEY] = fixed
     return fixed
 
 
@@ -142,7 +208,7 @@ def enforce_supplier_price_master_filter(df_final: pd.DataFrame | None) -> pd.Da
 
     if len(df_final) > expected:
         fixed = df_final.iloc[:expected].copy()
-        set_universal_final_df(fixed)
+        set_context_final_df(fixed)
         st.session_state['cadastro_supplier_price_master_excess_rows_removed'] = int(len(df_final) - expected)
         return fixed
 
@@ -175,19 +241,19 @@ def render_supplier_price_master_notice(df_final: pd.DataFrame | None = None) ->
 def enforce_cadastro_model_columns(df_final: pd.DataFrame | None = None) -> pd.DataFrame | None:
     """Mantém o modelo final fiel ao modelo anexado na primeira etapa."""
     if df_final is None:
-        df_final = get_universal_final_df()
+        df_final = get_context_final_df()
 
     df_modelo = st.session_state.get(CADASTRO_MODELO_KEY)
     if not isinstance(df_final, pd.DataFrame) or not valid_model(df_modelo):
         fixed = enforce_supplier_price_master_filter(df_final)
         if isinstance(fixed, pd.DataFrame):
-            set_universal_final_df(fixed)
+            set_context_final_df(fixed)
         return fixed
 
     fixed = df_final.reindex(columns=list(df_modelo.columns), fill_value='')
     fixed = enforce_supplier_price_master_filter(fixed)
     if isinstance(fixed, pd.DataFrame):
-        set_universal_final_df(fixed)
+        set_context_final_df(fixed)
     return fixed
 
 
@@ -283,8 +349,10 @@ def cadastro_context_ready() -> bool:
 
 
 def cadastro_mapping_ready() -> bool:
-    df_final = enforce_cadastro_model_columns(get_universal_final_df())
-    mapping = st.session_state.get('mapping_cadastro')
+    df_final = enforce_cadastro_model_columns(get_context_final_df())
+    mapping = st.session_state.get(_context_mapping_key())
+    if not isinstance(mapping, dict) or not mapping:
+        mapping = st.session_state.get('mapping_cadastro')
     confirmed = bool(st.session_state.get(CADASTRO_MAPPING_CONFIRMED_KEY))
     return valid_df(df_final) and row_count_matches_source(df_final) and isinstance(mapping, dict) and bool(mapping) and confirmed
 
@@ -316,11 +384,13 @@ __all__ = [
     'enforce_cadastro_model_columns',
     'enforce_supplier_price_master_filter',
     'expected_source_rows',
+    'get_context_final_df',
     'get_universal_final_df',
     'is_site_origin',
     'render_row_count_blocker',
     'render_supplier_price_master_notice',
     'row_count_matches_source',
+    'set_context_final_df',
     'set_universal_final_df',
     'store_cadastro_context',
     'store_expected_source_rows',
