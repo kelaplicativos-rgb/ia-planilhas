@@ -143,8 +143,10 @@ def _activate_non_wizard_flow(flow: str) -> None:
         pass
 
 
-def _render_home_card(title: str, subtitle: str, button: str, flow: str, *, step: str | None = None, key: str) -> None:
+def _render_home_card(title: str, subtitle: str, button: str, flow: str, *, step: str | None = None, key: str, badge: str = '') -> None:
     with st.container(border=True):
+        if badge:
+            st.caption(badge)
         st.markdown(f'#### {title}')
         st.caption(subtitle)
         if st.button(button, use_container_width=True, key=key):
@@ -153,9 +155,9 @@ def _render_home_card(title: str, subtitle: str, button: str, flow: str, *, step
 
 
 def _render_admin_links() -> None:
-    with st.expander('Administração e links úteis', expanded=False):
-        st.caption('Área auxiliar para links do app, repositório e manutenção. Não faz parte do fluxo principal.')
-        if st.button('Abrir links úteis do sistema', use_container_width=True, key='home_admin_open_system_links'):
+    with st.expander('Links úteis', expanded=False):
+        st.caption('Atalhos do app e repositório. Área auxiliar, fora do fluxo principal.')
+        if st.button('Abrir links do sistema', use_container_width=True, key='home_admin_open_system_links'):
             _set_flow(FLOW_LINKS_UTEIS)
             st.rerun()
 
@@ -165,33 +167,42 @@ def render_professional_home() -> None:
         'home_router_render_professional_home',
         area='HOME',
         status='OK',
-        details={'responsible_file': RESPONSIBLE_FILE, 'home_order': 'bling_then_universal_then_internal_price_step'},
+        details={
+            'responsible_file': RESPONSIBLE_FILE,
+            'home_order': 'bling_then_universal_then_internal_price_step',
+            'style': 'professional_light_cards',
+        },
     )
 
-    st.markdown('### O que você quer fazer agora?')
-    st.caption(
-        'Comece pelos modelos. Depois escolha a origem dos dados, mapeie os campos, revise o preview e baixe a planilha final. '
-        'A calculadora aparece somente na etapa Preço, dentro do fluxo.'
+    st.markdown('<div class="bling-home-section-title">Escolha como quer começar</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="bling-home-section-subtitle">Use os modelos oficiais do Bling ou carregue um modelo próprio. O restante do fluxo aparece na ordem certa.</div>',
+        unsafe_allow_html=True,
     )
 
-    _render_home_card(
-        'Bling: Modelos Bling',
-        'Gerencie os modelos oficiais do Bling, como cadastro de produtos, estoque e atualização de preços.',
-        'Abrir Modelos Bling',
-        FLOW_MODELOS_BLING,
-        key='home_card_open_bling',
-    )
+    col_bling, col_universal = st.columns(2)
+    with col_bling:
+        _render_home_card(
+            'Modelos Bling',
+            'Cadastro, estoque e atualização de preços com modelos oficiais salvos para reutilizar.',
+            'Abrir Bling',
+            FLOW_MODELOS_BLING,
+            key='home_card_open_bling',
+            badge='Recomendado para Bling',
+        )
 
-    st.markdown('---')
-    _render_home_card(
-        'Modelos Universal',
-        'Use qualquer modelo final com cabeçalho próprio: Bling, marketplace, fornecedor ou layout personalizado.',
-        'Iniciar fluxo com Modelo Universal',
-        FLOW_WIZARD,
-        step=STEP_MODELO,
-        key='home_card_open_universal',
-    )
+    with col_universal:
+        _render_home_card(
+            'Modelo Universal',
+            'Use qualquer planilha final com cabeçalho próprio: marketplace, fornecedor ou layout personalizado.',
+            'Iniciar Universal',
+            FLOW_WIZARD,
+            step=STEP_MODELO,
+            key='home_card_open_universal',
+            badge='Flexível',
+        )
 
+    st.markdown('<div class="bling-mini-note">A calculadora fica dentro da etapa Preço e também pode ser aberta pelo menu rápido.</div>', unsafe_allow_html=True)
     _render_admin_links()
 
 
