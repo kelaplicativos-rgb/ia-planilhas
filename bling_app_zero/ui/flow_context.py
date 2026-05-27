@@ -10,25 +10,36 @@ SKIP_DIRECT_BLING_KEY = 'skip_direct_bling_connection_this_flow'
 CONTEXT_BLING_API = 'bling_api'
 CONTEXT_BLING_CSV = 'bling_csv'
 CONTEXT_UNIVERSAL = 'universal'
-VALID_CONTEXTS = {CONTEXT_BLING_API, CONTEXT_BLING_CSV, CONTEXT_UNIVERSAL}
+
+# bling_csv permanece somente como valor legado para não quebrar imports antigos.
+# Em tempo de execução, qualquer tentativa de usar bling_csv vira universal.
+VALID_CONTEXTS = {CONTEXT_BLING_API, CONTEXT_UNIVERSAL}
+LEGACY_CONTEXT_REDIRECTS = {
+    'bling': CONTEXT_BLING_API,
+    CONTEXT_BLING_CSV: CONTEXT_UNIVERSAL,
+}
 
 
-def entry_context(default: str = CONTEXT_BLING_API) -> str:
-    value = str(st.session_state.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower()
-    if value == 'bling':
-        return CONTEXT_BLING_API
+def normalize_entry_context(context: object, default: str = CONTEXT_BLING_API) -> str:
+    value = str(context or '').strip().lower()
+    if value in LEGACY_CONTEXT_REDIRECTS:
+        return LEGACY_CONTEXT_REDIRECTS[value]
     if value in VALID_CONTEXTS:
         return value
     return default
 
 
+def entry_context(default: str = CONTEXT_BLING_API) -> str:
+    normalized_default = normalize_entry_context(default, CONTEXT_UNIVERSAL)
+    current = st.session_state.get(HOME_ENTRY_CONTEXT_KEY)
+    normalized = normalize_entry_context(current, normalized_default)
+    if current and current != normalized:
+        st.session_state[HOME_ENTRY_CONTEXT_KEY] = normalized
+    return normalized
+
+
 def set_entry_context(context: str) -> None:
-    normalized = str(context or '').strip().lower()
-    if normalized == 'bling':
-        normalized = CONTEXT_BLING_API
-    if normalized not in VALID_CONTEXTS:
-        normalized = CONTEXT_UNIVERSAL
-    st.session_state[HOME_ENTRY_CONTEXT_KEY] = normalized
+    st.session_state[HOME_ENTRY_CONTEXT_KEY] = normalize_entry_context(context, CONTEXT_UNIVERSAL)
 
 
 def finish_mode() -> str:
@@ -48,7 +59,8 @@ def is_bling_api_context() -> bool:
 
 
 def is_bling_csv_context() -> bool:
-    return entry_context(default=CONTEXT_UNIVERSAL) == CONTEXT_BLING_CSV
+    # Legado desativado: bling_csv é tratado como universal.
+    return False
 
 
 def is_universal_context() -> bool:
@@ -92,6 +104,7 @@ __all__ = [
     'is_bling_api_context',
     'is_bling_csv_context',
     'is_universal_context',
+    'normalize_entry_context',
     'set_entry_context',
     'set_finish_mode',
 ]
