@@ -249,6 +249,8 @@ def _restore_oauth_return_context(state_payload: dict[str, Any]) -> None:
     return_to = str(state_payload.get('return_to') or '').strip().lower()
     session_id = str(state_payload.get('session_id') or get_user_session_id()).strip()
 
+    # Impede o boot lock da Home de apagar o retorno do OAuth no primeiro render após conectar.
+    st.session_state['home_boot_landing_rendered_once'] = True
     st.session_state['home_active_operation_v2'] = 'wizard_cadastro_estoque'
     st.session_state['home_allow_operation_v2_session'] = True
     st.session_state['home_single_page_flow_active'] = True
