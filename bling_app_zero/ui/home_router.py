@@ -82,6 +82,8 @@ def _set_flow(flow: str, step: str | None = None) -> None:
     st.session_state['home_single_page_flow_active'] = flow == FLOW_WIZARD
     if step:
         st.session_state[WIZARD_STEP_KEY] = step
+    else:
+        st.session_state.pop(WIZARD_STEP_KEY, None)
     try:
         st.query_params['operation_v2'] = flow
         if step:
@@ -100,13 +102,12 @@ def _set_single_page_wizard_state() -> None:
     st.session_state['home_single_page_flow_active'] = True
 
     current_step = _current_wizard_step()
-    if not current_step:
-        st.session_state[WIZARD_STEP_KEY] = STEP_MODELO
-        current_step = STEP_MODELO
-
     try:
         st.query_params['operation_v2'] = FLOW_WIZARD
-        st.query_params['step'] = current_step
+        if current_step:
+            st.query_params['step'] = current_step
+        else:
+            st.query_params.pop('step', None)
         for key in ('flow', 'origem', 'operacao'):
             st.query_params.pop(key, None)
     except Exception:
@@ -145,14 +146,34 @@ def _activate_non_wizard_flow(flow: str) -> None:
         pass
 
 
-def _render_home_card(title: str, subtitle: str, button: str, flow: str, *, step: str | None = None, key: str, badge: str = '') -> None:
+def _open_bling_decision_flow() -> None:
+    request_scroll_top()
+    st.session_state[ACTIVE_FLOW_KEY] = FLOW_WIZARD
+    st.session_state[HOME_ALLOW_FLOW_KEY] = True
+    st.session_state['home_single_page_flow_active'] = True
+    st.session_state.pop(WIZARD_STEP_KEY, None)
+    st.session_state.pop('bling_finish_mode', None)
+    st.session_state.pop('skip_direct_bling_connection_this_flow', None)
+    try:
+        st.query_params['operation_v2'] = FLOW_WIZARD
+        st.query_params.pop('step', None)
+        for key in ('flow', 'origem', 'operacao'):
+            st.query_params.pop(key, None)
+    except Exception:
+        pass
+
+
+def _render_home_card(title: str, subtitle: str, button: str, flow: str, *, step: str | None = None, key: str, badge: str = '', bling_decision: bool = False) -> None:
     with st.container(border=True):
         if badge:
             st.caption(badge)
         st.markdown(f'#### {title}')
         st.caption(subtitle)
         if st.button(button, use_container_width=True, key=key):
-            _set_flow(flow, step)
+            if bling_decision:
+                _open_bling_decision_flow()
+            else:
+                _set_flow(flow, step)
             st.rerun()
 
 
@@ -171,26 +192,27 @@ def render_professional_home() -> None:
         status='OK',
         details={
             'responsible_file': RESPONSIBLE_FILE,
-            'home_order': 'bling_then_universal_then_internal_price_step',
+            'home_order': 'bling_decision_then_universal_then_internal_price_step',
             'style': 'professional_light_cards',
         },
     )
 
     st.markdown('<div class="bling-home-section-title">Escolha como quer começar</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="bling-home-section-subtitle">Use os modelos oficiais do Bling ou carregue um modelo próprio. O restante do fluxo aparece na ordem certa.</div>',
+        '<div class="bling-home-section-subtitle">Escolha entre envio direto ao Bling ou geração de CSV. O restante do fluxo aparece na ordem certa.</div>',
         unsafe_allow_html=True,
     )
 
     col_bling, col_universal = st.columns(2)
     with col_bling:
         _render_home_card(
-            'Modelos Bling',
-            'Cadastro, estoque e atualização de preços com modelos oficiais salvos para reutilizar.',
+            'Bling',
+            'Envie direto pela API ou gere CSV com modelos oficiais do Bling.',
             'Abrir Bling',
-            FLOW_MODELOS_BLING,
+            FLOW_WIZARD,
             key='home_card_open_bling',
             badge='Recomendado para Bling',
+            bling_decision=True,
         )
 
     with col_universal:
@@ -248,7 +270,7 @@ def render_home_router() -> None:
         add_audit_event(
             'home_router_render_modelos_bling',
             area='HOME',
-            details={'responsible_file': RESPONSIBLE_FILE},
+            details={'responsible_file': RESPONSIBLE_FILE, 'legacy_route': True},
         )
         render_modelos_bling()
         return
