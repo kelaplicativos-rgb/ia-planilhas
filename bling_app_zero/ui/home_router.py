@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from html import escape
+
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
@@ -210,6 +212,33 @@ def _render_home_card(
             st.rerun()
 
 
+def _render_same_tab_bling_link(auth_url: str) -> None:
+    safe_url = escape(str(auth_url or ''), quote=True)
+    if not safe_url:
+        st.warning('Não consegui gerar o link de conexão com o Bling agora.')
+        return
+    st.markdown(
+        f'''
+<a href="{safe_url}" target="_self" style="
+    display:block;
+    width:100%;
+    box-sizing:border-box;
+    text-align:center;
+    text-decoration:none;
+    font-weight:700;
+    padding:0.55rem 1rem;
+    border-radius:0.5rem;
+    border:1px solid rgba(49,51,63,.2);
+    color:#4b5563;
+    background:#ffffff;
+">
+    Conectar ao Bling
+</a>
+''',
+        unsafe_allow_html=True,
+    )
+
+
 def _render_bling_api_home_card() -> None:
     with st.container(border=True):
         st.caption('Mais automático')
@@ -230,7 +259,7 @@ def _render_bling_api_home_card() -> None:
             auth_url = ''
 
         if auth_url:
-            st.link_button('Conectar ao Bling', auth_url, use_container_width=True)
+            _render_same_tab_bling_link(auth_url)
             st.caption('Após autorizar, você volta para escolher o tipo de envio da API.')
         else:
             st.warning('Credenciais do Bling ainda não configuradas. Use o Modelo Universal enquanto isso.')
@@ -248,6 +277,7 @@ def render_professional_home() -> None:
             'responsible_file': RESPONSIBLE_FILE,
             'home_order': 'bling_api_universal',
             'style': 'professional_light_cards',
+            'bling_oauth_target': 'same_tab',
         },
     )
 
