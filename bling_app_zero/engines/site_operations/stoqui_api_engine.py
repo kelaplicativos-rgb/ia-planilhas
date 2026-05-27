@@ -13,11 +13,19 @@ RESPONSIBLE_FILE = 'bling_app_zero/engines/site_operations/stoqui_api_engine.py'
 STOQUI_REST_BASE = 'https://spb.stoqui.com.br/rest/v1'
 STOQUI_PRODUCT_PATH = '/produto'
 DEFAULT_TIMEOUT = 18
-MAX_DISCOVERY_PAGES = 6
-MAX_DISCOVERY_SCRIPTS = 12
+MAX_DISCOVERY_PAGES = 8
+MAX_DISCOVERY_SCRIPTS = 28
 UUID_RE = re.compile(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}')
 JWT_RE = re.compile(r'eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}')
 SCRIPT_SRC_RE = re.compile(r'<script[^>]+src=["\']([^"\']+)["\']', re.IGNORECASE)
+STOQUI_PUBLIC_SIGNALS = (
+    'stoqui',
+    'spb.stoqui.com.br',
+    'supabase',
+    'produto_variacao',
+    'produto_variacao_valor',
+    '/rest/v1/produto',
+)
 RICH_PRODUCT_SELECT = '*,categoria!produto_categoria_id_fkey(nome),produto_variacao(*,produto_variacao_valor(atributo_valor(id,valor,destaque,atributos(id,nome))))'
 
 DEFAULT_CADASTRO_COLUMNS = [
@@ -56,8 +64,12 @@ def _split_raw_urls(raw_urls: str) -> list[str]:
 
 
 def can_handle_stoqui_url(raw_urls: str) -> bool:
-    text = str(raw_urls or '').lower()
-    return any(signal in text for signal in ('stoqui.com.br', 'spb.stoqui.com.br/rest/v1/produto', '/rest/v1/produto'))
+    # BLINGFIX: lojas Stoqui podem usar domínio próprio, como megacentereletronicos.com.br.
+    # Antes o motor só rodava quando a URL continha stoqui.com.br; nesses domínios o
+    # sistema caía no scraper genérico e encontrava HTML React vazio. Agora qualquer URL
+    # pública pode passar por uma tentativa leve de descoberta; se não for Stoqui, a
+    # execução retorna DataFrame vazio e o fluxo segue para o motor genérico.
+    return bool(_split_raw_urls(raw_urls))
 
 
 def _extract_user_ids_from_text(text: str) -> list[str]:
@@ -70,8 +82,11 @@ def _extract_user_ids_from_text(text: str) -> list[str]:
         r'%24user_id=([0-9a-fA-F-]{36})',
         r'"user_id"\s*:\s*"([0-9a-fA-F-]{36})"',
         r"'user_id'\s*:\s*'([0-9a-fA-F-]{36})'",
+        r'user_id["\']?\s*[:=]\s*["\']([0-9a-fA-F-]{36})["\']',
+        r'usuario_id["\']?\s*[:=]\s*["\']([0-9a-fA-F-]{36})["\']',
+        r'lojista_id["\']?\s*[:=]\s*["\']([0-9a-fA-F-]{36})["\']',
     ):
-        for match in re.findall(pattern, raw):
+        for match in re.findall(pattern, raw, flags=re.IGNORECASE):
             if UUID_RE.fullmatch(match) and match not in found:
                 found.append(match)
     for match in UUID_RE.findall(raw):
@@ -94,6 +109,7 @@ def _extract_anon_key(text: str) -> str:
             return key
     for pattern in (
         r'(?:anonKey|anon_key|SUPABASE_ANON_KEY|VITE_SUPABASE_ANON_KEY)["\']?\s*[:=]\s*["\']([^"\']+)["\']',
+        r'(?:supabaseAnonKey|supabase_anon_key)["\']?\s*[:=]\s*["\']([^"\']+)["\']',
         r'apikey["\']?\s*[:=]\s*["\']([^"\']+)["\']',
     ):
         match = re.search(pattern, raw, flags=re.IGNORECASE)
@@ -110,8 +126,10 @@ def _http_get_text(url: str) -> str:
             url,
             timeout=DEFAULT_TIMEOUT,
             headers={
-                'User-Agent': 'Mozilla/5.0 (compatible; BlingSiteCrawler/1.0)',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,application/javascript,text/javascript,*/*;q=0.8',
+                'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+                'Cache-Control': 'no-cache',
             },
         )
         if response.status_code >= 400:
@@ -121,19 +139,30 @@ def _http_get_text(url: str) -> str:
         return ''
 
 
-def _discover_from_public_pages(raw_urls: str) -> tuple[list[str], str]:
+def _looks_like_stoqui_text(text: str) -> bool:
+    raw = str(text or '').lower()
+    return any(signal in raw for signal in STOQUI_PUBLIC_SIGNALS)
+
+
+def _discover_from_public_pages(raw_urls: str) -> tuple[list[str], str, bool, str]:
     urls = _split_raw_urls(raw_urls)
     user_ids: list[str] = []
     anon_key = _extract_anon_key(raw_urls)
     visited_scripts: set[str] = set()
+    saw_stoqui_signal = _looks_like_stoqui_text(raw_urls)
+    public_root = ''
 
     for url in urls[:MAX_DISCOVERY_PAGES]:
+        parsed = urlparse(url)
+        if not public_root and parsed.scheme and parsed.netloc:
+            public_root = f'{parsed.scheme}://{parsed.netloc}'
         for user_id in _extract_user_ids_from_url(url):
             if user_id not in user_ids:
                 user_ids.append(user_id)
         html = _http_get_text(url)
         if not html:
             continue
+        saw_stoqui_signal = saw_stoqui_signal or _looks_like_stoqui_text(html)
         for user_id in _extract_user_ids_from_text(html):
             if user_id not in user_ids:
                 user_ids.append(user_id)
@@ -148,17 +177,18 @@ def _discover_from_public_pages(raw_urls: str) -> tuple[list[str], str]:
             script_text = _http_get_text(script_url)
             if not script_text:
                 continue
+            saw_stoqui_signal = saw_stoqui_signal or _looks_like_stoqui_text(script_text)
             for user_id in _extract_user_ids_from_text(script_text):
                 if user_id not in user_ids:
                     user_ids.append(user_id)
             if not anon_key:
                 anon_key = _extract_anon_key(script_text)
-            if user_ids and anon_key:
+            if user_ids and anon_key and saw_stoqui_signal:
                 break
-        if user_ids and anon_key:
+        if user_ids and anon_key and saw_stoqui_signal:
             break
 
-    return user_ids, anon_key
+    return user_ids, anon_key, saw_stoqui_signal, public_root
 
 
 def _headers(anon_key: str) -> dict[str, str]:
@@ -293,7 +323,27 @@ def _variation_label(variation: dict) -> str:
     return ' / '.join(parts)
 
 
-def _base_product_dict(product: dict, variation: dict | None = None) -> dict[str, str]:
+def _public_product_url(product: dict, public_root: str) -> str:
+    raw = _deep_pick(product, ('url', 'link', 'permalink'))
+    if raw.startswith(('http://', 'https://')):
+        return raw
+    if raw.startswith('/') and public_root:
+        return urljoin(public_root, raw)
+    slug = _deep_pick(product, ('slug', 'url_slug', 'permalink_slug'))
+    product_id = _first_value(product.get('id'))
+    if public_root:
+        if raw:
+            return urljoin(public_root, raw)
+        if slug and product_id:
+            return f'{public_root.rstrip("/")}/produto/{product_id}-{slug.strip("/")}'
+        if slug:
+            return f'{public_root.rstrip("/")}/produto/{slug.strip("/")}'
+        if product_id:
+            return f'{public_root.rstrip("/")}/produto/{product_id}'
+    return raw or slug or product_id
+
+
+def _base_product_dict(product: dict, variation: dict | None = None, public_root: str = '') -> dict[str, str]:
     variation = variation or {}
     descricao = _first_value(
         _deep_pick(variation, ('nome', 'descricao', 'titulo', 'name')),
@@ -312,7 +362,7 @@ def _base_product_dict(product: dict, variation: dict | None = None) -> dict[str
         _deep_pick(product, ('gtin', 'ean', 'codigo_barras', 'cod_barras')),
     )
     return {
-        'url': _deep_pick(product, ('url', 'link', 'permalink', 'slug')),
+        'url': _public_product_url(product, public_root),
         'codigo': codigo or gtin,
         'id_produto': codigo or gtin or _first_value(product.get('id')),
         'sku': codigo,
@@ -327,7 +377,7 @@ def _base_product_dict(product: dict, variation: dict | None = None) -> dict[str
     }
 
 
-def _flatten_products(products: list[dict]) -> list[dict[str, str]]:
+def _flatten_products(products: list[dict], public_root: str = '') -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     for product in products:
         if not isinstance(product, dict):
@@ -336,9 +386,9 @@ def _flatten_products(products: list[dict]) -> list[dict[str, str]]:
         if isinstance(variations, list) and variations:
             for variation in variations:
                 if isinstance(variation, dict):
-                    rows.append(_base_product_dict(product, variation))
+                    rows.append(_base_product_dict(product, variation, public_root))
         else:
-            rows.append(_base_product_dict(product))
+            rows.append(_base_product_dict(product, public_root=public_root))
     return rows
 
 
@@ -402,31 +452,33 @@ def run_stoqui_site_engine(
 
     _emit(progress_callback, {
         'stage': 'API Stoqui',
-        'message': 'Site Stoqui detectado. Procurando user_id e chave publica da API interna...',
+        'message': 'Verificando se o site usa motor Stoqui/React e API interna de produtos...',
         'progress': 0.10,
         'responsible_file': RESPONSIBLE_FILE,
     })
     user_ids = _extract_user_ids_from_text(raw_urls)
     anon_key = _extract_anon_key(raw_urls)
-    discovered_ids, discovered_key = _discover_from_public_pages(raw_urls)
+    discovered_ids, discovered_key, saw_stoqui_signal, public_root = _discover_from_public_pages(raw_urls)
     for user_id in discovered_ids:
         if user_id not in user_ids:
             user_ids.append(user_id)
     if not anon_key:
         anon_key = discovered_key
 
-    if not user_ids:
+    if not user_ids or not saw_stoqui_signal:
         _emit(progress_callback, {
             'stage': 'API Stoqui',
-            'message': 'Stoqui detectado, mas não encontrei user_id publico. Indo para o motor generico.',
+            'message': 'Motor Stoqui não identificado nesta URL. Indo para o motor genérico.',
             'progress': 0.18,
             'responsible_file': RESPONSIBLE_FILE,
+            'stoqui_signal': bool(saw_stoqui_signal),
+            'user_ids_found': len(user_ids),
         })
         return pd.DataFrame()
 
     _emit(progress_callback, {
         'stage': 'API Stoqui',
-        'message': f'Consultando API interna Stoqui para {len(user_ids)} catalogo(s)...',
+        'message': f'Consultando API interna Stoqui para {len(user_ids)} possível(is) catálogo(s)...',
         'progress': 0.22,
         'stoqui_user_ids': len(user_ids),
         'has_anon_key': bool(anon_key),
@@ -434,22 +486,28 @@ def run_stoqui_site_engine(
     })
 
     products: list[dict] = []
+    tried_ids = 0
     for user_id in user_ids:
+        tried_ids += 1
         chunk = _request_products(user_id, anon_key)
-        products.extend(chunk)
+        if chunk:
+            products.extend(chunk)
         if len(products) >= int(max_products or 1_000_000):
+            break
+        if tried_ids >= 24 and not products:
             break
 
     if not products:
         _emit(progress_callback, {
             'stage': 'API Stoqui',
-            'message': 'API Stoqui não retornou produtos. Indo para o motor generico.',
+            'message': 'API Stoqui não retornou produtos. Indo para o motor genérico.',
             'progress': 0.30,
             'responsible_file': RESPONSIBLE_FILE,
+            'stoqui_user_ids_tried': tried_ids,
         })
         return pd.DataFrame()
 
-    rows = _flatten_products(products)[: int(max_products or 1_000_000)]
+    rows = _flatten_products(products, public_root=public_root)[: int(max_products or 1_000_000)]
     df = _to_dataframe(rows, requested_columns, normalized_operation)
     _emit(progress_callback, {
         'stage': 'API Stoqui',
