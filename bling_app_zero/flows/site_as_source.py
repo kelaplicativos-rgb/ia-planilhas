@@ -3,9 +3,6 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-# BLINGFIX: não importar estoque_wizard_state aqui.
-# Este módulo é usado por estoque_sources, que é importado pelo estoque_wizard_state.
-# Importar o estado de estoque de volta criava ciclo no startup do Streamlit.
 ESTOQUE_FINAL_KEY = 'df_final_estoque'
 ESTOQUE_MAPPING_KEY = 'mapping_estoque'
 ESTOQUE_CONFIDENCE_KEY = 'mapping_confidence_estoque'
@@ -32,27 +29,12 @@ CADASTRO_EXPECTED_ROWS_KEY = 'cadastro_wizard_expected_source_rows'
 CADASTRO_EXPECTED_SIGNATURE_KEY = 'cadastro_wizard_expected_source_signature'
 ESTOQUE_WIZARD_ORIGEM_SITE_KEY = 'estoque_wizard_df_origem_site'
 ESTOQUE_WIZARD_MODELO_KEY = 'estoque_wizard_df_modelo'
+HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
 
-PLANILHA_SOURCE_KEYS = [
-    'df_origem',
-    'df_origem_cadastro',
-    'df_origem_planilha',
-    'df_produtos_origem',
-    'df_source',
-]
-ESTOQUE_SOURCE_KEYS = [
-    'df_origem_estoque',
-    'df_estoque_origem',
-    'df_source_estoque',
-]
-PLANILHA_MODEL_CADASTRO_KEYS = [
-    'df_modelo_cadastro',
-    'modelo_cadastro_df',
-]
-PLANILHA_MODEL_ESTOQUE_KEYS = [
-    'df_modelo_estoque',
-    'modelo_estoque_df',
-]
+PLANILHA_SOURCE_KEYS = ['df_origem', 'df_origem_cadastro', 'df_origem_planilha', 'df_produtos_origem', 'df_source']
+ESTOQUE_SOURCE_KEYS = ['df_origem_estoque', 'df_estoque_origem', 'df_source_estoque']
+PLANILHA_MODEL_CADASTRO_KEYS = ['df_modelo_cadastro', 'modelo_cadastro_df']
+PLANILHA_MODEL_ESTOQUE_KEYS = ['df_modelo_estoque', 'modelo_estoque_df']
 STOCK_OUTPUT_KEYS = [
     'estoque_multi_outputs',
     ESTOQUE_FINAL_KEY,
@@ -62,6 +44,46 @@ STOCK_OUTPUT_KEYS = [
     LEGACY_ESTOQUE_MAPPING_KEY,
     LEGACY_ESTOQUE_CONFIDENCE_KEY,
 ]
+CONTEXT_OUTPUT_KEYS = [
+    'df_final_bling_api',
+    'df_final_bling_csv',
+    'df_final_universal',
+    'mapping_bling_api',
+    'mapping_bling_csv',
+    'mapping_universal',
+    'mapping_confidence_bling_api',
+    'mapping_confidence_bling_csv',
+    'mapping_confidence_universal',
+]
+
+
+def _entry_context() -> str:
+    value = str(st.session_state.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower()
+    if value == 'bling':
+        return 'bling_api'
+    if value in {'bling_api', 'bling_csv', 'universal'}:
+        return value
+    return ''
+
+
+def _context_default_operation() -> str:
+    context = _entry_context()
+    if context == 'universal':
+        return 'universal'
+    return 'cadastro'
+
+
+def _normalize_operation(operation: str | None) -> str:
+    text = str(operation or '').strip().lower()
+    if text in {'estoque', 'stock', 'atualizacao_estoque', 'atualização de estoque'}:
+        return 'estoque'
+    if text in {'atualizacao_preco', 'atualização de preço', 'atualização de preços', 'preco', 'preço', 'price'}:
+        return 'atualizacao_preco'
+    if text in {'universal', 'modelo_universal', 'modelo universal'}:
+        return 'universal'
+    if text in {'cadastro', 'produtos', 'produto', 'fornecedor', ''}:
+        return _context_default_operation() if not text else 'cadastro'
+    return _context_default_operation()
 
 
 def _op_key(operation: str) -> str:
@@ -82,13 +104,6 @@ def _urls_key(operation: str) -> str:
 
 def _columns_key(operation: str) -> str:
     return f'{SITE_REQUESTED_COLUMNS_KEY}_{_op_key(operation)}'
-
-
-def _normalize_operation(operation: str | None) -> str:
-    text = str(operation or '').strip().lower()
-    if text in {'estoque', 'stock', 'atualizacao_estoque', 'atualização de estoque'}:
-        return 'estoque'
-    return 'cadastro'
 
 
 def _copy_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
@@ -116,23 +131,22 @@ def _clear_stock_output_cache() -> None:
 
 def _clear_output_cache_for_operation(operation: str) -> None:
     normalized = _normalize_operation(operation)
-    keys = []
-    if normalized == 'cadastro':
-        keys.extend([
-            'df_final_cadastro',
-            'mapping_cadastro',
-            'mapping_confidence_cadastro',
-            'df_origem_cadastro_precificada',
-            'cadastro_preco_calculado_ativo',
-            CADASTRO_WIZARD_PARA_MAPEAR_KEY,
-            'cadastro_mapping_confirmed',
-            'cadastro_mapping_confirmed_signature',
-        ])
-    else:
+    keys = [
+        'df_final_cadastro',
+        'mapping_cadastro',
+        'mapping_confidence_cadastro',
+        'df_origem_cadastro_precificada',
+        'cadastro_preco_calculado_ativo',
+        CADASTRO_WIZARD_PARA_MAPEAR_KEY,
+        'cadastro_mapping_confirmed',
+        'cadastro_mapping_confirmed_signature',
+        *CONTEXT_OUTPUT_KEYS,
+    ]
+    if normalized == 'estoque':
         keys.extend(STOCK_OUTPUT_KEYS)
     for key in keys:
         st.session_state.pop(key, None)
-    if normalized == 'cadastro':
+    if normalized != 'estoque':
         _clear_stock_output_cache()
 
 
@@ -146,20 +160,19 @@ def _mirror_as_uploaded_planilha(
     copied_origin = _copy_df(df)
     origem = copied_origin if copied_origin is not None else pd.DataFrame()
 
-    if normalized == 'cadastro':
-        for key in PLANILHA_SOURCE_KEYS:
-            st.session_state[key] = origem.copy().fillna('')
+    if normalized == 'estoque':
         for key in ESTOQUE_SOURCE_KEYS:
+            st.session_state[key] = origem.copy().fillna('')
+        for key in PLANILHA_SOURCE_KEYS:
             st.session_state.pop(key, None)
     else:
-        for key in ESTOQUE_SOURCE_KEYS:
-            st.session_state[key] = origem.copy().fillna('')
         for key in PLANILHA_SOURCE_KEYS:
+            st.session_state[key] = origem.copy().fillna('')
+        for key in ESTOQUE_SOURCE_KEYS:
             st.session_state.pop(key, None)
 
     cadastro_model = _copy_df(cadastro_model_df)
     estoque_model = _copy_df(estoque_model_df)
-
     if cadastro_model is not None:
         for key in PLANILHA_MODEL_CADASTRO_KEYS:
             st.session_state[key] = cadastro_model.copy().fillna('')
@@ -184,31 +197,25 @@ def _mirror_to_wizard_keys(
     estoque_model_df: pd.DataFrame | None,
     operation_model_df: pd.DataFrame | None,
 ) -> None:
-    """Ponte BLINGFIX: captura por site precisa alimentar as chaves do Wizard atual."""
     normalized = _normalize_operation(operation)
     origem = source_df.copy().fillna('') if isinstance(source_df, pd.DataFrame) else pd.DataFrame()
-    cadastro_model = _copy_df(cadastro_model_df)
-    estoque_model = _copy_df(estoque_model_df)
-    operation_model = _copy_df(operation_model_df)
+    cadastro_model = _copy_df(cadastro_model_df) or _copy_df(operation_model_df)
+    estoque_model = _copy_df(estoque_model_df) or _copy_df(operation_model_df)
 
-    if normalized == 'cadastro':
-        if cadastro_model is None:
-            cadastro_model = operation_model
+    if normalized == 'estoque':
+        st.session_state[ESTOQUE_WIZARD_ORIGEM_SITE_KEY] = origem.copy().fillna('')
+        if estoque_model is not None:
+            st.session_state[ESTOQUE_WIZARD_MODELO_KEY] = estoque_model.copy().fillna('')
+    else:
         st.session_state[CADASTRO_WIZARD_ORIGEM_KEY] = origem.copy().fillna('')
         st.session_state[CADASTRO_WIZARD_PARA_MAPEAR_KEY] = origem.copy().fillna('')
         st.session_state[CADASTRO_EXPECTED_ROWS_KEY] = int(len(origem))
         st.session_state[CADASTRO_EXPECTED_SIGNATURE_KEY] = _df_signature(origem)
         if cadastro_model is not None:
             st.session_state[CADASTRO_WIZARD_MODELO_KEY] = cadastro_model.copy().fillna('')
-        if estoque_model is not None:
+        if estoque_model is not None and normalized != 'universal':
             st.session_state[CADASTRO_WIZARD_MODELO_ESTOQUE_KEY] = estoque_model.copy().fillna('')
         st.session_state.pop(ESTOQUE_WIZARD_ORIGEM_SITE_KEY, None)
-    else:
-        if estoque_model is None:
-            estoque_model = operation_model
-        st.session_state[ESTOQUE_WIZARD_ORIGEM_SITE_KEY] = origem.copy().fillna('')
-        if estoque_model is not None:
-            st.session_state[ESTOQUE_WIZARD_MODELO_KEY] = estoque_model.copy().fillna('')
 
     st.session_state['site_capture_result_ready'] = bool(not origem.empty)
     st.session_state['site_capture_finished'] = True
@@ -227,7 +234,6 @@ def set_site_source_as_planilha(
     estoque_model_df: pd.DataFrame | None = None,
     operation_model_df: pd.DataFrame | None = None,
 ) -> None:
-    """Registra a captura por site como origem equivalente a uma planilha carregada."""
     normalized = _normalize_operation(operation)
     source_df = df.copy().fillna('') if isinstance(df, pd.DataFrame) else pd.DataFrame()
 
@@ -243,8 +249,8 @@ def set_site_source_as_planilha(
     st.session_state[SITE_REQUESTED_COLUMNS_KEY] = list(requested_columns or [])
     st.session_state[_columns_key(normalized)] = list(requested_columns or [])
 
-    other = 'estoque' if normalized == 'cadastro' else 'cadastro'
-    st.session_state.pop(_raw_source_key(other), None)
+    for other in {'cadastro', 'estoque', 'atualizacao_preco', 'universal'} - {normalized}:
+        st.session_state.pop(_raw_source_key(other), None)
 
     cadastro_model = _copy_df(cadastro_model_df)
     estoque_model = _copy_df(estoque_model_df)
@@ -252,7 +258,7 @@ def set_site_source_as_planilha(
 
     if normalized == 'estoque' and estoque_model is None:
         estoque_model = operation_model
-    if normalized == 'cadastro' and cadastro_model is None:
+    elif normalized != 'estoque' and cadastro_model is None:
         cadastro_model = operation_model
 
     if cadastro_model is not None:
@@ -283,7 +289,6 @@ def get_site_source_for_operation(operation: str) -> pd.DataFrame | None:
     df = st.session_state.get(_source_key(normalized))
     if isinstance(df, pd.DataFrame) and not df.empty:
         return df.copy().fillna('')
-
     saved_operation = st.session_state.get(SITE_OPERATION_KEY)
     df = st.session_state.get(SITE_SOURCE_KEY)
     if saved_operation != normalized:
@@ -295,16 +300,14 @@ def get_site_source_for_operation(operation: str) -> pd.DataFrame | None:
 
 def get_site_model_for_operation(operation: str) -> pd.DataFrame | None:
     normalized = _normalize_operation(operation)
-    if normalized == 'cadastro':
-        df = st.session_state.get(SITE_CADASTRO_MODEL_KEY)
-        if not isinstance(df, pd.DataFrame):
-            df = st.session_state.get(SITE_OPERATION_MODEL_KEY)
-    elif normalized == 'estoque':
+    if normalized == 'estoque':
         df = st.session_state.get(SITE_ESTOQUE_MODEL_KEY)
         if not isinstance(df, pd.DataFrame):
             df = st.session_state.get(SITE_OPERATION_MODEL_KEY)
     else:
-        df = st.session_state.get(SITE_OPERATION_MODEL_KEY)
+        df = st.session_state.get(SITE_CADASTRO_MODEL_KEY)
+        if not isinstance(df, pd.DataFrame):
+            df = st.session_state.get(SITE_OPERATION_MODEL_KEY)
     return _copy_df(df) if isinstance(df, pd.DataFrame) else None
 
 
@@ -314,7 +317,7 @@ def get_site_estoque_model() -> pd.DataFrame | None:
 
 
 def clear_site_source(operation: str | None = None) -> None:
-    operations = [_normalize_operation(operation)] if operation else ['cadastro', 'estoque']
+    operations = [_normalize_operation(operation)] if operation else ['cadastro', 'estoque', 'atualizacao_preco', 'universal']
     for op in operations:
         for key in [_source_key(op), _raw_source_key(op), _urls_key(op), _columns_key(op)]:
             st.session_state.pop(key, None)
@@ -358,6 +361,7 @@ def clear_site_source(operation: str | None = None) -> None:
             'site_capture_rows',
             'site_capture_columns',
             *STOCK_OUTPUT_KEYS,
+            *CONTEXT_OUTPUT_KEYS,
         ]:
             st.session_state.pop(key, None)
 
