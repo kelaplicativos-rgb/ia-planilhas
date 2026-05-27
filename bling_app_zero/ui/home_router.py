@@ -13,6 +13,7 @@ from bling_app_zero.v2.price_multistore.ui import render_price_multistore_v2
 ACTIVE_FLOW_KEY = 'home_active_operation_v2'
 HOME_ALLOW_FLOW_KEY = 'home_allow_operation_v2_session'
 HOME_BOOT_LOCK_KEY = 'home_boot_landing_rendered_once'
+HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
 FLOW_HOME = 'home'
 FLOW_WIZARD = 'wizard_cadastro_estoque'
 FLOW_PRICE_UPDATE = 'price_multistore_v2'
@@ -72,6 +73,7 @@ def _set_home_flow() -> None:
     st.session_state[ACTIVE_FLOW_KEY] = FLOW_HOME
     st.session_state[HOME_ALLOW_FLOW_KEY] = False
     st.session_state['home_single_page_flow_active'] = False
+    st.session_state.pop(HOME_ENTRY_CONTEXT_KEY, None)
     _clear_navigation_params()
 
 
@@ -80,6 +82,10 @@ def _set_flow(flow: str, step: str | None = None) -> None:
     st.session_state[ACTIVE_FLOW_KEY] = flow
     st.session_state[HOME_ALLOW_FLOW_KEY] = True
     st.session_state['home_single_page_flow_active'] = flow == FLOW_WIZARD
+    if flow == FLOW_WIZARD and step == STEP_MODELO:
+        st.session_state[HOME_ENTRY_CONTEXT_KEY] = 'universal'
+        st.session_state['bling_finish_mode'] = 'csv_download'
+        st.session_state['skip_direct_bling_connection_this_flow'] = True
     if step:
         st.session_state[WIZARD_STEP_KEY] = step
     else:
@@ -151,6 +157,7 @@ def _open_bling_decision_flow() -> None:
     st.session_state[ACTIVE_FLOW_KEY] = FLOW_WIZARD
     st.session_state[HOME_ALLOW_FLOW_KEY] = True
     st.session_state['home_single_page_flow_active'] = True
+    st.session_state[HOME_ENTRY_CONTEXT_KEY] = 'bling'
     st.session_state.pop(WIZARD_STEP_KEY, None)
     st.session_state.pop('bling_finish_mode', None)
     st.session_state.pop('skip_direct_bling_connection_this_flow', None)
@@ -199,7 +206,7 @@ def render_professional_home() -> None:
 
     st.markdown('<div class="bling-home-section-title">Escolha como quer começar</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="bling-home-section-subtitle">Escolha entre envio direto ao Bling ou geração de CSV. O restante do fluxo aparece na ordem certa.</div>',
+        '<div class="bling-home-section-subtitle">Escolha entre Bling e Modelo Universal. Cada caminho mantém seu próprio fluxo.</div>',
         unsafe_allow_html=True,
     )
 
@@ -284,6 +291,7 @@ def render_home_router() -> None:
             'wizard_step': st.session_state.get(WIZARD_STEP_KEY),
             'step_preserved': True,
             'single_page_flow_enabled': True,
+            'home_entry_context': st.session_state.get(HOME_ENTRY_CONTEXT_KEY),
         },
     )
     render_home_wizard()
