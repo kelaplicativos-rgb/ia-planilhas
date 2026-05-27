@@ -10,29 +10,37 @@ from .smart_fields import FieldRequest
 @dataclass
 class FlashDeepConfig:
     enabled: bool = True
-    min_html_size: int = 800
-    use_browser_when_available: bool = True
+    min_html_size: int = 350
+    use_browser_when_available: bool = False
+    min_filled_fields_before_deep: int = 2
 
 
 class FlashDeepExtractor:
     """Fallback profundo do BLING INSTANT SCRAPER.
 
-    Primeiro tenta navegador real com Playwright. Se o ambiente não permitir,
-    cai para o modo seguro HTTP sem derrubar o fluxo público.
+    Ajuste de performance:
+    - o navegador real fica desligado por padrão, porque era o maior gargalo;
+    - HTTP profundo usa timeout menor;
+    - fallback só acontece quando quase nada foi capturado no modo rápido.
     """
 
     def __init__(self, config: FlashDeepConfig | None = None) -> None:
         self.config = config or FlashDeepConfig()
-        self.fast_extractor = FlashScanExtractor(timeout=28)
+        self.fast_extractor = FlashScanExtractor(timeout=10)
 
     def should_deep_scan(self, fast_output: FlashScanOutput) -> bool:
         if not self.config.enabled:
             return False
-        if fast_output.errors:
+        if fast_output.errors and not fast_output.html:
             return True
-        if not fast_output.html or len(fast_output.html) < self.config.min_html_size:
+        if not fast_output.html:
             return True
-        if not any(value for value in fast_output.data.values()):
+        filled_fields = sum(1 for value in fast_output.data.values() if str(value or '').strip())
+        if filled_fields >= self.config.min_filled_fields_before_deep:
+            return False
+        if len(fast_output.html) < self.config.min_html_size:
+            return True
+        if filled_fields == 0:
             return True
         return False
 
@@ -44,8 +52,8 @@ class FlashDeepExtractor:
                     entry_url=url,
                     start_urls=[url],
                     model_columns=[field.original_name for field in field_requests],
-                    max_pages=4,
-                    max_products=80,
+                    max_pages=1,
+                    max_products=12,
                     allow_entry_step=False,
                 )
             )
@@ -61,6 +69,6 @@ class FlashDeepExtractor:
         output.used_deep = True
         if not output.errors:
             output.errors.append(
-                "FLASH DEEP executado em modo seguro HTTP. Navegador real não retornou dados ou não está disponível."
+                "FLASH DEEP executado em modo HTTP rápido. Navegador real foi pulado para evitar lentidão."
             )
         return output
