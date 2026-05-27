@@ -6,6 +6,15 @@ from streamlit.errors import StreamlitAPIException
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.exporter import filename_for_operation, to_bling_csv_bytes
+from bling_app_zero.core.operation_contract import (
+    OP_ATUALIZACAO_PRECO,
+    OP_CADASTRO,
+    OP_ESTOQUE,
+    OP_UNIVERSAL,
+    normalize_operation,
+    operation_badge,
+    operation_label,
+)
 from bling_app_zero.core.rules_signature import rules_signature
 from bling_app_zero.core.template_download_exporter import (
     build_template_download_bytes,
@@ -27,13 +36,7 @@ FINAL_DOWNLOAD_SIGNATURE_KEY = 'final_download_signature'
 FINAL_DOWNLOAD_RULES_SIGNATURE_KEY = 'final_download_rules_signature'
 FINAL_DOWNLOAD_OPERATION_KEY = 'final_download_operation'
 FINAL_DOWNLOAD_WIDGET_KEY = 'final_download_widget_key'
-
-OPERATION_LABELS = {
-    'cadastro': 'Cadastro de produtos',
-    'estoque': 'Atualização de estoque',
-    'atualizacao_preco': 'Atualização de preços',
-    'universal': 'Modelo final preenchido',
-}
+PRESERVED_DOWNLOAD_OPERATIONS = {OP_CADASTRO, OP_ESTOQUE, OP_UNIVERSAL, OP_ATUALIZACAO_PRECO}
 
 
 def df_signature(df: pd.DataFrame) -> str:
@@ -45,37 +48,13 @@ def df_signature(df: pd.DataFrame) -> str:
     return f'{shape}:{columns}:{sample}'
 
 
-def _normalize_operation(operation: str) -> str:
-    op = str(operation or '').strip().lower()
-    if op in {'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}:
-        return 'universal'
-    if op in {'precos', 'preco', 'atualizar_precos', 'atualizacao_precos'}:
-        return 'atualizacao_preco'
-    return op or 'universal'
-
-
-def operation_label(operation: str) -> str:
-    return OPERATION_LABELS.get(_normalize_operation(operation), 'Modelo final preenchido')
-
-
-def operation_badge(operation: str) -> str:
-    op = _normalize_operation(operation)
-    if op == 'cadastro':
-        return '📄 CSV BLING · CADASTRO'
-    if op == 'estoque':
-        return '📦 CSV BLING · ESTOQUE'
-    if op == 'atualizacao_preco':
-        return '💲 CSV BLING · PREÇOS'
-    return '📄 CSV BLING · MODELO FINAL'
-
-
 def download_label() -> str:
     return '⬇️ Baixar CSV Bling pronto para importar'
 
 
 def preserve_flow_after_download(operation: str) -> None:
-    op = _normalize_operation(operation)
-    preserved_operation = op if op in {'cadastro', 'estoque', 'universal', 'atualizacao_preco'} else 'universal'
+    op = normalize_operation(operation)
+    preserved_operation = op if op in PRESERVED_DOWNLOAD_OPERATIONS else OP_UNIVERSAL
     st.session_state['home_active_operation_v2'] = 'wizard_cadastro_estoque'
     st.session_state['home_slim_flow_operation'] = preserved_operation
     st.session_state['operacao_final'] = preserved_operation
@@ -94,7 +73,7 @@ def after_final_download(operation: str, signature: str, rules_sig: str) -> None
     preserve_flow_after_download(operation)
     st.session_state['final_download_cache_cleaned'] = False
     st.session_state['final_download_done'] = True
-    st.session_state[FINAL_DOWNLOAD_OPERATION_KEY] = _normalize_operation(operation)
+    st.session_state[FINAL_DOWNLOAD_OPERATION_KEY] = normalize_operation(operation)
     add_audit_event(
         'final_csv_download_completed_navigation_preserved',
         area='DOWNLOAD',
@@ -164,7 +143,7 @@ def save_download_snapshot(
     st.session_state[FINAL_DOWNLOAD_FILE_BYTES_KEY] = bytes(file_bytes)
     st.session_state[FINAL_DOWNLOAD_FILE_NAME_KEY] = file_name
     st.session_state[FINAL_DOWNLOAD_MIME_KEY] = mime
-    st.session_state[FINAL_DOWNLOAD_OPERATION_KEY] = _normalize_operation(operation)
+    st.session_state[FINAL_DOWNLOAD_OPERATION_KEY] = normalize_operation(operation)
     st.session_state[FINAL_DOWNLOAD_SIGNATURE_KEY] = signature
     st.session_state[FINAL_DOWNLOAD_RULES_SIGNATURE_KEY] = rules_sig
     st.session_state[FINAL_DOWNLOAD_WIDGET_KEY] = widget_key
@@ -198,7 +177,7 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
             st.warning('Ainda não há dados finais para baixar.')
             return
 
-    operation = _normalize_operation(operation or st.session_state.get(FINAL_DOWNLOAD_OPERATION_KEY) or 'universal')
+    operation = normalize_operation(operation or st.session_state.get(FINAL_DOWNLOAD_OPERATION_KEY) or OP_UNIVERSAL)
     operation_title = operation_label(operation)
     st.markdown(f'##### {operation_badge(operation)}')
     st.caption(f'Arquivo final: {operation_title}. A saída principal agora é CSV com separador ; e UTF-8-SIG.')
