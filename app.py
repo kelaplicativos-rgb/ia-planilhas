@@ -27,8 +27,8 @@ def main() -> None:
     except Exception as exc:
         formatted_sidebar = register_critical_error(exc)
         add_audit_event('sidebar_critical_error', area='APP', status='ERRO', details={'error': str(exc)})
-        st.warning('O painel de diagnóstico não carregou, mas o sistema principal continuará aberto.')
-        with st.expander('Ver erro do painel de diagnóstico', expanded=False):
+        st.warning('O painel lateral não carregou, mas o sistema principal continuará aberto.')
+        with st.expander('Ver erro do painel lateral', expanded=False):
             st.code(formatted_sidebar)
 
     try:
@@ -38,7 +38,7 @@ def main() -> None:
         formatted = register_critical_error(exc)
         add_audit_event('app_critical_error', area='APP', status='ERRO', details={'error': str(exc)})
         st.error('Encontrei um erro interno, mas o aplicativo continuou aberto.')
-        st.caption('Use o botão da barra lateral para baixar o diagnóstico e envie o arquivo no próximo BLINGFIX.')
+        st.caption('Abra Admin / Diagnóstico com a chave de suporte para gerar o arquivo técnico do próximo BLINGFIX.')
         with st.expander('Ver detalhe técnico do erro', expanded=False):
             st.code(formatted)
 
