@@ -77,6 +77,10 @@ FINISH_MODE_CSV = 'csv_download'
 SKIP_DIRECT_BLING_KEY = 'skip_direct_bling_connection_this_flow'
 DIRECT_API_CONTRACT_KEY = 'direct_bling_api_contract_df'
 DIRECT_API_CONTRACT_ACTIVE_KEY = 'direct_bling_api_contract_active'
+HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
+CONTEXT_BLING_API = 'bling_api'
+CONTEXT_BLING_CSV = 'bling_csv'
+CONTEXT_UNIVERSAL = 'universal'
 
 DIRECT_OPERATION_LABELS = {
     'cadastro': 'Cadastrar produtos',
@@ -136,12 +140,40 @@ def _section_title(number: int, title: str) -> None:
     st.markdown(f'### {number}. {title}')
 
 
+def _entry_context() -> str:
+    value = str(st.session_state.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower()
+    if value == 'bling':
+        return CONTEXT_BLING_API
+    if value in {CONTEXT_BLING_API, CONTEXT_BLING_CSV, CONTEXT_UNIVERSAL}:
+        return value
+    return CONTEXT_BLING_API
+
+
+def _is_bling_api_entry() -> bool:
+    return _entry_context() == CONTEXT_BLING_API
+
+
+def _is_bling_csv_entry() -> bool:
+    return _entry_context() == CONTEXT_BLING_CSV
+
+
+def _is_universal_entry() -> bool:
+    return _entry_context() == CONTEXT_UNIVERSAL
+
+
+def _activate_csv_context(context: str) -> None:
+    st.session_state[HOME_ENTRY_CONTEXT_KEY] = context
+    st.session_state[FINISH_MODE_KEY] = FINISH_MODE_CSV
+    st.session_state[SKIP_DIRECT_BLING_KEY] = True
+    _clear_direct_api_contract()
+
+
 def _finish_mode() -> str:
     return str(st.session_state.get(FINISH_MODE_KEY) or '').strip()
 
 
 def _is_api_direct_mode() -> bool:
-    return _finish_mode() == FINISH_MODE_API and bool(connection_status().get('connected'))
+    return _finish_mode() == FINISH_MODE_API and bool(connection_status().get('connected')) and _is_bling_api_entry()
 
 
 def _direct_operation() -> str:
@@ -298,7 +330,7 @@ def _render_same_tab_connect_button(auth_url: str) -> None:
     background:#2563eb;
     box-shadow:0 10px 22px rgba(37,99,235,.18);
 ">
-    Conectar ao Bling e enviar direto
+    Conectar ao Bling
 </a>
 ''',
         unsafe_allow_html=True,
@@ -306,14 +338,14 @@ def _render_same_tab_connect_button(auth_url: str) -> None:
 
 
 def _render_bling_connection_step() -> None:
-    _section_title(1, 'Como deseja finalizar?')
+    _section_title(1, 'Bling API')
     with st.container(border=True):
-        st.caption('Escolha o caminho do fluxo. Envio direto usa a API do Bling e não exige planilha modelo. CSV exige modelo para importação manual.')
+        st.caption('Conecte ao Bling para enviar cadastro, estoque ou preços direto pela API. Este caminho não usa modelo de planilha.')
         status = connection_status()
         connected = bool(status.get('connected'))
 
         if connected:
-            st.success('Bling conectado. Escolha envio direto ou CSV manual.')
+            st.success('Bling conectado. Escolha o tipo de envio direto.')
             operation = st.radio(
                 'O que deseja fazer no Bling?',
                 options=list(DIRECT_OPERATION_LABELS.keys()),
@@ -334,10 +366,8 @@ def _render_bling_connection_step() -> None:
                     set_scroll_target(STEP_ORIGEM)
                     st.rerun()
             with col2:
-                if st.button('Gerar CSV', use_container_width=True, key='use_csv_even_connected'):
-                    st.session_state[FINISH_MODE_KEY] = FINISH_MODE_CSV
-                    st.session_state[SKIP_DIRECT_BLING_KEY] = True
-                    _clear_direct_api_contract()
+                if st.button('Gerar CSV Bling', use_container_width=True, key='use_csv_even_connected'):
+                    _activate_csv_context(CONTEXT_BLING_CSV)
                     st.session_state[WIZARD_STEP_KEY] = STEP_MODELO
                     set_scroll_target(STEP_MODELO)
                     st.rerun()
@@ -348,23 +378,18 @@ def _render_bling_connection_step() -> None:
                 st.rerun()
             return
 
-        st.warning('Bling não conectado. Conecte para envio direto ou gere CSV sem conexão.')
+        st.warning('Bling não conectado. Conecte para liberar o envio direto pela API.')
         try:
             auth_url = build_authorization_url({'return_to': 'start', 'source_step': 'bling_connection_entry'})
         except Exception:
             auth_url = ''
         _render_same_tab_connect_button(auth_url)
         st.markdown('<div style="height:.55rem"></div>', unsafe_allow_html=True)
-        if st.button('Continuar sem conectar e gerar CSV', use_container_width=True, key='continue_without_bling_connection'):
-            st.session_state[FINISH_MODE_KEY] = FINISH_MODE_CSV
-            st.session_state[SKIP_DIRECT_BLING_KEY] = True
-            _clear_direct_api_contract()
+        if st.button('Prefiro gerar CSV Bling', use_container_width=True, key='continue_without_bling_connection'):
+            _activate_csv_context(CONTEXT_BLING_CSV)
             st.session_state[WIZARD_STEP_KEY] = STEP_MODELO
             set_scroll_target(STEP_MODELO)
             st.rerun()
-
-    if not _finish_mode():
-        st.warning('Escolha uma das opções acima para liberar o fluxo.')
 
 
 def _render_model_step(section_number: int = 2) -> None:
@@ -373,17 +398,18 @@ def _render_model_step(section_number: int = 2) -> None:
     from bling_app_zero.ui.home_models import render_home_bling_models
 
     render_step_anchor(STEP_MODELO)
-    _section_title(section_number, 'Modelos Universal')
+    title = 'Modelo Universal' if _is_universal_entry() else 'Modelos Bling'
+    _section_title(section_number, title)
     with st.container(border=True):
         render_home_bling_models()
     ensure_universal_operation_state()
-    if _is_price_update_contract():
+    if _is_price_update_contract() and not _is_universal_entry():
         _bind_price_update_single_sheet()
 
 
 def _render_origin_step(section_number: int = 3) -> None:
     render_step_anchor(STEP_ORIGEM)
-    if _is_price_update_contract() and not _is_api_direct_mode():
+    if _is_price_update_contract() and not _is_api_direct_mode() and not _is_universal_entry():
         _section_title(section_number, 'Planilha única de atualização de preços')
         _render_price_update_single_sheet_notice()
         return
@@ -413,7 +439,7 @@ def _render_origin_step(section_number: int = 3) -> None:
 def _render_universal_entrada(section_number: int = 4) -> None:
     origin = current_origin_choice()
     render_step_anchor(STEP_ENTRADA)
-    if _is_price_update_contract() and not _is_api_direct_mode():
+    if _is_price_update_contract() and not _is_api_direct_mode() and not _is_universal_entry():
         _section_title(section_number, 'Dados da atualização de preços')
         _render_price_update_single_sheet_notice()
         return
@@ -433,6 +459,7 @@ def _render_universal_entrada(section_number: int = 4) -> None:
             'origin': origin,
             'operation': _current_contract_operation(),
             'finish_mode': _finish_mode(),
+            'home_entry_context': _entry_context(),
             'single_page_flow': SINGLE_PAGE_FLOW,
             'responsible_file': RESPONSIBLE_FILE,
         },
@@ -466,7 +493,7 @@ def _apply_pricing_step_result() -> None:
 
 def _render_pricing_step(section_number: int = 5) -> None:
     render_step_anchor(STEP_PRECIFICACAO)
-    if _is_price_update_contract() and not _is_api_direct_mode():
+    if _is_price_update_contract() and not _is_api_direct_mode() and not _is_universal_entry():
         _section_title(section_number, 'Preço')
         _render_price_update_single_sheet_notice()
         st.caption('A planilha de atualização de preços já contém a estrutura e a origem. Use a calculadora somente se quiser recalcular os valores antes do mapeamento.')
@@ -494,7 +521,12 @@ def _render_pricing_step(section_number: int = 5) -> None:
 
 def _render_universal_mapeamento(section_number: int = 6) -> None:
     render_step_anchor(STEP_MAPEAMENTO)
-    title = 'Mapear campos da API' if _is_api_direct_mode() else ('Conferir campos da atualização' if _is_price_update_contract() else 'Mapear campos')
+    if _is_api_direct_mode():
+        title = 'Mapear campos da API'
+    elif _is_price_update_contract() and not _is_universal_entry():
+        title = 'Conferir campos da atualização'
+    else:
+        title = 'Mapear campos'
     _section_title(section_number, title)
     if not _model_available():
         render_pending_notice('Liberado após escolher o caminho do fluxo e carregar os dados.')
@@ -505,7 +537,7 @@ def _render_universal_mapeamento(section_number: int = 6) -> None:
     if _is_api_direct_mode():
         _apply_direct_api_contract()
         st.caption('Modo Envio direto: confirme a ligação dos dados de origem com os campos da API do Bling.')
-    elif _is_price_update_contract():
+    elif _is_price_update_contract() and not _is_universal_entry():
         st.caption('A mesma planilha foi vinculada como origem e modelo. Confirme os campos para manter o contrato do arquivo final.')
     render_universal_mapeamento_step()
 
@@ -592,7 +624,7 @@ def _render_steps_from(start_step: str, *, skip_model: bool) -> None:
     if start_step not in steps:
         start_step = steps[0]
     start_index = steps.index(start_step)
-    section_number = 2
+    section_number = 2 if _is_bling_api_entry() else 1
     for step in steps[start_index:]:
         if step == STEP_MODELO:
             _render_model_step(section_number)
@@ -617,16 +649,22 @@ def render_home_wizard() -> None:
     inject_scroll_guard('home_wizard')
     has_model = has_home_models()
     operation = ensure_universal_operation_state()
+    context = _entry_context()
     st.session_state['wizard_bottom_nav_rendered_current_cycle'] = True
     st.session_state['home_single_page_flow_active'] = True
 
-    _render_bling_connection_step()
-    mode = _finish_mode()
-    direct_mode = _is_api_direct_mode()
-
-    if not mode:
-        inject_scroll_to_target()
-        return
+    if context == CONTEXT_BLING_API:
+        _render_bling_connection_step()
+        mode = _finish_mode()
+        direct_mode = _is_api_direct_mode()
+        if not mode:
+            inject_scroll_to_target()
+            return
+    else:
+        mode = FINISH_MODE_CSV
+        direct_mode = False
+        st.session_state[FINISH_MODE_KEY] = FINISH_MODE_CSV
+        st.session_state[SKIP_DIRECT_BLING_KEY] = True
 
     if direct_mode:
         _apply_direct_api_contract()
@@ -638,9 +676,9 @@ def render_home_wizard() -> None:
             'wizard_model_first_guard_active',
             area='WIZARD',
             step=STEP_MODELO,
-            details={'reason': 'missing_destination_model', 'single_page_flow': SINGLE_PAGE_FLOW, 'finish_mode': mode, 'responsible_file': RESPONSIBLE_FILE},
+            details={'reason': 'missing_destination_model', 'single_page_flow': SINGLE_PAGE_FLOW, 'finish_mode': mode, 'home_entry_context': context, 'responsible_file': RESPONSIBLE_FILE},
         )
-        _render_model_step(2)
+        _render_model_step(1 if context != CONTEXT_BLING_API else 2)
         inject_scroll_to_target()
         return
 
@@ -653,7 +691,7 @@ def render_home_wizard() -> None:
         'wizard_single_page_rendered',
         area='WIZARD',
         step=active_step,
-        details={'operation': operation or 'universal', 'steps': UNIVERSAL_STEPS, 'single_page_flow': SINGLE_PAGE_FLOW, 'skip_model_step': start_at_origin, 'active_start_step': active_step, 'finish_mode': mode, 'responsible_file': RESPONSIBLE_FILE},
+        details={'operation': operation or 'universal', 'steps': UNIVERSAL_STEPS, 'single_page_flow': SINGLE_PAGE_FLOW, 'skip_model_step': start_at_origin, 'active_start_step': active_step, 'finish_mode': mode, 'home_entry_context': context, 'responsible_file': RESPONSIBLE_FILE},
     )
 
     _render_steps_from(active_step, skip_model=start_at_origin)
