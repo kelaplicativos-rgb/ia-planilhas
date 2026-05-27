@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.bling_api_contract import OP_ATUALIZACAO_PRECO as PRICE_UPDATE_OPERATION
 from bling_app_zero.ui.ai_real_advanced_panel import render_ai_real_advanced_panel
 from bling_app_zero.ui.cadastro_pricing import apply_cadastro_pricing, clear_cadastro_pricing_state
 from bling_app_zero.ui.cadastro_wizard_state import (
@@ -20,22 +21,19 @@ from bling_app_zero.ui.cadastro_wizard_steps import (
     universal_context_ready,
     universal_mapping_ready,
 )
-from bling_app_zero.ui.home_bling_api_flow import (
+from bling_app_zero.ui.flow_context import (
     CONTEXT_BLING_API,
     CONTEXT_BLING_CSV,
     CONTEXT_UNIVERSAL,
-    FINISH_MODE_API,
     FINISH_MODE_CSV,
-    FINISH_MODE_KEY,
-    HOME_ENTRY_CONTEXT_KEY,
-    PRICE_UPDATE_OPERATION,
-    SKIP_DIRECT_BLING_KEY,
-    apply_direct_api_contract,
-    clear_direct_api_contract,
-    is_api_direct_mode,
-    is_bling_api_entry,
-    render_bling_connection_step,
+    activate_csv_finish_mode,
+    entry_context as _entry_context,
+    finish_mode as _finish_mode,
+    is_api_direct_mode as _is_api_direct_mode,
+    is_bling_api_context as _is_bling_api_entry,
+    is_universal_context as _is_universal_entry,
 )
+from bling_app_zero.ui.home_bling_api_flow import apply_direct_api_contract, render_bling_connection_step
 from bling_app_zero.ui.home_pricing_config import (
     disable_home_pricing,
     get_home_pricing_config,
@@ -107,15 +105,6 @@ def _section_title(number: int, title: str) -> None:
     st.markdown(f'### {number}. {title}')
 
 
-def _entry_context() -> str:
-    value = str(st.session_state.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower()
-    if value == 'bling':
-        return CONTEXT_BLING_API
-    if value in {CONTEXT_BLING_API, CONTEXT_BLING_CSV, CONTEXT_UNIVERSAL}:
-        return value
-    return CONTEXT_BLING_API
-
-
 def _context_mapping_keys() -> tuple[str, str]:
     return CONTEXT_MAPPING_KEYS.get(_entry_context(), CONTEXT_MAPPING_KEYS[CONTEXT_BLING_API])
 
@@ -136,22 +125,6 @@ def _context_confidence() -> dict:
         return confidence
     fallback = st.session_state.get('mapping_confidence_cadastro')
     return fallback if isinstance(fallback, dict) else {}
-
-
-def _is_bling_api_entry() -> bool:
-    return is_bling_api_entry()
-
-
-def _is_api_direct_mode() -> bool:
-    return is_api_direct_mode()
-
-
-def _is_universal_entry() -> bool:
-    return _entry_context() == CONTEXT_UNIVERSAL
-
-
-def _finish_mode() -> str:
-    return str(st.session_state.get(FINISH_MODE_KEY) or '').strip()
 
 
 def _model_available() -> bool:
@@ -499,8 +472,7 @@ def render_home_wizard() -> None:
     else:
         mode = FINISH_MODE_CSV
         direct_mode = False
-        st.session_state[FINISH_MODE_KEY] = FINISH_MODE_CSV
-        st.session_state[SKIP_DIRECT_BLING_KEY] = True
+        activate_csv_finish_mode()
 
     if direct_mode:
         apply_direct_api_contract()
@@ -512,7 +484,13 @@ def render_home_wizard() -> None:
             'wizard_model_first_guard_active',
             area='WIZARD',
             step=STEP_MODELO,
-            details={'reason': 'missing_destination_model', 'single_page_flow': SINGLE_PAGE_FLOW, 'finish_mode': mode, 'home_entry_context': context, 'responsible_file': RESPONSIBLE_FILE},
+            details={
+                'reason': 'missing_destination_model',
+                'single_page_flow': SINGLE_PAGE_FLOW,
+                'finish_mode': mode,
+                'home_entry_context': context,
+                'responsible_file': RESPONSIBLE_FILE,
+            },
         )
         _render_model_step(1 if context != CONTEXT_BLING_API else 2)
         inject_scroll_to_target()
@@ -527,7 +505,16 @@ def render_home_wizard() -> None:
         'wizard_single_page_rendered',
         area='WIZARD',
         step=active_step,
-        details={'operation': operation or 'universal', 'steps': UNIVERSAL_STEPS, 'single_page_flow': SINGLE_PAGE_FLOW, 'skip_model_step': start_at_origin, 'active_start_step': active_step, 'finish_mode': mode, 'home_entry_context': context, 'responsible_file': RESPONSIBLE_FILE},
+        details={
+            'operation': operation or 'universal',
+            'steps': UNIVERSAL_STEPS,
+            'single_page_flow': SINGLE_PAGE_FLOW,
+            'skip_model_step': start_at_origin,
+            'active_start_step': active_step,
+            'finish_mode': mode,
+            'home_entry_context': context,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
     )
 
     _render_steps_from(active_step, skip_model=start_at_origin)
