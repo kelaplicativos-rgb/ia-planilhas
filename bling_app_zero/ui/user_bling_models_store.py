@@ -138,10 +138,16 @@ def _read_zip_model(file_name: str, file_bytes: bytes) -> pd.DataFrame:
 
 def read_model_bytes(file_name: str, file_bytes: bytes) -> pd.DataFrame:
     suffix = Path(str(file_name or '')).suffix.lower().strip()
-    if suffix == '.zip' or _looks_like_zip(file_bytes):
-        return _read_zip_model(file_name, file_bytes)
+
+    # XLSX/XLSM/XLSB também são ZIP internamente. Por isso a extensão de planilha
+    # precisa ter prioridade absoluta, senão cadastro.xlsx e saldo_estoque.xlsx
+    # seriam confundidos com pacote ZIP original do Bling.
     if suffix in SPREADSHEET_EXTENSIONS:
         return _read_spreadsheet_bytes(file_name, file_bytes)
+
+    if suffix == '.zip' or _looks_like_zip(file_bytes):
+        return _read_zip_model(file_name, file_bytes)
+
     raise ValueError(FORMAT_ERROR)
 
 
