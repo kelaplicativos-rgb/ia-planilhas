@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import streamlit as st
 
-from bling_app_zero.core.bling_oauth import build_authorization_url, disconnect
 from bling_app_zero.core.operation_contract import (
     MODEL_TYPE_PRECOS,
     OP_ATUALIZACAO_PRECO,
@@ -54,11 +53,6 @@ PRICE_MODEL_WARNING = (
 )
 
 
-def _session_has_bling_token() -> bool:
-    token = st.session_state.get('bling_oauth_token_response')
-    return isinstance(token, dict) and bool(token.get('access_token'))
-
-
 def _render_master_intro() -> None:
     st.markdown(
         '''
@@ -70,31 +64,6 @@ def _render_master_intro() -> None:
 ''',
         unsafe_allow_html=True,
     )
-
-
-def _render_bling_connection() -> None:
-    # Não consulta Firestore/SQLite aqui para não travar a tela de modelos.
-    # O status persistente é tratado no callback; esta área deve ser sempre leve.
-    with st.expander('Conexão com Bling', expanded=False):
-        if _session_has_bling_token():
-            st.success('Bling conectado nesta sessão')
-            if st.button('Desconectar Bling', key='disconnect_bling_oauth', use_container_width=True):
-                disconnect()
-                st.rerun()
-            return
-
-        st.caption('Conecte sua conta Bling quando quiser usar integração via API. Os modelos abaixo continuam funcionando sem conexão.')
-        try:
-            auth_url = build_authorization_url()
-        except Exception as exc:
-            auth_url = ''
-            st.warning('Não consegui gerar o link de conexão agora. Confira os Secrets do Bling no Streamlit.')
-            st.caption(f'Detalhe técnico: {exc}')
-
-        if auth_url:
-            st.link_button('Conectar ao Bling', auth_url, use_container_width=True)
-        else:
-            st.warning('Informe o Client ID do Bling nos Secrets para habilitar o botão de conexão.')
 
 
 def _set_price_update_flow(step: str = STEP_MAPEAMENTO) -> None:
@@ -211,7 +180,6 @@ def _render_model_card(model_type: str) -> None:
 
 def render_modelos_bling_user_screen() -> None:
     _render_master_intro()
-    _render_bling_connection()
 
     st.markdown('### Modelos oficiais do Bling')
     st.caption('Escolha o tipo de modelo, anexe o arquivo original e siga para o fluxo correspondente.')
