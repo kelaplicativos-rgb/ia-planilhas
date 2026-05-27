@@ -3,6 +3,7 @@ from __future__ import annotations
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.bling_oauth import build_authorization_url, connection_status
 from bling_app_zero.ui.home_wizard import render_home_wizard
 from bling_app_zero.ui.links_uteis import render_links_uteis
 from bling_app_zero.ui.modelos_bling import render_modelos_bling
@@ -181,18 +182,60 @@ def _activate_non_wizard_flow(flow: str) -> None:
         pass
 
 
-def _render_home_card(title: str, subtitle: str, button: str, *, context: str | None = None, flow: str = FLOW_WIZARD, step: str | None = None, key: str, badge: str = '') -> None:
+def _render_home_card(
+    title: str,
+    subtitle: str,
+    button: str,
+    *,
+    context: str | None = None,
+    flow: str = FLOW_WIZARD,
+    step: str | None = None,
+    key: str,
+    badge: str = '',
+    note: str = '',
+) -> None:
     with st.container(border=True):
         if badge:
             st.caption(badge)
         st.markdown(f'#### {title}')
         st.caption(subtitle)
+        if note:
+            st.caption(note)
         if st.button(button, use_container_width=True, key=key):
             if context:
                 _start_wizard_context(context, step=step)
             else:
                 _set_flow(flow, step)
             st.rerun()
+
+
+def _render_bling_api_home_card() -> None:
+    with st.container(border=True):
+        st.caption('Mais automático')
+        st.markdown('#### Bling API')
+        st.caption('Autentique o Bling primeiro. Depois escolha cadastro, estoque ou preços e envie no final pela API.')
+
+        connected = bool(connection_status().get('connected'))
+        if connected:
+            st.success('Bling já conectado.')
+            if st.button('Continuar via API', use_container_width=True, key='home_card_continue_bling_api'):
+                _start_wizard_context('bling_api')
+                st.rerun()
+            return
+
+        try:
+            auth_url = build_authorization_url({'return_to': 'start', 'source_step': 'home_bling_api_card'})
+        except Exception:
+            auth_url = ''
+
+        if auth_url:
+            st.link_button('Conectar ao Bling', auth_url, use_container_width=True)
+            st.caption('Após autorizar, você volta para escolher o tipo de envio da API.')
+        else:
+            st.warning('Credenciais do Bling ainda não configuradas. Use o modo CSV enquanto isso.')
+            if st.button('Abrir etapa da API', use_container_width=True, key='home_card_open_bling_api_without_url'):
+                _start_wizard_context('bling_api')
+                st.rerun()
 
 
 def _render_admin_links() -> None:
@@ -223,14 +266,7 @@ def render_professional_home() -> None:
 
     col_api, col_csv, col_universal = st.columns(3)
     with col_api:
-        _render_home_card(
-            'Bling API',
-            'Conecte ao Bling e envie cadastro, estoque ou preços direto pela API, sem modelo de planilha.',
-            'Enviar direto',
-            context='bling_api',
-            key='home_card_open_bling_api',
-            badge='Mais automático',
-        )
+        _render_bling_api_home_card()
 
     with col_csv:
         _render_home_card(
