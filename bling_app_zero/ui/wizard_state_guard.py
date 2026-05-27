@@ -9,7 +9,8 @@ FLOW_OPERATION_KEY = 'home_slim_flow_operation'
 FLOW_ORIGIN_KEY = 'home_slim_flow_origin'
 STATE_GUARD_VERSION_KEY = 'bling_wizard_state_guard_version'
 STATE_GUARD_LAST_OPERATION_KEY = 'bling_wizard_state_guard_last_operation'
-STATE_GUARD_VERSION = '2026-05-26-wizard-guard-real-contract-2'
+STATE_GUARD_VERSION = '2026-05-27-blingreset-context-guard-1'
+HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
 
 VALID_STEPS = {
     'modelo',
@@ -26,6 +27,7 @@ VALID_STEPS = {
 }
 VALID_OPERATIONS = {'cadastro', 'estoque', 'universal', 'atualizacao_preco'}
 VALID_ORIGINS = {'arquivo', 'site'}
+VALID_ENTRY_CONTEXTS = {'bling_api', 'bling_csv', 'universal'}
 STOCK_FORBIDDEN_STEPS = {'precificacao', 'mapeamento'}
 
 LEGACY_WIDGET_PREFIXES = (
@@ -41,6 +43,9 @@ CURRENT_WIDGET_PREFIXES = (
     'frontpage_origin_radio_atualizacao_preco',
     'cad_map_',
     'stk_map_',
+    'bling_api_map_',
+    'bling_csv_map_',
+    'universal_map_',
     'urls_site_cadastro',
     'urls_site_estoque',
     'urls_site_universal',
@@ -120,7 +125,18 @@ def _selected_operation() -> str:
     return ''
 
 
+def _normalize_entry_context() -> None:
+    context = str(st.session_state.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower()
+    if context == 'bling':
+        st.session_state[HOME_ENTRY_CONTEXT_KEY] = 'bling_api'
+        return
+    if context and context not in VALID_ENTRY_CONTEXTS:
+        st.session_state.pop(HOME_ENTRY_CONTEXT_KEY, None)
+
+
 def _normalize_scalar_state() -> None:
+    _normalize_entry_context()
+
     step = str(st.session_state.get(WIZARD_STEP_KEY) or 'modelo').strip().lower()
     if step not in VALID_STEPS:
         step = 'modelo'
