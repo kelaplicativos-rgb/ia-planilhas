@@ -12,7 +12,9 @@ from bling_app_zero.ui.user_bling_models_store import (
 
 FLOW_WIZARD = 'wizard_cadastro_estoque'
 STEP_ORIGEM = 'origem'
+STEP_MAPEAMENTO = 'mapeamento'
 UNIVERSAL_OPERATION = 'universal'
+PRICE_UPDATE_OPERATION = 'atualizacao_preco'
 PRICE_MODEL_TYPE = 'precos'
 
 MODEL_TITLES = {
@@ -35,17 +37,38 @@ MODEL_UPLOAD_HELP = {
 
 PRICE_MODEL_WARNING = (
     'Atualização de preços aceita o arquivo original do Bling, inclusive quando vier em ZIP. '
-    'O sistema extrai a planilha interna e guarda o modelo para o fluxo próprio de preços.'
+    'Após anexar, o sistema segue direto para a conferência/mapeamento do fluxo de preços.'
 )
+
+
+def _set_price_update_flow(step: str = STEP_MAPEAMENTO) -> None:
+    st.session_state['bling_price_model_waiting_own_flow'] = False
+    st.session_state['home_active_operation_v2'] = FLOW_WIZARD
+    st.session_state['home_allow_operation_v2_session'] = True
+    st.session_state['home_single_page_flow_active'] = True
+    st.session_state['bling_wizard_step'] = step
+    st.session_state['bling_quick_model_ready_origin'] = True
+    st.session_state['bling_quick_model_type'] = PRICE_MODEL_TYPE
+    st.session_state['home_slim_flow_origin'] = 'arquivo'
+    st.session_state['origem_final'] = 'arquivo'
+    st.session_state['home_slim_flow_operation'] = PRICE_UPDATE_OPERATION
+    st.session_state['home_detected_operation'] = PRICE_UPDATE_OPERATION
+    st.session_state['operacao_final'] = PRICE_UPDATE_OPERATION
+    st.session_state['tipo_operacao_final'] = PRICE_UPDATE_OPERATION
+    try:
+        st.query_params['operation_v2'] = FLOW_WIZARD
+        st.query_params['step'] = step
+        st.query_params.pop('flow', None)
+        st.query_params.pop('origem', None)
+        st.query_params.pop('operacao', None)
+    except Exception:
+        pass
 
 
 def _go_to_origin(model_type: str) -> None:
     if model_type == PRICE_MODEL_TYPE:
-        st.session_state['bling_price_model_waiting_own_flow'] = True
-        st.session_state['home_slim_flow_operation'] = 'atualizacao_preco'
-        st.session_state['home_detected_operation'] = 'atualizacao_preco'
-        st.session_state['operacao_final'] = 'atualizacao_preco'
-        st.session_state['tipo_operacao_final'] = 'atualizacao_preco'
+        _set_price_update_flow(STEP_MAPEAMENTO)
+        st.rerun()
         return
 
     st.session_state['home_active_operation_v2'] = FLOW_WIZARD
@@ -70,7 +93,7 @@ def _go_to_origin(model_type: str) -> None:
 
 def _show_price_model_block() -> None:
     st.warning(PRICE_MODEL_WARNING)
-    st.caption('Sem bloqueio por extensão no upload: se o arquivo for ZIP original do Bling, o sistema detecta e extrai automaticamente.')
+    st.caption('Sem bloqueio por extensão no upload: se o arquivo for ZIP original do Bling, o sistema detecta, extrai e avança para mapeamento.')
 
 
 def _show_model(model_type: str) -> None:
@@ -93,7 +116,8 @@ def _show_model(model_type: str) -> None:
             st.caption('Formato salvo: ' + str(info.get('format')).upper())
         st.caption('Colunas: ' + str(len(df.columns)))
         if model_type == PRICE_MODEL_TYPE:
-            st.button('Modelo de preços salvo para o fluxo próprio', key=f'use_{model_type}', use_container_width=True, disabled=True)
+            if st.button('Usar modelo de preços e ir para mapeamento', key=f'use_{model_type}', use_container_width=True):
+                _go_to_origin(model_type)
         elif st.button('Usar este modelo e ir para Origem dos dados', key=f'use_{model_type}', use_container_width=True):
             _go_to_origin(model_type)
         if st.button('Remover modelo salvo', key=f'remove_{model_type}', use_container_width=True):
@@ -113,8 +137,9 @@ def _show_model(model_type: str) -> None:
         try:
             save_user_model(model_type, uploaded.name, uploaded.getvalue())
             if model_type == PRICE_MODEL_TYPE:
-                st.success('Modelo Bling de atualização de preços salvo com sucesso. Arquivo original/ZIP aceito quando houver planilha interna válida.')
-                st.warning(PRICE_MODEL_WARNING)
+                st.success('Modelo Bling de atualização de preços salvo. Abrindo mapeamento...')
+                _set_price_update_flow(STEP_MAPEAMENTO)
+                st.rerun()
             else:
                 st.success('Modelo Bling salvo com sucesso. Indo para Origem dos dados...')
                 _go_to_origin(model_type)
