@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import streamlit as st
 
+from bling_app_zero.ui.scroll_position import request_scroll_top
+
 ACTIVE_FLOW_KEY = 'home_active_operation_v2'
 HOME_ALLOW_FLOW_KEY = 'home_allow_operation_v2_session'
 FLOW_HOME = 'home'
@@ -20,6 +22,7 @@ def _clear_navigation_params() -> None:
 
 
 def _go_home() -> None:
+    request_scroll_top()
     st.session_state[ACTIVE_FLOW_KEY] = FLOW_HOME
     st.session_state[HOME_ALLOW_FLOW_KEY] = False
     st.session_state['home_single_page_flow_active'] = False
@@ -27,6 +30,7 @@ def _go_home() -> None:
 
 
 def _set_flow(flow: str, step: str | None = None) -> None:
+    request_scroll_top()
     st.session_state[ACTIVE_FLOW_KEY] = flow
     st.session_state[HOME_ALLOW_FLOW_KEY] = True
     st.session_state['home_single_page_flow_active'] = flow == FLOW_WIZARD
