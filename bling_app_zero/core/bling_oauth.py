@@ -79,7 +79,6 @@ def build_authorization_url() -> str:
         'response_type': 'code',
         'client_id': cid,
         'state': state,
-        'redirect_uri': redirect_uri(),
     }
     return f'{authorize_url()}?{urlencode(params)}'
 
