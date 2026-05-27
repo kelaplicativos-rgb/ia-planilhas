@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from bling_app_zero.ui.scroll_position import request_scroll_top
 from bling_app_zero.ui.user_bling_models_store import (
     MODEL_LABELS,
     MODEL_TYPES,
@@ -31,7 +32,7 @@ MODEL_UPLOAD_LABELS = {
 
 MODEL_UPLOAD_HELP = {
     'cadastro': 'Anexe o arquivo oficial do Bling. Aceita CSV, XLSX, XLS, XLSM, XLSB e também pacote ZIP quando o Bling entregar compactado.',
-    'estoque': 'Anexe o arquivo oficial do Bling. Aceita CSV, XLSX, XLS, XLSM, XLSB e também pacote ZIP quando o Bling entregar compactado.',
+    'estoque': 'Anexe o arquivo oficial do Bling. Aceita CSV, XLSX, XLSM, XLS ou XLSB e também pacote ZIP quando o Bling entregar compactado.',
     'precos': 'Anexe o arquivo original baixado do Bling. Pode ser ZIP; o sistema abre o pacote e procura a planilha interna automaticamente.',
 }
 
@@ -42,6 +43,7 @@ PRICE_MODEL_WARNING = (
 
 
 def _set_price_update_flow(step: str = STEP_MAPEAMENTO) -> None:
+    request_scroll_top()
     st.session_state['bling_price_model_waiting_own_flow'] = False
     st.session_state['home_active_operation_v2'] = FLOW_WIZARD
     st.session_state['home_allow_operation_v2_session'] = True
@@ -66,6 +68,7 @@ def _set_price_update_flow(step: str = STEP_MAPEAMENTO) -> None:
 
 
 def _go_to_origin(model_type: str) -> None:
+    request_scroll_top()
     if model_type == PRICE_MODEL_TYPE:
         _set_price_update_flow(STEP_MAPEAMENTO)
         st.rerun()
