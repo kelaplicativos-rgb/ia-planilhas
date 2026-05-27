@@ -1,7 +1,7 @@
 [server]
 fileWatcherType = "none"
 runOnSave = false
-maxUploadSize = 200
+maxUploadSize = 1024
 
 [browser]
 gatherUsageStats = false
