@@ -5,7 +5,7 @@ import streamlit as st
 from streamlit.errors import StreamlitAPIException
 
 from bling_app_zero.core.audit import add_audit_event
-from bling_app_zero.core.bling_direct_sender import is_direct_send_available, send_dataframe_to_bling
+from bling_app_zero.core.bling_direct_sender import is_direct_send_available, preview_payloads, send_dataframe_to_bling
 from bling_app_zero.core.bling_oauth import connection_status
 from bling_app_zero.core.exporter import filename_for_operation, to_bling_csv_bytes
 from bling_app_zero.core.operation_contract import (
@@ -198,6 +198,26 @@ def _render_optional_template_download(download_df: pd.DataFrame, key: str, sign
         )
 
 
+def _render_payload_preview(download_df: pd.DataFrame, operation: str) -> None:
+    payload_preview = preview_payloads(download_df.copy(), operation, limit=5)
+    if not payload_preview:
+        st.warning('Não consegui montar prévia de payload para envio. Confira o mapeamento dos campos obrigatórios.')
+        return
+    ok_count = sum(1 for item in payload_preview if item.get('status') == 'OK')
+    ignored_count = len(payload_preview) - ok_count
+    if ok_count:
+        st.success(f'Payload pronto para prévia: {ok_count} linha(s) válida(s).')
+    if ignored_count:
+        st.warning(f'{ignored_count} linha(s) da prévia seriam ignoradas por falta de campo obrigatório.')
+    with st.expander('Prévia real do payload que será enviado ao Bling', expanded=False):
+        for index, item in enumerate(payload_preview, start=1):
+            st.markdown(f'**Linha {index} · {item.get("status", "") }**')
+            motivo = str(item.get('motivo') or '').strip()
+            if motivo:
+                st.caption(motivo)
+            st.json(item.get('payload') or {})
+
+
 def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: str, signature: str, rules_sig: str) -> None:
     operation = normalize_operation(operation)
     title = DIRECT_SEND_TEXT.get(operation, 'Envio direto ao Bling')
@@ -218,8 +238,9 @@ def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: st
     st.success('Bling conectado. Envio direto disponível.')
     st.caption(f'Operação detectada: {operation_label(operation)} · Linhas prontas: {len(download_df)}')
 
-    with st.expander('Prévia dos dados que serão enviados', expanded=False):
+    with st.expander('Prévia da tabela final', expanded=False):
         st.dataframe(download_df.head(50), use_container_width=True)
+    _render_payload_preview(download_df, operation)
 
     button_key = f'send_direct_bling_{key}_{signature}_{rules_sig}'
     if st.button(f'🚀 {title}', use_container_width=True, key=button_key):
