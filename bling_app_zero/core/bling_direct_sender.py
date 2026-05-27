@@ -22,17 +22,42 @@ RESPONSIBLE_FILE = 'bling_app_zero/core/bling_direct_sender.py'
 DEFAULT_API_BASE_URL = 'https://www.bling.com.br/Api/v3'
 
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
-    'id': ('id', 'id produto', 'id_produto', 'idproduto', 'codigo bling', 'código bling'),
-    'codigo': ('codigo', 'código', 'sku', 'ref', 'referencia', 'referência'),
-    'nome': ('nome', 'descrição', 'descricao', 'produto', 'título', 'titulo'),
-    'descricao': ('descricao complementar', 'descrição complementar', 'descricao curta', 'descrição curta', 'descrição do produto', 'descricao do produto'),
-    'preco': ('preço', 'preco', 'preço unitário', 'preco unitario', 'preço unitário (obrigatório)', 'preco unitario (obrigatorio)', 'valor', 'valor venda'),
-    'gtin': ('gtin', 'ean', 'codigo de barras', 'código de barras'),
+    'id': ('id produto', 'id_produto', 'idproduto', 'id', 'codigo bling', 'código bling'),
+    'codigo': ('código', 'codigo', 'sku', 'ref', 'referencia', 'referência', 'codigo produto', 'código produto'),
+    'nome': ('nome', 'produto', 'título', 'titulo', 'nome produto', 'nome do produto', 'descrição produto', 'descricao produto'),
+    'descricao': (
+        'descrição',
+        'descricao',
+        'descrição curta',
+        'descricao curta',
+        'descrição do produto',
+        'descricao do produto',
+        'descricao complementar',
+        'descrição complementar',
+        'detalhes',
+        'observação',
+        'observacao',
+    ),
+    'preco': (
+        'preço',
+        'preco',
+        'preço unitário',
+        'preco unitario',
+        'preço unitário (obrigatório)',
+        'preco unitario (obrigatorio)',
+        'valor',
+        'valor venda',
+        'preço de venda',
+        'preco de venda',
+    ),
+    'gtin': ('gtin', 'ean', 'codigo de barras', 'código de barras', 'gtin/ean'),
     'marca': ('marca', 'fabricante'),
     'unidade': ('unidade', 'un'),
     'ncm': ('ncm',),
-    'quantidade': ('quantidade', 'saldo', 'estoque', 'balanço', 'balanco', 'qtd'),
-    'deposito': ('deposito', 'depósito', 'nome deposito', 'nome depósito'),
+    'quantidade': ('quantidade', 'saldo', 'estoque', 'balanço', 'balanco', 'qtd', 'qtde'),
+    'deposito': ('depósito', 'deposito', 'nome depósito', 'nome deposito', 'depósito padrão', 'deposito padrao'),
+    'categoria': ('categoria', 'categoria produto', 'categoria do produto'),
+    'imagens': ('imagens', 'imagem', 'url imagem', 'url imagens', 'fotos'),
 }
 
 
@@ -60,7 +85,13 @@ def api_base_url() -> str:
 
 def _normalize_column_name(value: object) -> str:
     text = str(value or '').strip().lower()
-    text = re.sub(r'\s+', ' ', text)
+    text = text.replace('ã', 'a').replace('á', 'a').replace('à', 'a').replace('â', 'a')
+    text = text.replace('é', 'e').replace('ê', 'e')
+    text = text.replace('í', 'i')
+    text = text.replace('ó', 'o').replace('ô', 'o').replace('õ', 'o')
+    text = text.replace('ú', 'u').replace('ç', 'c')
+    text = re.sub(r'[^a-z0-9]+', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip()
     return text
 
 
@@ -105,13 +136,6 @@ def _float_or_none(value: str) -> float | None:
         return None
 
 
-def _int_or_none(value: str) -> int | None:
-    number = _float_or_none(value)
-    if number is None:
-        return None
-    return int(number)
-
-
 def _token() -> tuple[dict[str, Any] | None, str]:
     token, meta = load_token()
     if not isinstance(token, dict) or not token.get('access_token'):
@@ -152,6 +176,20 @@ def _url(path: str) -> str:
     return api_base_url() + '/' + path.lstrip('/')
 
 
+def _clean_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    clean: dict[str, Any] = {}
+    for key, value in payload.items():
+        if value in ('', None, {}):
+            continue
+        if isinstance(value, dict):
+            nested = {nested_key: nested_value for nested_key, nested_value in value.items() if nested_value not in ('', None, {})}
+            if nested:
+                clean[key] = nested
+            continue
+        clean[key] = value
+    return clean
+
+
 def _payload_cadastro(row: pd.Series, mapping: dict[str, str]) -> dict[str, Any]:
     preco = _float_or_none(_value(row, mapping, 'preco'))
     payload: dict[str, Any] = {
@@ -170,8 +208,15 @@ def _payload_cadastro(row: pd.Series, mapping: dict[str, str]) -> dict[str, Any]
     ncm = _value(row, mapping, 'ncm')
     if ncm:
         payload['tributacao']['ncm'] = ncm
-    payload = {key: value for key, value in payload.items() if value not in ('', None, {})}
-    return payload
+    categoria = _value(row, mapping, 'categoria')
+    if categoria:
+        payload['categoria'] = {'descricao': categoria}
+    imagens = _value(row, mapping, 'imagens')
+    if imagens:
+        urls = [url.strip() for url in re.split(r'[|,;\n]+', imagens) if url.strip()]
+        if urls:
+            payload['midia'] = {'imagens': [{'link': url} for url in urls[:10]]}
+    return _clean_payload(payload)
 
 
 def _payload_preco(row: pd.Series, mapping: dict[str, str]) -> dict[str, Any] | None:
@@ -198,7 +243,7 @@ def _payload_estoque(row: pd.Series, mapping: dict[str, str]) -> dict[str, Any] 
         payload['produto'] = {'codigo': codigo}
     if deposito:
         payload['deposito'] = {'nome': deposito}
-    return payload
+    return _clean_payload(payload)
 
 
 def _payload_for(operation: str, row: pd.Series, mapping: dict[str, str]) -> tuple[dict[str, Any] | None, str]:
@@ -215,8 +260,22 @@ def _payload_for(operation: str, row: pd.Series, mapping: dict[str, str]) -> tup
         payload = _payload_estoque(row, mapping)
         if payload is None:
             return None, 'Quantidade/saldo ausente ou inválido.'
+        if not payload.get('produto'):
+            return None, 'Estoque exige ID do produto ou código/SKU.'
         return payload, ''
     return None, f'Operação sem envio direto configurado: {operation_label(operation)}.'
+
+
+def preview_payloads(df: pd.DataFrame, operation: str, *, limit: int = 5) -> list[dict[str, Any]]:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return []
+    operation = normalize_operation(operation)
+    mapping = _column_map(df.columns)
+    previews: list[dict[str, Any]] = []
+    for _index, row in df.fillna('').head(limit).iterrows():
+        payload, reason = _payload_for(operation, row, mapping)
+        previews.append({'payload': payload or {}, 'status': 'OK' if payload else 'IGNORADO', 'motivo': reason})
+    return previews
 
 
 def send_dataframe_to_bling(df: pd.DataFrame, operation: str, *, limit: int | None = None) -> DirectSendResult:
@@ -277,4 +336,4 @@ def send_dataframe_to_bling(df: pd.DataFrame, operation: str, *, limit: int | No
     return result
 
 
-__all__ = ['DirectSendResult', 'is_direct_send_available', 'send_dataframe_to_bling']
+__all__ = ['DirectSendResult', 'is_direct_send_available', 'preview_payloads', 'send_dataframe_to_bling']
