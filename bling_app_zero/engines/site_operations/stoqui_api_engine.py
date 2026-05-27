@@ -183,9 +183,11 @@ def _discover_from_public_pages(raw_urls: str) -> tuple[list[str], str, bool, st
                     user_ids.append(user_id)
             if not anon_key:
                 anon_key = _extract_anon_key(script_text)
-            if user_ids and anon_key and saw_stoqui_signal:
+            has_public_api_credentials = bool(user_ids and anon_key)
+            if has_public_api_credentials or saw_stoqui_signal:
                 break
-        if user_ids and anon_key and saw_stoqui_signal:
+        has_public_api_credentials = bool(user_ids and anon_key)
+        if has_public_api_credentials or (user_ids and saw_stoqui_signal):
             break
 
     return user_ids, anon_key, saw_stoqui_signal, public_root
@@ -465,13 +467,15 @@ def run_stoqui_site_engine(
     if not anon_key:
         anon_key = discovered_key
 
-    if not user_ids or not saw_stoqui_signal:
+    has_public_api_credentials = bool(user_ids and anon_key)
+    if not user_ids or (not saw_stoqui_signal and not has_public_api_credentials):
         _emit(progress_callback, {
             'stage': 'API Stoqui',
-            'message': 'Motor Stoqui não identificado nesta URL. Indo para o motor genérico.',
+            'message': 'Motor Stoqui/API pública não identificado nesta URL. Indo para o motor genérico.',
             'progress': 0.18,
             'responsible_file': RESPONSIBLE_FILE,
             'stoqui_signal': bool(saw_stoqui_signal),
+            'has_public_api_credentials': bool(has_public_api_credentials),
             'user_ids_found': len(user_ids),
         })
         return pd.DataFrame()
@@ -482,6 +486,7 @@ def run_stoqui_site_engine(
         'progress': 0.22,
         'stoqui_user_ids': len(user_ids),
         'has_anon_key': bool(anon_key),
+        'stoqui_signal': bool(saw_stoqui_signal),
         'responsible_file': RESPONSIBLE_FILE,
     })
 
