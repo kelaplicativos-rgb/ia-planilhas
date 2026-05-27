@@ -36,6 +36,9 @@ SITE_SOURCE_FALLBACK_KEYS = (
 SITE_SOURCE_OPERATIONS = ('universal', 'cadastro', 'estoque', 'fornecedor')
 RESPONSIBLE_FILE = 'bling_app_zero/ui/cadastro_entry_step.py'
 ENTRY_AUTOSCROLL_SIGNATURE_KEY = 'cadastro_entry_autoscroll_signature'
+DIRECT_API_CONTRACT_KEY = 'direct_bling_api_contract_df'
+FINISH_MODE_KEY = 'bling_finish_mode'
+FINISH_MODE_API = 'api_direct'
 
 
 def _copy_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
@@ -50,7 +53,26 @@ def _copy_model(df: pd.DataFrame | None) -> pd.DataFrame | None:
     return None
 
 
+def _direct_api_model() -> pd.DataFrame | None:
+    if st.session_state.get(FINISH_MODE_KEY) != FINISH_MODE_API:
+        return None
+    for key in (
+        DIRECT_API_CONTRACT_KEY,
+        'cadastro_wizard_df_modelo',
+        'home_modelo_universal_df',
+        'df_modelo_universal',
+        'modelo_universal_df',
+    ):
+        copied = _copy_model(st.session_state.get(key))
+        if copied is not None:
+            return copied
+    return None
+
+
 def _first_contract_model() -> pd.DataFrame | None:
+    direct_model = _direct_api_model()
+    if direct_model is not None:
+        return direct_model
     for model in (
         get_home_cadastro_model(),
         get_home_preco_model(),
@@ -102,6 +124,9 @@ def source_dataframe(df_origem_site: pd.DataFrame | None, upload) -> pd.DataFram
 
 
 def _destination_model(upload) -> pd.DataFrame:
+    direct_model = _direct_api_model()
+    if direct_model is not None:
+        return direct_model
     for model in (
         get_home_cadastro_model(),
         get_home_estoque_model(),
@@ -143,7 +168,10 @@ def render_cadastro_entrada_step() -> None:
 
     if valid_df(df_origem):
         origem_nome = 'Busca do site' if site_origin else 'Dados do fornecedor'
-        st.success(f'{origem_nome} carregados com sucesso. {len(df_origem)} linha(s) encontradas. Próximo passo: calcular preço ou mapear com o modelo.')
+        if st.session_state.get(FINISH_MODE_KEY) == FINISH_MODE_API:
+            st.success(f'{origem_nome} carregados com sucesso. {len(df_origem)} linha(s) encontradas. Próximo passo: mapear os campos da API do Bling.')
+        else:
+            st.success(f'{origem_nome} carregados com sucesso. {len(df_origem)} linha(s) encontradas. Próximo passo: calcular preço ou mapear com o modelo.')
         if site_origin:
             resolved_from = str(st.session_state.get('cadastro_entry_site_source_resolved_from') or '').strip()
             if resolved_from:
@@ -159,7 +187,10 @@ def render_cadastro_entrada_step() -> None:
         st.warning('Envie os dados do fornecedor para continuar.')
 
     if not valid_model(df_modelo):
-        st.error('Modelo de destino ausente. Volte na primeira etapa e envie a planilha modelo.')
+        if st.session_state.get(FINISH_MODE_KEY) == FINISH_MODE_API:
+            st.error('Contrato interno da API não foi carregado. Volte ao início e selecione Envio direto novamente.')
+        else:
+            st.error('Modelo de destino ausente. Volte na primeira etapa e envie a planilha modelo.')
 
 
 __all__ = [
