@@ -20,13 +20,17 @@ def render_links_uteis() -> None:
         details={'responsible_file': RESPONSIBLE_FILE, 'links_count': len(SYSTEM_LINKS)},
     )
 
-    st.markdown('### Sistema')
-    st.caption('Atalhos do sistema. Links referentes ao Bling ficam somente na aba Bling.')
+    st.markdown('### Links do sistema')
+    st.caption('Área auxiliar apenas para abrir o app publicado e o repositório do projeto.')
 
     for label, url in SYSTEM_LINKS:
         st.link_button(label, url, use_container_width=True)
 
-    st.info('Use esta área apenas para acessar o app publicado ou o repositório. Para Bling, abra a aba Bling na home.')
+    st.info(
+        'Links de importação do Bling não ficam nesta área. Para gerar CSV de importação, use o caminho Bling CSV. '
+        'Para envio direto, use o caminho Bling API, que envia pela API e não usa link de importador.',
+        icon='ℹ️',
+    )
 
 
 __all__ = ['render_links_uteis']
