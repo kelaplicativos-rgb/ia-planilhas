@@ -161,14 +161,14 @@ def _render_source_site(model: pd.DataFrame) -> pd.DataFrame | None:
                     str(raw_urls),
                     requested_columns=[str(column) for column in model.columns],
                     all_products=bool(all_products),
-                    operation='cadastro',
+                    operation='universal',
                     progress_callback=_progress_callback(progress_bar, status_box),
                 )
                 _store_df(UNIVERSAL_SOURCE_KEY, df_site)
                 add_audit_event(
                     'universal_site_source_loaded',
                     area='UNIVERSAL',
-                    details={'rows': int(len(df_site)), 'columns': int(len(df_site.columns)), 'responsible_file': RESPONSIBLE_FILE},
+                    details={'rows': int(len(df_site)), 'columns': int(len(df_site.columns)), 'operation': 'universal', 'responsible_file': RESPONSIBLE_FILE},
                 )
                 st.success(f'Busca por site concluída: {len(df_site)} linha(s).')
             except Exception as exc:
