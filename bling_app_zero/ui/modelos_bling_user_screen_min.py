@@ -44,9 +44,15 @@ PRICE_MODEL_WARNING = (
 
 
 def _render_bling_connection() -> None:
-    status = connection_status()
     with st.container(border=True):
         st.markdown('#### Conexão com Bling')
+        try:
+            status = connection_status()
+        except Exception as exc:
+            st.warning('Conexão Bling ainda não configurada. Os modelos continuam disponíveis abaixo.')
+            st.caption(f'Detalhe técnico: {exc}')
+            return
+
         if status.get('connected'):
             st.success('Bling conectado')
             connected_at = str(status.get('connected_at') or '').strip()
@@ -55,10 +61,22 @@ def _render_bling_connection() -> None:
             if st.button('Desconectar Bling', key='disconnect_bling_oauth', use_container_width=True):
                 disconnect()
                 st.rerun()
-        else:
-            st.caption('Conecte sua conta Bling para liberar o fluxo OAuth do sistema.')
-            st.link_button('Conectar ao Bling', build_authorization_url(), use_container_width=True)
+            return
+
+        st.caption('Conecte sua conta Bling para liberar o fluxo OAuth do sistema.')
+        try:
+            auth_url = build_authorization_url()
+        except Exception as exc:
+            auth_url = ''
+            st.warning('Não consegui gerar o link de conexão agora. Confira os Secrets do Bling no Streamlit.')
+            st.caption(f'Detalhe técnico: {exc}')
+
+        if auth_url:
+            st.link_button('Conectar ao Bling', auth_url, use_container_width=True)
             st.caption('A autorização abre no Bling e retorna para este app automaticamente.')
+        else:
+            st.warning('Informe o Client ID do Bling nos Secrets para habilitar o botão de conexão.')
+            st.caption('Mesmo sem conectar, você pode cadastrar os modelos Bling abaixo.')
 
 
 def _set_price_update_flow(step: str = STEP_MAPEAMENTO) -> None:
@@ -130,7 +148,12 @@ def _show_model(model_type: str) -> None:
     if model_type == PRICE_MODEL_TYPE:
         _show_price_model_block()
 
-    df, info = get_user_model(model_type)
+    try:
+        df, info = get_user_model(model_type)
+    except Exception as exc:
+        df, info = None, None
+        st.warning(f'Não consegui carregar este modelo salvo agora: {exc}')
+
     if df is not None and info:
         st.success('Modelo Bling salvo')
         st.caption(str(info.get('name') or ''))
