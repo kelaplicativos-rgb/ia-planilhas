@@ -8,6 +8,7 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_direct_sender import is_direct_send_available, send_dataframe_to_bling
 from bling_app_zero.core.bling_oauth import build_authorization_url, connection_status
 from bling_app_zero.core.exporter import filename_for_operation, to_bling_csv_bytes
+from bling_app_zero.core.oauth_return_snapshot import prepare_download_oauth_return
 from bling_app_zero.core.operation_contract import (
     OP_ATUALIZACAO_PRECO,
     OP_CADASTRO,
@@ -177,6 +178,11 @@ def _render_optional_template_download(download_df: pd.DataFrame, key: str, sign
         )
 
 
+def _authorization_url_for_download(download_df: pd.DataFrame, operation: str, signature: str) -> str:
+    context = prepare_download_oauth_return(download_df, operation, signature=signature)
+    return build_authorization_url(context)
+
+
 def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: str, signature: str, rules_sig: str) -> None:
     operation = normalize_operation(operation)
     title = DIRECT_SEND_TEXT.get(operation, 'Envio direto ao Bling')
@@ -187,11 +193,12 @@ def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: st
     status = connection_status()
     connected = bool(status.get('connected')) and is_direct_send_available()
     if not connected:
-        st.warning('Bling não conectado. Conecte o app para liberar o envio direto.')
+        st.warning('Bling não conectado. Conecte o app para liberar o envio direto. Ao voltar do Bling, esta etapa será restaurada automaticamente.')
         try:
-            auth_url = build_authorization_url()
-        except Exception:
+            auth_url = _authorization_url_for_download(download_df, operation, signature)
+        except Exception as exc:
             auth_url = ''
+            st.caption(f'Não consegui preparar o retorno automático: {exc}')
         if auth_url:
             st.link_button('Conectar ao Bling', auth_url, use_container_width=True)
         return
@@ -203,13 +210,8 @@ def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: st
     st.success('Bling conectado. Você pode usar o envio direto pela API do app.')
     st.caption(f'Operação detectada: {operation_label(operation)} · Linhas prontas: {len(download_df)}')
 
-    confirm_key = f'confirm_direct_bling_{key}_{signature}_{rules_sig}'
-    confirmed = st.checkbox(
-        'Confirmo que revisei o preview final e quero usar o envio direto ao Bling.',
-        key=confirm_key,
-    )
     button_key = f'send_direct_bling_{key}_{signature}_{rules_sig}'
-    if st.button(f'🚀 {title}', use_container_width=True, disabled=not confirmed, key=button_key):
+    if st.button(f'🚀 {title}', use_container_width=True, key=button_key):
         with st.spinner('Realizando envio direto ao Bling...'):
             result = send_dataframe_to_bling(download_df.copy(), operation)
         if result.sent and not result.failed and not result.skipped:
