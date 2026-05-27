@@ -31,8 +31,10 @@ def apply_pricing_step_result() -> None:
     df_precificado = apply_cadastro_pricing(df_origem, channel='home_price_step')
     if isinstance(df_precificado, pd.DataFrame):
         st.session_state[UNIVERSAL_ORIGEM_PRICED_KEY] = df_precificado
+    selected_cost_column = str(st.session_state.get('global_price_source_cost_column') or '').strip()
     if bool(st.session_state.get('cadastro_preco_calculado_ativo', False)):
-        st.success('Preço calculado. O campo Preço de venda será usado no mapeamento e no preview.')
+        suffix = f' usando a coluna de custo "{selected_cost_column}"' if selected_cost_column else ''
+        st.success(f'Preço calculado linha a linha{suffix}. O campo Preço de venda será usado no mapeamento e no preview.')
     else:
         st.warning('Calcule um preço para aplicar a referência de precificação aos dados carregados.')
 
@@ -61,11 +63,12 @@ def render_pricing_step(
     if not universal_context_ready():
         render_pending_notice('Carregue os dados primeiro.')
         return
+    df_origem = source_dataframe_for_pricing()
     current_config = get_home_pricing_config()
     use_pricing = st.toggle('Usar calculadora', value=bool(current_config.get('enabled', False)), key='home_pricing_enabled_toggle')
     if use_pricing:
         with st.container(border=True):
-            config = render_home_pricing_config_form()
+            config = render_home_pricing_config_form(source_df=df_origem)
             set_home_pricing_config(config)
             apply_pricing_step_result()
     else:
