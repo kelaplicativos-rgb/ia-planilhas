@@ -9,6 +9,7 @@ from urllib.parse import urlencode
 
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_token_store import clear_token, get_user_session_id, load_token, save_token
@@ -291,6 +292,29 @@ def _restore_oauth_return_context(state_payload: dict[str, Any]) -> None:
     _force_start_query_params()
 
 
+def _try_close_oauth_popup_after_success() -> None:
+    components.html(
+        '''
+<script>
+(function () {
+    try {
+        if (window.opener && !window.opener.closed) {
+            const nextUrl = window.location.origin + window.location.pathname + '?operation_v2=wizard_cadastro_estoque';
+            window.opener.location.href = nextUrl;
+            setTimeout(function () {
+                window.close();
+            }, 700);
+        }
+    } catch (err) {
+        console.log('OAuth popup close skipped:', err);
+    }
+})();
+</script>
+''',
+        height=0,
+    )
+
+
 def process_oauth_callback() -> None:
     code = _query_param('code')
     if not code:
@@ -319,6 +343,7 @@ def process_oauth_callback() -> None:
     if ok:
         _restore_oauth_return_context(state_payload)
         st.success(message)
+        _try_close_oauth_popup_after_success()
         try:
             st.query_params.pop('code', None)
             st.query_params.pop('state', None)
