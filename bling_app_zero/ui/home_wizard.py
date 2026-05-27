@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
-from bling_app_zero.core.bling_api_contract import OP_ATUALIZACAO_PRECO as PRICE_UPDATE_OPERATION
 from bling_app_zero.ui.ai_real_advanced_panel import render_ai_real_advanced_panel
-from bling_app_zero.ui.cadastro_pricing import apply_cadastro_pricing, clear_cadastro_pricing_state
 from bling_app_zero.ui.flow_context import (
     CONTEXT_BLING_API,
     CONTEXT_BLING_CSV,
@@ -20,12 +17,6 @@ from bling_app_zero.ui.flow_context import (
     is_universal_context as _is_universal_entry,
 )
 from bling_app_zero.ui.home_bling_api_flow import apply_direct_api_contract, render_bling_connection_step
-from bling_app_zero.ui.home_pricing_config import (
-    disable_home_pricing,
-    get_home_pricing_config,
-    render_home_pricing_config_form,
-    set_home_pricing_config,
-)
 from bling_app_zero.ui.home_wizard_constants import (
     CADASTRO_STEPS,
     ESTOQUE_STEPS,
@@ -40,6 +31,13 @@ from bling_app_zero.ui.home_wizard_constants import (
     STEP_REGRAS,
     WIZARD_STEP_KEY,
 )
+from bling_app_zero.ui.home_wizard_price_update import (
+    PRICE_UPDATE_OPERATION,
+    bind_price_update_single_sheet,
+    is_price_update_contract,
+    render_price_update_single_sheet_notice,
+)
+from bling_app_zero.ui.home_wizard_pricing_step import render_pricing_step
 from bling_app_zero.ui.home_wizard_review import render_final_checker, render_safe_fixes
 from bling_app_zero.ui.home_wizard_scroll import inject_scroll_to_target, render_step_anchor
 from bling_app_zero.ui.home_wizard_state import (
@@ -69,10 +67,9 @@ from bling_app_zero.ui.universal_entry_step import render_universal_entrada_step
 from bling_app_zero.ui.universal_mapping_step import render_universal_mapeamento_step
 from bling_app_zero.ui.universal_preview_step import render_universal_preview_step
 from bling_app_zero.ui.universal_wizard_state import (
-    UNIVERSAL_MODELO_KEY as CADASTRO_MODELO_KEY,
-    UNIVERSAL_ORIGEM_KEY as CADASTRO_ORIGEM_KEY,
-    UNIVERSAL_ORIGEM_PRICED_KEY as CADASTRO_ORIGEM_PRICED_KEY,
-    store_universal_context as store_cadastro_context,
+    UNIVERSAL_MODELO_KEY,
+    UNIVERSAL_ORIGEM_KEY,
+    UNIVERSAL_ORIGEM_PRICED_KEY,
     universal_context_ready,
     universal_mapping_ready,
 )
@@ -144,60 +141,7 @@ def _current_contract_operation() -> str:
 
 
 def _is_price_update_contract() -> bool:
-    return _current_contract_operation() == PRICE_UPDATE_OPERATION
-
-
-def _price_update_model_df() -> pd.DataFrame | None:
-    for key in (
-        'home_modelo_atualizacao_preco_df',
-        'df_modelo_atualizacao_preco',
-        'modelo_atualizacao_preco_df',
-        CADASTRO_MODELO_KEY,
-    ):
-        df = st.session_state.get(key)
-        if isinstance(df, pd.DataFrame) and len(df.columns):
-            return df.copy().fillna('')
-    return None
-
-
-def _bind_price_update_single_sheet() -> bool:
-    df_modelo = _price_update_model_df()
-    if not isinstance(df_modelo, pd.DataFrame) or not len(df_modelo.columns):
-        return False
-
-    df_origem = df_modelo.copy().fillna('')
-    store_cadastro_context(df_origem, df_modelo, None)
-    st.session_state[CADASTRO_ORIGEM_PRICED_KEY] = df_origem.copy().fillna('')
-    st.session_state['home_slim_flow_origin'] = 'arquivo'
-    st.session_state['origem_final'] = 'arquivo'
-    st.session_state['operacao_final'] = PRICE_UPDATE_OPERATION
-    st.session_state['tipo_operacao_final'] = PRICE_UPDATE_OPERATION
-    st.session_state['home_detected_operation'] = PRICE_UPDATE_OPERATION
-    st.session_state['home_slim_flow_operation'] = PRICE_UPDATE_OPERATION
-    st.session_state[MODEL_CONTRACT_TYPE_KEY] = PRICE_UPDATE_OPERATION
-    add_audit_event(
-        'price_update_single_sheet_bound',
-        area='PRECOS',
-        step='entrada',
-        status='OK',
-        details={
-            'rows': len(df_origem),
-            'columns': len(df_origem.columns),
-            'mode': 'same_sheet_as_source_and_contract',
-            'responsible_file': RESPONSIBLE_FILE,
-        },
-    )
-    return True
-
-
-def _render_price_update_single_sheet_notice() -> None:
-    if _bind_price_update_single_sheet():
-        st.success('Atualização de preços detectada: a planilha anexada será usada como origem e como modelo final. Não é necessário enviar outra planilha.')
-        df = st.session_state.get(CADASTRO_ORIGEM_KEY)
-        if isinstance(df, pd.DataFrame):
-            st.caption(f'Planilha única vinculada · {len(df)} linha(s) · {len(df.columns)} coluna(s).')
-    else:
-        render_pending_notice('Anexe a planilha de atualização de preços para continuar.')
+    return is_price_update_contract(_current_contract_operation())
 
 
 def _render_model_step(section_number: int = 2) -> None:
@@ -212,14 +156,14 @@ def _render_model_step(section_number: int = 2) -> None:
         render_home_bling_models()
     ensure_universal_operation_state()
     if _is_price_update_contract() and not _is_universal_entry():
-        _bind_price_update_single_sheet()
+        bind_price_update_single_sheet()
 
 
 def _render_origin_step(section_number: int = 3) -> None:
     render_step_anchor(STEP_ORIGEM)
     if _is_price_update_contract() and not _is_api_direct_mode() and not _is_universal_entry():
         _section_title(section_number, 'Planilha única de atualização de preços')
-        _render_price_update_single_sheet_notice()
+        render_price_update_single_sheet_notice()
         return
 
     _section_title(section_number, 'Origem dos dados')
@@ -249,7 +193,7 @@ def _render_universal_entrada(section_number: int = 4) -> None:
     render_step_anchor(STEP_ENTRADA)
     if _is_price_update_contract() and not _is_api_direct_mode() and not _is_universal_entry():
         _section_title(section_number, 'Dados da atualização de preços')
-        _render_price_update_single_sheet_notice()
+        render_price_update_single_sheet_notice()
         return
     _section_title(section_number, 'Dados do fornecedor')
     if not _model_available():
@@ -278,52 +222,17 @@ def _render_universal_entrada(section_number: int = 4) -> None:
     render_universal_entrada_step()
 
 
-def _source_dataframe_for_pricing() -> pd.DataFrame | None:
-    df_origem = st.session_state.get(CADASTRO_ORIGEM_KEY)
-    return df_origem if isinstance(df_origem, pd.DataFrame) else None
-
-
-def _apply_pricing_step_result() -> None:
-    df_origem = _source_dataframe_for_pricing()
-    if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
-        clear_cadastro_pricing_state()
-        render_pending_notice('Carregue os dados primeiro.')
-        return
-    df_precificado = apply_cadastro_pricing(df_origem, channel='home_price_step')
-    if isinstance(df_precificado, pd.DataFrame):
-        st.session_state[CADASTRO_ORIGEM_PRICED_KEY] = df_precificado
-    if bool(st.session_state.get('cadastro_preco_calculado_ativo', False)):
-        st.success('Preço calculado. O campo Preço de venda será usado no mapeamento e no preview.')
-    else:
-        st.warning('Calcule um preço para aplicar a referência de precificação aos dados carregados.')
-
-
 def _render_pricing_step(section_number: int = 5) -> None:
-    render_step_anchor(STEP_PRECIFICACAO)
-    if _is_price_update_contract() and not _is_api_direct_mode() and not _is_universal_entry():
-        _section_title(section_number, 'Preço')
-        _render_price_update_single_sheet_notice()
-        st.caption('A planilha de atualização de preços já contém a estrutura e a origem. Use a calculadora somente se quiser recalcular os valores antes do mapeamento.')
-    else:
-        _section_title(section_number, 'Preço')
-    if not _model_available():
-        render_pending_notice('Liberado após escolher o caminho do fluxo.')
-        return
-    if not universal_context_ready():
-        render_pending_notice('Carregue os dados primeiro.')
-        return
-    current_config = get_home_pricing_config()
-    use_pricing = st.toggle('Usar calculadora', value=bool(current_config.get('enabled', False)), key='home_pricing_enabled_toggle')
-    if use_pricing:
-        with st.container(border=True):
-            config = render_home_pricing_config_form()
-            set_home_pricing_config(config)
-            _apply_pricing_step_result()
-    else:
-        disable_home_pricing()
-        if not _is_price_update_contract():
-            clear_cadastro_pricing_state()
-        st.caption('Opcional. Se desligada, mantém o preço da origem ou do mapeamento.')
+    render_pricing_step(
+        section_number=section_number,
+        step_key=STEP_PRECIFICACAO,
+        section_title=_section_title,
+        model_available=_model_available(),
+        is_price_update=_is_price_update_contract(),
+        is_api_direct=_is_api_direct_mode(),
+        is_universal_entry=_is_universal_entry(),
+        render_price_update_notice=render_price_update_single_sheet_notice,
+    )
 
 
 def _render_universal_mapeamento(section_number: int = 6) -> None:
@@ -359,10 +268,10 @@ def _render_ai_review_step(section_number: int = 7) -> None:
         render_pending_notice('Confirme o mapeamento manual primeiro.')
         return
 
-    df_source = st.session_state.get(CADASTRO_ORIGEM_PRICED_KEY)
+    df_source = st.session_state.get(UNIVERSAL_ORIGEM_PRICED_KEY)
     if not looks_like_loaded_df(df_source):
-        df_source = st.session_state.get(CADASTRO_ORIGEM_KEY)
-    df_modelo = st.session_state.get(CADASTRO_MODELO_KEY)
+        df_source = st.session_state.get(UNIVERSAL_ORIGEM_KEY)
+    df_modelo = st.session_state.get(UNIVERSAL_MODELO_KEY)
 
     st.caption('Revise os campos ligados e aplique as proteções finais antes do preview.')
     render_mapping_review_panel(
