@@ -12,6 +12,11 @@ from bling_app_zero.ui.cadastro_wizard_state import (
     valid_df,
     valid_model,
 )
+from bling_app_zero.ui.flow_context import (
+    is_api_direct_mode as _is_api_context,
+    is_bling_csv_context as _is_bling_csv_context,
+    is_universal_context as _is_universal_context,
+)
 from bling_app_zero.ui.home_models import (
     get_home_cadastro_model,
     get_home_estoque_model,
@@ -37,28 +42,6 @@ SITE_SOURCE_OPERATIONS = ('universal', 'cadastro', 'estoque', 'fornecedor')
 RESPONSIBLE_FILE = 'bling_app_zero/ui/cadastro_entry_step.py'
 ENTRY_AUTOSCROLL_SIGNATURE_KEY = 'cadastro_entry_autoscroll_signature'
 DIRECT_API_CONTRACT_KEY = 'direct_bling_api_contract_df'
-FINISH_MODE_KEY = 'bling_finish_mode'
-FINISH_MODE_API = 'api_direct'
-HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
-CONTEXT_BLING_API = 'bling_api'
-CONTEXT_BLING_CSV = 'bling_csv'
-CONTEXT_UNIVERSAL = 'universal'
-
-
-def _entry_context() -> str:
-    return str(st.session_state.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower()
-
-
-def _is_api_context() -> bool:
-    return _entry_context() == CONTEXT_BLING_API and st.session_state.get(FINISH_MODE_KEY) == FINISH_MODE_API
-
-
-def _is_bling_csv_context() -> bool:
-    return _entry_context() == CONTEXT_BLING_CSV
-
-
-def _is_universal_context() -> bool:
-    return _entry_context() == CONTEXT_UNIVERSAL
 
 
 def _copy_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
