@@ -19,6 +19,10 @@ AUTH_URL_DEFAULT = 'https://www.bling.com.br/Api/v3/oauth/authorize'
 TOKEN_URL_DEFAULT = 'https://www.bling.com.br/Api/v3/oauth/token'
 PUBLIC_REDIRECT_URI_DEFAULT = 'https://ia-planilhas-bling.streamlit.app/'
 CLIENT_ID_DEFAULT = ''
+LEGACY_REDIRECT_URI_VALUES = {
+    'https://ia-planilhas.streamlit.app',
+    'https://ia-planilhas.streamlit.app/',
+}
 
 TOKEN_STATE_KEY = 'bling_oauth_token_response'
 TOKEN_CONNECTED_AT_KEY = 'bling_oauth_connected_at'
@@ -40,6 +44,27 @@ def _secret(name: str, default: str = '') -> str:
         return default
 
 
+def _normalize_redirect_uri(value: str) -> str:
+    configured = str(value or '').strip()
+    if not configured:
+        return PUBLIC_REDIRECT_URI_DEFAULT
+
+    if configured.rstrip('/') in {item.rstrip('/') for item in LEGACY_REDIRECT_URI_VALUES}:
+        add_audit_event(
+            'bling_oauth_legacy_redirect_uri_overridden',
+            area='BLING_OAUTH',
+            status='CORRIGIDO',
+            details={
+                'configured_redirect_uri': configured,
+                'forced_redirect_uri': PUBLIC_REDIRECT_URI_DEFAULT,
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+        return PUBLIC_REDIRECT_URI_DEFAULT
+
+    return configured
+
+
 def client_id() -> str:
     return _secret('client_id', CLIENT_ID_DEFAULT)
 
@@ -49,10 +74,7 @@ def client_secret() -> str:
 
 
 def redirect_uri() -> str:
-    configured = _secret('redirect_uri', '')
-    if configured:
-        return configured.strip()
-    return PUBLIC_REDIRECT_URI_DEFAULT
+    return _normalize_redirect_uri(_secret('redirect_uri', ''))
 
 
 def authorize_url() -> str:
