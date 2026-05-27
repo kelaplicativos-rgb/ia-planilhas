@@ -16,15 +16,7 @@ from bling_app_zero.core.bling_token_store import clear_token, get_user_session_
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_oauth.py'
 AUTH_URL_DEFAULT = 'https://www.bling.com.br/Api/v3/oauth/authorize'
 TOKEN_URL_DEFAULT = 'https://www.bling.com.br/Api/v3/oauth/token'
-CLIENT_ID_DEFAULT = '4ef4b0753ae8a4c319f7f8d5e0a7abce08954be2'
-DEFAULT_SCOPES = [
-    '98308', '98309', '98310', '98313', '98314', '104142', '104163', '107041',
-    '507943', '575904', '5990556', '6631498', '106168710', '182224097',
-    '199272829', '220621674', '318257555', '318257556', '318257562',
-    '318257563', '318257564', '318257565', '318257570', '318257576',
-    '318257577', '318257578', '333936575', '363921590', '363921591',
-    '363921593', '363921594', '1649295804', '1869535257', '13645013013',
-]
+CLIENT_ID_DEFAULT = ''
 
 TOKEN_STATE_KEY = 'bling_oauth_token_response'
 TOKEN_CONNECTED_AT_KEY = 'bling_oauth_connected_at'
@@ -68,13 +60,6 @@ def token_url() -> str:
     return _secret('token_url', TOKEN_URL_DEFAULT)
 
 
-def scopes() -> list[str]:
-    raw = _secret('scopes', '')
-    if raw:
-        return [item for item in raw.replace(',', ' ').split() if item.strip()]
-    return list(DEFAULT_SCOPES)
-
-
 def _new_state() -> str:
     payload = {
         'nonce': secrets.token_urlsafe(24),
@@ -87,27 +72,32 @@ def _new_state() -> str:
 
 
 def build_authorization_url() -> str:
+    cid = client_id()
+    if not cid:
+        return ''
     state = _new_state()
     st.session_state[EXPECTED_STATE_KEY] = state
     params = {
-        'client_id': client_id(),
         'response_type': 'code',
+        'client_id': cid,
         'state': state,
-        'scopes': ' '.join(scopes()),
     }
-    uri = redirect_uri()
-    if uri:
-        params['redirect_uri'] = uri
     return f'{authorize_url()}?{urlencode(params)}'
 
 
 def is_connected() -> bool:
-    token, _meta = load_token()
-    return isinstance(token, dict) and bool(token.get('access_token'))
+    try:
+        token, _meta = load_token()
+        return isinstance(token, dict) and bool(token.get('access_token'))
+    except Exception:
+        return False
 
 
 def connection_status() -> dict[str, Any]:
-    token, meta = load_token()
+    try:
+        token, meta = load_token()
+    except Exception as exc:
+        return {'connected': False, 'message': 'Bling não conectado.', 'error': str(exc)}
     if not isinstance(token, dict):
         return {'connected': False, 'message': 'Bling não conectado.', **meta}
     return {
@@ -141,14 +131,11 @@ def exchange_code_for_token(code: str) -> tuple[bool, str]:
     secret = client_secret()
     uri = redirect_uri()
     if not cid:
-        return False, 'Client ID do Bling não configurado.'
+        return False, 'Client ID do Bling não configurado nos secrets do app.'
     if not secret:
         return False, 'Client Secret do Bling ainda não está configurado nos secrets do app.'
 
-    payload: dict[str, str] = {
-        'grant_type': 'authorization_code',
-        'code': code,
-    }
+    payload: dict[str, str] = {'grant_type': 'authorization_code', 'code': code}
     if uri:
         payload['redirect_uri'] = uri
 
@@ -202,12 +189,7 @@ def process_oauth_callback() -> None:
     expected = str(st.session_state.get(EXPECTED_STATE_KEY) or '')
     if expected and state and state != expected:
         st.session_state[LAST_ERROR_KEY] = 'Retorno OAuth com state diferente do esperado.'
-        add_audit_event(
-            'bling_oauth_state_mismatch',
-            area='BLING_OAUTH',
-            status='ERRO',
-            details={'responsible_file': RESPONSIBLE_FILE},
-        )
+        add_audit_event('bling_oauth_state_mismatch', area='BLING_OAUTH', status='ERRO', details={'responsible_file': RESPONSIBLE_FILE})
         return
 
     ok, message = exchange_code_for_token(code)
@@ -230,10 +212,4 @@ def disconnect() -> None:
     add_audit_event('bling_oauth_disconnected', area='BLING_OAUTH', status='OK', details={'user_session_id': get_user_session_id(), 'responsible_file': RESPONSIBLE_FILE})
 
 
-__all__ = [
-    'build_authorization_url',
-    'connection_status',
-    'disconnect',
-    'is_connected',
-    'process_oauth_callback',
-]
+__all__ = ['build_authorization_url', 'connection_status', 'disconnect', 'is_connected', 'process_oauth_callback']
