@@ -7,11 +7,7 @@ import streamlit as st
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_oauth import build_authorization_url, connection_status
 from bling_app_zero.ui.home_wizard import render_home_wizard
-from bling_app_zero.ui.links_uteis import render_links_uteis
-from bling_app_zero.ui.modelos_bling import render_modelos_bling
 from bling_app_zero.ui.scroll_position import request_scroll_top
-from bling_app_zero.v2.price_multistore.quick_ui import render_quick_price_calculator
-from bling_app_zero.v2.price_multistore.ui import render_price_multistore_v2
 
 ACTIVE_FLOW_KEY = 'home_active_operation_v2'
 HOME_ALLOW_FLOW_KEY = 'home_allow_operation_v2_session'
@@ -19,9 +15,13 @@ HOME_BOOT_LOCK_KEY = 'home_boot_landing_rendered_once'
 HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
 FLOW_HOME = 'home'
 FLOW_WIZARD = 'wizard_cadastro_estoque'
+
+# Mantidos apenas para compatibilidade com imports antigos. O router não renderiza mais essas rotas.
 FLOW_PRICE_UPDATE = 'price_multistore_v2'
 FLOW_LINKS_UTEIS = 'links_uteis'
 FLOW_MODELOS_BLING = 'modelos_bling'
+LEGACY_DISABLED_FLOWS = {FLOW_PRICE_UPDATE, FLOW_LINKS_UTEIS, FLOW_MODELOS_BLING}
+
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_router.py'
 WIZARD_STEP_KEY = 'bling_wizard_step'
 STEP_MODELO = 'modelo'
@@ -92,7 +92,7 @@ def _start_wizard_context(context: str, *, step: str | None = None) -> None:
         st.session_state.pop('skip_direct_bling_connection_this_flow', None)
         st.session_state.pop(WIZARD_STEP_KEY, None)
     elif context in {'bling_csv', 'universal'}:
-        # Mantém compatibilidade com links antigos de bling_csv, mas a Home não oferece mais esse caminho.
+        # Compatibilidade silenciosa para links antigos de bling_csv. A Home não oferece mais esse caminho.
         st.session_state['bling_finish_mode'] = 'csv_download'
         st.session_state['skip_direct_bling_connection_this_flow'] = True
         st.session_state[WIZARD_STEP_KEY] = step or STEP_MODELO
@@ -106,27 +106,6 @@ def _start_wizard_context(context: str, *, step: str | None = None) -> None:
         active_step = st.session_state.get(WIZARD_STEP_KEY)
         if active_step:
             st.query_params['step'] = str(active_step)
-        else:
-            st.query_params.pop('step', None)
-        for key in ('flow', 'origem', 'operacao', 'operation'):
-            st.query_params.pop(key, None)
-    except Exception:
-        pass
-
-
-def _set_flow(flow: str, step: str | None = None) -> None:
-    request_scroll_top()
-    st.session_state[ACTIVE_FLOW_KEY] = flow
-    st.session_state[HOME_ALLOW_FLOW_KEY] = True
-    st.session_state['home_single_page_flow_active'] = flow == FLOW_WIZARD
-    if step:
-        st.session_state[WIZARD_STEP_KEY] = step
-    else:
-        st.session_state.pop(WIZARD_STEP_KEY, None)
-    try:
-        st.query_params['operation_v2'] = flow
-        if step:
-            st.query_params['step'] = step
         else:
             st.query_params.pop('step', None)
         for key in ('flow', 'origem', 'operacao', 'operation'):
@@ -171,27 +150,12 @@ def _requested_flow() -> str:
     return FLOW_HOME
 
 
-def _activate_non_wizard_flow(flow: str) -> None:
-    st.session_state[ACTIVE_FLOW_KEY] = flow
-    st.session_state[HOME_ALLOW_FLOW_KEY] = True
-    st.session_state['home_single_page_flow_active'] = False
-
-    try:
-        st.query_params['operation_v2'] = flow
-        st.query_params.pop('step', None)
-        for key in ('flow', 'origem', 'operacao', 'operation'):
-            st.query_params.pop(key, None)
-    except Exception:
-        pass
-
-
 def _render_home_card(
     title: str,
     subtitle: str,
     button: str,
     *,
     context: str | None = None,
-    flow: str = FLOW_WIZARD,
     step: str | None = None,
     key: str,
     badge: str = '',
@@ -207,8 +171,6 @@ def _render_home_card(
         if st.button(button, use_container_width=True, key=key):
             if context:
                 _start_wizard_context(context, step=step)
-            else:
-                _set_flow(flow, step)
             st.rerun()
 
 
@@ -278,6 +240,7 @@ def render_professional_home() -> None:
             'home_order': 'bling_api_universal',
             'style': 'professional_light_cards',
             'bling_oauth_target': 'same_tab',
+            'legacy_routes_removed': True,
         },
     )
 
@@ -303,6 +266,17 @@ def render_professional_home() -> None:
         )
 
 
+def _redirect_legacy_flow_to_home(flow: str) -> None:
+    add_audit_event(
+        'home_router_legacy_flow_removed',
+        area='HOME',
+        status='LEGADO_REDIRECIONADO',
+        details={'legacy_flow': flow, 'responsible_file': RESPONSIBLE_FILE},
+    )
+    _set_home_flow()
+    render_professional_home()
+
+
 def render_home_router() -> None:
     requested_flow = _requested_flow()
 
@@ -311,41 +285,8 @@ def render_home_router() -> None:
         render_professional_home()
         return
 
-    if requested_flow == FLOW_PRICE_UPDATE:
-        _activate_non_wizard_flow(FLOW_PRICE_UPDATE)
-        add_audit_event(
-            'home_router_render_price_update',
-            area='HOME',
-            details={
-                'responsible_file': RESPONSIBLE_FILE,
-                'module_label': 'calculadora_principal',
-                'quick_calculator_enabled': True,
-                'legacy_direct_access': True,
-            },
-        )
-        render_quick_price_calculator()
-        st.markdown('---')
-        render_price_multistore_v2()
-        return
-
-    if requested_flow == FLOW_LINKS_UTEIS:
-        _activate_non_wizard_flow(FLOW_LINKS_UTEIS)
-        add_audit_event(
-            'home_router_render_links_uteis',
-            area='HOME',
-            details={'responsible_file': RESPONSIBLE_FILE},
-        )
-        render_links_uteis()
-        return
-
-    if requested_flow == FLOW_MODELOS_BLING:
-        _activate_non_wizard_flow(FLOW_MODELOS_BLING)
-        add_audit_event(
-            'home_router_render_modelos_bling',
-            area='HOME',
-            details={'responsible_file': RESPONSIBLE_FILE, 'legacy_route': True},
-        )
-        render_modelos_bling()
+    if requested_flow in LEGACY_DISABLED_FLOWS:
+        _redirect_legacy_flow_to_home(requested_flow)
         return
 
     _set_single_page_wizard_state()
