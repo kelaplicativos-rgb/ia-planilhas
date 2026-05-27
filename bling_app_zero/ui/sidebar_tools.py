@@ -8,6 +8,7 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.debug import add_debug
+from bling_app_zero.production.production_config import admin_mode_enabled
 
 SidebarRenderer = Callable[[], None]
 SIDEBAR_CLEAN_DONE_KEY = 'sidebar_legacy_noise_clean_done'
@@ -17,6 +18,7 @@ SIDEBAR_CLEAN_DONE_KEY = 'sidebar_legacy_noise_clean_done'
 class SidebarTool:
     name: str
     renderer: SidebarRenderer
+    admin_only: bool = False
 
 
 def _render_production_sidebar_lazy() -> None:
@@ -38,27 +40,29 @@ def _render_support_diagnostic_panel_lazy() -> None:
 
 
 SIDEBAR_TOOLS: tuple[SidebarTool, ...] = (
-    SidebarTool('Produção MapeiaAI', _render_production_sidebar_lazy),
-    SidebarTool('Créditos MapeiaAI', _render_credits_sidebar_lazy),
-    SidebarTool('Enviar diagnóstico', _render_support_diagnostic_panel_lazy),
+    SidebarTool('Produção MapeiaAI', _render_production_sidebar_lazy, admin_only=False),
+    SidebarTool('Créditos MapeiaAI', _render_credits_sidebar_lazy, admin_only=True),
+    SidebarTool('Enviar diagnóstico', _render_support_diagnostic_panel_lazy, admin_only=True),
 )
 
 
-def _render_sidebar_tool(name: str, renderer: SidebarRenderer) -> None:
+def _render_sidebar_tool(tool: SidebarTool) -> None:
+    if tool.admin_only and not admin_mode_enabled():
+        return
     try:
-        renderer()
+        tool.renderer()
     except Exception as exc:
         formatted = ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-        add_debug(f'Falha no módulo da sidebar {name}: {exc}', origin='SIDEBAR', level='ERRO')
+        add_debug(f'Falha no módulo da sidebar {tool.name}: {exc}', origin='SIDEBAR', level='ERRO')
         add_debug(formatted, origin='TRACEBACK', level='ERRO')
         add_audit_event(
             'sidebar_tool_failed',
             area='SIDEBAR',
             status='ERRO',
-            details={'tool': name, 'error': str(exc), 'responsible_file': 'bling_app_zero/ui/sidebar_tools.py'},
+            details={'tool': tool.name, 'error': str(exc), 'responsible_file': 'bling_app_zero/ui/sidebar_tools.py'},
         )
         with st.sidebar:
-            st.error(f'{name} indisponível.')
+            st.error(f'{tool.name} indisponível.')
             st.caption('Tire um print desta tela e envie no próximo BLINGFIX.')
 
 
@@ -95,7 +99,7 @@ def _clear_legacy_sidebar_noise_state_once() -> None:
 def render_sidebar_tools() -> None:
     _clear_legacy_sidebar_noise_state_once()
     for tool in SIDEBAR_TOOLS:
-        _render_sidebar_tool(tool.name, tool.renderer)
+        _render_sidebar_tool(tool)
 
 
 __all__ = ['render_sidebar_tools']
