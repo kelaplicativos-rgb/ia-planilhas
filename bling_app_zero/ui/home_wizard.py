@@ -68,6 +68,16 @@ from bling_app_zero.universal.model_contract_detector import MODEL_CONTRACT_TYPE
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_wizard.py'
 PRICE_UPDATE_OPERATION = 'atualizacao_preco'
+ACTIVE_RENDER_STEPS = [
+    STEP_MODELO,
+    STEP_ORIGEM,
+    STEP_ENTRADA,
+    STEP_PRECIFICACAO,
+    STEP_MAPEAMENTO,
+    STEP_REGRAS,
+    STEP_PREVIEW,
+    STEP_DOWNLOAD,
+]
 
 
 def _section_title(number: int, title: str) -> None:
@@ -229,7 +239,6 @@ def _apply_pricing_step_result() -> None:
         clear_cadastro_pricing_state()
         render_pending_notice('Carregue os dados primeiro.')
         return
-
     df_precificado = apply_cadastro_pricing(df_origem, channel='home_price_step')
     if isinstance(df_precificado, pd.DataFrame):
         st.session_state[CADASTRO_ORIGEM_PRICED_KEY] = df_precificado
@@ -342,6 +351,49 @@ def _render_universal_download(section_number: int = 8) -> None:
         reset_wizard()
 
 
+def _query_step() -> str:
+    try:
+        value = st.query_params.get('step', '')
+    except Exception:
+        value = ''
+    if isinstance(value, list):
+        value = value[0] if value else ''
+    return str(value or '').strip().lower()
+
+
+def _active_start_step() -> str:
+    current = str(st.session_state.get(WIZARD_STEP_KEY) or _query_step() or STEP_MODELO).strip().lower()
+    if current not in ACTIVE_RENDER_STEPS:
+        return STEP_MODELO
+    return current
+
+
+def _render_steps_from(start_step: str, *, skip_model: bool) -> None:
+    steps = [step for step in ACTIVE_RENDER_STEPS if not (skip_model and step == STEP_MODELO)]
+    if start_step not in steps:
+        start_step = steps[0]
+    start_index = steps.index(start_step)
+    section_number = 1
+    for step in steps[start_index:]:
+        if step == STEP_MODELO:
+            _render_model_step()
+        elif step == STEP_ORIGEM:
+            _render_origin_step(section_number)
+        elif step == STEP_ENTRADA:
+            _render_universal_entrada(section_number)
+        elif step == STEP_PRECIFICACAO:
+            _render_pricing_step(section_number)
+        elif step == STEP_MAPEAMENTO:
+            _render_universal_mapeamento(section_number)
+        elif step == STEP_REGRAS:
+            _render_ai_review_step(section_number)
+        elif step == STEP_PREVIEW:
+            _render_universal_preview(section_number)
+        elif step == STEP_DOWNLOAD:
+            _render_universal_download(section_number)
+        section_number += 1
+
+
 def render_home_wizard() -> None:
     inject_scroll_guard('home_wizard')
     has_model = has_home_models()
@@ -363,38 +415,25 @@ def render_home_wizard() -> None:
         return
 
     start_at_origin = came_from_bling_quick_model()
+    active_step = _active_start_step()
+    if start_at_origin and active_step == STEP_MODELO:
+        active_step = STEP_ORIGEM
+
     add_audit_event(
         'wizard_single_page_rendered',
         area='WIZARD',
-        step='single_page',
+        step=active_step,
         details={
             'operation': operation or 'universal',
             'steps': UNIVERSAL_STEPS,
             'single_page_flow': SINGLE_PAGE_FLOW,
             'skip_model_step': start_at_origin,
+            'active_start_step': active_step,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
 
-    if start_at_origin:
-        _render_origin_step(1)
-        _render_universal_entrada(2)
-        _render_pricing_step(3)
-        _render_universal_mapeamento(4)
-        _render_ai_review_step(5)
-        _render_universal_preview(6)
-        _render_universal_download(7)
-        inject_scroll_to_target()
-        return
-
-    _render_model_step()
-    _render_origin_step()
-    _render_universal_entrada()
-    _render_pricing_step()
-    _render_universal_mapeamento()
-    _render_ai_review_step()
-    _render_universal_preview()
-    _render_universal_download()
+    _render_steps_from(active_step, skip_model=start_at_origin)
     inject_scroll_to_target()
 
 
