@@ -63,7 +63,7 @@ def _current_wizard_step() -> str:
 
 def _clear_navigation_params() -> None:
     try:
-        for key in ('operation_v2', 'step', 'flow', 'origem', 'operacao'):
+        for key in ('operation_v2', 'step', 'flow', 'origem', 'operacao', 'operation'):
             st.query_params.pop(key, None)
     except Exception:
         pass
@@ -77,15 +77,44 @@ def _set_home_flow() -> None:
     _clear_navigation_params()
 
 
+def _start_wizard_context(context: str, *, step: str | None = None) -> None:
+    request_scroll_top()
+    st.session_state[ACTIVE_FLOW_KEY] = FLOW_WIZARD
+    st.session_state[HOME_ALLOW_FLOW_KEY] = True
+    st.session_state['home_single_page_flow_active'] = True
+    st.session_state[HOME_ENTRY_CONTEXT_KEY] = context
+
+    if context == 'bling_api':
+        st.session_state.pop('bling_finish_mode', None)
+        st.session_state.pop('skip_direct_bling_connection_this_flow', None)
+        st.session_state.pop(WIZARD_STEP_KEY, None)
+    elif context in {'bling_csv', 'universal'}:
+        st.session_state['bling_finish_mode'] = 'csv_download'
+        st.session_state['skip_direct_bling_connection_this_flow'] = True
+        st.session_state[WIZARD_STEP_KEY] = step or STEP_MODELO
+    elif step:
+        st.session_state[WIZARD_STEP_KEY] = step
+    else:
+        st.session_state.pop(WIZARD_STEP_KEY, None)
+
+    try:
+        st.query_params['operation_v2'] = FLOW_WIZARD
+        active_step = st.session_state.get(WIZARD_STEP_KEY)
+        if active_step:
+            st.query_params['step'] = str(active_step)
+        else:
+            st.query_params.pop('step', None)
+        for key in ('flow', 'origem', 'operacao', 'operation'):
+            st.query_params.pop(key, None)
+    except Exception:
+        pass
+
+
 def _set_flow(flow: str, step: str | None = None) -> None:
     request_scroll_top()
     st.session_state[ACTIVE_FLOW_KEY] = flow
     st.session_state[HOME_ALLOW_FLOW_KEY] = True
     st.session_state['home_single_page_flow_active'] = flow == FLOW_WIZARD
-    if flow == FLOW_WIZARD and step == STEP_MODELO:
-        st.session_state[HOME_ENTRY_CONTEXT_KEY] = 'universal'
-        st.session_state['bling_finish_mode'] = 'csv_download'
-        st.session_state['skip_direct_bling_connection_this_flow'] = True
     if step:
         st.session_state[WIZARD_STEP_KEY] = step
     else:
@@ -96,7 +125,7 @@ def _set_flow(flow: str, step: str | None = None) -> None:
             st.query_params['step'] = step
         else:
             st.query_params.pop('step', None)
-        for key in ('flow', 'origem', 'operacao'):
+        for key in ('flow', 'origem', 'operacao', 'operation'):
             st.query_params.pop(key, None)
     except Exception:
         pass
@@ -114,7 +143,7 @@ def _set_single_page_wizard_state() -> None:
             st.query_params['step'] = current_step
         else:
             st.query_params.pop('step', None)
-        for key in ('flow', 'origem', 'operacao'):
+        for key in ('flow', 'origem', 'operacao', 'operation'):
             st.query_params.pop(key, None)
     except Exception:
         pass
@@ -146,39 +175,21 @@ def _activate_non_wizard_flow(flow: str) -> None:
     try:
         st.query_params['operation_v2'] = flow
         st.query_params.pop('step', None)
-        for key in ('flow', 'origem', 'operacao'):
+        for key in ('flow', 'origem', 'operacao', 'operation'):
             st.query_params.pop(key, None)
     except Exception:
         pass
 
 
-def _open_bling_decision_flow() -> None:
-    request_scroll_top()
-    st.session_state[ACTIVE_FLOW_KEY] = FLOW_WIZARD
-    st.session_state[HOME_ALLOW_FLOW_KEY] = True
-    st.session_state['home_single_page_flow_active'] = True
-    st.session_state[HOME_ENTRY_CONTEXT_KEY] = 'bling'
-    st.session_state.pop(WIZARD_STEP_KEY, None)
-    st.session_state.pop('bling_finish_mode', None)
-    st.session_state.pop('skip_direct_bling_connection_this_flow', None)
-    try:
-        st.query_params['operation_v2'] = FLOW_WIZARD
-        st.query_params.pop('step', None)
-        for key in ('flow', 'origem', 'operacao'):
-            st.query_params.pop(key, None)
-    except Exception:
-        pass
-
-
-def _render_home_card(title: str, subtitle: str, button: str, flow: str, *, step: str | None = None, key: str, badge: str = '', bling_decision: bool = False) -> None:
+def _render_home_card(title: str, subtitle: str, button: str, *, context: str | None = None, flow: str = FLOW_WIZARD, step: str | None = None, key: str, badge: str = '') -> None:
     with st.container(border=True):
         if badge:
             st.caption(badge)
         st.markdown(f'#### {title}')
         st.caption(subtitle)
         if st.button(button, use_container_width=True, key=key):
-            if bling_decision:
-                _open_bling_decision_flow()
+            if context:
+                _start_wizard_context(context, step=step)
             else:
                 _set_flow(flow, step)
             st.rerun()
@@ -199,27 +210,37 @@ def render_professional_home() -> None:
         status='OK',
         details={
             'responsible_file': RESPONSIBLE_FILE,
-            'home_order': 'bling_decision_then_universal_then_internal_price_step',
+            'home_order': 'bling_api_bling_csv_universal',
             'style': 'professional_light_cards',
         },
     )
 
     st.markdown('<div class="bling-home-section-title">Escolha como quer começar</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="bling-home-section-subtitle">Escolha entre Bling e Modelo Universal. Cada caminho mantém seu próprio fluxo.</div>',
+        '<div class="bling-home-section-subtitle">Agora são três caminhos separados: API, CSV Bling ou Modelo Universal.</div>',
         unsafe_allow_html=True,
     )
 
-    col_bling, col_universal = st.columns(2)
-    with col_bling:
+    col_api, col_csv, col_universal = st.columns(3)
+    with col_api:
         _render_home_card(
-            'Bling',
-            'Envie direto pela API ou gere CSV com modelos oficiais do Bling.',
-            'Abrir Bling',
-            FLOW_WIZARD,
-            key='home_card_open_bling',
-            badge='Recomendado para Bling',
-            bling_decision=True,
+            'Bling API',
+            'Conecte ao Bling e envie cadastro, estoque ou preços direto pela API, sem modelo de planilha.',
+            'Enviar direto',
+            context='bling_api',
+            key='home_card_open_bling_api',
+            badge='Mais automático',
+        )
+
+    with col_csv:
+        _render_home_card(
+            'Bling CSV',
+            'Use modelos oficiais do Bling para gerar CSV pronto para importação manual.',
+            'Gerar CSV Bling',
+            context='bling_csv',
+            step=STEP_MODELO,
+            key='home_card_open_bling_csv',
+            badge='Importação manual',
         )
 
     with col_universal:
@@ -227,7 +248,7 @@ def render_professional_home() -> None:
             'Modelo Universal',
             'Use qualquer planilha final com cabeçalho próprio: marketplace, fornecedor ou layout personalizado.',
             'Iniciar Universal',
-            FLOW_WIZARD,
+            context='universal',
             step=STEP_MODELO,
             key='home_card_open_universal',
             badge='Flexível',
