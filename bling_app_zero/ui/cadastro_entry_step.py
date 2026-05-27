@@ -39,6 +39,26 @@ ENTRY_AUTOSCROLL_SIGNATURE_KEY = 'cadastro_entry_autoscroll_signature'
 DIRECT_API_CONTRACT_KEY = 'direct_bling_api_contract_df'
 FINISH_MODE_KEY = 'bling_finish_mode'
 FINISH_MODE_API = 'api_direct'
+HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
+CONTEXT_BLING_API = 'bling_api'
+CONTEXT_BLING_CSV = 'bling_csv'
+CONTEXT_UNIVERSAL = 'universal'
+
+
+def _entry_context() -> str:
+    return str(st.session_state.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower()
+
+
+def _is_api_context() -> bool:
+    return _entry_context() == CONTEXT_BLING_API and st.session_state.get(FINISH_MODE_KEY) == FINISH_MODE_API
+
+
+def _is_bling_csv_context() -> bool:
+    return _entry_context() == CONTEXT_BLING_CSV
+
+
+def _is_universal_context() -> bool:
+    return _entry_context() == CONTEXT_UNIVERSAL
 
 
 def _copy_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
@@ -54,14 +74,11 @@ def _copy_model(df: pd.DataFrame | None) -> pd.DataFrame | None:
 
 
 def _direct_api_model() -> pd.DataFrame | None:
-    if st.session_state.get(FINISH_MODE_KEY) != FINISH_MODE_API:
+    if not _is_api_context():
         return None
     for key in (
         DIRECT_API_CONTRACT_KEY,
         'cadastro_wizard_df_modelo',
-        'home_modelo_universal_df',
-        'df_modelo_universal',
-        'modelo_universal_df',
     ):
         copied = _copy_model(st.session_state.get(key))
         if copied is not None:
@@ -69,19 +86,31 @@ def _direct_api_model() -> pd.DataFrame | None:
     return None
 
 
-def _first_contract_model() -> pd.DataFrame | None:
-    direct_model = _direct_api_model()
-    if direct_model is not None:
-        return direct_model
+def _bling_contract_model() -> pd.DataFrame | None:
     for model in (
         get_home_cadastro_model(),
+        get_home_estoque_model(),
         get_home_preco_model(),
-        get_home_universal_model(),
     ):
         copied = _copy_model(model)
         if copied is not None:
             return copied
     return None
+
+
+def _universal_contract_model() -> pd.DataFrame | None:
+    return _copy_model(get_home_universal_model())
+
+
+def _first_contract_model() -> pd.DataFrame | None:
+    direct_model = _direct_api_model()
+    if direct_model is not None:
+        return direct_model
+    if _is_universal_context():
+        return _universal_contract_model()
+    if _is_bling_csv_context():
+        return _bling_contract_model()
+    return _bling_contract_model() or _universal_contract_model()
 
 
 def empty_cadastro_upload_result() -> SmartUploadResult:
@@ -92,7 +121,7 @@ def empty_cadastro_upload_result() -> SmartUploadResult:
         cadastro_model_file=None,
         cadastro_model_df=_first_contract_model(),
         estoque_model_file=None,
-        estoque_model_df=get_home_estoque_model(),
+        estoque_model_df=get_home_estoque_model() if _is_bling_csv_context() else None,
         attachments=[],
         ignored_files=[],
     )
@@ -127,15 +156,19 @@ def _destination_model(upload) -> pd.DataFrame:
     direct_model = _direct_api_model()
     if direct_model is not None:
         return direct_model
-    for model in (
-        get_home_cadastro_model(),
-        get_home_estoque_model(),
-        get_home_preco_model(),
-        get_home_universal_model(),
-    ):
-        copied = _copy_model(model)
-        if copied is not None:
-            return copied
+
+    if _is_universal_context():
+        universal_model = _universal_contract_model()
+        if universal_model is not None:
+            return universal_model
+    elif _is_bling_csv_context():
+        bling_model = _bling_contract_model()
+        if bling_model is not None:
+            return bling_model
+    else:
+        fallback_model = _bling_contract_model() or _universal_contract_model()
+        if fallback_model is not None:
+            return fallback_model
 
     return select_cadastro_model(upload)
 
@@ -168,10 +201,12 @@ def render_cadastro_entrada_step() -> None:
 
     if valid_df(df_origem):
         origem_nome = 'Busca do site' if site_origin else 'Dados do fornecedor'
-        if st.session_state.get(FINISH_MODE_KEY) == FINISH_MODE_API:
+        if _is_api_context():
             st.success(f'{origem_nome} carregados com sucesso. {len(df_origem)} linha(s) encontradas. Próximo passo: mapear os campos da API do Bling.')
+        elif _is_universal_context():
+            st.success(f'{origem_nome} carregados com sucesso. {len(df_origem)} linha(s) encontradas. Próximo passo: mapear para o modelo universal.')
         else:
-            st.success(f'{origem_nome} carregados com sucesso. {len(df_origem)} linha(s) encontradas. Próximo passo: calcular preço ou mapear com o modelo.')
+            st.success(f'{origem_nome} carregados com sucesso. {len(df_origem)} linha(s) encontradas. Próximo passo: calcular preço ou mapear com o modelo Bling.')
         if site_origin:
             resolved_from = str(st.session_state.get('cadastro_entry_site_source_resolved_from') or '').strip()
             if resolved_from:
@@ -187,10 +222,12 @@ def render_cadastro_entrada_step() -> None:
         st.warning('Envie os dados do fornecedor para continuar.')
 
     if not valid_model(df_modelo):
-        if st.session_state.get(FINISH_MODE_KEY) == FINISH_MODE_API:
-            st.error('Contrato interno da API não foi carregado. Volte ao início e selecione Envio direto novamente.')
+        if _is_api_context():
+            st.error('Contrato interno da API não foi carregado. Volte ao início do caminho Bling API e selecione o envio direto.')
+        elif _is_universal_context():
+            st.error('Modelo Universal ausente. Volte na primeira etapa e envie o modelo universal.')
         else:
-            st.error('Modelo de destino ausente. Volte na primeira etapa e envie a planilha modelo.')
+            st.error('Modelo Bling ausente. Volte na primeira etapa e envie um modelo oficial do Bling.')
 
 
 __all__ = [
