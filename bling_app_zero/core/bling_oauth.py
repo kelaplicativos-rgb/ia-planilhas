@@ -27,6 +27,7 @@ EXPECTED_STATE_KEY = 'bling_oauth_expected_state'
 CALLBACK_DONE_KEY = 'bling_oauth_callback_done_for_code'
 RETURN_CONTEXT_KEY = 'bling_oauth_return_context'
 RESTORED_AFTER_CALLBACK_KEY = 'bling_oauth_restored_after_callback'
+STATE_SOURCE = 'ia_planilhas_bling'
 
 
 def _secret(name: str, default: str = '') -> str:
@@ -82,7 +83,7 @@ def _new_state(extra_context: dict[str, Any] | None = None) -> str:
     payload: dict[str, Any] = {
         'nonce': secrets.token_urlsafe(24),
         'created_at': datetime.now().isoformat(timespec='seconds'),
-        'source': 'ia_planilhas_bling',
+        'source': STATE_SOURCE,
         'session_id': get_user_session_id(),
     }
     if isinstance(extra_context, dict):
@@ -201,6 +202,14 @@ def exchange_code_for_token(code: str) -> tuple[bool, str]:
         return False, f'Falha ao conectar ao Bling: {exc}'
 
 
+def _state_is_trusted(state: str, expected: str, payload: dict[str, Any]) -> bool:
+    if expected and state and state == expected:
+        return True
+    if payload.get('source') == STATE_SOURCE and payload.get('session_id'):
+        return True
+    return not expected
+
+
 def _restore_oauth_return_context(state_payload: dict[str, Any]) -> None:
     return_to = str(state_payload.get('return_to') or '').strip().lower()
     session_id = str(state_payload.get('session_id') or get_user_session_id()).strip()
@@ -226,9 +235,14 @@ def process_oauth_callback() -> None:
     state = _query_param('state')
     expected = str(st.session_state.get(EXPECTED_STATE_KEY) or '')
     state_payload = _decode_state_payload(state)
-    if expected and state and state != expected:
-        st.session_state[LAST_ERROR_KEY] = 'Retorno OAuth com state diferente do esperado.'
-        add_audit_event('bling_oauth_state_mismatch', area='BLING_OAUTH', status='ERRO', details={'responsible_file': RESPONSIBLE_FILE})
+    if not _state_is_trusted(state, expected, state_payload):
+        st.session_state[LAST_ERROR_KEY] = 'Retorno OAuth com state inválido.'
+        add_audit_event(
+            'bling_oauth_state_invalid',
+            area='BLING_OAUTH',
+            status='ERRO',
+            details={'has_expected': bool(expected), 'has_state': bool(state), 'decoded': bool(state_payload), 'responsible_file': RESPONSIBLE_FILE},
+        )
         return
 
     ok, message = exchange_code_for_token(code)
