@@ -3,6 +3,12 @@ from __future__ import annotations
 import streamlit as st
 
 from bling_app_zero.core.bling_oauth import build_authorization_url, disconnect
+from bling_app_zero.core.operation_contract import (
+    MODEL_TYPE_PRECOS,
+    OP_ATUALIZACAO_PRECO,
+    OP_UNIVERSAL,
+    operation_from_model_type,
+)
 from bling_app_zero.ui.scroll_position import request_scroll_top
 from bling_app_zero.ui.user_bling_models_store import (
     MODEL_LABELS,
@@ -15,14 +21,8 @@ from bling_app_zero.ui.user_bling_models_store import (
 FLOW_WIZARD = 'wizard_cadastro_estoque'
 STEP_ORIGEM = 'origem'
 STEP_MAPEAMENTO = 'mapeamento'
-UNIVERSAL_OPERATION = 'universal'
-PRICE_UPDATE_OPERATION = 'atualizacao_preco'
-PRICE_MODEL_TYPE = 'precos'
-OPERATION_BY_MODEL_TYPE = {
-    'cadastro': 'cadastro',
-    'estoque': 'estoque',
-    PRICE_MODEL_TYPE: PRICE_UPDATE_OPERATION,
-}
+PRICE_MODEL_TYPE = MODEL_TYPE_PRECOS
+PRICE_UPDATE_OPERATION = OP_ATUALIZACAO_PRECO
 
 MODEL_TITLES = {
     'cadastro': 'Modelo Bling cadastro',
@@ -52,10 +52,6 @@ PRICE_MODEL_WARNING = (
     'Atualização de preços aceita o arquivo original do Bling, inclusive quando vier em ZIP. '
     'Após anexar, o sistema segue direto para a conferência/mapeamento do fluxo de preços.'
 )
-
-
-def _operation_for_model_type(model_type: str) -> str:
-    return OPERATION_BY_MODEL_TYPE.get(str(model_type or '').strip().lower(), UNIVERSAL_OPERATION)
 
 
 def _session_has_bling_token() -> bool:
@@ -133,7 +129,7 @@ def _go_to_origin(model_type: str) -> None:
         st.rerun()
         return
 
-    operation = _operation_for_model_type(model_type)
+    operation = operation_from_model_type(model_type, default=OP_UNIVERSAL)
     st.session_state['home_active_operation_v2'] = FLOW_WIZARD
     st.session_state['home_allow_operation_v2_session'] = True
     st.session_state['home_single_page_flow_active'] = True
