@@ -18,6 +18,11 @@ STEP_MAPEAMENTO = 'mapeamento'
 UNIVERSAL_OPERATION = 'universal'
 PRICE_UPDATE_OPERATION = 'atualizacao_preco'
 PRICE_MODEL_TYPE = 'precos'
+OPERATION_BY_MODEL_TYPE = {
+    'cadastro': 'cadastro',
+    'estoque': 'estoque',
+    PRICE_MODEL_TYPE: PRICE_UPDATE_OPERATION,
+}
 
 MODEL_TITLES = {
     'cadastro': 'Modelo Bling cadastro',
@@ -47,6 +52,10 @@ PRICE_MODEL_WARNING = (
     'Atualização de preços aceita o arquivo original do Bling, inclusive quando vier em ZIP. '
     'Após anexar, o sistema segue direto para a conferência/mapeamento do fluxo de preços.'
 )
+
+
+def _operation_for_model_type(model_type: str) -> str:
+    return OPERATION_BY_MODEL_TYPE.get(str(model_type or '').strip().lower(), UNIVERSAL_OPERATION)
 
 
 def _session_has_bling_token() -> bool:
@@ -124,16 +133,17 @@ def _go_to_origin(model_type: str) -> None:
         st.rerun()
         return
 
+    operation = _operation_for_model_type(model_type)
     st.session_state['home_active_operation_v2'] = FLOW_WIZARD
     st.session_state['home_allow_operation_v2_session'] = True
     st.session_state['home_single_page_flow_active'] = True
     st.session_state['bling_wizard_step'] = STEP_ORIGEM
     st.session_state['bling_quick_model_ready_origin'] = True
     st.session_state['bling_quick_model_type'] = model_type
-    st.session_state['home_slim_flow_operation'] = UNIVERSAL_OPERATION
-    st.session_state['operacao_final'] = UNIVERSAL_OPERATION
-    st.session_state['tipo_operacao_final'] = UNIVERSAL_OPERATION
-    st.session_state['home_detected_operation'] = UNIVERSAL_OPERATION
+    st.session_state['home_slim_flow_operation'] = operation
+    st.session_state['operacao_final'] = operation
+    st.session_state['tipo_operacao_final'] = operation
+    st.session_state['home_detected_operation'] = operation
     try:
         st.query_params['operation_v2'] = FLOW_WIZARD
         st.query_params['step'] = STEP_ORIGEM
