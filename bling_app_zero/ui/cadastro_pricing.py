@@ -15,7 +15,8 @@ from bling_app_zero.ui.home_shared import df_signature
 PRICED_SOURCE_KEY = 'df_origem_cadastro_precificada'
 PRICING_ACTIVE_KEY = 'cadastro_preco_calculado_ativo'
 PRICING_SOURCE_KEY = 'shared_price_calculator_source'
-PRICING_SELECTED_COST_COLUMN_KEY = 'global_price_source_cost_column'
+PRICING_SELECTED_COST_COLUMN_KEY = 'price_calculator_source_cost_column'
+PRICING_SELECTED_COST_COLUMN_LEGACY_KEY = 'global_price_source_cost_column'
 CADASTRO_ORIGEM_PRICED_STATE_KEY = 'cadastro_wizard_df_para_mapear'
 
 
@@ -35,6 +36,12 @@ def _selected_cost_column(df_origem: pd.DataFrame) -> str:
     selected = str(st.session_state.get(PRICING_SELECTED_COST_COLUMN_KEY) or '').strip()
     if selected and selected in list(map(str, df_origem.columns)):
         return selected
+
+    legacy_selected = str(st.session_state.get(PRICING_SELECTED_COST_COLUMN_LEGACY_KEY) or '').strip()
+    if legacy_selected and legacy_selected in list(map(str, df_origem.columns)):
+        st.session_state[PRICING_SELECTED_COST_COLUMN_KEY] = legacy_selected
+        return legacy_selected
+
     return best_cost_column(list(map(str, df_origem.columns)))
 
 
@@ -42,6 +49,7 @@ def _store_pricing_state(signature: str, selected_cost_column: str) -> None:
     st.session_state[PRICING_ACTIVE_KEY] = True
     st.session_state[f'cadastro_coluna_custo_{signature}'] = selected_cost_column
     st.session_state[PRICING_SELECTED_COST_COLUMN_KEY] = selected_cost_column
+    st.session_state[PRICING_SELECTED_COST_COLUMN_LEGACY_KEY] = selected_cost_column
     st.session_state[PRICING_SOURCE_KEY] = 'price_step_plugin'
 
 
@@ -100,6 +108,7 @@ __all__ = [
     'PRICED_SOURCE_KEY',
     'PRICING_ACTIVE_KEY',
     'PRICING_SELECTED_COST_COLUMN_KEY',
+    'PRICING_SELECTED_COST_COLUMN_LEGACY_KEY',
     'apply_calculated_price_aliases',
     'apply_cadastro_pricing',
     'best_cost_column',
