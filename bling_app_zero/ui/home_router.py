@@ -6,6 +6,15 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_oauth import build_authorization_url, connection_status
+from bling_app_zero.ui.flow_context import (
+    CONTEXT_BLING_API,
+    CONTEXT_BLING_CSV,
+    CONTEXT_UNIVERSAL,
+    activate_csv_finish_mode,
+    clear_api_skip_flag,
+    clear_finish_mode,
+    set_entry_context,
+)
 from bling_app_zero.ui.home_wizard import render_home_wizard
 from bling_app_zero.ui.scroll_position import request_scroll_top
 
@@ -85,21 +94,29 @@ def _start_wizard_context(context: str, *, step: str | None = None) -> None:
     st.session_state[ACTIVE_FLOW_KEY] = FLOW_WIZARD
     st.session_state[HOME_ALLOW_FLOW_KEY] = True
     st.session_state['home_single_page_flow_active'] = True
-    st.session_state[HOME_ENTRY_CONTEXT_KEY] = context
 
-    if context == 'bling_api':
-        st.session_state.pop('bling_finish_mode', None)
-        st.session_state.pop('skip_direct_bling_connection_this_flow', None)
+    normalized_context = CONTEXT_UNIVERSAL if context == CONTEXT_BLING_CSV else context
+    set_entry_context(normalized_context)
+
+    if normalized_context == CONTEXT_BLING_API:
+        clear_finish_mode()
+        clear_api_skip_flag()
         st.session_state.pop(WIZARD_STEP_KEY, None)
-    elif context in {'bling_csv', 'universal'}:
-        # Compatibilidade silenciosa para links antigos de bling_csv. A Home não oferece mais esse caminho.
-        st.session_state['bling_finish_mode'] = 'csv_download'
-        st.session_state['skip_direct_bling_connection_this_flow'] = True
+    elif normalized_context == CONTEXT_UNIVERSAL:
+        activate_csv_finish_mode()
         st.session_state[WIZARD_STEP_KEY] = step or STEP_MODELO
     elif step:
         st.session_state[WIZARD_STEP_KEY] = step
     else:
         st.session_state.pop(WIZARD_STEP_KEY, None)
+
+    if context == CONTEXT_BLING_CSV:
+        add_audit_event(
+            'home_router_bling_csv_legacy_redirected_to_universal',
+            area='HOME',
+            status='LEGADO_REDIRECIONADO',
+            details={'responsible_file': RESPONSIBLE_FILE},
+        )
 
     try:
         st.query_params['operation_v2'] = FLOW_WIZARD
@@ -211,7 +228,7 @@ def _render_bling_api_home_card() -> None:
         if connected:
             st.success('Bling já conectado.')
             if st.button('Continuar via API', use_container_width=True, key='home_card_continue_bling_api'):
-                _start_wizard_context('bling_api')
+                _start_wizard_context(CONTEXT_BLING_API)
                 st.rerun()
             return
 
@@ -226,7 +243,7 @@ def _render_bling_api_home_card() -> None:
         else:
             st.warning('Credenciais do Bling ainda não configuradas. Use o Modelo Universal enquanto isso.')
             if st.button('Abrir etapa da API', use_container_width=True, key='home_card_open_bling_api_without_url'):
-                _start_wizard_context('bling_api')
+                _start_wizard_context(CONTEXT_BLING_API)
                 st.rerun()
 
 
@@ -241,6 +258,7 @@ def render_professional_home() -> None:
             'style': 'professional_light_cards',
             'bling_oauth_target': 'same_tab',
             'legacy_routes_removed': True,
+            'bling_csv_legacy_redirected_to_universal': True,
         },
     )
 
@@ -259,7 +277,7 @@ def render_professional_home() -> None:
             'Modelo Universal',
             'Use qualquer planilha final com cabeçalho próprio: marketplace, fornecedor ou layout personalizado.',
             'Iniciar Universal',
-            context='universal',
+            context=CONTEXT_UNIVERSAL,
             step=STEP_MODELO,
             key='home_card_open_universal',
             badge='Flexível',
