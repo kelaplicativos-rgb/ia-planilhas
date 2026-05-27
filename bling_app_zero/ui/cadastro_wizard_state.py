@@ -86,6 +86,10 @@ def _entry_context() -> str:
     return CONTEXT_UNIVERSAL
 
 
+def _is_api_context() -> bool:
+    return _entry_context() == CONTEXT_BLING_API
+
+
 def _context_final_key() -> str:
     return CONTEXT_FINAL_KEYS.get(_entry_context(), UNIVERSAL_FINAL_KEY)
 
@@ -103,22 +107,13 @@ def valid_model(df: object) -> bool:
 
 
 def get_universal_final_df() -> pd.DataFrame | None:
-    """Retorna a planilha final usando a chave universal como fonte principal.
-
-    BLINGFIX:
-    - o fluxo atual é universal/modelo final;
-    - a chave antiga df_final_cadastro continua sendo lida por compatibilidade;
-    - sempre que possível, sincronizamos as duas para não quebrar módulos antigos.
-    """
     current = st.session_state.get(UNIVERSAL_FINAL_KEY)
     if valid_df(current):
         return current
-
     legacy = st.session_state.get(LEGACY_CADASTRO_FINAL_KEY)
     if valid_df(legacy):
         st.session_state[UNIVERSAL_FINAL_KEY] = legacy
         return legacy
-
     return current if isinstance(current, pd.DataFrame) else None
 
 
@@ -172,19 +167,11 @@ def supplier_price_master_filter_active() -> bool:
 
 
 def activate_supplier_price_master_filter(df_origem: pd.DataFrame | None) -> None:
-    """Ativa a origem do fornecedor como filtro mestre do resultado final.
-
-    Regra de negócio:
-    - A origem do fornecedor é a base final de produtos.
-    - Produto que não está na origem do fornecedor não deve aparecer no CSV final.
-    - O modelo do Bling serve como estrutura de colunas, nunca como fonte para criar linhas extras.
-    """
     if not valid_df(df_origem):
         st.session_state.pop(CADASTRO_SUPPLIER_PRICE_MASTER_FILTER_KEY, None)
         st.session_state.pop(CADASTRO_SUPPLIER_PRICE_MASTER_ROWS_KEY, None)
         st.session_state.pop(CADASTRO_SUPPLIER_PRICE_MASTER_SIGNATURE_KEY, None)
         return
-
     st.session_state[CADASTRO_SUPPLIER_PRICE_MASTER_FILTER_KEY] = True
     st.session_state[CADASTRO_SUPPLIER_PRICE_MASTER_ROWS_KEY] = int(len(df_origem))
     st.session_state[CADASTRO_SUPPLIER_PRICE_MASTER_SIGNATURE_KEY] = df_signature(df_origem)
@@ -198,20 +185,16 @@ def supplier_price_master_expected_rows() -> int:
 
 
 def enforce_supplier_price_master_filter(df_final: pd.DataFrame | None) -> pd.DataFrame | None:
-    """Impede que a base/modelo do Bling gere linhas fora da origem fornecedora."""
     if not supplier_price_master_filter_active() or not isinstance(df_final, pd.DataFrame):
         return df_final
-
     expected = supplier_price_master_expected_rows()
     if expected <= 0:
         return df_final
-
     if len(df_final) > expected:
         fixed = df_final.iloc[:expected].copy()
         set_context_final_df(fixed)
         st.session_state['cadastro_supplier_price_master_excess_rows_removed'] = int(len(df_final) - expected)
         return fixed
-
     st.session_state.pop('cadastro_supplier_price_master_excess_rows_removed', None)
     return df_final
 
@@ -219,13 +202,11 @@ def enforce_supplier_price_master_filter(df_final: pd.DataFrame | None) -> pd.Da
 def render_supplier_price_master_notice(df_final: pd.DataFrame | None = None) -> None:
     if not supplier_price_master_filter_active():
         return
-
     expected = supplier_price_master_expected_rows()
     current = len(df_final) if isinstance(df_final, pd.DataFrame) else expected
     removed = int(st.session_state.get('cadastro_supplier_price_master_excess_rows_removed') or 0)
     source_label = _supplier_origin_label()
     short_label = _supplier_origin_short_label()
-
     st.warning(
         f'{CADASTRO_SUPPLIER_PRICE_MASTER_RULE_NAME}: a {source_label} está sendo usada como filtro mestre. '
         f'O CSV final terá somente produtos presentes na {short_label}.'
@@ -239,17 +220,19 @@ def render_supplier_price_master_notice(df_final: pd.DataFrame | None = None) ->
 
 
 def enforce_cadastro_model_columns(df_final: pd.DataFrame | None = None) -> pd.DataFrame | None:
-    """Mantém o modelo final fiel ao modelo anexado na primeira etapa."""
     if df_final is None:
         df_final = get_context_final_df()
-
+    if _is_api_context():
+        fixed = enforce_supplier_price_master_filter(df_final)
+        if isinstance(fixed, pd.DataFrame):
+            set_context_final_df(fixed)
+        return fixed
     df_modelo = st.session_state.get(CADASTRO_MODELO_KEY)
     if not isinstance(df_final, pd.DataFrame) or not valid_model(df_modelo):
         fixed = enforce_supplier_price_master_filter(df_final)
         if isinstance(fixed, pd.DataFrame):
             set_context_final_df(fixed)
         return fixed
-
     fixed = df_final.reindex(columns=list(df_modelo.columns), fill_value='')
     fixed = enforce_supplier_price_master_filter(fixed)
     if isinstance(fixed, pd.DataFrame):
@@ -330,12 +313,10 @@ def store_cadastro_context(
         st.session_state.pop(CADASTRO_ORIGEM_KEY, None)
         store_expected_source_rows(None)
         activate_supplier_price_master_filter(None)
-
     if valid_model(df_modelo):
         st.session_state[CADASTRO_MODELO_KEY] = df_modelo
     else:
         st.session_state.pop(CADASTRO_MODELO_KEY, None)
-
     if valid_model(df_modelo_estoque):
         st.session_state[CADASTRO_MODELO_ESTOQUE_KEY] = df_modelo_estoque
     else:
@@ -349,7 +330,8 @@ def cadastro_context_ready() -> bool:
 
 
 def cadastro_mapping_ready() -> bool:
-    df_final = enforce_cadastro_model_columns(get_context_final_df())
+    raw_final = get_context_final_df()
+    df_final = enforce_cadastro_model_columns(raw_final) if not _is_api_context() else enforce_supplier_price_master_filter(raw_final)
     mapping = st.session_state.get(_context_mapping_key())
     if not isinstance(mapping, dict) or not mapping:
         mapping = st.session_state.get('mapping_cadastro')
