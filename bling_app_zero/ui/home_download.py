@@ -44,7 +44,7 @@ DIRECT_SEND_TEXT = {
     OP_CADASTRO: 'Cadastrar produtos no Bling',
     OP_ESTOQUE: 'Atualizar estoque no Bling',
     OP_ATUALIZACAO_PRECO: 'Atualizar preços no Bling',
-    OP_UNIVERSAL: 'Enviar fluxo direto ao Bling',
+    OP_UNIVERSAL: 'Envio direto ao Bling',
 }
 
 
@@ -179,10 +179,10 @@ def _render_optional_template_download(download_df: pd.DataFrame, key: str, sign
 
 def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: str, signature: str, rules_sig: str) -> None:
     operation = normalize_operation(operation)
-    title = DIRECT_SEND_TEXT.get(operation, 'Enviar fluxo direto ao Bling')
+    title = DIRECT_SEND_TEXT.get(operation, 'Envio direto ao Bling')
 
-    st.markdown('##### Enviar direto ao Bling')
-    st.caption('Use esta opção para mandar o mesmo resultado final do fluxo para o Bling conectado, sem baixar e importar manualmente.')
+    st.markdown('##### Envio direto ao Bling')
+    st.caption('Use esta opção para mandar o mesmo resultado final para o Bling conectado, sem baixar e importar manualmente.')
 
     status = connection_status()
     connected = bool(status.get('connected')) and is_direct_send_available()
@@ -200,17 +200,17 @@ def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: st
         st.warning('Envio direto exige operação definida: cadastro, estoque ou atualização de preços. Use o CSV se este fluxo for universal.')
         return
 
-    st.success('Bling conectado. Você pode enviar este fluxo diretamente pela API do app.')
+    st.success('Bling conectado. Você pode usar o envio direto pela API do app.')
     st.caption(f'Operação detectada: {operation_label(operation)} · Linhas prontas: {len(download_df)}')
 
     confirm_key = f'confirm_direct_bling_{key}_{signature}_{rules_sig}'
     confirmed = st.checkbox(
-        'Confirmo que revisei o preview final e quero enviar este fluxo direto ao Bling.',
+        'Confirmo que revisei o preview final e quero usar o envio direto ao Bling.',
         key=confirm_key,
     )
     button_key = f'send_direct_bling_{key}_{signature}_{rules_sig}'
     if st.button(f'🚀 {title}', use_container_width=True, disabled=not confirmed, key=button_key):
-        with st.spinner('Enviando fluxo ao Bling...'):
+        with st.spinner('Realizando envio direto ao Bling...'):
             result = send_dataframe_to_bling(download_df.copy(), operation)
         if result.sent and not result.failed and not result.skipped:
             st.success(f'Envio concluído: {result.sent} linha(s) enviada(s) ao Bling.')
