@@ -18,7 +18,9 @@ from bling_app_zero.ui.home_models import (
     get_home_preco_model,
     get_home_universal_model,
 )
-from bling_app_zero.ui.home_shared import preview_df
+from bling_app_zero.ui.home_shared import df_signature, preview_df
+from bling_app_zero.ui.home_wizard_constants import STEP_PRECIFICACAO
+from bling_app_zero.ui.home_wizard_scroll import set_scroll_target
 from bling_app_zero.ui.smart_upload import SmartUploadResult
 
 SITE_SOURCE_FALLBACK_KEYS = (
@@ -33,6 +35,7 @@ SITE_SOURCE_FALLBACK_KEYS = (
 )
 SITE_SOURCE_OPERATIONS = ('universal', 'cadastro', 'estoque', 'fornecedor')
 RESPONSIBLE_FILE = 'bling_app_zero/ui/cadastro_entry_step.py'
+ENTRY_AUTOSCROLL_SIGNATURE_KEY = 'cadastro_entry_autoscroll_signature'
 
 
 def _copy_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
@@ -112,6 +115,21 @@ def _destination_model(upload) -> pd.DataFrame:
     return select_cadastro_model(upload)
 
 
+def _auto_scroll_after_source_loaded(df_origem: pd.DataFrame, df_modelo: pd.DataFrame) -> None:
+    if not valid_df(df_origem) or not valid_model(df_modelo):
+        return
+    signature = df_signature(df_origem) + ':' + df_signature(df_modelo)
+    if st.session_state.get(ENTRY_AUTOSCROLL_SIGNATURE_KEY) == signature:
+        return
+    st.session_state[ENTRY_AUTOSCROLL_SIGNATURE_KEY] = signature
+    set_scroll_target(STEP_PRECIFICACAO)
+    try:
+        st.query_params['step'] = STEP_PRECIFICACAO
+    except Exception:
+        pass
+    st.rerun()
+
+
 def render_cadastro_entrada_step() -> None:
     site_origin = is_site_origin()
 
@@ -132,6 +150,7 @@ def render_cadastro_entrada_step() -> None:
                 st.caption(f'Origem do site vinculada ao fluxo: {resolved_from}.')
         with st.expander('Ver dados do fornecedor', expanded=False):
             preview_df('Dados do fornecedor', df_origem)
+        _auto_scroll_after_source_loaded(df_origem, df_modelo)
     elif site_origin:
         st.warning('Busque os dados no site para continuar.')
     elif getattr(upload, 'attachments', None):
