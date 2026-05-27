@@ -3,6 +3,7 @@ from __future__ import annotations
 from html import escape
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_oauth import build_authorization_url, connection_status
@@ -196,25 +197,46 @@ def _render_same_tab_bling_link(auth_url: str) -> None:
     if not safe_url:
         st.warning('Não consegui gerar o link de conexão com o Bling agora.')
         return
-    st.markdown(
+
+    components.html(
         f'''
-<a href="{safe_url}" target="_self" style="
-    display:block;
-    width:100%;
-    box-sizing:border-box;
-    text-align:center;
-    text-decoration:none;
-    font-weight:700;
-    padding:0.55rem 1rem;
-    border-radius:0.5rem;
-    border:1px solid rgba(49,51,63,.2);
-    color:#4b5563;
-    background:#ffffff;
-">
-    Conectar ao Bling
-</a>
+<div style="width:100%; font-family:Arial, sans-serif;">
+    <button
+        type="button"
+        onclick="
+            const oauthUrl = '{safe_url}';
+            const popup = window.open(
+                oauthUrl,
+                'bling_oauth_popup',
+                'width=520,height=720,menubar=no,toolbar=no,location=yes,status=no,scrollbars=yes,resizable=yes'
+            );
+
+            if (!popup || popup.closed || typeof popup.closed === 'undefined') {{
+                window.location.href = oauthUrl;
+            }}
+        "
+        style="
+            display:block;
+            width:100%;
+            box-sizing:border-box;
+            text-align:center;
+            font-weight:700;
+            padding:0.65rem 1rem;
+            border-radius:0.5rem;
+            border:1px solid rgba(49,51,63,.2);
+            color:#4b5563;
+            background:#ffffff;
+            cursor:pointer;
+        "
+    >
+        Conectar ao Bling
+    </button>
+    <div style="margin-top:8px; font-size:12px; color:#6b7280; text-align:center;">
+        Se o popup for bloqueado, o Bling será aberto na mesma aba.
+    </div>
+</div>
 ''',
-        unsafe_allow_html=True,
+        height=92,
     )
 
 
@@ -256,7 +278,7 @@ def render_professional_home() -> None:
             'responsible_file': RESPONSIBLE_FILE,
             'home_order': 'bling_api_universal',
             'style': 'professional_light_cards',
-            'bling_oauth_target': 'same_tab',
+            'bling_oauth_target': 'popup_with_same_tab_fallback',
             'legacy_routes_removed': True,
             'bling_csv_legacy_redirected_to_universal': True,
         },
