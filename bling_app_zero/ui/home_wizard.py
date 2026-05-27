@@ -74,6 +74,7 @@ FINISH_MODE_API = 'api_direct'
 FINISH_MODE_CSV = 'csv_download'
 SKIP_DIRECT_BLING_KEY = 'skip_direct_bling_connection_this_flow'
 DIRECT_API_CONTRACT_KEY = 'direct_bling_api_contract_df'
+DIRECT_API_CONTRACT_ACTIVE_KEY = 'direct_bling_api_contract_active'
 DIRECT_OPERATION_LABELS = {
     'cadastro': 'Cadastrar produtos',
     'estoque': 'Atualizar estoque',
@@ -95,6 +96,23 @@ API_CONTRACT_COLUMNS = {
     'estoque': ['ID produto', 'Código', 'Quantidade', 'Depósito'],
     'atualizacao_preco': ['ID produto', 'Código', 'Preço'],
 }
+DIRECT_CONTRACT_SESSION_KEYS = (
+    DIRECT_API_CONTRACT_KEY,
+    'home_modelo_universal_df',
+    'df_modelo_universal',
+    'modelo_universal_df',
+    'cadastro_wizard_df_modelo',
+    'home_modelo_cadastro_df',
+    'df_modelo_cadastro',
+    'modelo_cadastro_df',
+    'home_modelo_estoque_df',
+    'df_modelo_estoque',
+    'modelo_estoque_df',
+    'cadastro_wizard_df_modelo_estoque',
+    'home_modelo_atualizacao_preco_df',
+    'df_modelo_atualizacao_preco',
+    'modelo_atualizacao_preco_df',
+)
 ACTIVE_RENDER_STEPS = [
     STEP_MODELO,
     STEP_ORIGEM,
@@ -124,6 +142,9 @@ def _direct_operation() -> str:
     op = normalize_contract_operation(st.session_state.get('home_slim_flow_operation'))
     if op in DIRECT_OPERATION_LABELS:
         return op
+    choice = normalize_contract_operation(st.session_state.get('direct_bling_operation_choice'))
+    if choice in DIRECT_OPERATION_LABELS:
+        return choice
     return 'cadastro'
 
 
@@ -133,9 +154,19 @@ def _direct_api_contract_model(operation: str | None = None) -> pd.DataFrame:
     return pd.DataFrame(columns=columns)
 
 
+def _clear_direct_api_contract() -> None:
+    if not st.session_state.get(DIRECT_API_CONTRACT_ACTIVE_KEY):
+        return
+    for key in DIRECT_CONTRACT_SESSION_KEYS:
+        st.session_state.pop(key, None)
+    st.session_state.pop(DIRECT_API_CONTRACT_ACTIVE_KEY, None)
+    st.session_state.pop(MODEL_CONTRACT_TYPE_KEY, None)
+
+
 def _apply_direct_api_contract(operation: str | None = None) -> pd.DataFrame:
     op = normalize_contract_operation(operation or _direct_operation()) or 'cadastro'
     model = _direct_api_contract_model(op)
+    st.session_state[DIRECT_API_CONTRACT_ACTIVE_KEY] = True
     st.session_state[DIRECT_API_CONTRACT_KEY] = model.copy()
     st.session_state[CADASTRO_MODELO_KEY] = model.copy()
     st.session_state['cadastro_wizard_df_modelo'] = model.copy()
@@ -241,7 +272,7 @@ def _render_bling_connection_step() -> None:
         connected = bool(status.get('connected'))
 
         if connected:
-            st.success('Bling conectado. Você pode usar envio direto sem anexar modelo de planilha.')
+            st.success('Bling conectado. Você pode usar envio direto sem anexar modelo de planilha, ou escolher CSV manual.')
             operation = st.radio(
                 'O que deseja fazer no Bling?',
                 options=list(DIRECT_OPERATION_LABELS.keys()),
@@ -249,13 +280,15 @@ def _render_bling_connection_step() -> None:
                 horizontal=True,
                 key='direct_bling_operation_choice',
             )
-            st.session_state[FINISH_MODE_KEY] = FINISH_MODE_API
-            st.session_state.pop(SKIP_DIRECT_BLING_KEY, None)
-            _apply_direct_api_contract(operation)
+            current_mode = _finish_mode()
+            if current_mode == FINISH_MODE_API:
+                _apply_direct_api_contract(operation)
             col1, col2 = st.columns(2)
             with col1:
                 if st.button('Usar envio direto', use_container_width=True, key='use_direct_bling_mode'):
                     st.session_state[FINISH_MODE_KEY] = FINISH_MODE_API
+                    st.session_state.pop(SKIP_DIRECT_BLING_KEY, None)
+                    _apply_direct_api_contract(operation)
                     st.session_state[WIZARD_STEP_KEY] = STEP_ORIGEM
                     set_scroll_target(STEP_ORIGEM)
                     st.rerun()
@@ -263,11 +296,13 @@ def _render_bling_connection_step() -> None:
                 if st.button('Usar CSV mesmo assim', use_container_width=True, key='use_csv_even_connected'):
                     st.session_state[FINISH_MODE_KEY] = FINISH_MODE_CSV
                     st.session_state[SKIP_DIRECT_BLING_KEY] = True
+                    _clear_direct_api_contract()
                     st.session_state[WIZARD_STEP_KEY] = STEP_MODELO
                     set_scroll_target(STEP_MODELO)
                     st.rerun()
             if st.button('Desconectar Bling', use_container_width=True, key='entry_disconnect_bling'):
                 disconnect()
+                _clear_direct_api_contract()
                 st.session_state.pop(FINISH_MODE_KEY, None)
                 st.rerun()
             return
@@ -287,6 +322,7 @@ def _render_bling_connection_step() -> None:
             if st.button('Continuar sem conectar e gerar CSV', use_container_width=True, key='continue_without_bling_connection'):
                 st.session_state[FINISH_MODE_KEY] = FINISH_MODE_CSV
                 st.session_state[SKIP_DIRECT_BLING_KEY] = True
+                _clear_direct_api_contract()
                 st.session_state[WIZARD_STEP_KEY] = STEP_MODELO
                 set_scroll_target(STEP_MODELO)
                 st.rerun()
