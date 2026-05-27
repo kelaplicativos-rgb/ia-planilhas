@@ -239,14 +239,6 @@ def _render_bling_api_home_card() -> None:
                 st.rerun()
 
 
-def _render_admin_links() -> None:
-    with st.expander('Links úteis', expanded=False):
-        st.caption('Atalhos do app e repositório. Área auxiliar, fora do fluxo principal.')
-        if st.button('Abrir links do sistema', use_container_width=True, key='home_admin_open_system_links'):
-            _set_flow(FLOW_LINKS_UTEIS)
-            st.rerun()
-
-
 def render_professional_home() -> None:
     add_audit_event(
         'home_router_render_professional_home',
@@ -279,9 +271,6 @@ def render_professional_home() -> None:
             key='home_card_open_universal',
             badge='Flexível',
         )
-
-    st.markdown('<div class="bling-mini-note">A calculadora fica dentro da etapa Preço e também pode ser aberta pelo menu rápido.</div>', unsafe_allow_html=True)
-    _render_admin_links()
 
 
 def render_home_router() -> None:
