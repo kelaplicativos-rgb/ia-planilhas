@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from bling_app_zero.core.bling_oauth import build_authorization_url, connection_status, disconnect
 from bling_app_zero.ui.scroll_position import request_scroll_top
 from bling_app_zero.ui.user_bling_models_store import (
     MODEL_LABELS,
@@ -40,6 +41,24 @@ PRICE_MODEL_WARNING = (
     'Atualização de preços aceita o arquivo original do Bling, inclusive quando vier em ZIP. '
     'Após anexar, o sistema segue direto para a conferência/mapeamento do fluxo de preços.'
 )
+
+
+def _render_bling_connection() -> None:
+    status = connection_status()
+    with st.container(border=True):
+        st.markdown('#### Conexão com Bling')
+        if status.get('connected'):
+            st.success('Bling conectado')
+            connected_at = str(status.get('connected_at') or '').strip()
+            if connected_at:
+                st.caption(f'Conectado em: {connected_at}')
+            if st.button('Desconectar Bling', key='disconnect_bling_oauth', use_container_width=True):
+                disconnect()
+                st.rerun()
+        else:
+            st.caption('Conecte sua conta Bling para liberar o fluxo OAuth do sistema.')
+            st.link_button('Conectar ao Bling', build_authorization_url(), use_container_width=True)
+            st.caption('A autorização abre no Bling e retorna para este app automaticamente.')
 
 
 def _set_price_update_flow(step: str = STEP_MAPEAMENTO) -> None:
@@ -153,6 +172,7 @@ def _show_model(model_type: str) -> None:
 def render_modelos_bling_user_screen() -> None:
     st.markdown('### Modelos Bling')
     st.caption('Cadastre uma vez os modelos oficiais do Bling e reutilize quando precisar.')
+    _render_bling_connection()
     st.info('Esta área é somente para modelos do Bling. Para preencher um modelo próprio, use Modelos Universal na Home.')
 
     for model_type in MODEL_TYPES:
