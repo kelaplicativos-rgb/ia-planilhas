@@ -17,6 +17,44 @@ from bling_app_zero.universal.model_contract_detector import MODEL_CONTRACT_TYPE
 RESPONSIBLE_FILE = 'bling_app_zero/ui/cadastro_preview_step.py'
 VALID_OPERATIONS = {'cadastro', 'estoque', 'universal', 'atualizacao_preco'}
 LEGACY_OPERATION_ALIASES = {'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}
+HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
+CONTEXT_BLING_API = 'bling_api'
+CONTEXT_BLING_CSV = 'bling_csv'
+CONTEXT_UNIVERSAL = 'universal'
+CONTEXT_FINAL_KEYS = {
+    CONTEXT_BLING_API: 'df_final_bling_api',
+    CONTEXT_BLING_CSV: 'df_final_bling_csv',
+    CONTEXT_UNIVERSAL: 'df_final_universal',
+}
+
+
+def _entry_context() -> str:
+    value = str(st.session_state.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower()
+    if value in CONTEXT_FINAL_KEYS:
+        return value
+    return CONTEXT_UNIVERSAL
+
+
+def _context_final_key() -> str:
+    return CONTEXT_FINAL_KEYS.get(_entry_context(), 'df_final_universal')
+
+
+def _context_title() -> str:
+    context = _entry_context()
+    if context == CONTEXT_BLING_API:
+        return 'Preview do envio direto ao Bling'
+    if context == CONTEXT_BLING_CSV:
+        return 'Preview do CSV Bling'
+    return 'Preview do Modelo Universal'
+
+
+def _context_caption() -> str:
+    context = _entry_context()
+    if context == CONTEXT_BLING_API:
+        return 'Confira os dados que serão enviados pela API. Este caminho não depende de CSV nem modelo de planilha.'
+    if context == CONTEXT_BLING_CSV:
+        return 'Confira se o arquivo final segue o modelo Bling anexado no início.'
+    return 'Confira se o arquivo final segue o modelo universal anexado no início.'
 
 
 def _normalize_operation(value: object) -> str:
@@ -57,34 +95,51 @@ def _current_operation() -> str:
     return 'universal'
 
 
+def _context_final_df() -> pd.DataFrame | None:
+    context_key = _context_final_key()
+    df = st.session_state.get(context_key)
+    if valid_df(df):
+        return df.copy().fillna('')
+    legacy = get_universal_final_df()
+    return legacy.copy().fillna('') if valid_df(legacy) else None
+
+
+def _store_context_preview(df_preview: pd.DataFrame, operation: str) -> None:
+    context_key = _context_final_key()
+    st.session_state[context_key] = df_preview.copy()
+    set_universal_final_df(df_preview)
+    st.session_state['df_final_cadastro_preview_rules_applied'] = df_preview
+    st.session_state['df_final_preview_operation'] = operation
+
+
 def _final_preview_df(df_final: pd.DataFrame, operation: str) -> pd.DataFrame:
-    """Aplica no preview a mesma blindagem usada na planilha final."""
+    """Aplica no preview a blindagem correta para cada caminho."""
     safe_operation = operation if operation in VALID_OPERATIONS else 'universal'
     safe = sanitize_for_bling(df_final.copy().fillna(''), operation=safe_operation)
+    if _entry_context() == CONTEXT_BLING_API:
+        return safe
     fixed = enforce_cadastro_model_columns(safe)
     return fixed if isinstance(fixed, pd.DataFrame) else safe
 
 
 def render_cadastro_preview_step() -> None:
     operation = _current_operation()
-    st.markdown('### Preview do modelo final')
-    st.caption('Confira se o arquivo final segue o modelo anexado no início.')
+    st.markdown(f'### {_context_title()}')
+    st.caption(_context_caption())
 
-    df_final = enforce_cadastro_model_columns(get_universal_final_df())
+    df_final = _context_final_df()
 
     if not valid_df(df_final):
         st.warning('O preview ainda não foi gerado. Volte para o mapeamento e confirme os campos.')
         return
 
     df_preview = _final_preview_df(df_final, operation)
-    set_universal_final_df(df_preview)
-    st.session_state['df_final_cadastro_preview_rules_applied'] = df_preview
-    st.session_state['df_final_preview_operation'] = operation
+    _store_context_preview(df_preview, operation)
 
-    if render_row_count_blocker(df_preview):
+    if _entry_context() != CONTEXT_BLING_API and render_row_count_blocker(df_preview):
         return
 
-    preview_df('Modelo final preenchido', df_preview)
+    preview_df('Resultado final preenchido', df_preview)
 
 
 __all__ = ['render_cadastro_preview_step']
