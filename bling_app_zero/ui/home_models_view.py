@@ -19,9 +19,22 @@ from bling_app_zero.ui.model_upload import render_model_upload_box
 from bling_app_zero.universal.model_contract_detector import CONTRACT_LABELS, MODEL_CONTRACT_TYPE_KEY
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_models_view.py'
+HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
+
+
+def _entry_context() -> str:
+    return str(st.session_state.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower()
+
+
+def _is_universal_entry() -> bool:
+    return _entry_context() == 'universal'
 
 
 def _model_summary_df() -> pd.DataFrame | None:
+    if _is_universal_entry():
+        df = get_home_universal_model()
+        if isinstance(df, pd.DataFrame):
+            return df
     for df in (get_home_cadastro_model(), get_home_estoque_model(), get_home_preco_model(), get_home_universal_model()):
         if isinstance(df, pd.DataFrame):
             return df
@@ -38,13 +51,16 @@ def _first_valid_df(*items: pd.DataFrame | None) -> pd.DataFrame | None:
 def _render_loaded_summary() -> None:
     df = _model_summary_df()
     if not isinstance(df, pd.DataFrame):
-        st.warning(
-            'Envie o modelo final de destino para continuar. '
-            'Use uma planilha com cabeçalho na primeira linha e com as colunas finais que o sistema deverá preencher.'
-        )
+        if _is_universal_entry():
+            st.warning('Envie o modelo universal de destino para continuar. Use uma planilha com as colunas finais que o sistema deverá preencher.')
+        else:
+            st.warning(
+                'Envie o modelo final de destino para continuar. '
+                'Use uma planilha com cabeçalho na primeira linha e com as colunas finais que o sistema deverá preencher.'
+            )
         return
     contract_type = str(st.session_state.get(MODEL_CONTRACT_TYPE_KEY) or 'universal')
-    label = CONTRACT_LABELS.get(contract_type, CONTRACT_LABELS['universal'])
+    label = 'Modelo Universal' if _is_universal_entry() else CONTRACT_LABELS.get(contract_type, CONTRACT_LABELS['universal'])
     st.caption(f'{label} carregado · {len(df)} linha(s) · {len(df.columns)} coluna(s)')
     with st.expander('Ver colunas do modelo de destino', expanded=False):
         columns = [str(column) for column in list(df.columns)]
@@ -52,6 +68,14 @@ def _render_loaded_summary() -> None:
 
 
 def _render_model_type_guidance() -> None:
+    if _is_universal_entry():
+        st.markdown('#### Modelo Universal')
+        st.caption('Configure aqui somente um modelo universal com cabeçalho próprio. Este caminho não usa modelos oficiais do Bling.')
+        with st.container(border=True):
+            st.markdown('##### Estrutura universal')
+            st.caption('Use para marketplace, fornecedor ou qualquer layout final personalizado.')
+        return
+
     st.markdown('#### Bling')
     st.caption('Configure aqui a estrutura final da planilha. O sistema detecta se é Bling Cadastro, Bling Estoque, Atualização de Preços ou Universal.')
 
@@ -68,6 +92,8 @@ def _render_model_type_guidance() -> None:
 
 def _split_models_by_contract(upload) -> tuple[pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None]:
     df = upload.model_df if isinstance(upload.model_df, pd.DataFrame) else None
+    if _is_universal_entry():
+        return None, None, None, df
     contract_type = str(getattr(upload, 'contract_type', '') or st.session_state.get(MODEL_CONTRACT_TYPE_KEY) or 'universal')
     cadastro = df if contract_type == 'cadastro' else None
     estoque = df if contract_type == 'estoque' else None
@@ -80,12 +106,20 @@ def render_home_bling_models() -> None:
     clear_default_home_models()
     _render_model_type_guidance()
 
-    st.markdown('#### Modelo de destino')
-    st.caption('Anexe abaixo o modelo que será preenchido no final. Pode ser Bling Cadastro, Bling Estoque, Atualização de Preços ou Universal.')
+    if _is_universal_entry():
+        st.markdown('#### Modelo de destino universal')
+        st.caption('Anexe o modelo universal que será preenchido no final. Não é necessário anexar modelo oficial do Bling neste caminho.')
+        title = 'Enviar modelo universal de destino'
+        operation = 'universal'
+    else:
+        st.markdown('#### Modelo de destino')
+        st.caption('Anexe abaixo o modelo que será preenchido no final. Pode ser Bling Cadastro, Bling Estoque, Atualização de Preços ou Universal.')
+        title = 'Enviar modelo final de destino'
+        operation = 'detectar_contrato_real'
 
     upload = render_model_upload_box(
-        title='Enviar modelo final de destino',
-        operation='detectar_contrato_real',
+        title=title,
+        operation=operation,
         key='home_model_upload_bling',
         required_model=False,
         caption=None,
@@ -100,8 +134,9 @@ def render_home_bling_models() -> None:
             step=st.session_state.get(WIZARD_STEP_KEY),
             status='OK',
             details={
-                'contract_type': getattr(upload, 'contract_type', 'universal'),
-                'contract_label': getattr(upload, 'contract_label', 'Modelo Universal'),
+                'entry_context': _entry_context(),
+                'contract_type': 'universal' if _is_universal_entry() else getattr(upload, 'contract_type', 'universal'),
+                'contract_label': 'Modelo Universal' if _is_universal_entry() else getattr(upload, 'contract_label', 'Modelo Universal'),
                 'cadastro': df_log_summary(cadastro_model),
                 'estoque': df_log_summary(estoque_model),
                 'preco': df_log_summary(preco_model),
