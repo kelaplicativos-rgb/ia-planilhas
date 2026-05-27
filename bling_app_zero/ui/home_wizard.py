@@ -105,6 +105,12 @@ API_CONTRACT_COLUMNS = {
     'atualizacao_preco': ['ID produto', 'Código', 'Preço'],
 }
 
+CONTEXT_MAPPING_KEYS = {
+    CONTEXT_BLING_API: ('mapping_bling_api', 'mapping_confidence_bling_api'),
+    CONTEXT_BLING_CSV: ('mapping_bling_csv', 'mapping_confidence_bling_csv'),
+    CONTEXT_UNIVERSAL: ('mapping_universal', 'mapping_confidence_universal'),
+}
+
 DIRECT_CONTRACT_SESSION_KEYS = (
     DIRECT_API_CONTRACT_KEY,
     'home_modelo_universal_df',
@@ -147,6 +153,28 @@ def _entry_context() -> str:
     if value in {CONTEXT_BLING_API, CONTEXT_BLING_CSV, CONTEXT_UNIVERSAL}:
         return value
     return CONTEXT_BLING_API
+
+
+def _context_mapping_keys() -> tuple[str, str]:
+    return CONTEXT_MAPPING_KEYS.get(_entry_context(), CONTEXT_MAPPING_KEYS[CONTEXT_BLING_API])
+
+
+def _context_mapping() -> dict:
+    mapping_key, _confidence_key = _context_mapping_keys()
+    mapping = st.session_state.get(mapping_key)
+    if isinstance(mapping, dict):
+        return mapping
+    fallback = st.session_state.get('mapping_cadastro')
+    return fallback if isinstance(fallback, dict) else {}
+
+
+def _context_confidence() -> dict:
+    _mapping_key, confidence_key = _context_mapping_keys()
+    confidence = st.session_state.get(confidence_key)
+    if isinstance(confidence, dict):
+        return confidence
+    fallback = st.session_state.get('mapping_confidence_cadastro')
+    return fallback if isinstance(fallback, dict) else {}
 
 
 def _is_bling_api_entry() -> bool:
@@ -560,8 +588,8 @@ def _render_ai_review_step(section_number: int = 7) -> None:
     st.caption('Revise os campos ligados e aplique as proteções finais antes do preview.')
     render_mapping_review_panel(
         operation=UNIVERSAL_REVIEW_OPERATION,
-        mapping=st.session_state.get('mapping_cadastro'),
-        confidence=st.session_state.get('mapping_confidence_cadastro'),
+        mapping=_context_mapping(),
+        confidence=_context_confidence(),
         df_source=df_source,
         target_columns=[str(column) for column in getattr(df_modelo, 'columns', [])],
     )
