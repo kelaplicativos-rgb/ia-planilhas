@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.bling_oauth import build_authorization_url, connection_status, disconnect
 from bling_app_zero.ui.ai_real_advanced_panel import render_ai_real_advanced_panel
 from bling_app_zero.ui.cadastro_pricing import apply_cadastro_pricing, clear_cadastro_pricing_state
 from bling_app_zero.ui.cadastro_wizard_state import (
@@ -68,6 +69,7 @@ from bling_app_zero.universal.model_contract_detector import MODEL_CONTRACT_TYPE
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_wizard.py'
 PRICE_UPDATE_OPERATION = 'atualizacao_preco'
+SKIP_DIRECT_BLING_KEY = 'skip_direct_bling_connection_this_flow'
 ACTIVE_RENDER_STEPS = [
     STEP_MODELO,
     STEP_ORIGEM,
@@ -157,11 +159,45 @@ def _render_price_update_single_sheet_notice() -> None:
         render_pending_notice('Anexe a planilha de atualização de preços para continuar.')
 
 
-def _render_model_step() -> None:
+def _render_bling_connection_step() -> None:
+    _section_title(1, 'Conexão com Bling')
+    with st.container(border=True):
+        st.caption('Opcional. Conecte agora se quiser usar Envio direto ao Bling no final. Para baixar apenas CSV, pode continuar sem conectar.')
+        status = connection_status()
+        connected = bool(status.get('connected'))
+        if connected:
+            st.success('Bling conectado. O envio direto ficará disponível no final do fluxo.')
+            col1, col2 = st.columns(2)
+            with col1:
+                st.caption('Continue normalmente para modelo, origem, mapeamento e download.')
+            with col2:
+                if st.button('Desconectar Bling', use_container_width=True, key='entry_disconnect_bling'):
+                    disconnect()
+                    st.rerun()
+            return
+
+        st.warning('Bling não conectado. O download CSV continuará funcionando normalmente.')
+        col1, col2 = st.columns(2)
+        with col1:
+            try:
+                auth_url = build_authorization_url({'return_to': 'start', 'source_step': 'bling_connection_entry'})
+            except Exception:
+                auth_url = ''
+            if auth_url:
+                st.link_button('Conectar ao Bling', auth_url, use_container_width=True)
+            else:
+                st.warning('Não consegui gerar o link de conexão com o Bling agora.')
+        with col2:
+            if st.button('Continuar sem conectar', use_container_width=True, key='continue_without_bling_connection'):
+                st.session_state[SKIP_DIRECT_BLING_KEY] = True
+                st.success('Tudo bem. O fluxo continuará com download CSV no final.')
+
+
+def _render_model_step(section_number: int = 2) -> None:
     from bling_app_zero.ui.home_models import render_home_bling_models
 
     render_step_anchor(STEP_MODELO)
-    _section_title(1, 'Modelos Universal')
+    _section_title(section_number, 'Modelos Universal')
     with st.container(border=True):
         render_home_bling_models()
     ensure_universal_operation_state()
@@ -169,7 +205,7 @@ def _render_model_step() -> None:
         _bind_price_update_single_sheet()
 
 
-def _render_origin_step(section_number: int = 2) -> None:
+def _render_origin_step(section_number: int = 3) -> None:
     render_step_anchor(STEP_ORIGEM)
     if _is_price_update_contract():
         _section_title(section_number, 'Planilha única de atualização de preços')
@@ -195,7 +231,7 @@ def _render_origin_step(section_number: int = 2) -> None:
         render_pending_notice('Escolha Arquivo ou Site.')
 
 
-def _render_universal_entrada(section_number: int = 3) -> None:
+def _render_universal_entrada(section_number: int = 4) -> None:
     origin = current_origin_choice()
     render_step_anchor(STEP_ENTRADA)
     if _is_price_update_contract():
@@ -248,7 +284,7 @@ def _apply_pricing_step_result() -> None:
         st.warning('Calcule um preço para aplicar a referência de precificação aos dados carregados.')
 
 
-def _render_pricing_step(section_number: int = 4) -> None:
+def _render_pricing_step(section_number: int = 5) -> None:
     render_step_anchor(STEP_PRECIFICACAO)
     if _is_price_update_contract():
         _section_title(section_number, 'Preço')
@@ -277,7 +313,7 @@ def _render_pricing_step(section_number: int = 4) -> None:
         st.caption('Opcional. Se desligada, mantém o preço da origem ou do mapeamento.')
 
 
-def _render_universal_mapeamento(section_number: int = 5) -> None:
+def _render_universal_mapeamento(section_number: int = 6) -> None:
     render_step_anchor(STEP_MAPEAMENTO)
     title = 'Conferir campos da atualização' if _is_price_update_contract() else 'Mapear campos'
     _section_title(section_number, title)
@@ -292,7 +328,7 @@ def _render_universal_mapeamento(section_number: int = 5) -> None:
     render_universal_mapeamento_step()
 
 
-def _render_ai_review_step(section_number: int = 6) -> None:
+def _render_ai_review_step(section_number: int = 7) -> None:
     render_step_anchor(STEP_REGRAS)
     _section_title(section_number, 'Revisão final')
     if not has_home_models():
@@ -324,7 +360,7 @@ def _render_ai_review_step(section_number: int = 6) -> None:
     render_rules_center_step()
 
 
-def _render_universal_preview(section_number: int = 7) -> None:
+def _render_universal_preview(section_number: int = 8) -> None:
     render_step_anchor(STEP_PREVIEW)
     _section_title(section_number, 'Preview')
     if not has_home_models():
@@ -336,7 +372,7 @@ def _render_universal_preview(section_number: int = 7) -> None:
     render_universal_preview_step()
 
 
-def _render_universal_download(section_number: int = 8) -> None:
+def _render_universal_download(section_number: int = 9) -> None:
     render_step_anchor(STEP_DOWNLOAD)
     _section_title(section_number, 'Download')
     if not has_home_models():
@@ -373,10 +409,10 @@ def _render_steps_from(start_step: str, *, skip_model: bool) -> None:
     if start_step not in steps:
         start_step = steps[0]
     start_index = steps.index(start_step)
-    section_number = 1
+    section_number = 2
     for step in steps[start_index:]:
         if step == STEP_MODELO:
-            _render_model_step()
+            _render_model_step(section_number)
         elif step == STEP_ORIGEM:
             _render_origin_step(section_number)
         elif step == STEP_ENTRADA:
@@ -401,6 +437,8 @@ def render_home_wizard() -> None:
     st.session_state['wizard_bottom_nav_rendered_current_cycle'] = True
     st.session_state['home_single_page_flow_active'] = True
 
+    _render_bling_connection_step()
+
     if not has_model:
         st.session_state[WIZARD_STEP_KEY] = STEP_MODELO
         st.session_state.pop('home_slim_flow_origin', None)
@@ -410,7 +448,7 @@ def render_home_wizard() -> None:
             step=STEP_MODELO,
             details={'reason': 'missing_destination_model', 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE},
         )
-        _render_model_step()
+        _render_model_step(2)
         inject_scroll_to_target()
         return
 
