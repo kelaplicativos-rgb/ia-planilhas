@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
@@ -25,14 +26,22 @@ class FlashScraperResult:
 class FlashScraperEngine:
     """Orquestrador isolado do motor BLINGFLASH.
 
-    Este motor NÃO substitui o crawler legado automaticamente. Ele fica pronto
-    para ser conectado ao fluxo de site, com isolamento total entre cadastro e
-    estoque.
+    Fluxo ajustado para busca por site:
+    - tenta primeiro o HTTP rápido;
+    - só usa fallback profundo quando a página realmente não trouxe dados úteis;
+    - processa múltiplas URLs em paralelo, mantendo a ordem original no resultado.
     """
 
-    def __init__(self) -> None:
-        self.fast = FlashScanExtractor()
-        self.deep = FlashDeepExtractor()
+    def __init__(self, max_workers: int = 6) -> None:
+        self.max_workers = max(1, int(max_workers or 1))
+
+    def _extract_one(self, url: str, field_requests: list[FieldRequest]) -> FlashScanOutput:
+        fast = FlashScanExtractor()
+        deep = FlashDeepExtractor()
+        output = fast.extract(url, field_requests)
+        if deep.should_deep_scan(output):
+            output = deep.extract(url, field_requests)
+        return output
 
     def run(
         self,
@@ -41,7 +50,7 @@ class FlashScraperEngine:
         *,
         operation: str = "cadastro",
     ) -> FlashScraperResult:
-        urls_clean = [str(url or "").strip() for url in urls if str(url or "").strip()]
+        urls_clean = list(dict.fromkeys(str(url or "").strip() for url in urls if str(url or "").strip()))
         defaults = operation_defaults(operation)
         field_requests = build_field_requests(model_columns)
 
@@ -54,11 +63,26 @@ class FlashScraperEngine:
             result.errors.append("Nenhuma coluna de modelo informada para extração seletiva.")
             return result
 
-        for url in urls_clean:
-            output = self.fast.extract(url, field_requests)
-            if self.deep.should_deep_scan(output):
-                output = self.deep.extract(url, field_requests)
+        workers = min(self.max_workers, len(urls_clean))
+        ordered_outputs: list[FlashScanOutput | None] = [None] * len(urls_clean)
 
+        if workers <= 1:
+            for index, url in enumerate(urls_clean):
+                ordered_outputs[index] = self._extract_one(url, field_requests)
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {executor.submit(self._extract_one, url, field_requests): index for index, url in enumerate(urls_clean)}
+                for future in as_completed(futures):
+                    index = futures[future]
+                    url = urls_clean[index]
+                    try:
+                        ordered_outputs[index] = future.result()
+                    except Exception as exc:  # proteção para não travar o lote inteiro
+                        ordered_outputs[index] = FlashScanOutput(url=url, errors=[f"Falha ao extrair URL em paralelo: {exc}"])
+
+        for output in ordered_outputs:
+            if output is None:
+                continue
             result.raw_outputs.append(output)
             result.errors.extend(output.errors)
             result.rows.append(
