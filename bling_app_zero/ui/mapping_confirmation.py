@@ -5,6 +5,8 @@ import streamlit as st
 
 from bling_app_zero.core.credits import check_mapping_credit, consume_mapping_credit, credits_enabled
 from bling_app_zero.ui.home_shared import df_signature
+from bling_app_zero.ui.home_wizard_constants import STEP_REGRAS
+from bling_app_zero.ui.home_wizard_scroll import set_scroll_target
 from bling_app_zero.ui.mapping_constants import CADASTRO_MAPPING_CONFIRMED_KEY, CADASTRO_MAPPING_SIGNATURE_KEY
 from bling_app_zero.ui.mapping_widget_state import is_manual_value, manual_value_key, short_hash, target_widget_key
 
@@ -76,6 +78,11 @@ def render_confirm_mapping_button(
             return
         st.session_state[CADASTRO_MAPPING_CONFIRMED_KEY] = True
         st.session_state[CADASTRO_MAPPING_SIGNATURE_KEY] = signature
+        set_scroll_target(STEP_REGRAS)
+        try:
+            st.query_params['step'] = STEP_REGRAS
+        except Exception:
+            pass
         st.success('Mapeamento confirmado.')
         st.rerun()
 
