@@ -90,6 +90,7 @@ def _start_wizard_context(context: str, *, step: str | None = None) -> None:
         st.session_state.pop('skip_direct_bling_connection_this_flow', None)
         st.session_state.pop(WIZARD_STEP_KEY, None)
     elif context in {'bling_csv', 'universal'}:
+        # Mantém compatibilidade com links antigos de bling_csv, mas a Home não oferece mais esse caminho.
         st.session_state['bling_finish_mode'] = 'csv_download'
         st.session_state['skip_direct_bling_connection_this_flow'] = True
         st.session_state[WIZARD_STEP_KEY] = step or STEP_MODELO
@@ -232,7 +233,7 @@ def _render_bling_api_home_card() -> None:
             st.link_button('Conectar ao Bling', auth_url, use_container_width=True)
             st.caption('Após autorizar, você volta para escolher o tipo de envio da API.')
         else:
-            st.warning('Credenciais do Bling ainda não configuradas. Use o modo CSV enquanto isso.')
+            st.warning('Credenciais do Bling ainda não configuradas. Use o Modelo Universal enquanto isso.')
             if st.button('Abrir etapa da API', use_container_width=True, key='home_card_open_bling_api_without_url'):
                 _start_wizard_context('bling_api')
                 st.rerun()
@@ -253,31 +254,20 @@ def render_professional_home() -> None:
         status='OK',
         details={
             'responsible_file': RESPONSIBLE_FILE,
-            'home_order': 'bling_api_bling_csv_universal',
+            'home_order': 'bling_api_universal',
             'style': 'professional_light_cards',
         },
     )
 
     st.markdown('<div class="bling-home-section-title">Escolha como quer começar</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="bling-home-section-subtitle">Agora são três caminhos separados: API, CSV Bling ou Modelo Universal.</div>',
+        '<div class="bling-home-section-subtitle">Agora são dois caminhos: envio direto pela API ou Modelo Universal.</div>',
         unsafe_allow_html=True,
     )
 
-    col_api, col_csv, col_universal = st.columns(3)
+    col_api, col_universal = st.columns(2)
     with col_api:
         _render_bling_api_home_card()
-
-    with col_csv:
-        _render_home_card(
-            'Bling CSV',
-            'Use modelos oficiais do Bling para gerar CSV pronto para importação manual.',
-            'Gerar CSV Bling',
-            context='bling_csv',
-            step=STEP_MODELO,
-            key='home_card_open_bling_csv',
-            badge='Importação manual',
-        )
 
     with col_universal:
         _render_home_card(
