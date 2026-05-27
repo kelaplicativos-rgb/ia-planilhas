@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from html import escape
+
 import pandas as pd
 import streamlit as st
 from streamlit.errors import StreamlitAPIException
@@ -183,6 +185,32 @@ def _authorization_url_for_download(download_df: pd.DataFrame, operation: str, s
     return build_authorization_url(context)
 
 
+def _render_same_tab_oauth_link(auth_url: str) -> None:
+    safe_url = escape(str(auth_url or ''), quote=True)
+    if not safe_url:
+        return
+    st.markdown(
+        f'''
+<a href="{safe_url}" target="_self" style="
+    display:block;
+    width:100%;
+    box-sizing:border-box;
+    text-align:center;
+    text-decoration:none;
+    font-weight:800;
+    padding:0.72rem 1rem;
+    border-radius:0.75rem;
+    border:1px solid #d1d5db;
+    color:#111827;
+    background:#ffffff;
+">
+    Conectar ao Bling
+</a>
+''',
+        unsafe_allow_html=True,
+    )
+
+
 def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: str, signature: str, rules_sig: str) -> None:
     operation = normalize_operation(operation)
     title = DIRECT_SEND_TEXT.get(operation, 'Envio direto ao Bling')
@@ -199,8 +227,7 @@ def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: st
         except Exception as exc:
             auth_url = ''
             st.caption(f'Não consegui preparar o retorno automático: {exc}')
-        if auth_url:
-            st.link_button('Conectar ao Bling', auth_url, use_container_width=True)
+        _render_same_tab_oauth_link(auth_url)
         return
 
     if operation == OP_UNIVERSAL:
