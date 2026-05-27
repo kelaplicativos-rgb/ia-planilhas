@@ -17,6 +17,12 @@ from bling_app_zero.core.global_price_calculator import (
 GLOBAL_PRICE_RESULT_KEY = 'global_price_calculator_last_result'
 GLOBAL_PRICE_CONFIG_KEY = 'global_price_calculator_last_config'
 GLOBAL_PRICE_READY_KEY = 'global_price_calculator_ready'
+GLOBAL_PRICE_MODE_KEY = 'global_price_application_mode'
+GLOBAL_PRICE_WARNING_ACK_KEY = 'global_price_warning_acknowledged'
+GLOBAL_PRICE_WARNING_TEXT = (
+    'Atenção: este é um preço global. Se você usar esta opção em uma planilha, '
+    'o mesmo preço de venda será aplicado em todos os produtos, independentemente do custo individual de cada item.'
+)
 
 
 def _metric_card(label: str, value: str, extra: str = '') -> None:
@@ -45,6 +51,18 @@ def _profit_card(profit: Decimal, margin: Decimal) -> None:
     )
 
 
+def _render_global_price_warning() -> None:
+    st.markdown(
+        f'''
+<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:16px;padding:1rem 1.2rem;color:#7c2d12;margin:.8rem 0;">
+  <div style="font-weight:950;margin-bottom:.4rem;">⚠️ Preço global para todos os produtos</div>
+  <div style="line-height:1.55;">{GLOBAL_PRICE_WARNING_TEXT}</div>
+</div>
+''',
+        unsafe_allow_html=True,
+    )
+
+
 def _render_observations(result: GlobalPriceResult) -> None:
     st.markdown(
         f'''
@@ -54,7 +72,7 @@ def _render_observations(result: GlobalPriceResult) -> None:
     <li>Tipo selecionado: <b>{result.ad_type}</b>.</li>
     <li>Taxa informada para este cálculo: <b>{percent(result.marketplace_fee_percent)}</b>.</li>
     <li>Esta é a calculadora única de preço usada como base global do sistema.</li>
-    <li>Nos fluxos com planilha, o preço calculado pode ser usado como referência para preencher o preço final.</li>
+    <li>Nos fluxos com planilha, o preço calculado pode preencher o preço final de todos os produtos.</li>
   </ul>
 </div>
 ''',
@@ -65,17 +83,20 @@ def _render_observations(result: GlobalPriceResult) -> None:
 def _save_global_result(result: GlobalPriceResult) -> None:
     st.session_state[GLOBAL_PRICE_RESULT_KEY] = result
     st.session_state[GLOBAL_PRICE_READY_KEY] = True
+    st.session_state[GLOBAL_PRICE_MODE_KEY] = 'global_fixed_price_all_products'
     st.session_state['global_price_calculator_sale_price'] = float(result.sale_price)
     st.session_state['global_price_calculator_profit'] = float(result.profit)
     st.session_state['global_price_calculator_margin'] = float(result.margin)
     st.session_state['preco_calculado_global'] = float(result.sale_price)
     st.session_state['preco_unitario_calculado'] = float(result.sale_price)
+    st.session_state['preco_global_aplicado_em_todos_produtos'] = True
+    st.session_state['preco_global_alerta_texto'] = GLOBAL_PRICE_WARNING_TEXT
 
 
 def _render_saved_result_notice() -> None:
     result = st.session_state.get(GLOBAL_PRICE_RESULT_KEY)
     if isinstance(result, GlobalPriceResult):
-        st.success(f'Preço global disponível para os fluxos: {money(result.sale_price)}')
+        st.warning(f'Preço global disponível para os fluxos: {money(result.sale_price)}. Ele pode ser aplicado em todos os produtos da planilha.')
 
 
 def render_quick_price_calculator(*, embedded: bool = False) -> None:
@@ -101,6 +122,13 @@ def render_quick_price_calculator(*, embedded: bool = False) -> None:
         fixed_fee = st.number_input('Taxa Fixa (R$)', min_value=0.0, value=0.0, step=0.5, key='quick_market_fixed_fee')
         extra_cost = st.number_input('Outros Custos (R$)', min_value=0.0, value=0.0, step=0.5, key='quick_market_extra_cost')
 
+        _render_global_price_warning()
+        acknowledged = st.checkbox(
+            'Entendi que este valor pode ser usado como preço único para todos os produtos da planilha.',
+            value=bool(st.session_state.get(GLOBAL_PRICE_WARNING_ACK_KEY)),
+            key=GLOBAL_PRICE_WARNING_ACK_KEY,
+        )
+
         data = build_input_from_values(
             ad_type=ad_type,
             classic_fee_percent=classic_fee,
@@ -114,14 +142,14 @@ def render_quick_price_calculator(*, embedded: bool = False) -> None:
         )
         result = calculate_global_price(data)
 
-        clicked = st.button('🧮 Calcular e usar este preço', use_container_width=True, key='quick_market_calculate')
+        clicked = st.button('🧮 Calcular e usar este preço', use_container_width=True, key='quick_market_calculate', disabled=not acknowledged)
         if clicked:
             st.session_state['quick_market_has_calculated'] = True
             st.session_state[GLOBAL_PRICE_CONFIG_KEY] = data
             _save_global_result(result)
 
         if not st.session_state.get('quick_market_has_calculated'):
-            st.info('Preencha os valores e toque em Calcular para ver a simulação.')
+            st.info('Preencha os valores, confirme o aviso de preço global e toque em Calcular para ver a simulação.')
             _render_saved_result_notice()
             return
 
@@ -142,12 +170,15 @@ def render_quick_price_calculator(*, embedded: bool = False) -> None:
         elif result.profit < 0:
             st.warning('Atenção: o lucro líquido ficou negativo. Revise custo, preço, frete, imposto ou taxas.')
         else:
-            st.success('Simulação concluída. O preço calculado ficou disponível para o restante do fluxo.')
+            st.success('Simulação concluída. O preço global ficou disponível para o restante do fluxo.')
 
 
 __all__ = [
     'GLOBAL_PRICE_CONFIG_KEY',
+    'GLOBAL_PRICE_MODE_KEY',
     'GLOBAL_PRICE_READY_KEY',
     'GLOBAL_PRICE_RESULT_KEY',
+    'GLOBAL_PRICE_WARNING_ACK_KEY',
+    'GLOBAL_PRICE_WARNING_TEXT',
     'render_quick_price_calculator',
 ]
