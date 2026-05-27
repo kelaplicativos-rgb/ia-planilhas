@@ -27,15 +27,25 @@ MODEL_UPLOAD_LABELS = {
     'precos': 'Anexar ou substituir modelo Bling atualização de preços',
 }
 
+MODEL_UPLOAD_HELP = {
+    'cadastro': 'Anexe o arquivo oficial do Bling em CSV, XLSX, XLS, XLSM ou XLSB. Depois ele ficará salvo para reutilizar, remover ou substituir.',
+    'estoque': 'Anexe o arquivo oficial do Bling em CSV, XLSX, XLS, XLSM ou XLSB. Depois ele ficará salvo para reutilizar, remover ou substituir.',
+    'precos': 'Aceita o arquivo original do Bling, inclusive quando vier compactado em ZIP. O sistema extrai a planilha interna e salva o modelo para atualização de preços.',
+}
+
 PRICE_MODEL_WARNING = (
-    'Atualização de preços precisa de um fluxo próprio antes de seguir para Origem dos dados. '
-    'O modelo pode ficar salvo aqui, mas ainda não deve abrir o wizard universal automaticamente.'
+    'Atualização de preços aceita o formato original do Bling, inclusive ZIP. '
+    'Depois de salvo, o modelo será usado no fluxo próprio de atualização de preços.'
 )
 
 
 def _go_to_origin(model_type: str) -> None:
     if model_type == PRICE_MODEL_TYPE:
         st.session_state['bling_price_model_waiting_own_flow'] = True
+        st.session_state['home_slim_flow_operation'] = 'atualizacao_preco'
+        st.session_state['home_detected_operation'] = 'atualizacao_preco'
+        st.session_state['operacao_final'] = 'atualizacao_preco'
+        st.session_state['tipo_operacao_final'] = 'atualizacao_preco'
         return
 
     st.session_state['home_active_operation_v2'] = FLOW_WIZARD
@@ -60,13 +70,14 @@ def _go_to_origin(model_type: str) -> None:
 
 def _show_price_model_block() -> None:
     st.warning(PRICE_MODEL_WARNING)
-    st.caption('Use por enquanto os modelos de cadastro ou estoque para liberar Origem dos dados. O modelo de preços fica guardado para o fluxo específico de atualização de preços.')
+    st.caption('Pode anexar o ZIP original baixado do Bling. O sistema vai procurar a planilha dentro do pacote automaticamente.')
 
 
 def _show_model(model_type: str) -> None:
     label = MODEL_LABELS.get(model_type, model_type)
     title = MODEL_TITLES.get(model_type, label)
     upload_label = MODEL_UPLOAD_LABELS.get(model_type, f'Anexar ou substituir {label}')
+    upload_help = MODEL_UPLOAD_HELP.get(model_type, 'Anexe o arquivo oficial do Bling apenas uma vez. Depois ele ficará disponível para reutilizar, remover ou substituir.')
 
     st.markdown('---')
     st.markdown(f'#### {title}')
@@ -78,9 +89,11 @@ def _show_model(model_type: str) -> None:
     if df is not None and info:
         st.success('Modelo Bling salvo')
         st.caption(str(info.get('name') or ''))
+        if info.get('format'):
+            st.caption('Formato salvo: ' + str(info.get('format')).upper())
         st.caption('Colunas: ' + str(len(df.columns)))
         if model_type == PRICE_MODEL_TYPE:
-            st.button('Aguardando fluxo próprio de atualização de preços', key=f'use_{model_type}', use_container_width=True, disabled=True)
+            st.button('Modelo de preços salvo para o fluxo próprio', key=f'use_{model_type}', use_container_width=True, disabled=True)
         elif st.button('Usar este modelo e ir para Origem dos dados', key=f'use_{model_type}', use_container_width=True):
             _go_to_origin(model_type)
         if st.button('Remover modelo salvo', key=f'remove_{model_type}', use_container_width=True):
@@ -92,14 +105,15 @@ def _show_model(model_type: str) -> None:
     uploaded = st.file_uploader(
         upload_label,
         key=f'upload_{model_type}',
-        help='Anexe o arquivo oficial do Bling apenas uma vez. Depois ele ficará disponível para reutilizar, remover ou substituir.',
+        type=['csv', 'xlsx', 'xls', 'xlsm', 'xlsb', 'zip'],
+        help=upload_help,
     )
 
     if uploaded is not None:
         try:
             save_user_model(model_type, uploaded.name, uploaded.getvalue())
             if model_type == PRICE_MODEL_TYPE:
-                st.success('Modelo Bling de atualização de preços salvo com sucesso.')
+                st.success('Modelo Bling de atualização de preços salvo com sucesso. ZIP original aceito quando houver planilha interna válida.')
                 st.warning(PRICE_MODEL_WARNING)
             else:
                 st.success('Modelo Bling salvo com sucesso. Indo para Origem dos dados...')
