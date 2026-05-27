@@ -28,6 +28,7 @@ CALLBACK_DONE_KEY = 'bling_oauth_callback_done_for_code'
 RETURN_CONTEXT_KEY = 'bling_oauth_return_context'
 RESTORED_AFTER_CALLBACK_KEY = 'bling_oauth_restored_after_callback'
 STATE_SOURCE = 'ia_planilhas_bling'
+CONTEXT_BLING_API = 'bling_api'
 
 
 def _secret(name: str, default: str = '') -> str:
@@ -219,6 +220,13 @@ def _clear_legacy_query_params() -> None:
             pass
 
 
+def _clear_non_api_flow_state() -> None:
+    st.session_state.pop('bling_finish_mode', None)
+    st.session_state.pop('skip_direct_bling_connection_this_flow', None)
+    for key in ('home_modelo_universal_df', 'df_modelo_universal', 'modelo_universal_df'):
+        st.session_state.pop(key, None)
+
+
 def _force_start_query_params() -> None:
     try:
         st.query_params['operation_v2'] = 'wizard_cadastro_estoque'
@@ -244,14 +252,7 @@ def _restore_oauth_return_context(state_payload: dict[str, Any]) -> None:
     st.session_state['home_active_operation_v2'] = 'wizard_cadastro_estoque'
     st.session_state['home_allow_operation_v2_session'] = True
     st.session_state['home_single_page_flow_active'] = True
-    st.session_state['home_entry_context'] = 'bling'
-
-    if return_to == 'start':
-        st.session_state.pop('bling_wizard_step', None)
-        st.session_state.pop('bling_finish_mode', None)
-        st.session_state.pop('skip_direct_bling_connection_this_flow', None)
-        _force_start_query_params()
-        return
+    st.session_state['home_entry_context'] = CONTEXT_BLING_API
 
     if return_to == 'download':
         restored = restore_download_oauth_return(session_id)
@@ -260,6 +261,8 @@ def _restore_oauth_return_context(state_payload: dict[str, Any]) -> None:
         _force_download_query_params()
         return
 
+    _clear_non_api_flow_state()
+    st.session_state.pop('bling_wizard_step', None)
     _force_start_query_params()
 
 
