@@ -9,50 +9,26 @@ from bling_app_zero.ui.cadastro_wizard_state import (
     CADASTRO_ORIGEM_PRICED_KEY,
     cadastro_mapping_ready,
     enforce_cadastro_model_columns,
-    get_universal_final_df,
     render_row_count_blocker,
     store_expected_source_rows,
     valid_df,
     valid_model,
 )
-from bling_app_zero.ui.home_shared import download_final
 from bling_app_zero.ui.shared_mapping import render_shared_cadastro_mapping
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/cadastro_mapping_step.py'
 
 
-def _render_quick_download_after_mapping(df_origem: pd.DataFrame) -> None:
-    """Mostra o download logo após o mapeamento, antes da etapa de IA Real.
-
-    A etapa final de Download continua existindo no fim do fluxo. Este bloco é um
-    atalho operacional para quando o usuário já conferiu o mapeamento e quer
-    baixar sem precisar rolar até a última seção.
-    """
+def _render_post_mapping_notice() -> None:
+    """Mantém o usuário no fluxo seguro: revisão, preview e só depois download."""
     if not cadastro_mapping_ready():
-        st.info('Confirme o mapeamento para liberar o download imediato antes da revisão por IA.')
+        st.info('Confirme o mapeamento para liberar a revisão, o preview e o download final.')
         return
 
-    df_final = enforce_cadastro_model_columns(get_universal_final_df())
-    if not valid_df(df_final):
-        st.warning('O arquivo final ainda não foi gerado. Confirme o mapeamento para liberar o download.')
-        return
-
-    if render_row_count_blocker(df_final):
-        return
-
-    with st.container(border=True):
-        st.markdown('#### Download imediato')
-        st.caption(
-            'Atalho liberado após o mapeamento confirmado. '
-            'Você pode baixar agora sem passar pela Revisão final / IA Real. '
-            'A revisão inteligente continua disponível abaixo como etapa opcional de conferência.'
-        )
-        c1, c2 = st.columns(2)
-        with c1:
-            st.metric('Produtos no arquivo', len(df_final))
-        with c2:
-            st.metric('Produtos da origem', len(df_origem))
-        download_final(df_final, 'universal', 'atalho_pos_mapeamento_universal')
+    st.success('Mapeamento confirmado. O download será liberado no final, após a revisão e o preview blindado.')
+    st.caption(
+        'BLINGFIX: o download imediato foi removido desta etapa para evitar arquivo baixado antes da conferência final.'
+    )
 
 
 def _df_for_mapping(df_origem: pd.DataFrame) -> pd.DataFrame:
@@ -99,7 +75,7 @@ def render_cadastro_mapeamento_step() -> None:
         if render_row_count_blocker(df_final):
             return
 
-    _render_quick_download_after_mapping(df_origem)
+    _render_post_mapping_notice()
 
 
 __all__ = ['render_cadastro_mapeamento_step']
