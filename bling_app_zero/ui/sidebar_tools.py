@@ -44,7 +44,7 @@ def _render_support_diagnostic_panel_lazy() -> None:
 SIDEBAR_TOOLS: tuple[SidebarTool, ...] = (
     SidebarTool('Produção MapeiaAI', _render_production_sidebar_lazy, admin_only=False),
     SidebarTool('Créditos MapeiaAI', _render_credits_sidebar_lazy, admin_only=True),
-    SidebarTool('Enviar diagnóstico', _render_support_diagnostic_panel_lazy, admin_only=True),
+    SidebarTool('Enviar diagnóstico', _render_support_diagnostic_panel_lazy, admin_only=False),
 )
 
 
