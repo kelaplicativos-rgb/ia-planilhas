@@ -30,6 +30,7 @@ HTML_DISCOVERY_PAGE_CAP = 350
 HTML_DISCOVERY_BATCH = 36
 FEED_BATCH = 36
 SMART_URL_TARGET = 220
+FULL_SCAN_URL_TARGET = 2500
 MIN_HTML_PRODUCTS_TO_SKIP_FEED = 60
 
 
@@ -185,12 +186,31 @@ def discover_from_html(starts: list[str], max_pages: int, max_products: int) -> 
     return products[:max_products]
 
 
+def _smart_target(max_products: int) -> int:
+    """Define o alvo da descoberta sem travar a busca ampla.
+
+    Antes, o fallback genérico sempre parava em 220 URLs, mesmo quando o fluxo
+    vinha com `Buscar todos os produtos encontrados`. O pipeline usa um valor alto
+    de `max_products` para esse modo; por isso, quando o pedido passa de 220,
+    liberamos uma varredura maior com teto seguro.
+    """
+    try:
+        requested = int(max_products or 0)
+    except Exception:
+        requested = SMART_URL_TARGET
+    if requested <= 0:
+        return SMART_URL_TARGET
+    if requested <= SMART_URL_TARGET:
+        return requested
+    return min(requested, FULL_SCAN_URL_TARGET)
+
+
 def discover_product_urls(raw_urls: str, max_pages: int, max_products: int) -> list[str]:
     starts = [norm_url(url) for url in split_urls(raw_urls) if norm_url(url)]
     if not starts:
         return []
 
-    smart_target = min(max_products, SMART_URL_TARGET)
+    smart_target = _smart_target(max_products)
     direct_products = [url for url in starts if productish_url(url)]
     only_direct_products = bool(direct_products) and len(direct_products) == len(starts)
     if only_direct_products:
