@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.operation_contract import MODEL_OPERATION_BY_TYPE, operation_from_model_type
 from bling_app_zero.ui.home_models import (
     DESTINATION_MODEL_UPLOAD_BYTES_KEY,
     DESTINATION_MODEL_UPLOAD_NAME_KEY,
@@ -28,11 +29,6 @@ MODEL_FILE_NAMES = {
     'cadastro': 'modelo_bling_cadastro',
     'estoque': 'modelo_bling_estoque',
     'precos': 'modelo_bling_atualizar_precos',
-}
-MODEL_OPERATION_BY_TYPE = {
-    'cadastro': 'cadastro',
-    'estoque': 'estoque',
-    'precos': 'atualizacao_preco',
 }
 SPREADSHEET_EXTENSIONS = {'.csv', '.xlsx', '.xls', '.xlsm', '.xlsb'}
 VALID_EXTENSIONS = SPREADSHEET_EXTENSIONS | {'.zip'}
@@ -163,7 +159,7 @@ def csv_bytes(df: pd.DataFrame) -> bytes:
 
 
 def _sync_operation_to_flow(model_type: str) -> None:
-    operation = MODEL_OPERATION_BY_TYPE.get(model_type, 'universal')
+    operation = operation_from_model_type(model_type)
     st.session_state['home_slim_flow_operation'] = operation
     st.session_state['home_detected_operation'] = operation
     st.session_state['operacao_final'] = operation
@@ -203,13 +199,14 @@ def save_user_model(model_type: str, file_name: str, file_bytes: bytes) -> pd.Da
     ensure_dir()
     target = path_for_model(model_type, file_name, file_bytes)
     target.write_bytes(file_bytes)
+    operation = operation_from_model_type(model_type)
     manifest = load_manifest()
     manifest[model_type] = {
         'name': file_name,
         'path': str(target),
         'saved_at': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
         'format': safe_suffix(file_name, file_bytes).lstrip('.'),
-        'operation': MODEL_OPERATION_BY_TYPE.get(model_type, 'universal'),
+        'operation': operation,
     }
     save_manifest(manifest)
     sync_model_to_flow(model_type, df, file_name)
@@ -219,7 +216,7 @@ def save_user_model(model_type: str, file_name: str, file_bytes: bytes) -> pd.Da
         status='OK',
         details={
             'model_type': model_type,
-            'operation': MODEL_OPERATION_BY_TYPE.get(model_type, 'universal'),
+            'operation': operation,
             'file_name': file_name,
             'format': safe_suffix(file_name, file_bytes),
             'columns': [str(c) for c in df.columns],
@@ -243,7 +240,7 @@ def get_user_model(model_type: str) -> tuple[pd.DataFrame | None, dict[str, str]
         file_bytes = path.read_bytes()
         df = read_model_bytes(path.name, file_bytes)
         sync_model_to_flow(model_type, df, str(info.get('name') or path.name))
-        return df.fillna(''), {'name': str(info.get('name') or path.name), 'path': str(path), 'saved_at': str(info.get('saved_at') or ''), 'format': str(info.get('format') or safe_suffix(path.name, file_bytes).lstrip('.')), 'operation': MODEL_OPERATION_BY_TYPE.get(model_type, 'universal')}
+        return df.fillna(''), {'name': str(info.get('name') or path.name), 'path': str(path), 'saved_at': str(info.get('saved_at') or ''), 'format': str(info.get('format') or safe_suffix(path.name, file_bytes).lstrip('.')), 'operation': operation_from_model_type(model_type)}
     except Exception as exc:
         add_audit_event('user_bling_model_read_error', area='MODELOS_BLING', status='ERRO', details={'model_type': model_type, 'error': str(exc), 'responsible_file': RESPONSIBLE_FILE})
         return None, info
