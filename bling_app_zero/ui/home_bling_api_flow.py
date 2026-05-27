@@ -6,47 +6,37 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.bling_api_contract import (
+    DIRECT_OPERATION_LABELS,
+    OP_ATUALIZACAO_PRECO,
+    direct_api_contract_model,
+    direct_operation_options,
+    normalize_direct_operation,
+)
 from bling_app_zero.core.bling_oauth import build_authorization_url, connection_status, disconnect
 from bling_app_zero.ui.cadastro_wizard_state import CADASTRO_MODELO_KEY
+from bling_app_zero.ui.flow_context import (
+    CONTEXT_BLING_API,
+    CONTEXT_BLING_CSV,
+    CONTEXT_UNIVERSAL,
+    FINISH_MODE_API,
+    FINISH_MODE_CSV,
+    FINISH_MODE_KEY,
+    HOME_ENTRY_CONTEXT_KEY,
+    SKIP_DIRECT_BLING_KEY,
+    activate_api_finish_mode,
+    clear_finish_mode,
+    entry_context,
+    finish_mode,
+)
 from bling_app_zero.ui.home_wizard_constants import STEP_ORIGEM, WIZARD_STEP_KEY
 from bling_app_zero.ui.home_wizard_scroll import set_scroll_target
-from bling_app_zero.universal.model_contract_detector import MODEL_CONTRACT_TYPE_KEY, normalize_contract_operation
+from bling_app_zero.universal.model_contract_detector import MODEL_CONTRACT_TYPE_KEY
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_bling_api_flow.py'
-PRICE_UPDATE_OPERATION = 'atualizacao_preco'
-FINISH_MODE_KEY = 'bling_finish_mode'
-FINISH_MODE_API = 'api_direct'
-FINISH_MODE_CSV = 'csv_download'
-SKIP_DIRECT_BLING_KEY = 'skip_direct_bling_connection_this_flow'
+PRICE_UPDATE_OPERATION = OP_ATUALIZACAO_PRECO
 DIRECT_API_CONTRACT_KEY = 'direct_bling_api_contract_df'
 DIRECT_API_CONTRACT_ACTIVE_KEY = 'direct_bling_api_contract_active'
-HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
-CONTEXT_BLING_API = 'bling_api'
-CONTEXT_BLING_CSV = 'bling_csv'
-CONTEXT_UNIVERSAL = 'universal'
-
-DIRECT_OPERATION_LABELS = {
-    'cadastro': 'Cadastrar produtos',
-    'estoque': 'Atualizar estoque',
-    'atualizacao_preco': 'Atualizar preços',
-}
-
-API_CONTRACT_COLUMNS = {
-    'cadastro': [
-        'Nome',
-        'Código',
-        'Preço',
-        'Quantidade',
-        'GTIN',
-        'Descrição',
-        'Marca',
-        'Categoria',
-        'Imagens',
-        'Depósito',
-    ],
-    'estoque': ['ID produto', 'Código', 'Quantidade', 'Depósito'],
-    'atualizacao_preco': ['ID produto', 'Código', 'Preço'],
-}
 
 DIRECT_CONTRACT_SESSION_KEYS = (
     DIRECT_API_CONTRACT_KEY,
@@ -67,41 +57,19 @@ DIRECT_CONTRACT_SESSION_KEYS = (
 )
 
 
-def _entry_context() -> str:
-    value = str(st.session_state.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower()
-    if value == 'bling':
-        return CONTEXT_BLING_API
-    if value in {CONTEXT_BLING_API, CONTEXT_BLING_CSV, CONTEXT_UNIVERSAL}:
-        return value
-    return CONTEXT_BLING_API
-
-
 def _direct_operation() -> str:
-    choice = normalize_contract_operation(st.session_state.get('direct_bling_operation_choice'))
+    choice = normalize_direct_operation(st.session_state.get('direct_bling_operation_choice'))
     if choice in DIRECT_OPERATION_LABELS:
         return choice
-    op = normalize_contract_operation(st.session_state.get('home_slim_flow_operation'))
-    if op in DIRECT_OPERATION_LABELS:
-        return op
-    return 'cadastro'
+    return normalize_direct_operation(st.session_state.get('home_slim_flow_operation'))
 
 
 def is_bling_api_entry() -> bool:
-    return _entry_context() == CONTEXT_BLING_API
+    return entry_context() == CONTEXT_BLING_API
 
 
 def is_api_direct_mode() -> bool:
-    return (
-        str(st.session_state.get(FINISH_MODE_KEY) or '').strip() == FINISH_MODE_API
-        and bool(connection_status().get('connected'))
-        and is_bling_api_entry()
-    )
-
-
-def direct_api_contract_model(operation: str | None = None) -> pd.DataFrame:
-    op = normalize_contract_operation(operation or _direct_operation()) or 'cadastro'
-    columns = API_CONTRACT_COLUMNS.get(op, API_CONTRACT_COLUMNS['cadastro'])
-    return pd.DataFrame(columns=columns)
+    return finish_mode() == FINISH_MODE_API and bool(connection_status().get('connected')) and is_bling_api_entry()
 
 
 def clear_direct_api_contract() -> None:
@@ -114,7 +82,7 @@ def clear_direct_api_contract() -> None:
 
 
 def apply_direct_api_contract(operation: str | None = None) -> pd.DataFrame:
-    op = normalize_contract_operation(operation or _direct_operation()) or 'cadastro'
+    op = normalize_direct_operation(operation or _direct_operation())
     model = direct_api_contract_model(op)
     st.session_state[DIRECT_API_CONTRACT_ACTIVE_KEY] = True
     st.session_state[DIRECT_API_CONTRACT_KEY] = model.copy()
@@ -185,17 +153,16 @@ def render_bling_connection_step(section_title) -> None:
             st.success('Bling conectado. Escolha o tipo de envio direto.')
             operation = st.radio(
                 'O que deseja fazer no Bling?',
-                options=list(DIRECT_OPERATION_LABELS.keys()),
+                options=direct_operation_options(),
                 format_func=lambda value: DIRECT_OPERATION_LABELS.get(value, value),
                 horizontal=True,
                 key='direct_bling_operation_choice',
             )
-            if str(st.session_state.get(FINISH_MODE_KEY) or '').strip() == FINISH_MODE_API:
+            if finish_mode() == FINISH_MODE_API:
                 apply_direct_api_contract(operation)
 
             if st.button('Usar envio direto pela API', use_container_width=True, key='use_direct_bling_mode'):
-                st.session_state[FINISH_MODE_KEY] = FINISH_MODE_API
-                st.session_state.pop(SKIP_DIRECT_BLING_KEY, None)
+                activate_api_finish_mode()
                 apply_direct_api_contract(operation)
                 st.session_state[WIZARD_STEP_KEY] = STEP_ORIGEM
                 set_scroll_target(STEP_ORIGEM)
@@ -205,7 +172,7 @@ def render_bling_connection_step(section_title) -> None:
             if st.button('Desconectar Bling', use_container_width=True, key='entry_disconnect_bling'):
                 disconnect()
                 clear_direct_api_contract()
-                st.session_state.pop(FINISH_MODE_KEY, None)
+                clear_finish_mode()
                 st.rerun()
             return
 
