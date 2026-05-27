@@ -29,6 +29,11 @@ MODEL_FILE_NAMES = {
     'estoque': 'modelo_bling_estoque',
     'precos': 'modelo_bling_atualizar_precos',
 }
+MODEL_OPERATION_BY_TYPE = {
+    'cadastro': 'cadastro',
+    'estoque': 'estoque',
+    'precos': 'atualizacao_preco',
+}
 SPREADSHEET_EXTENSIONS = {'.csv', '.xlsx', '.xls', '.xlsm', '.xlsb'}
 VALID_EXTENSIONS = SPREADSHEET_EXTENSIONS | {'.zip'}
 FORMAT_ERROR = 'Formato nao aceito. Use CSV, XLSX, XLS, XLSM, XLSB ou o ZIP original do Bling.'
@@ -157,6 +162,14 @@ def csv_bytes(df: pd.DataFrame) -> bytes:
     return buffer.getvalue().encode('utf-8-sig')
 
 
+def _sync_operation_to_flow(model_type: str) -> None:
+    operation = MODEL_OPERATION_BY_TYPE.get(model_type, 'universal')
+    st.session_state['home_slim_flow_operation'] = operation
+    st.session_state['home_detected_operation'] = operation
+    st.session_state['operacao_final'] = operation
+    st.session_state['tipo_operacao_final'] = operation
+
+
 def sync_model_to_flow(model_type: str, df_model: pd.DataFrame, file_name: str) -> None:
     df_model = df_model.copy().fillna('')
     if model_type == 'cadastro':
@@ -176,10 +189,7 @@ def sync_model_to_flow(model_type: str, df_model: pd.DataFrame, file_name: str) 
         st.session_state['home_modelo_atualizacao_preco_df'] = df_model.copy()
         st.session_state['df_modelo_atualizacao_preco'] = df_model.copy()
         st.session_state['modelo_atualizacao_preco_df'] = df_model.copy()
-        st.session_state['home_slim_flow_operation'] = 'atualizacao_preco'
-        st.session_state['home_detected_operation'] = 'atualizacao_preco'
-        st.session_state['operacao_final'] = 'atualizacao_preco'
-        st.session_state['tipo_operacao_final'] = 'atualizacao_preco'
+    _sync_operation_to_flow(model_type)
     st.session_state[DESTINATION_MODEL_UPLOAD_NAME_KEY] = file_name
     st.session_state[DESTINATION_MODEL_UPLOAD_BYTES_KEY] = csv_bytes(df_model)
 
@@ -199,6 +209,7 @@ def save_user_model(model_type: str, file_name: str, file_bytes: bytes) -> pd.Da
         'path': str(target),
         'saved_at': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
         'format': safe_suffix(file_name, file_bytes).lstrip('.'),
+        'operation': MODEL_OPERATION_BY_TYPE.get(model_type, 'universal'),
     }
     save_manifest(manifest)
     sync_model_to_flow(model_type, df, file_name)
@@ -206,7 +217,14 @@ def save_user_model(model_type: str, file_name: str, file_bytes: bytes) -> pd.Da
         'user_bling_model_saved',
         area='MODELOS_BLING',
         status='OK',
-        details={'model_type': model_type, 'file_name': file_name, 'format': safe_suffix(file_name, file_bytes), 'columns': [str(c) for c in df.columns], 'responsible_file': RESPONSIBLE_FILE},
+        details={
+            'model_type': model_type,
+            'operation': MODEL_OPERATION_BY_TYPE.get(model_type, 'universal'),
+            'file_name': file_name,
+            'format': safe_suffix(file_name, file_bytes),
+            'columns': [str(c) for c in df.columns],
+            'responsible_file': RESPONSIBLE_FILE,
+        },
     )
     return df.fillna('')
 
@@ -225,7 +243,7 @@ def get_user_model(model_type: str) -> tuple[pd.DataFrame | None, dict[str, str]
         file_bytes = path.read_bytes()
         df = read_model_bytes(path.name, file_bytes)
         sync_model_to_flow(model_type, df, str(info.get('name') or path.name))
-        return df.fillna(''), {'name': str(info.get('name') or path.name), 'path': str(path), 'saved_at': str(info.get('saved_at') or ''), 'format': str(info.get('format') or safe_suffix(path.name, file_bytes).lstrip('.'))}
+        return df.fillna(''), {'name': str(info.get('name') or path.name), 'path': str(path), 'saved_at': str(info.get('saved_at') or ''), 'format': str(info.get('format') or safe_suffix(path.name, file_bytes).lstrip('.')), 'operation': MODEL_OPERATION_BY_TYPE.get(model_type, 'universal')}
     except Exception as exc:
         add_audit_event('user_bling_model_read_error', area='MODELOS_BLING', status='ERRO', details={'model_type': model_type, 'error': str(exc), 'responsible_file': RESPONSIBLE_FILE})
         return None, info
@@ -251,7 +269,7 @@ def remove_user_model(model_type: str) -> None:
             'modelo_atualizacao_preco_df',
         ),
     }
-    for key in keys_by_type.get(model_type, ()): 
+    for key in keys_by_type.get(model_type, ()):
         st.session_state.pop(key, None)
     add_audit_event('user_bling_model_removed', area='MODELOS_BLING', status='OK', details={'model_type': model_type, 'responsible_file': RESPONSIBLE_FILE})
 
