@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.shared_price_calculator import normalize_shared_price_config
@@ -26,7 +27,7 @@ CALCULATOR_MODE_LABELS = {value: key for key, value in CALCULATOR_MODE_MAP.items
 @dataclass(frozen=True)
 class HomePricingDefaults:
     enabled: bool = False
-    calculator_mode: str = 'fixed_sale_price'
+    calculator_mode: str = 'nominal_profit'
     marketplace_fee_percent: float = 0.0
     tax_percent: float = 0.0
     freight_cost: float = 0.0
@@ -90,11 +91,11 @@ def disable_home_pricing() -> dict[str, Any]:
 
 
 def _mode_label(config: dict[str, Any]) -> str:
-    mode = str(config.get('calculator_mode') or 'fixed_sale_price')
-    return CALCULATOR_MODE_LABELS.get(mode, 'Preço fixo')
+    mode = str(config.get('calculator_mode') or 'nominal_profit')
+    return CALCULATOR_MODE_LABELS.get(mode, 'Lucro nominal')
 
 
-def _config_from_global_result() -> dict[str, Any]:
+def _config_from_global_result(*, source_df: pd.DataFrame | None = None) -> dict[str, Any]:
     result = st.session_state.get(GLOBAL_PRICE_RESULT_KEY)
     if result is None:
         current = get_home_pricing_config()
@@ -102,42 +103,59 @@ def _config_from_global_result() -> dict[str, Any]:
         return current
 
     sale_price = float(getattr(result, 'sale_price', 0.0) or 0.0)
+    cost = float(getattr(result, 'cost', 0.0) or 0.0)
+    profit = float(getattr(result, 'profit', 0.0) or 0.0)
+    margin = float(getattr(result, 'margin', 0.0) or 0.0)
     fee_percent = float(getattr(result, 'marketplace_fee_percent', 0.0) or 0.0)
     fixed_fee = float(getattr(result, 'fixed_fee', 0.0) or 0.0)
     freight = float(getattr(result, 'freight', 0.0) or 0.0)
     tax_value = float(getattr(result, 'tax', 0.0) or 0.0)
     tax_percent = (tax_value / sale_price * 100.0) if sale_price else 0.0
     extra_cost = float(getattr(result, 'extra_cost', 0.0) or 0.0)
+    has_source = isinstance(source_df, pd.DataFrame) and not source_df.empty
+
+    if has_source:
+        calculator_mode = 'nominal_profit'
+        desired_sale_price = 0.0
+        desired_nominal_profit = max(profit, 0.0)
+        desired_contribution_margin_percent = max(margin, 0.0)
+    else:
+        calculator_mode = 'fixed_sale_price'
+        desired_sale_price = sale_price
+        desired_nominal_profit = 0.0
+        desired_contribution_margin_percent = 0.0
 
     return normalize_home_pricing_config(
         {
             'enabled': True,
-            'calculator_mode': 'fixed_sale_price',
+            'calculator_mode': calculator_mode,
             'marketplace_fee_percent': fee_percent,
             'tax_percent': tax_percent,
-            'freight_cost': freight,
+            'freight_cost': freight + fixed_fee + extra_cost,
             'other_sale_fees_percent': 0.0,
-            'desired_nominal_profit': 0.0,
-            'desired_contribution_margin_percent': 0.0,
-            'desired_sale_price': sale_price,
+            'desired_nominal_profit': desired_nominal_profit,
+            'desired_contribution_margin_percent': desired_contribution_margin_percent,
+            'desired_sale_price': desired_sale_price,
             'supplier_term_days': 0.0,
             'stock_turnover_days': 0.0,
             'promo_discount_percent': 0.0,
-            'global_fixed_fee_cost': fixed_fee,
-            'global_extra_cost': extra_cost,
+            'source_sample_cost': cost,
         }
     )
 
 
-def render_home_pricing_config_form() -> dict[str, Any]:
+def render_home_pricing_config_form(source_df: pd.DataFrame | None = None) -> dict[str, Any]:
     st.markdown('##### Calculadora única de preço')
-    st.caption('Esta etapa usa a mesma calculadora global exibida na Home. As calculadoras antigas foram preservadas apenas por compatibilidade interna.')
-    render_quick_price_calculator(embedded=True)
-    config = _config_from_global_result()
+    st.caption('Com planilha, a calculadora localiza a coluna de custo e calcula linha por linha. Sem planilha, funciona como simulação avulsa na tela.')
+    render_quick_price_calculator(embedded=True, source_df=source_df)
+    config = _config_from_global_result(source_df=source_df)
     if bool(config.get('enabled', False)):
-        st.success('Preço da calculadora única disponível para o restante do fluxo.')
+        if isinstance(source_df, pd.DataFrame) and not source_df.empty:
+            st.success(f'Calculadora pronta para aplicar preço linha a linha. Modo: {_mode_label(config)}.')
+        else:
+            st.success('Simulação avulsa concluída. O preço calculado aparece apenas na tela enquanto não houver fonte de dados.')
     else:
-        st.warning('Calcule um preço para liberar a referência de precificação global.')
+        st.warning('Calcule um preço para liberar a referência de precificação.')
     return config
 
 
