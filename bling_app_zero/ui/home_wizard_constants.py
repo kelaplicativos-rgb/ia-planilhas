@@ -50,17 +50,17 @@ STEP_LABELS = {
     STEP_MODELO: 'Modelo de destino',
     STEP_OPERACAO: 'Etapa legada ocultada',
     STEP_ORIGEM: 'Origem dos dados',
-    STEP_ENTRADA: 'Dados do fornecedor',
-    STEP_PRECIFICACAO: 'Preço',
-    STEP_MAPEAMENTO: 'Mapear campos',
+    STEP_ENTRADA: 'Dados importados',
+    STEP_PRECIFICACAO: 'Precificação',
+    STEP_MAPEAMENTO: 'Mapeamento',
     STEP_GERAR_ESTOQUE: 'Etapa legada ocultada',
-    STEP_REGRAS: 'IA / Revisão',
-    STEP_PREVIEW: 'Preview',
+    STEP_REGRAS: 'Revisão final',
+    STEP_PREVIEW: 'Prévia final',
     STEP_DOWNLOAD: 'Download',
     STEP_PROCESSAR: 'Processar',
 }
 
-DEFAULT_PENDING_MESSAGE = 'Conclua esta parte para continuar.'
+DEFAULT_PENDING_MESSAGE = 'Conclua esta etapa para continuar.'
 
 RESET_OUTPUT_KEYS = [
     FLOW_ORIGIN_KEY,
