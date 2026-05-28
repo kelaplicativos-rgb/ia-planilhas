@@ -24,7 +24,7 @@ from bling_app_zero.ui.home_models import (
     get_home_universal_model,
 )
 from bling_app_zero.ui.home_shared import df_signature, preview_df
-from bling_app_zero.ui.home_wizard_constants import STEP_PRECIFICACAO
+from bling_app_zero.ui.home_wizard_constants import STEP_LABELS, STEP_PRECIFICACAO, WIZARD_STEP_KEY
 from bling_app_zero.ui.home_wizard_scroll import set_scroll_target
 from bling_app_zero.ui.smart_upload import SmartUploadResult
 
@@ -42,6 +42,10 @@ SITE_SOURCE_OPERATIONS = ('universal', 'cadastro', 'estoque', 'fornecedor')
 RESPONSIBLE_FILE = 'bling_app_zero/ui/cadastro_entry_step.py'
 ENTRY_AUTOSCROLL_SIGNATURE_KEY = 'cadastro_entry_autoscroll_signature'
 DIRECT_API_CONTRACT_KEY = 'direct_bling_api_contract_df'
+
+
+def _step_label(step: str) -> str:
+    return str(STEP_LABELS.get(step, step)).strip()
 
 
 def _copy_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
@@ -156,13 +160,14 @@ def _destination_model(upload) -> pd.DataFrame:
     return select_cadastro_model(upload)
 
 
-def _auto_scroll_after_source_loaded(df_origem: pd.DataFrame, df_modelo: pd.DataFrame) -> None:
+def _auto_advance_after_source_loaded(df_origem: pd.DataFrame, df_modelo: pd.DataFrame) -> None:
     if not valid_df(df_origem) or not valid_model(df_modelo):
         return
     signature = df_signature(df_origem) + ':' + df_signature(df_modelo)
     if st.session_state.get(ENTRY_AUTOSCROLL_SIGNATURE_KEY) == signature:
         return
     st.session_state[ENTRY_AUTOSCROLL_SIGNATURE_KEY] = signature
+    st.session_state[WIZARD_STEP_KEY] = STEP_PRECIFICACAO
     set_scroll_target(STEP_PRECIFICACAO)
     try:
         st.query_params['step'] = STEP_PRECIFICACAO
@@ -183,34 +188,28 @@ def render_cadastro_entrada_step() -> None:
     store_cadastro_context(df_origem, df_modelo, None)
 
     if valid_df(df_origem):
-        origem_nome = 'Busca do site' if site_origin else 'Dados do fornecedor'
-        if _is_api_context():
-            st.success(f'{origem_nome} carregados com sucesso. {len(df_origem)} linha(s) encontradas. Próximo passo: mapear os campos da API do Bling.')
-        elif _is_universal_context():
-            st.success(f'{origem_nome} carregados com sucesso. {len(df_origem)} linha(s) encontradas. Próximo passo: mapear para o modelo universal.')
-        else:
-            st.success(f'{origem_nome} carregados com sucesso. {len(df_origem)} linha(s) encontradas. Próximo passo: calcular preço ou mapear com o modelo Bling.')
+        origem_nome = 'Busca do site' if site_origin else 'Dados importados'
+        proxima_etapa = _step_label(STEP_PRECIFICACAO)
+        st.success(f'{origem_nome} carregados com sucesso. {len(df_origem)} linha(s) encontradas. Próxima etapa: {proxima_etapa}.')
         if site_origin:
             resolved_from = str(st.session_state.get('cadastro_entry_site_source_resolved_from') or '').strip()
             if resolved_from:
                 st.caption(f'Origem do site vinculada ao fluxo: {resolved_from}.')
-        with st.expander('Ver dados do fornecedor', expanded=False):
-            preview_df('Dados do fornecedor', df_origem)
-        _auto_scroll_after_source_loaded(df_origem, df_modelo)
+        with st.expander('Ver dados importados', expanded=False):
+            preview_df('Dados importados', df_origem)
+        _auto_advance_after_source_loaded(df_origem, df_modelo)
     elif site_origin:
         st.warning('Busque os dados no site para continuar.')
     elif getattr(upload, 'attachments', None):
         st.warning('Arquivo recebido, mas ainda não encontrei uma tabela válida.')
     else:
-        st.warning('Envie os dados do fornecedor para continuar.')
+        st.warning('Envie os dados para continuar.')
 
     if not valid_model(df_modelo):
         if _is_api_context():
             st.error('Contrato interno da API não foi carregado. Volte ao início do caminho Bling API e selecione o envio direto.')
-        elif _is_universal_context():
-            st.error('Modelo Universal ausente. Volte na primeira etapa e envie o modelo universal.')
         else:
-            st.error('Modelo Bling ausente. Volte na primeira etapa e envie um modelo oficial do Bling.')
+            st.error('Modelo de destino ausente. Volte na primeira etapa e envie o modelo que será preenchido no final.')
 
 
 __all__ = [
