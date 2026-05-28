@@ -272,6 +272,25 @@ def _render_validation_errors(errors: list[str], operation: str) -> None:
             st.warning(error)
 
 
+def _render_final_checklist(download_df: pd.DataFrame, operation: str, errors: list[str]) -> bool:
+    st.markdown('##### Checklist final obrigatório')
+    if errors:
+        st.error('Download bloqueado. Corrija os itens abaixo antes de baixar o CSV final.')
+        _render_validation_errors(errors, operation)
+        st.caption('Volte para Mapeamento ou Revisão final, ajuste os campos e gere a prévia final novamente.')
+        add_audit_event(
+            'download_blocked_by_final_checklist',
+            area='DOWNLOAD',
+            status='BLOQUEADO',
+            details={'operation': operation, 'errors': errors[:20], 'row_count': len(download_df), 'home_entry_context': _entry_context()},
+        )
+        return False
+
+    st.success('Checklist aprovado: arquivo final validado para download.')
+    st.caption('CSV com separador ; e codificação UTF-8-SIG será gerado a partir da base validada.')
+    return True
+
+
 def _render_csv_final(df: pd.DataFrame, operation: str, key: str) -> None:
     operation = normalize_operation(operation or st.session_state.get(FINAL_DOWNLOAD_OPERATION_KEY) or OP_UNIVERSAL)
     operation_title = operation_label(operation)
@@ -292,7 +311,9 @@ def _render_csv_final(df: pd.DataFrame, operation: str, key: str) -> None:
     with st.expander('Colunas do modelo que serão preenchidas', expanded=False):
         st.caption(', '.join(model_columns))
 
-    _render_validation_errors(validate_final_df(download_df, operation), operation)
+    validation_errors = validate_final_df(download_df, operation)
+    if not _render_final_checklist(download_df, operation, validation_errors):
+        return
 
     signature = df_signature(download_df)
     rules_sig = rules_signature()
