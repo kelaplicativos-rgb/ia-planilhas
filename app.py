@@ -7,6 +7,7 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_oauth import process_oauth_callback
 from bling_app_zero.core.cache_control import clear_cache_once_per_version
 from bling_app_zero.core.mapping_widget_state import restore_mapping_widget_state_from_snapshot
+from bling_app_zero.ui.alerts import enforce_attention_alert_policy
 from bling_app_zero.ui.home import render_home
 from bling_app_zero.ui.layout import inject_streamlit_toolbar_fix
 from bling_app_zero.ui.sidebar_tools import render_sidebar_tools
@@ -14,6 +15,7 @@ from bling_app_zero.ui.sidebar_tools import render_sidebar_tools
 
 def main() -> None:
     st.set_page_config(**PAGE_CONFIG)
+    enforce_attention_alert_policy()
     inject_streamlit_toolbar_fix()
     clear_cache_once_per_version(APP_VERSION)
 
