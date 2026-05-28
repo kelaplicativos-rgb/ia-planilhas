@@ -168,7 +168,7 @@ def render_bling_connection_step(section_title) -> None:
                 set_scroll_target(STEP_ORIGEM)
                 st.rerun()
 
-            st.caption('Para gerar arquivo manual, volte para a Home e use Modelo Universal.')
+            st.caption('Para gerar arquivo manual, volte para a Home e use modelo de destino.')
             if st.button('Desconectar Bling', use_container_width=True, key='entry_disconnect_bling'):
                 disconnect()
                 clear_direct_api_contract()
@@ -183,7 +183,7 @@ def render_bling_connection_step(section_title) -> None:
             auth_url = ''
         render_same_tab_connect_button(auth_url)
         st.markdown('<div style="height:.55rem"></div>', unsafe_allow_html=True)
-        st.caption('Sem conexão com o Bling, este caminho fica bloqueado. Para gerar arquivo manual, volte para a Home e use Modelo Universal.')
+        st.caption('Sem conexão com o Bling, este caminho fica bloqueado. Para gerar arquivo manual, volte para a Home e use modelo de destino.')
         add_audit_event(
             'bling_api_connection_required',
             area='BLING_API',
