@@ -42,19 +42,19 @@ def _context_final_key() -> str:
 def _context_title() -> str:
     context = _entry_context()
     if context == CONTEXT_BLING_API:
-        return 'Preview do envio direto ao Bling'
+        return 'Prévia final do envio direto ao Bling'
     if context == CONTEXT_BLING_CSV:
-        return 'Preview do CSV Bling'
-    return 'Preview do Modelo Universal'
+        return 'Prévia final do CSV Bling'
+    return 'Prévia final'
 
 
 def _context_caption() -> str:
     context = _entry_context()
     if context == CONTEXT_BLING_API:
-        return 'Confira os dados que serão enviados pela API. Este caminho não depende de CSV nem modelo de planilha.'
+        return 'Confira os dados que serão enviados pela API. O envio usará exatamente esta base revisada.'
     if context == CONTEXT_BLING_CSV:
         return 'Confira se o arquivo final segue o modelo Bling anexado no início.'
-    return 'Confira se o arquivo final segue o modelo universal anexado no início.'
+    return 'Confira se o arquivo final segue o modelo de destino anexado no início.'
 
 
 def _normalize_operation(value: object) -> str:
@@ -68,7 +68,7 @@ def _normalize_operation(value: object) -> str:
 
 
 def _current_operation() -> str:
-    """Resolve a operação real do contrato antes de aplicar regras do preview."""
+    """Resolve a operação real do contrato antes de aplicar regras da prévia final."""
     for key in (
         MODEL_CONTRACT_TYPE_KEY,
         'df_final_preview_operation',
@@ -113,7 +113,7 @@ def _store_context_preview(df_preview: pd.DataFrame, operation: str) -> None:
 
 
 def _final_preview_df(df_final: pd.DataFrame, operation: str) -> pd.DataFrame:
-    """Aplica no preview a blindagem correta para cada caminho."""
+    """Aplica na prévia final a blindagem correta para cada caminho."""
     safe_operation = operation if operation in VALID_OPERATIONS else 'universal'
     safe = sanitize_for_bling(df_final.copy().fillna(''), operation=safe_operation)
     if _entry_context() == CONTEXT_BLING_API:
@@ -130,7 +130,7 @@ def render_cadastro_preview_step() -> None:
     df_final = _context_final_df()
 
     if not valid_df(df_final):
-        st.warning('O preview ainda não foi gerado. Volte para o mapeamento e confirme os campos.')
+        st.warning('A prévia final ainda não foi gerada. Volte para o mapeamento e confirme os campos.')
         return
 
     df_preview = _final_preview_df(df_final, operation)
