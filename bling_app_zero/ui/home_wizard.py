@@ -297,10 +297,10 @@ def _resolve_active_step(active_step: str, *, has_model: bool, start_at_origin: 
     """Evita tela parada em etapa já concluída e mantém foco na próxima ação.
 
     BLINGFIX:
-    - modelo carregado leva para Origem;
-    - origem escolhida leva para Dados do fornecedor;
-    - dados carregados levam para Preço, mantendo a etapa opcional visível;
-    - preço só é pulado automaticamente quando não houver configuração ativa.
+    - modelo carregado leva para Origem dos dados;
+    - origem escolhida leva para Dados importados;
+    - dados carregados levam para Precificação;
+    - precificação só é pulada automaticamente quando não houver configuração ativa.
     """
     if start_at_origin and active_step == STEP_MODELO:
         return STEP_ORIGEM
@@ -324,8 +324,7 @@ def _render_model_step(section_number: int = 2) -> None:
     from bling_app_zero.ui.home_models import render_home_bling_models
 
     render_step_anchor(STEP_MODELO)
-    title = 'Modelo Universal' if _is_universal_entry() else 'Modelos Bling'
-    _section_title(section_number, title)
+    _section_title(section_number, _label_for(STEP_MODELO))
     with st.container(border=True):
         render_home_bling_models()
     ensure_universal_operation_state()
@@ -336,11 +335,11 @@ def _render_model_step(section_number: int = 2) -> None:
 def _render_origin_step(section_number: int = 3) -> None:
     render_step_anchor(STEP_ORIGEM)
     if _is_price_update_contract() and not _is_api_direct_mode() and not _is_universal_entry():
-        _section_title(section_number, 'Planilha única de atualização de preços')
+        _section_title(section_number, _label_for(STEP_ENTRADA))
         render_price_update_single_sheet_notice()
         return
 
-    _section_title(section_number, 'Origem dos dados')
+    _section_title(section_number, _label_for(STEP_ORIGEM))
     if not _model_available():
         render_pending_notice('Liberado após escolher o caminho do fluxo.')
         return
@@ -370,10 +369,10 @@ def _render_universal_entrada(section_number: int = 4) -> None:
     origin = current_origin_choice()
     render_step_anchor(STEP_ENTRADA)
     if _is_price_update_contract() and not _is_api_direct_mode() and not _is_universal_entry():
-        _section_title(section_number, 'Dados da atualização de preços')
+        _section_title(section_number, _label_for(STEP_ENTRADA))
         render_price_update_single_sheet_notice()
         return
-    _section_title(section_number, 'Dados do fornecedor')
+    _section_title(section_number, _label_for(STEP_ENTRADA))
     if not _model_available():
         render_pending_notice('Liberado após escolher o caminho do fluxo.')
         return
@@ -415,13 +414,7 @@ def _render_pricing_step(section_number: int = 5) -> None:
 
 def _render_universal_mapeamento(section_number: int = 6) -> None:
     render_step_anchor(STEP_MAPEAMENTO)
-    if _is_api_direct_mode():
-        title = 'Mapear campos da API'
-    elif _is_price_update_contract() and not _is_universal_entry():
-        title = 'Conferir campos da atualização'
-    else:
-        title = 'Mapear campos'
-    _section_title(section_number, title)
+    _section_title(section_number, _label_for(STEP_MAPEAMENTO))
     if not _model_available():
         render_pending_notice('Liberado após escolher o caminho do fluxo e carregar os dados.')
         return
@@ -438,7 +431,7 @@ def _render_universal_mapeamento(section_number: int = 6) -> None:
 
 def _render_ai_review_step(section_number: int = 7) -> None:
     render_step_anchor(STEP_REGRAS)
-    _section_title(section_number, 'Revisão final')
+    _section_title(section_number, _label_for(STEP_REGRAS))
     if not _model_available():
         render_pending_notice('Liberado após modelo/dados e mapeamento.')
         return
@@ -451,7 +444,7 @@ def _render_ai_review_step(section_number: int = 7) -> None:
         df_source = st.session_state.get(UNIVERSAL_ORIGEM_KEY)
     df_modelo = st.session_state.get(UNIVERSAL_MODELO_KEY)
 
-    st.caption('Revise os campos ligados e aplique as proteções finais antes do preview.')
+    st.caption('Revise os campos ligados e aplique as proteções finais antes da prévia final.')
     render_mapping_review_panel(
         operation=UNIVERSAL_REVIEW_OPERATION,
         mapping=_context_mapping(),
@@ -470,7 +463,7 @@ def _render_ai_review_step(section_number: int = 7) -> None:
 
 def _render_universal_preview(section_number: int = 8) -> None:
     render_step_anchor(STEP_PREVIEW)
-    _section_title(section_number, 'Preview')
+    _section_title(section_number, _label_for(STEP_PREVIEW))
     if not _model_available():
         render_pending_notice('Liberado após o mapeamento.')
         return
@@ -482,8 +475,9 @@ def _render_universal_preview(section_number: int = 8) -> None:
 
 def _render_universal_download(section_number: int = 9) -> None:
     render_step_anchor(STEP_DOWNLOAD)
-    title = 'Envio direto' if _is_api_direct_mode() else 'Download'
-    _section_title(section_number, title)
+    _section_title(section_number, _label_for(STEP_DOWNLOAD))
+    if _is_api_direct_mode():
+        st.caption('Envio direto pela API do Bling.')
     if not _model_available():
         render_pending_notice('Liberado no final.')
         return
