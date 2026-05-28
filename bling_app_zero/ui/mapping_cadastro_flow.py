@@ -52,7 +52,7 @@ def _context_label() -> str:
         return 'API do Bling'
     if context == CONTEXT_BLING_CSV:
         return 'CSV Bling'
-    return 'Modelo Universal'
+    return 'Modelo de destino'
 
 
 def _duplicated_source_columns(mapping: dict[str, str]) -> list[str]:
