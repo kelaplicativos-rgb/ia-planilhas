@@ -26,6 +26,7 @@ from bling_app_zero.ui.site_panel_state import (
     query_urls_default,
     recover_stale_capture_if_needed,
 )
+from bling_app_zero.ui.site_progress import render_site_progress_history
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/site_panel.py'
 SCAN_TOTAL_MAX_PAGES = 1_000_000
@@ -49,17 +50,16 @@ def _render_site_models_inline(operation: str) -> tuple[object, pd.DataFrame | N
 
 def _render_urls_input(operation: str) -> str:
     return st.text_area(
-        'Links do fornecedor',
+        'Links para buscar produtos',
         value=query_urls_default(),
         height=120,
         key=f'urls_site_{operation}',
         placeholder='https://site.com.br\nhttps://site.com.br/categoria\nhttps://site.com.br/produto-1',
-        help='Cole a página inicial, categorias ou produtos. O sistema vai escanear o site inteiro atrás de produtos.',
+        help='Cole página inicial, categorias ou produtos. O sistema vai procurar produtos e montar os dados importados.',
     )
 
 
 def _scan_total_options() -> dict[str, int | bool]:
-    """SCAN TOTAL UI: sem modo teste e sem limite baixo manual."""
     return {
         'enabled': True,
         'max_pages': SCAN_TOTAL_MAX_PAGES,
@@ -72,10 +72,27 @@ def _scan_total_options() -> dict[str, int | bool]:
 def _render_scan_total_notice() -> None:
     st.markdown(
         '<div style="background:#fff3e0;border:1px solid #ffcc80;border-left:6px solid #fb8c00;color:#5d3200;border-radius:12px;padding:12px 14px;margin:8px 0;font-size:0.95rem;">'
-        '🚀 <b>SCAN TOTAL UI ativo:</b> o sistema não usa modo teste. Ao clicar no botão, ele procura produtos no site inteiro e prepara a origem conforme o modelo anexado.'
+        '🚀 <b>Busca completa ativa:</b> ao clicar no botão, o sistema procura produtos no site e prepara os dados importados conforme o modelo de destino.'
         '</div>',
         unsafe_allow_html=True,
     )
+
+
+def _render_running_state(operation: str) -> None:
+    orange_warning('Busca por site em andamento. Acompanhe a barra de progresso e aguarde os dados importados aparecerem.')
+    render_site_progress_history()
+    if st.button('🧹 Limpar busca travada e tentar novamente', use_container_width=True, key=f'limpar_captura_travada_{operation}'):
+        clear_stuck_capture(operation)
+        st.rerun()
+
+
+def _render_last_error(error: str) -> None:
+    if not error:
+        return
+    st.error('A última busca por site não conseguiu finalizar.')
+    st.caption('Confira os links, tente novamente ou use a opção de site protegido para colar HTML, tabela, CSV ou XLSX.')
+    with st.expander('Detalhe da falha', expanded=False):
+        st.code(error)
 
 
 def _render_universal_fallback(
@@ -88,7 +105,7 @@ def _render_universal_fallback(
 ) -> None:
     expanded = bool(st.session_state.get('site_capture_error'))
     with st.expander('🔐 Site protegido ou com login', expanded=expanded):
-        orange_warning('Use se o fornecedor bloquear robô, login, CAPTCHA, Cloudflare ou firewall. Você pode colar HTML, tabela, CSV ou XLSX.')
+        orange_warning('Use se o fornecedor bloquear a busca automática. Você pode colar HTML, tabela, CSV ou XLSX.')
         render_manual_table_import_panel(
             operation=operation,
             requested_columns=requested_columns,
@@ -106,7 +123,7 @@ def render_site_panel() -> None:
 
     recovered = recover_stale_capture_if_needed(operation)
     if recovered:
-        orange_warning('A captura anterior ficou travada e foi destravada automaticamente. Revise os links e execute novamente.')
+        orange_warning('A busca anterior ficou travada e foi destravada automaticamente. Revise os links e execute novamente.')
 
     df_site_bruto = get_site_df(operation)
     if isinstance(df_site_bruto, pd.DataFrame) and not df_site_bruto.empty:
@@ -120,7 +137,7 @@ def render_site_panel() -> None:
         return
 
     st.markdown(
-        '<section class="bling-flow-card bling-inline-card"><div class="bling-flow-card-kicker">Entrada por site</div><h2 class="bling-flow-card-title">SCAN TOTAL UI · Escanear site inteiro</h2></section>',
+        '<section class="bling-flow-card bling-inline-card"><div class="bling-flow-card-kicker">Entrada por site</div><h2 class="bling-flow-card-title">Buscar produtos no site</h2></section>',
         unsafe_allow_html=True,
     )
 
@@ -132,20 +149,19 @@ def render_site_panel() -> None:
     running = bool(st.session_state.get('site_capture_running'))
     has_urls_value = has_urls(raw_urls)
     if running:
-        orange_warning('SCAN TOTAL em andamento. Aguarde a origem aparecer.')
-        if st.button('🧹 Limpar captura travada e tentar novamente', use_container_width=True, key=f'limpar_captura_travada_{operation}'):
-            clear_stuck_capture(operation)
-            st.rerun()
+        _render_running_state(operation)
 
     error = str(st.session_state.get('site_capture_error') or '').strip()
-    if error:
-        st.error(f'Última captura falhou: {error}')
+    _render_last_error(error)
 
-    button_label = '🚀 Escanear site inteiro agora'
+    button_label = '🚀 Buscar produtos agora'
     button_disabled = running or not has_urls_value or (operation in {UNIVERSAL_OPERATION} and not has_columns(requested_columns))
 
     if not has_urls_value:
-        orange_warning('Cole pelo menos um link para liberar o SCAN TOTAL.')
+        orange_warning('Cole pelo menos um link para liberar a busca por site.')
+
+    if operation in {UNIVERSAL_OPERATION} and not has_columns(requested_columns):
+        orange_warning('Modelo de destino necessário: envie o modelo para o sistema saber quais campos buscar.')
 
     if st.button(button_label, use_container_width=True, disabled=button_disabled, key=f'buscar_site_{operation}'):
         add_audit_event(
@@ -154,7 +170,7 @@ def render_site_panel() -> None:
             step='entrada',
             details={
                 'operation': operation,
-                'capture_mode': 'scan_total_ui',
+                'capture_mode': 'full_site_search',
                 'max_pages': SCAN_TOTAL_MAX_PAGES,
                 'max_products': SCAN_TOTAL_MAX_PRODUCTS,
                 'max_depth': SCAN_TOTAL_MAX_DEPTH,
