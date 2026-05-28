@@ -23,6 +23,7 @@ from bling_app_zero.ui.home_wizard_constants import (
     STEP_DOWNLOAD,
     STEP_ENTRADA,
     STEP_GERAR_ESTOQUE,
+    STEP_LABELS,
     STEP_MAPEAMENTO,
     STEP_MODELO,
     STEP_ORIGEM,
@@ -153,6 +154,66 @@ def _go_to_step(step: str) -> None:
         st.query_params['step'] = normalized
     except Exception:
         pass
+
+
+def _label_for(step: str) -> str:
+    return str(STEP_LABELS.get(step, step)).strip()
+
+
+def _step_is_done(step: str) -> bool:
+    if step == STEP_MODELO:
+        return _model_available()
+    if step == STEP_ORIGEM:
+        return current_origin_choice() in {'arquivo', 'site'}
+    if step == STEP_ENTRADA:
+        return universal_context_ready()
+    if step == STEP_PRECIFICACAO:
+        return True
+    if step in {STEP_MAPEAMENTO, STEP_REGRAS, STEP_PREVIEW, STEP_DOWNLOAD}:
+        return universal_mapping_ready()
+    return False
+
+
+def _render_step_progress(steps: list[str], active_step: str) -> None:
+    if active_step not in steps:
+        return
+    index = steps.index(active_step)
+    total = len(steps)
+    percent = int(((index + 1) / total) * 100)
+
+    st.caption(f'Etapa {index + 1} de {total} · {_label_for(active_step)}')
+    st.progress(max(1, min(100, percent)))
+
+    done_labels = [_label_for(step) for step in steps[:index] if _step_is_done(step)]
+    if done_labels:
+        with st.expander('Resumo das etapas concluídas', expanded=False):
+            for label in done_labels:
+                st.success(f'{label} concluído.')
+
+
+def _resolve_active_step(active_step: str, *, has_model: bool, start_at_origin: bool) -> str:
+    """Evita tela parada em etapa já concluída e mantém foco na próxima ação.
+
+    BLINGFIX:
+    - modelo carregado leva para Origem;
+    - origem escolhida leva para Dados do fornecedor;
+    - dados carregados levam para Preço, mantendo a etapa opcional visível;
+    - preço só é pulado automaticamente quando não houver configuração ativa.
+    """
+    if start_at_origin and active_step == STEP_MODELO:
+        return STEP_ORIGEM
+    if has_model and active_step == STEP_MODELO:
+        return STEP_ORIGEM
+    if active_step == STEP_ORIGEM and current_origin_choice() in {'arquivo', 'site'}:
+        return STEP_ENTRADA
+    if active_step == STEP_ENTRADA and universal_context_ready():
+        return STEP_PRECIFICACAO
+    if active_step == STEP_PRECIFICACAO:
+        pricing_enabled = bool(st.session_state.get('home_precificacao_inicial')) or bool(st.session_state.get('home_pricing_enabled_toggle'))
+        pricing_configured = isinstance(st.session_state.get('home_pricing_config'), dict) and bool(st.session_state.get('home_pricing_config'))
+        if not pricing_enabled and not pricing_configured:
+            return STEP_MAPEAMENTO
+    return active_step
 
 
 def _render_model_step(section_number: int = 2) -> None:
@@ -381,6 +442,7 @@ def _render_steps_from(start_step: str, *, skip_model: bool) -> None:
     if start_step not in steps:
         start_step = steps[0]
     _go_to_step(start_step)
+    _render_step_progress(steps, start_step)
     section_number = (2 if _is_bling_api_entry() else 1) + steps.index(start_step)
     _render_active_step(start_step, section_number)
 
@@ -423,14 +485,14 @@ def render_home_wizard() -> None:
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
+        _render_step_progress(ACTIVE_RENDER_STEPS, STEP_MODELO)
         _render_model_step(1 if context != CONTEXT_BLING_API else 2)
         inject_scroll_to_target()
         return
 
     start_at_origin = came_from_bling_quick_model() or direct_mode
     active_step = _active_start_step()
-    if start_at_origin and active_step == STEP_MODELO:
-        active_step = STEP_ORIGEM
+    active_step = _resolve_active_step(active_step, has_model=has_model, start_at_origin=start_at_origin)
 
     add_audit_event(
         'wizard_single_step_rendered',
@@ -439,7 +501,7 @@ def render_home_wizard() -> None:
         details={
             'operation': operation or 'universal',
             'steps': UNIVERSAL_STEPS,
-            'render_mode': 'one_step_at_a_time',
+            'render_mode': 'one_step_at_a_time_with_progress',
             'single_page_flow': SINGLE_PAGE_FLOW,
             'skip_model_step': start_at_origin,
             'active_start_step': active_step,
