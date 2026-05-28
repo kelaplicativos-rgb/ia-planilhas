@@ -291,6 +291,12 @@ def _render_final_checklist(download_df: pd.DataFrame, operation: str, errors: l
     return True
 
 
+def _missing_contract_message() -> str:
+    if _is_universal_context():
+        return 'Reenvie o modelo de destino antes de baixar.'
+    return 'Reenvie a planilha modelo antes de baixar.'
+
+
 def _render_csv_final(df: pd.DataFrame, operation: str, key: str) -> None:
     operation = normalize_operation(operation or st.session_state.get(FINAL_DOWNLOAD_OPERATION_KEY) or OP_UNIVERSAL)
     operation_title = operation_label(operation)
@@ -302,8 +308,7 @@ def _render_csv_final(df: pd.DataFrame, operation: str, key: str) -> None:
 
     download_df, contract_applied, model_columns = download_dataframe_for_contract(df, operation)
     if not contract_applied:
-        message = 'Reenvie a planilha modelo antes de baixar.' if not _is_universal_context() else 'Reenvie o modelo universal antes de baixar.'
-        st.warning(message)
+        st.warning(_missing_contract_message())
         add_audit_event('download_contract_missing', area='DOWNLOAD', status='AGUARDANDO_MODELO', details={'home_entry_context': _entry_context()})
         return
 
