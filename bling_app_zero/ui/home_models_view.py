@@ -63,17 +63,14 @@ def _render_loaded_summary() -> None:
     df = _model_summary_df()
     if not isinstance(df, pd.DataFrame):
         if _is_universal_entry():
-            st.warning('Envie o modelo universal de destino para continuar. Use uma planilha com as colunas finais que o sistema deverá preencher.')
+            st.warning('Envie o modelo de destino para continuar. Use uma planilha com as colunas finais que o sistema deverá preencher.')
         elif _is_bling_csv_entry():
             st.warning('Envie um modelo oficial do Bling para continuar: Cadastro, Estoque ou Atualização de Preços.')
         else:
-            st.warning('Envie o modelo final de destino para continuar.')
+            st.warning('Envie o modelo de destino para continuar.')
         return
     contract_type = str(st.session_state.get(MODEL_CONTRACT_TYPE_KEY) or 'universal')
-    if _is_universal_entry():
-        label = 'Modelo Universal'
-    else:
-        label = CONTRACT_LABELS.get(contract_type, CONTRACT_LABELS['universal'])
+    label = 'Modelo de destino' if _is_universal_entry() else CONTRACT_LABELS.get(contract_type, 'Modelo de destino')
     st.caption(f'{label} carregado · {len(df)} linha(s) · {len(df.columns)} coluna(s)')
     with st.expander('Ver colunas do modelo de destino', expanded=False):
         columns = [str(column) for column in list(df.columns)]
@@ -82,14 +79,13 @@ def _render_loaded_summary() -> None:
 
 def _render_model_type_guidance() -> None:
     if _is_universal_entry():
-        st.markdown('#### Modelo Universal')
-        st.caption('Configure somente um modelo universal com cabeçalho próprio. Este caminho não usa modelos oficiais do Bling.')
+        st.markdown('#### Modelo de destino')
+        st.caption('Configure uma planilha com o cabeçalho final que o sistema deverá preencher.')
         with st.container(border=True):
-            st.markdown('##### Estrutura universal')
+            st.markdown('##### Estrutura personalizada')
             st.caption('Use para marketplace, fornecedor ou qualquer layout final personalizado.')
         return
-
-    st.markdown('#### Modelos Bling')
+    st.markdown('#### Modelo de destino')
     st.caption('Configure a estrutura oficial do Bling para gerar CSV de importação manual.')
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -130,14 +126,14 @@ def render_home_bling_models() -> None:
     _render_model_type_guidance()
 
     if _is_universal_entry():
-        st.markdown('#### Modelo de destino universal')
-        st.caption('Anexe o modelo universal que será preenchido no final.')
-        title = 'Enviar modelo universal de destino'
+        st.markdown('#### Enviar modelo de destino')
+        st.caption('Anexe o modelo que será preenchido no final.')
+        title = 'Enviar modelo de destino'
         operation = 'universal'
     else:
-        st.markdown('#### Modelo oficial Bling')
+        st.markdown('#### Enviar modelo de destino')
         st.caption('Anexe o modelo Bling de Cadastro, Estoque ou Atualização de Preços que será preenchido no final.')
-        title = 'Enviar modelo Bling'
+        title = 'Enviar modelo de destino'
         operation = 'detectar_contrato_real'
 
     upload = render_model_upload_box(
@@ -159,12 +155,12 @@ def render_home_bling_models() -> None:
             details={
                 'entry_context': _entry_context(),
                 'contract_type': 'universal' if _is_universal_entry() else getattr(upload, 'contract_type', 'universal'),
-                'contract_label': 'Modelo Universal' if _is_universal_entry() else getattr(upload, 'contract_label', 'Modelo Universal'),
+                'contract_label': 'Modelo de destino' if _is_universal_entry() else getattr(upload, 'contract_label', 'Modelo de destino'),
                 'cadastro': df_log_summary(cadastro_model),
                 'estoque': df_log_summary(estoque_model),
                 'preco': df_log_summary(preco_model),
                 'universal': df_log_summary(universal_model),
-                'responsible_file': RESPONSIBLE_FILE,
+                'responsible_file': RESPONSIBLE_FILE
             },
         )
         save_home_models(cadastro_model, estoque_model, preco_model, universal_model, replace_missing=True)
