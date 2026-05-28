@@ -145,7 +145,7 @@ def render_cadastro_source_upload(df_origem_site: pd.DataFrame | None):
         return _site_origin_upload_result(df_origem_site)
 
     return render_smart_upload_box(
-        title='Dados do fornecedor',
+        title='Dados importados',
         operation=SUPPLIER_OPERATION,
         key='smart_upload_fornecedor',
         allow_model=False,
