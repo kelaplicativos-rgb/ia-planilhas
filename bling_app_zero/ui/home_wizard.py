@@ -206,6 +206,10 @@ def _pending_message_for(step: str) -> str:
     return 'Conclua esta etapa para continuar.'
 
 
+def _render_blocked_next_state(next_step: str) -> None:
+    st.caption(f'🔒 Próximo bloqueado: {_label_for(next_step)}')
+
+
 def _render_step_progress(steps: list[str], active_step: str) -> None:
     if active_step not in steps:
         return
@@ -263,26 +267,28 @@ def _render_safe_step_nav(steps: list[str], active_step: str) -> None:
 
     with col_next:
         if next_step:
-            if st.button(
-                f'Próximo: {_label_for(next_step)}',
-                use_container_width=True,
-                key=f'wizard_local_next_{active_step}',
-                disabled=not can_go_next,
-            ):
-                _go_to_step(next_step)
-                add_audit_event(
-                    'wizard_local_next_clicked',
-                    area='WIZARD',
-                    step=next_step,
-                    details={
-                        'from': active_step,
-                        'to': next_step,
-                        'prerequisite_ok': True,
-                        'state_preserved': True,
-                        'responsible_file': RESPONSIBLE_FILE,
-                    },
-                )
-                st.rerun()
+            if can_go_next:
+                if st.button(
+                    f'Próximo: {_label_for(next_step)}',
+                    use_container_width=True,
+                    key=f'wizard_local_next_{active_step}',
+                ):
+                    _go_to_step(next_step)
+                    add_audit_event(
+                        'wizard_local_next_clicked',
+                        area='WIZARD',
+                        step=next_step,
+                        details={
+                            'from': active_step,
+                            'to': next_step,
+                            'prerequisite_ok': True,
+                            'state_preserved': True,
+                            'responsible_file': RESPONSIBLE_FILE,
+                        },
+                    )
+                    st.rerun()
+            else:
+                _render_blocked_next_state(next_step)
         else:
             st.caption('Final')
 
