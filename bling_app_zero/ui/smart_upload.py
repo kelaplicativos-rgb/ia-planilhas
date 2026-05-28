@@ -232,9 +232,9 @@ def _render_upload_header(title: str, allow_model: bool, accepted_types: list[st
     clean_title = str(title).replace('📎', '').strip()
     st.markdown(f'<div class="bling-upload-title">📎 {clean_title}</div>', unsafe_allow_html=True)
     if allow_model:
-        st.caption('Envie o arquivo de origem. O modelo também pode ser enviado junto se ainda não foi anexado.')
+        st.caption('Envie o arquivo de origem. O modelo de destino também pode ser enviado junto se ainda não foi anexado.')
     else:
-        st.caption('Envie um ou vários arquivos do fornecedor. Todos os compatíveis serão unidos para o mapeamento.')
+        st.caption('Envie um ou vários arquivos. Todos os compatíveis serão unidos para o mapeamento.')
 
 
 def _render_detected_files(result: SmartUploadResult, supported_files: list[Any], allow_model: bool) -> None:
@@ -243,7 +243,7 @@ def _render_detected_files(result: SmartUploadResult, supported_files: list[Any]
     st.success(f'{len(supported_files)} arquivo(s) recebido(s).')
     with st.expander('Ver detalhes do arquivo', expanded=False):
         for file in supported_files:
-            role = 'Dados do fornecedor'
+            role = 'Dados importados'
             if allow_model and result.cadastro_model_file is file:
                 role = 'Modelo de cadastro'
             elif allow_model and result.estoque_model_file is file:
@@ -288,7 +288,7 @@ def render_smart_upload_box(
 
     if result.source_df is not None:
         with st.expander('Ver base unificada enviada', expanded=False):
-            preview_df('Base unificada do fornecedor', result.source_df)
+            preview_df('Base unificada enviada', result.source_df)
         st.caption(f'Base de origem pronta para mapeamento: {len(result.source_df)} linha(s) × {len(result.source_df.columns)} coluna(s).')
     elif result.source_file is not None:
         st.warning(f'Arquivo recebido, mas nenhuma tabela foi detectada em {_file_name(result.source_file)}.')
@@ -301,6 +301,9 @@ def render_smart_upload_box(
             with st.expander('Ver modelo de estoque', expanded=False):
                 preview_df('Modelo de estoque', result.estoque_model_df)
         if required_model and result.model_df is None:
-            st.warning('Ainda não identifiquei o modelo Bling desta operação.')
+            st.warning('Ainda não identifiquei o modelo de destino desta operação.')
 
     return result
+
+
+__all__ = ['SUPPORTED_TYPES', 'SmartUploadResult', 'render_smart_upload_box']
