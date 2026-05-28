@@ -144,6 +144,17 @@ def _is_price_update_contract() -> bool:
     return is_price_update_contract(_current_contract_operation())
 
 
+def _go_to_step(step: str) -> None:
+    normalized = str(step or '').strip().lower()
+    if normalized not in ACTIVE_RENDER_STEPS:
+        return
+    st.session_state[WIZARD_STEP_KEY] = normalized
+    try:
+        st.query_params['step'] = normalized
+    except Exception:
+        pass
+
+
 def _render_model_step(section_number: int = 2) -> None:
     if _is_api_direct_mode():
         return
@@ -179,9 +190,13 @@ def _render_origin_step(section_number: int = 3) -> None:
     with col1:
         if st.button('📎 Arquivo', use_container_width=True, key='origin_choose_file'):
             select_origin('arquivo', set_scroll_target=None)
+            _go_to_step(STEP_ENTRADA)
+            st.rerun()
     with col2:
         if st.button('🌐 Site', use_container_width=True, key='origin_choose_site'):
             select_origin('site', set_scroll_target=None)
+            _go_to_step(STEP_ENTRADA)
+            st.rerun()
     if selected in {'arquivo', 'site'}:
         st.success('Origem selecionada.')
     else:
@@ -335,30 +350,39 @@ def _active_start_step() -> str:
     return current
 
 
+def _render_active_step(step: str, section_number: int) -> None:
+    if step == STEP_MODELO:
+        _render_model_step(section_number)
+    elif step == STEP_ORIGEM:
+        _render_origin_step(section_number)
+    elif step == STEP_ENTRADA:
+        _render_universal_entrada(section_number)
+    elif step == STEP_PRECIFICACAO:
+        _render_pricing_step(section_number)
+    elif step == STEP_MAPEAMENTO:
+        _render_universal_mapeamento(section_number)
+    elif step == STEP_REGRAS:
+        _render_ai_review_step(section_number)
+    elif step == STEP_PREVIEW:
+        _render_universal_preview(section_number)
+    elif step == STEP_DOWNLOAD:
+        _render_universal_download(section_number)
+
+
 def _render_steps_from(start_step: str, *, skip_model: bool) -> None:
+    """Renderiza somente a etapa ativa.
+
+    BLINGFIX:
+    - antes o wizard renderizava da etapa atual até o download, criando uma tela longa;
+    - agora mantém foco em uma etapa por vez;
+    - a numeração continua refletindo a posição real da etapa no fluxo.
+    """
     steps = [step for step in ACTIVE_RENDER_STEPS if not (skip_model and step == STEP_MODELO)]
     if start_step not in steps:
         start_step = steps[0]
-    start_index = steps.index(start_step)
-    section_number = 2 if _is_bling_api_entry() else 1
-    for step in steps[start_index:]:
-        if step == STEP_MODELO:
-            _render_model_step(section_number)
-        elif step == STEP_ORIGEM:
-            _render_origin_step(section_number)
-        elif step == STEP_ENTRADA:
-            _render_universal_entrada(section_number)
-        elif step == STEP_PRECIFICACAO:
-            _render_pricing_step(section_number)
-        elif step == STEP_MAPEAMENTO:
-            _render_universal_mapeamento(section_number)
-        elif step == STEP_REGRAS:
-            _render_ai_review_step(section_number)
-        elif step == STEP_PREVIEW:
-            _render_universal_preview(section_number)
-        elif step == STEP_DOWNLOAD:
-            _render_universal_download(section_number)
-        section_number += 1
+    _go_to_step(start_step)
+    section_number = (2 if _is_bling_api_entry() else 1) + steps.index(start_step)
+    _render_active_step(start_step, section_number)
 
 
 def render_home_wizard() -> None:
@@ -409,12 +433,13 @@ def render_home_wizard() -> None:
         active_step = STEP_ORIGEM
 
     add_audit_event(
-        'wizard_single_page_rendered',
+        'wizard_single_step_rendered',
         area='WIZARD',
         step=active_step,
         details={
             'operation': operation or 'universal',
             'steps': UNIVERSAL_STEPS,
+            'render_mode': 'one_step_at_a_time',
             'single_page_flow': SINGLE_PAGE_FLOW,
             'skip_model_step': start_at_origin,
             'active_start_step': active_step,
