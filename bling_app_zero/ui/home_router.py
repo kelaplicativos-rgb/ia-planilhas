@@ -263,7 +263,7 @@ def _render_bling_api_home_card() -> None:
             _render_same_tab_bling_link(auth_url)
             st.caption('Após autorizar, você volta para escolher o tipo de envio da API.')
         else:
-            st.warning('Credenciais do Bling ainda não configuradas. Use o Modelo Universal enquanto isso.')
+            st.warning('Credenciais do Bling ainda não configuradas. Use Modelo de destino enquanto isso.')
             if st.button('Abrir etapa da API', use_container_width=True, key='home_card_open_bling_api_without_url'):
                 _start_wizard_context(CONTEXT_BLING_API)
                 st.rerun()
@@ -276,7 +276,7 @@ def render_professional_home() -> None:
         status='OK',
         details={
             'responsible_file': RESPONSIBLE_FILE,
-            'home_order': 'bling_api_universal',
+            'home_order': 'bling_api_destination_model',
             'style': 'professional_light_cards',
             'bling_oauth_target': 'popup_with_same_tab_fallback',
             'legacy_routes_removed': True,
@@ -286,7 +286,7 @@ def render_professional_home() -> None:
 
     st.markdown('<div class="bling-home-section-title">Escolha como quer começar</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="bling-home-section-subtitle">Agora são dois caminhos: envio direto pela API ou Modelo Universal.</div>',
+        '<div class="bling-home-section-subtitle">Agora são dois caminhos: envio direto pela API ou modelo de destino.</div>',
         unsafe_allow_html=True,
     )
 
@@ -296,9 +296,9 @@ def render_professional_home() -> None:
 
     with col_universal:
         _render_home_card(
-            'Modelo Universal',
+            'Modelo de destino',
             'Use qualquer planilha final com cabeçalho próprio: marketplace, fornecedor ou layout personalizado.',
-            'Iniciar Universal',
+            'Iniciar com modelo de destino',
             context=CONTEXT_UNIVERSAL,
             step=STEP_MODELO,
             key='home_card_open_universal',
