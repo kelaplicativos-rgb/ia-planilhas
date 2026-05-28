@@ -174,6 +174,38 @@ def _step_is_done(step: str) -> bool:
     return False
 
 
+def _can_advance_from(step: str) -> bool:
+    if step == STEP_MODELO:
+        return _model_available()
+    if step == STEP_ORIGEM:
+        return current_origin_choice() in {'arquivo', 'site'}
+    if step == STEP_ENTRADA:
+        return universal_context_ready()
+    if step == STEP_PRECIFICACAO:
+        return True
+    if step == STEP_MAPEAMENTO:
+        return universal_mapping_ready()
+    if step == STEP_REGRAS:
+        return universal_mapping_ready()
+    if step == STEP_PREVIEW:
+        return universal_mapping_ready()
+    return False
+
+
+def _pending_message_for(step: str) -> str:
+    if step == STEP_MODELO:
+        return 'Anexe ou confirme o modelo de destino para liberar a próxima etapa.'
+    if step == STEP_ORIGEM:
+        return 'Escolha se os dados virão de Arquivo ou Site para continuar.'
+    if step == STEP_ENTRADA:
+        return 'Carregue os dados da origem para liberar a próxima etapa.'
+    if step == STEP_MAPEAMENTO:
+        return 'Confirme o mapeamento obrigatório antes de avançar.'
+    if step in {STEP_REGRAS, STEP_PREVIEW}:
+        return 'Confirme o mapeamento e revise os dados antes de continuar.'
+    return 'Conclua esta etapa para continuar.'
+
+
 def _render_step_progress(steps: list[str], active_step: str) -> None:
     if active_step not in steps:
         return
@@ -189,6 +221,70 @@ def _render_step_progress(steps: list[str], active_step: str) -> None:
         with st.expander('Resumo das etapas concluídas', expanded=False):
             for label in done_labels:
                 st.success(f'{label} concluído.')
+
+
+def _render_safe_step_nav(steps: list[str], active_step: str) -> None:
+    if active_step not in steps:
+        return
+    index = steps.index(active_step)
+    previous_step = steps[index - 1] if index > 0 else ''
+    next_step = steps[index + 1] if index < len(steps) - 1 else ''
+    can_go_next = bool(next_step) and _can_advance_from(active_step)
+
+    st.markdown('---')
+    col_back, col_status, col_next = st.columns([1, 1.4, 1])
+
+    with col_back:
+        if previous_step and st.button('⬅️ Voltar', use_container_width=True, key=f'wizard_local_back_{active_step}'):
+            _go_to_step(previous_step)
+            add_audit_event(
+                'wizard_local_back_clicked',
+                area='WIZARD',
+                step=previous_step,
+                details={
+                    'from': active_step,
+                    'to': previous_step,
+                    'state_preserved': True,
+                    'responsible_file': RESPONSIBLE_FILE,
+                },
+            )
+            st.rerun()
+        elif not previous_step:
+            st.caption('Início do fluxo')
+
+    with col_status:
+        if next_step:
+            if can_go_next:
+                st.success(f'Próxima etapa liberada: {_label_for(next_step)}')
+            else:
+                render_pending_notice(_pending_message_for(active_step))
+        else:
+            st.success('Última etapa do fluxo.')
+
+    with col_next:
+        if next_step:
+            if st.button(
+                f'Próximo: {_label_for(next_step)}',
+                use_container_width=True,
+                key=f'wizard_local_next_{active_step}',
+                disabled=not can_go_next,
+            ):
+                _go_to_step(next_step)
+                add_audit_event(
+                    'wizard_local_next_clicked',
+                    area='WIZARD',
+                    step=next_step,
+                    details={
+                        'from': active_step,
+                        'to': next_step,
+                        'prerequisite_ok': True,
+                        'state_preserved': True,
+                        'responsible_file': RESPONSIBLE_FILE,
+                    },
+                )
+                st.rerun()
+        else:
+            st.caption('Final')
 
 
 def _resolve_active_step(active_step: str, *, has_model: bool, start_at_origin: bool) -> str:
@@ -431,13 +527,7 @@ def _render_active_step(step: str, section_number: int) -> None:
 
 
 def _render_steps_from(start_step: str, *, skip_model: bool) -> None:
-    """Renderiza somente a etapa ativa.
-
-    BLINGFIX:
-    - antes o wizard renderizava da etapa atual até o download, criando uma tela longa;
-    - agora mantém foco em uma etapa por vez;
-    - a numeração continua refletindo a posição real da etapa no fluxo.
-    """
+    """Renderiza somente a etapa ativa e uma navegação local segura."""
     steps = [step for step in ACTIVE_RENDER_STEPS if not (skip_model and step == STEP_MODELO)]
     if start_step not in steps:
         start_step = steps[0]
@@ -445,6 +535,7 @@ def _render_steps_from(start_step: str, *, skip_model: bool) -> None:
     _render_step_progress(steps, start_step)
     section_number = (2 if _is_bling_api_entry() else 1) + steps.index(start_step)
     _render_active_step(start_step, section_number)
+    _render_safe_step_nav(steps, start_step)
 
 
 def render_home_wizard() -> None:
@@ -487,6 +578,7 @@ def render_home_wizard() -> None:
         )
         _render_step_progress(ACTIVE_RENDER_STEPS, STEP_MODELO)
         _render_model_step(1 if context != CONTEXT_BLING_API else 2)
+        _render_safe_step_nav(ACTIVE_RENDER_STEPS, STEP_MODELO)
         inject_scroll_to_target()
         return
 
@@ -501,7 +593,7 @@ def render_home_wizard() -> None:
         details={
             'operation': operation or 'universal',
             'steps': UNIVERSAL_STEPS,
-            'render_mode': 'one_step_at_a_time_with_progress',
+            'render_mode': 'one_step_at_a_time_with_safe_nav',
             'single_page_flow': SINGLE_PAGE_FLOW,
             'skip_model_step': start_at_origin,
             'active_start_step': active_step,
