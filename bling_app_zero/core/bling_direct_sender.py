@@ -83,6 +83,33 @@ def api_base_url() -> str:
     return (_secret('api_base_url', DEFAULT_API_BASE_URL) or DEFAULT_API_BASE_URL).rstrip('/')
 
 
+def _looks_like_local_path(value: str) -> bool:
+    text = str(value or '').strip().replace('\\', '/')
+    if not text:
+        return False
+    lowered = text.lower()
+    return lowered.startswith(('data/', './data/', '../data/')) or lowered.endswith(('.json', '.sqlite', '.sqlite3', '.db'))
+
+
+def _api_path_secret(name: str, default: str) -> str:
+    value = _secret(name, default) or default
+    if _looks_like_local_path(value):
+        add_audit_event(
+            'bling_direct_invalid_api_path_secret_ignored',
+            area='BLING_ENVIO',
+            status='CORRIGIDO',
+            details={
+                'secret_name': name,
+                'configured_value': value,
+                'fallback_value': default,
+                'reason': 'Campo de endpoint da API recebeu caminho local/arquivo. Usando endpoint padrão do Bling.',
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+        return default
+    return value
+
+
 def _normalize_column_name(value: object) -> str:
     text = str(value or '').strip().lower()
     text = text.replace('ã', 'a').replace('á', 'a').replace('à', 'a').replace('â', 'a')
@@ -159,15 +186,15 @@ def _headers(token: dict[str, Any]) -> dict[str, str]:
 def _endpoint_for(operation: str, row_id: str = '') -> tuple[str, str]:
     operation = normalize_operation(operation)
     if operation == OP_CADASTRO:
-        return 'POST', _secret('product_create_path', '/produtos') or '/produtos'
+        return 'POST', _api_path_secret('product_create_path', '/produtos') or '/produtos'
     if operation == OP_ATUALIZACAO_PRECO:
-        path = _secret('price_update_path', '/produtos/{id}') or '/produtos/{id}'
+        path = _api_path_secret('price_update_path', '/produtos/{id}') or '/produtos/{id}'
         return _secret('price_update_method', 'PATCH').upper() or 'PATCH', path.replace('{id}', row_id)
     if operation == OP_ESTOQUE:
-        path = _secret('stock_write_path', '/estoques/saldos') or '/estoques/saldos'
+        path = _api_path_secret('stock_write_path', '/estoques/saldos') or '/estoques/saldos'
         method = _secret('stock_update_method', 'POST').upper() or 'POST'
         return method, path.replace('{id}', row_id).replace('{idProduto}', row_id)
-    return 'POST', _secret('product_create_path', '/produtos') or '/produtos'
+    return 'POST', _api_path_secret('product_create_path', '/produtos') or '/produtos'
 
 
 def _url(path: str) -> str:
