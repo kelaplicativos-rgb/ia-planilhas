@@ -9,7 +9,7 @@ import requests
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
-from bling_app_zero.core.bling_token_store import load_token
+from bling_app_zero.core.bling_token_store import clear_token, load_token
 from bling_app_zero.core.operation_contract import (
     OP_ATUALIZACAO_PRECO,
     OP_CADASTRO,
@@ -190,6 +190,23 @@ def _clean_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return clean
 
 
+def _api_error_message(index: object, response: requests.Response) -> str:
+    status = int(response.status_code)
+    preview = str(response.text or '')[:240]
+    line = int(index) + 1 if isinstance(index, int) else index
+    if status in {401, 403}:
+        return (
+            f'Linha {line}: Bling recusou a autorização ({status}). '
+            'O token pode ter expirado ou o app não tem permissão para esta operação. '
+            'Desconecte o Bling, conecte novamente e tente enviar de novo.'
+        )
+    if status == 404:
+        return f'Linha {line}: endpoint ou produto não encontrado no Bling (404). Verifique ID/SKU e caminho da API. {preview}'
+    if status == 422:
+        return f'Linha {line}: dados recusados pelo Bling (422). Revise campos obrigatórios e formato. {preview}'
+    return f'Linha {line}: status {status} · {preview}'
+
+
 def _payload_cadastro(row: pd.Series, mapping: dict[str, str]) -> dict[str, Any]:
     preco = _float_or_none(_value(row, mapping, 'preco'))
     payload: dict[str, Any] = {
@@ -293,6 +310,7 @@ def send_dataframe_to_bling(df: pd.DataFrame, operation: str, *, limit: int | No
     failed = 0
     skipped = 0
     errors: list[str] = []
+    auth_failed = False
 
     for index, row in rows.iterrows():
         row_id = _value(row, mapping, 'id')
@@ -308,15 +326,31 @@ def send_dataframe_to_bling(df: pd.DataFrame, operation: str, *, limit: int | No
             response = requests.request(method, _url(path), headers=_headers(token), json=payload, timeout=30)
             if response.status_code >= 400:
                 failed += 1
-                preview = response.text[:240]
+                if response.status_code in {401, 403}:
+                    auth_failed = True
                 if len(errors) < 8:
-                    errors.append(f'Linha {index + 1}: status {response.status_code} · {preview}')
+                    errors.append(_api_error_message(index, response))
+                if auth_failed:
+                    break
                 continue
             sent += 1
         except Exception as exc:
             failed += 1
             if len(errors) < 8:
                 errors.append(f'Linha {index + 1}: {exc}')
+
+    if auth_failed:
+        try:
+            clear_token()
+        except Exception:
+            pass
+        skipped += max(0, len(rows) - sent - failed - skipped)
+        add_audit_event(
+            'bling_direct_flow_auth_failed_token_cleared',
+            area='BLING_ENVIO',
+            status='ERRO',
+            details={'operation': operation, 'store_mode': store_mode, 'responsible_file': RESPONSIBLE_FILE},
+        )
 
     result = DirectSendResult(attempted=len(rows), sent=sent, failed=failed, skipped=skipped, errors=tuple(errors))
     add_audit_event(
