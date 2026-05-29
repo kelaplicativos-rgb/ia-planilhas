@@ -13,7 +13,7 @@ from bling_app_zero.core.bling_api_contract import (
     direct_operation_options,
     normalize_direct_operation,
 )
-from bling_app_zero.core.bling_oauth import build_authorization_url, connection_status, disconnect
+from bling_app_zero.core.bling_oauth import build_authorization_url, connection_status, disconnect, required_redirect_uri
 from bling_app_zero.ui.cadastro_wizard_state import CADASTRO_MODELO_KEY
 from bling_app_zero.ui.flow_context import (
     CONTEXT_BLING_API,
@@ -117,7 +117,7 @@ def apply_direct_api_contract(operation: str | None = None) -> pd.DataFrame:
 def render_same_tab_connect_button(auth_url: str) -> None:
     safe_url = escape(str(auth_url or ''), quote=True)
     if not safe_url:
-        st.warning('Não consegui gerar o link de conexão com o Bling agora.')
+        st.warning('Não consegui gerar o link de conexão com o Bling agora. Confira Client ID, Client Secret e Redirect URI nos secrets do Streamlit.')
         return
     st.markdown(
         f'''
@@ -142,12 +142,37 @@ def render_same_tab_connect_button(auth_url: str) -> None:
     )
 
 
+def render_callback_hint(callback_url: str) -> None:
+    safe_callback = escape(str(callback_url or '').strip())
+    if not safe_callback:
+        return
+    st.markdown(
+        f'''
+<div style="
+    margin:.75rem 0 0 0;
+    padding:.78rem .9rem;
+    border-radius:.8rem;
+    border:1px solid rgba(234,88,12,.30);
+    background:rgba(255,237,213,.82);
+    color:#7c2d12;
+    font-weight:650;
+    line-height:1.35;
+">
+    Callback URL obrigatório no app v3 do Bling:<br>
+    <code style="word-break:break-all;color:#7c2d12;background:rgba(255,255,255,.55);padding:.12rem .25rem;border-radius:.35rem;">{safe_callback}</code>
+</div>
+''',
+        unsafe_allow_html=True,
+    )
+
+
 def render_bling_connection_step(section_title) -> None:
     section_title(1, 'Bling API')
     with st.container(border=True):
         st.caption('Conecte ao Bling para enviar cadastro, estoque ou preços direto pela API. Este caminho não usa modelo de planilha nem gera CSV Bling.')
         status = connection_status()
         connected = bool(status.get('connected'))
+        callback_url = str(status.get('required_redirect_uri') or required_redirect_uri()).strip()
 
         if connected:
             st.success('Bling conectado. Escolha o tipo de envio direto.')
@@ -177,10 +202,17 @@ def render_bling_connection_step(section_title) -> None:
             return
 
         st.warning('Bling não conectado. Conecte para liberar o envio direto pela API.')
+        render_callback_hint(callback_url)
         try:
             auth_url = build_authorization_url({'return_to': 'start', 'source_step': 'bling_connection_entry'})
-        except Exception:
+        except Exception as exc:
             auth_url = ''
+            add_audit_event(
+                'bling_api_authorization_url_error',
+                area='BLING_API',
+                status='ERRO',
+                details={'error': str(exc), 'responsible_file': RESPONSIBLE_FILE},
+            )
         render_same_tab_connect_button(auth_url)
         st.markdown('<div style="height:.55rem"></div>', unsafe_allow_html=True)
         st.caption('Sem conexão com o Bling, este caminho fica bloqueado. Para gerar arquivo manual, volte para a Home e use modelo de destino.')
@@ -188,7 +220,7 @@ def render_bling_connection_step(section_title) -> None:
             'bling_api_connection_required',
             area='BLING_API',
             status='AGUARDANDO_CONEXAO',
-            details={'responsible_file': RESPONSIBLE_FILE},
+            details={'required_redirect_uri': callback_url, 'responsible_file': RESPONSIBLE_FILE},
         )
 
 
