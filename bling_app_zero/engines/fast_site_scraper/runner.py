@@ -10,7 +10,14 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.column_contract import build_contract
 from bling_app_zero.core.debug import add_debug
 from bling_app_zero.engines.fast_site_scraper.completeness import is_complete_product, should_stop_early
-from bling_app_zero.engines.fast_site_scraper.constants import MAX_WORKERS, RESPONSIBLE_FILE, SLOW_LINK_SECONDS
+from bling_app_zero.engines.fast_site_scraper.constants import (
+    MAX_WORKERS,
+    RESPONSIBLE_FILE,
+    SAFE_CAPTURE_MAX_PAGES,
+    SAFE_CAPTURE_MAX_PRODUCTS,
+    SLOW_LINK_SECONDS,
+    normalize_capture_limits,
+)
 from bling_app_zero.engines.fast_site_scraper.contract_rules import default_columns, important_kinds, needed_kinds
 from bling_app_zero.engines.fast_site_scraper.models import FastProductData
 from bling_app_zero.engines.fast_site_scraper.output_builder import ensure_columns, to_contract_row
@@ -189,8 +196,8 @@ def run_fast_site_scraper(
     raw_urls: str,
     requested_columns: Iterable[str] | None = None,
     operation: str = 'cadastro',
-    max_pages: int = 1_000_000,
-    max_products: int = 1_000_000,
+    max_pages: int = SAFE_CAPTURE_MAX_PAGES,
+    max_products: int = SAFE_CAPTURE_MAX_PRODUCTS,
     stop_early: bool = True,
     progress_callback: Callable[[dict], None] | None = None,
 ) -> pd.DataFrame:
@@ -198,12 +205,44 @@ def run_fast_site_scraper(
     normalized_operation = _normalize_operation(operation)
     columns, contract, needed, important = _prepare_contract(requested_columns, normalized_operation)
 
-    _audit_contract(normalized_operation, columns, needed)
+    limits = normalize_capture_limits(
+        max_pages=max_pages,
+        max_products=max_products,
+        mode='safe' if stop_early else 'deep',
+    )
+    max_pages = limits['max_pages']
+    max_products = limits['max_products']
 
-    emit(progress_callback, {'stage': 'Procurando links', 'message': 'Procurando produtos nos links informados...', 'progress': 0.08, 'columns': len(columns)})
+    _audit_contract(normalized_operation, columns, needed)
+    add_audit_event(
+        'site_scraper_limits_normalized',
+        area='SITE',
+        status='OK',
+        details={
+            'operation': normalized_operation,
+            'max_pages': int(max_pages),
+            'max_products': int(max_products),
+            'stop_early': bool(stop_early),
+            'safe_limited': True,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+
+    emit(progress_callback, {
+        'stage': 'Procurando links',
+        'message': f'Procurando produtos nos links informados com limite de {max_pages} página(s) e {max_products} produto(s)...',
+        'progress': 0.08,
+        'columns': len(columns),
+        'max_pages': max_pages,
+        'max_products': max_products,
+        'safe_limited': True,
+    })
     discovery_started = time.perf_counter()
     urls = discover_product_urls(raw_urls, max_pages=max_pages, max_products=max_products)
     discovery_seconds = time.perf_counter() - discovery_started
+
+    if len(urls) > max_products:
+        urls = urls[:max_products]
 
     emit(progress_callback, {
         'stage': 'Links encontrados',
@@ -211,6 +250,8 @@ def run_fast_site_scraper(
         'progress': 0.22,
         'urls_found': len(urls),
         'discovery_seconds': round(discovery_seconds, 2),
+        'max_products': max_products,
+        'safe_limited': True,
     })
     if not urls:
         emit(progress_callback, {'stage': 'Nada encontrado', 'message': 'Não encontrei produtos nos links informados. Confira se o link abre produtos ou categorias.', 'progress': 1.0, 'urls_found': 0})
@@ -267,6 +308,9 @@ def run_fast_site_scraper(
         'rich_description_ok': rich_ok,
         'rich_description_empty': rich_empty,
         'dynamic_render_fallback_enabled': True,
+        'max_pages': max_pages,
+        'max_products': max_products,
+        'safe_limited': True,
     })
     return ensure_columns(pd.DataFrame(rows).fillna(''), columns)
 
