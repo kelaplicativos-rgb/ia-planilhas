@@ -18,12 +18,8 @@ from bling_app_zero.core.oauth_return_snapshot import restore_download_oauth_ret
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_oauth.py'
 AUTH_URL_DEFAULT = 'https://www.bling.com.br/Api/v3/oauth/authorize'
 TOKEN_URL_DEFAULT = 'https://www.bling.com.br/Api/v3/oauth/token'
-PUBLIC_REDIRECT_URI_DEFAULT = 'https://ia-planilhas-bling.streamlit.app/'
+PUBLIC_REDIRECT_URI_DEFAULT = 'https://ia-planilhas.streamlit.app/'
 CLIENT_ID_DEFAULT = ''
-LEGACY_REDIRECT_URI_VALUES = {
-    'https://ia-planilhas.streamlit.app',
-    'https://ia-planilhas.streamlit.app/',
-}
 
 TOKEN_STATE_KEY = 'bling_oauth_token_response'
 TOKEN_CONNECTED_AT_KEY = 'bling_oauth_connected_at'
@@ -48,17 +44,13 @@ def _secret(name: str, default: str = '') -> str:
 def _normalize_redirect_uri(value: str) -> str:
     configured = str(value or '').strip()
     if not configured:
-        return PUBLIC_REDIRECT_URI_DEFAULT
-
-    if configured.rstrip('/') in {item.rstrip('/') for item in LEGACY_REDIRECT_URI_VALUES}:
         add_audit_event(
-            'bling_oauth_legacy_redirect_uri_overridden',
+            'bling_oauth_redirect_uri_default_used',
             area='BLING_OAUTH',
-            status='CORRIGIDO',
+            status='AVISO',
             details={
-                'configured_redirect_uri': configured,
-                'forced_redirect_uri': PUBLIC_REDIRECT_URI_DEFAULT,
-                'reason': 'redirect antigo sem sufixo -bling substituído pelo domínio público atual',
+                'redirect_uri': PUBLIC_REDIRECT_URI_DEFAULT,
+                'reason': 'redirect_uri não configurado no secrets.toml; usando fallback público',
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
@@ -119,17 +111,40 @@ def _new_state(extra_context: dict[str, Any] | None = None) -> str:
 def build_authorization_url(extra_context: dict[str, Any] | None = None) -> str:
     cid = client_id()
     if not cid:
+        st.session_state[LAST_ERROR_KEY] = 'Client ID do Bling não configurado nos secrets do app.'
+        add_audit_event(
+            'bling_oauth_missing_client_id',
+            area='BLING_OAUTH',
+            status='ERRO',
+            details={'responsible_file': RESPONSIBLE_FILE},
+        )
         return ''
+
     state = _new_state(extra_context)
     st.session_state[EXPECTED_STATE_KEY] = state
     if isinstance(extra_context, dict):
         st.session_state[RETURN_CONTEXT_KEY] = dict(extra_context)
+
+    uri = redirect_uri()
     params = {
         'response_type': 'code',
         'client_id': cid,
-        'redirect_uri': redirect_uri(),
+        'redirect_uri': uri,
         'state': state,
     }
+
+    add_audit_event(
+        'bling_oauth_authorization_url_built',
+        area='BLING_OAUTH',
+        status='OK',
+        details={
+            'redirect_uri': uri,
+            'has_client_id': bool(cid),
+            'has_state': bool(state),
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+
     return f'{authorize_url()}?{urlencode(params)}'
 
 
@@ -149,9 +164,19 @@ def connection_status() -> dict[str, Any]:
     try:
         token, meta = load_token()
     except Exception as exc:
-        return {'connected': False, 'message': 'Bling não conectado.', 'error': str(exc)}
+        return {
+            'connected': False,
+            'message': 'Bling não conectado.',
+            'error': str(exc),
+            'required_redirect_uri': required_redirect_uri(),
+        }
     if not isinstance(token, dict):
-        return {'connected': False, 'message': 'Bling não conectado.', **meta}
+        return {
+            'connected': False,
+            'message': 'Bling não conectado.',
+            'required_redirect_uri': required_redirect_uri(),
+            **meta,
+        }
     return {
         'connected': bool(token.get('access_token')),
         'connected_at': meta.get('connected_at', ''),
@@ -159,6 +184,7 @@ def connection_status() -> dict[str, Any]:
         'expires_in': token.get('expires_in'),
         'store_mode': meta.get('store_mode', ''),
         'user_session_id': meta.get('user_session_id', ''),
+        'required_redirect_uri': required_redirect_uri(),
         'message': 'Bling conectado.' if token.get('access_token') else 'Bling não conectado.',
     }
 
@@ -186,6 +212,8 @@ def exchange_code_for_token(code: str) -> tuple[bool, str]:
         return False, 'Client ID do Bling não configurado nos secrets do app.'
     if not secret:
         return False, 'Client Secret do Bling ainda não está configurado nos secrets do app.'
+    if not uri:
+        return False, 'Redirect URI do Bling não configurado.'
 
     payload: dict[str, str] = {'grant_type': 'authorization_code', 'code': code, 'redirect_uri': uri}
 
@@ -206,7 +234,7 @@ def exchange_code_for_token(code: str) -> tuple[bool, str]:
                 status='ERRO',
                 details={'status_code': response.status_code, 'response_preview': text, 'redirect_uri': uri, 'responsible_file': RESPONSIBLE_FILE},
             )
-            return False, f'Falha ao conectar ao Bling. Status {response.status_code}.'
+            return False, f'Falha ao conectar ao Bling. Status {response.status_code}. Confira se o Callback URL cadastrado no app v3 do Bling é exatamente: {uri}'
         data = response.json()
         save_token(data)
         st.session_state.pop(LAST_ERROR_KEY, None)
