@@ -60,6 +60,15 @@ def _copy_model(df: pd.DataFrame | None) -> pd.DataFrame | None:
     return None
 
 
+def _first_existing_model(*models: pd.DataFrame | None) -> pd.DataFrame | None:
+    """Retorna o primeiro modelo válido sem avaliar DataFrame como booleano."""
+    for model in models:
+        copied = _copy_model(model)
+        if copied is not None:
+            return copied
+    return None
+
+
 def _direct_api_model() -> pd.DataFrame | None:
     if not _is_api_context():
         return None
@@ -74,15 +83,11 @@ def _direct_api_model() -> pd.DataFrame | None:
 
 
 def _bling_contract_model() -> pd.DataFrame | None:
-    for model in (
+    return _first_existing_model(
         get_home_cadastro_model(),
         get_home_estoque_model(),
         get_home_preco_model(),
-    ):
-        copied = _copy_model(model)
-        if copied is not None:
-            return copied
-    return None
+    )
 
 
 def _universal_contract_model() -> pd.DataFrame | None:
@@ -97,7 +102,7 @@ def _first_contract_model() -> pd.DataFrame | None:
         return _universal_contract_model()
     if _is_bling_csv_context():
         return _bling_contract_model()
-    return _bling_contract_model() or _universal_contract_model()
+    return _first_existing_model(_bling_contract_model(), _universal_contract_model())
 
 
 def empty_cadastro_upload_result() -> SmartUploadResult:
@@ -153,7 +158,7 @@ def _destination_model(upload) -> pd.DataFrame:
         if bling_model is not None:
             return bling_model
     else:
-        fallback_model = _bling_contract_model() or _universal_contract_model()
+        fallback_model = _first_existing_model(_bling_contract_model(), _universal_contract_model())
         if fallback_model is not None:
             return fallback_model
 
