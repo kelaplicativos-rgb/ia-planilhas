@@ -32,7 +32,7 @@ class ModelUploadResult:
     attachments: list[Any] | None = None
     ignored_files: list[Any] | None = None
     contract_type: str = 'universal'
-    contract_label: str = 'Modelo Universal'
+    contract_label: str = 'Modelo de destino'
     contract_confidence: float = 0.0
     contract_reason: str = ''
 
@@ -120,7 +120,6 @@ def _read_excel_header_fallback(file: Any) -> pd.DataFrame | None:
         if not best_columns:
             add_audit_event('destination_model_header_fallback_empty', area='MODELO', status='AVISO', details={'file': _file_audit_info(file)})
             return None
-
         df = pd.DataFrame(columns=_dedupe_columns(best_columns))
         add_audit_event(
             'destination_model_header_fallback_applied',
@@ -190,13 +189,19 @@ def _remember_contract_detection(detection) -> None:
     st.session_state['home_slim_flow_operation'] = detection.contract_type
 
 
+def _display_contract_label(label: object) -> str:
+    text = str(label or '').strip()
+    if not text or text.lower() in {'modelo universal', 'universal'}:
+        return 'Modelo de destino'
+    return text
+
+
 def _render_model_summary(file: Any | None, df: pd.DataFrame | None, detection=None) -> None:
     if not isinstance(df, pd.DataFrame):
         return
-    label = getattr(detection, 'label', 'Modelo de destino')
-    confidence = float(getattr(detection, 'confidence', 0.0) or 0.0)
-    st.success(f'{label} anexado como contrato final.')
-    st.caption(f'{_file_name(file)} · {len(df)} linha(s) · {len(df.columns)} coluna(s) · confiança {confidence:.0%}')
+    label = _display_contract_label(getattr(detection, 'label', 'Modelo de destino'))
+    st.success(f'{label} anexado como modelo de destino.')
+    st.caption(f'{_file_name(file)} · {len(df)} linha(s) · {len(df.columns)} coluna(s)')
     with st.expander('Ver colunas do modelo de destino', expanded=False):
         st.caption(_columns_caption(df))
 
@@ -217,7 +222,7 @@ def _classified_result(destination_file: Any, destination_df: pd.DataFrame, dete
         attachments=supported_files,
         ignored_files=ignored_files,
         contract_type=contract,
-        contract_label=detection.label,
+        contract_label=_display_contract_label(detection.label),
         contract_confidence=float(detection.confidence),
         contract_reason=detection.reason,
     )
