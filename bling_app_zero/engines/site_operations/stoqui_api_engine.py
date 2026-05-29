@@ -16,6 +16,14 @@ STOQUI_PRODUCT_PATH = '/produto'
 DEFAULT_TIMEOUT = 18
 MAX_DISCOVERY_PAGES = 8
 MAX_DISCOVERY_SCRIPTS = 28
+KNOWN_STOQUI_DOMAINS = {
+    'megacentereletronicos.com.br',
+    'www.megacentereletronicos.com.br',
+    'stoqui.shop',
+    'www.stoqui.shop',
+    'spb.stoqui.com.br',
+    'app.stoqui.com.br',
+}
 UUID_RE = re.compile(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}')
 JWT_RE = re.compile(r'eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}')
 SCRIPT_SRC_RE = re.compile(r'<script[^>]+src=["\']([^"\']+)["\']', re.IGNORECASE)
@@ -69,7 +77,25 @@ def _split_raw_urls(raw_urls: str) -> list[str]:
     return [value.strip() for value in values if value.strip().startswith(('http://', 'https://'))]
 
 
+def _host_from_url(url: str) -> str:
+    try:
+        return urlparse(str(url or '').strip()).netloc.lower().split(':', 1)[0]
+    except Exception:
+        return ''
+
+
+def _known_stoqui_domain(raw_urls: str) -> str:
+    for url in _split_raw_urls(raw_urls):
+        host = _host_from_url(url)
+        if host in KNOWN_STOQUI_DOMAINS:
+            return host
+    return ''
+
+
 def can_handle_stoqui_url(raw_urls: str) -> bool:
+    # BLINGFIX: Mega Center é loja Stoqui com domínio próprio.
+    # Ainda tentamos descoberta leve em URLs públicas, mas domínios conhecidos
+    # entram explicitamente no motor Stoqui/API primeiro.
     return bool(_split_raw_urls(raw_urls))
 
 
@@ -150,7 +176,8 @@ def _discover_from_public_pages(raw_urls: str) -> tuple[list[str], str, bool, st
     user_ids: list[str] = []
     anon_key = _extract_anon_key(raw_urls)
     visited_scripts: set[str] = set()
-    saw_stoqui_signal = _looks_like_stoqui_text(raw_urls)
+    known_domain = _known_stoqui_domain(raw_urls)
+    saw_stoqui_signal = bool(known_domain) or _looks_like_stoqui_text(raw_urls)
     public_root = ''
 
     for url in urls[:MAX_DISCOVERY_PAGES]:
@@ -206,13 +233,14 @@ def _headers(anon_key: str) -> dict[str, str]:
 
 
 def _request_products(user_id: str, anon_key: str, *, limit: int) -> list[dict]:
+    safe_limit = max(1, min(SAFE_CAPTURE_MAX_PRODUCTS, int(limit or SAFE_CAPTURE_MAX_PRODUCTS)))
     endpoint = f'{STOQUI_REST_BASE}{STOQUI_PRODUCT_PATH}'
     params = {
         'select': RICH_PRODUCT_SELECT,
         'user_id': f'eq.{user_id}',
         'deletado_em': 'is.null',
         'order': 'oculto.asc,destaque.desc,criado_em.desc,id.desc',
-        'limit': str(max(1, min(SAFE_CAPTURE_MAX_PRODUCTS, int(limit or SAFE_CAPTURE_MAX_PRODUCTS)))),
+        'limit': str(safe_limit),
     }
     try:
         response = requests.get(endpoint, params=params, headers=_headers(anon_key), timeout=DEFAULT_TIMEOUT)
@@ -221,7 +249,7 @@ def _request_products(user_id: str, anon_key: str, *, limit: int) -> list[dict]:
         if response.status_code >= 400:
             return []
         data = response.json()
-        return data if isinstance(data, list) else []
+        return data[:safe_limit] if isinstance(data, list) else []
     except Exception:
         return []
 
@@ -447,14 +475,16 @@ def run_stoqui_site_engine(
 ) -> pd.DataFrame:
     normalized_operation = 'estoque' if str(operation or '').strip().lower() == 'estoque' else 'cadastro'
     safe_max_products = _safe_max_products(max_products)
+    known_domain = _known_stoqui_domain(raw_urls)
     if not can_handle_stoqui_url(raw_urls):
         return pd.DataFrame()
 
     _emit(progress_callback, {
         'stage': 'API Stoqui',
-        'message': 'Verificando se o site usa motor Stoqui/React e API interna de produtos...',
+        'message': 'Domínio reconhecido como Stoqui. Tentando API interna primeiro.' if known_domain else 'Verificando se o site usa motor Stoqui/React e API interna de produtos...',
         'progress': 0.10,
         'responsible_file': RESPONSIBLE_FILE,
+        'known_stoqui_domain': known_domain,
         'max_products': safe_max_products,
         'safe_limited': True,
     })
@@ -474,6 +504,7 @@ def run_stoqui_site_engine(
             'message': 'Motor Stoqui/API pública não identificado nesta URL. Indo para o motor genérico.',
             'progress': 0.18,
             'responsible_file': RESPONSIBLE_FILE,
+            'known_stoqui_domain': known_domain,
             'stoqui_signal': bool(saw_stoqui_signal),
             'has_public_api_credentials': bool(has_public_api_credentials),
             'user_ids_found': len(user_ids),
@@ -487,6 +518,7 @@ def run_stoqui_site_engine(
         'stoqui_user_ids': len(user_ids),
         'has_anon_key': bool(anon_key),
         'stoqui_signal': bool(saw_stoqui_signal),
+        'known_stoqui_domain': known_domain,
         'max_products': safe_max_products,
         'safe_limited': True,
         'responsible_file': RESPONSIBLE_FILE,
@@ -510,6 +542,7 @@ def run_stoqui_site_engine(
             'message': 'API Stoqui não retornou produtos. Indo para o motor genérico.',
             'progress': 0.30,
             'responsible_file': RESPONSIBLE_FILE,
+            'known_stoqui_domain': known_domain,
             'stoqui_user_ids_tried': tried_ids,
         })
         return pd.DataFrame()
@@ -522,6 +555,7 @@ def run_stoqui_site_engine(
         'progress': 0.88,
         'rows': len(df),
         'columns': len(df.columns),
+        'known_stoqui_domain': known_domain,
         'max_products': safe_max_products,
         'safe_limited': True,
         'responsible_file': RESPONSIBLE_FILE,
