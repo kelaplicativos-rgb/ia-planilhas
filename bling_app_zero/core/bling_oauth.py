@@ -18,11 +18,11 @@ from bling_app_zero.core.oauth_return_snapshot import restore_download_oauth_ret
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_oauth.py'
 AUTH_URL_DEFAULT = 'https://www.bling.com.br/Api/v3/oauth/authorize'
 TOKEN_URL_DEFAULT = 'https://www.bling.com.br/Api/v3/oauth/token'
-PUBLIC_REDIRECT_URI_DEFAULT = 'https://ia-planilhas.streamlit.app/'
+PUBLIC_REDIRECT_URI_DEFAULT = 'https://ia-planilhas-bling.streamlit.app/'
 CLIENT_ID_DEFAULT = ''
 LEGACY_REDIRECT_URI_VALUES = {
-    'https://ia-planilhas-bling.streamlit.app',
-    'https://ia-planilhas-bling.streamlit.app/',
+    'https://ia-planilhas.streamlit.app',
+    'https://ia-planilhas.streamlit.app/',
 }
 
 TOKEN_STATE_KEY = 'bling_oauth_token_response'
@@ -58,7 +58,7 @@ def _normalize_redirect_uri(value: str) -> str:
             details={
                 'configured_redirect_uri': configured,
                 'forced_redirect_uri': PUBLIC_REDIRECT_URI_DEFAULT,
-                'reason': 'redirect antigo do app ia-planilhas-bling substituído pelo domínio público atual',
+                'reason': 'redirect antigo sem sufixo -bling substituído pelo domínio público atual',
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
@@ -273,7 +273,6 @@ def _restore_oauth_return_context(state_payload: dict[str, Any]) -> None:
     return_to = str(state_payload.get('return_to') or '').strip().lower()
     session_id = str(state_payload.get('session_id') or get_user_session_id()).strip()
 
-    # Impede o boot lock da Home de apagar o retorno do OAuth no primeiro render após conectar.
     st.session_state['home_boot_landing_rendered_once'] = True
     st.session_state['home_active_operation_v2'] = 'wizard_cadastro_estoque'
     st.session_state['home_allow_operation_v2_session'] = True
