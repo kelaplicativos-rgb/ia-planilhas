@@ -4,6 +4,7 @@ from collections.abc import Callable, Iterable
 
 import pandas as pd
 
+from bling_app_zero.engines.fast_site_scraper.constants import SAFE_CAPTURE_MAX_PAGES, SAFE_CAPTURE_MAX_PRODUCTS, normalize_capture_limits
 from bling_app_zero.engines.site_operations.cadastro_engine import run_cadastro_site_engine
 from bling_app_zero.engines.site_operations.estoque_engine import run_estoque_site_engine
 from bling_app_zero.engines.site_operations.universal_engine import run_universal_site_engine
@@ -32,25 +33,33 @@ def run_site_operation_engine(
     operation: str,
     raw_urls: str,
     requested_columns: Iterable[str] | None = None,
-    max_pages: int = 1_000_000,
-    max_products: int = 1_000_000,
-    stop_early: bool = False,
+    max_pages: int = SAFE_CAPTURE_MAX_PAGES,
+    max_products: int = SAFE_CAPTURE_MAX_PRODUCTS,
+    stop_early: bool = True,
     progress_callback: Callable[[dict], None] | None = None,
 ) -> pd.DataFrame:
-    """Roteador central dos motores por site.
+    """Roteador central dos motores por site com limite duro.
 
-    Atualização de preço usa o motor de cadastro como extrator de produto/preço,
-    mas preserva a operação `atualizacao_preco` no restante do fluxo para que o
-    contrato/download final use o modelo correto.
+    BLINGFIX: este roteador não deve aceitar 1_000_000 páginas/produtos em
+    chamadas diretas. Mesmo fora da UI, os limites passam pelo normalizador.
     """
     selected = normalize_operation(operation)
+    limits = normalize_capture_limits(
+        max_pages=max_pages,
+        max_products=max_products,
+        mode='safe' if stop_early else 'deep',
+    )
+    safe_max_pages = limits['max_pages']
+    safe_max_products = limits['max_products']
+    safe_stop_early = True
+
     if selected == 'estoque':
         return run_estoque_site_engine(
             raw_urls=raw_urls,
             requested_columns=requested_columns,
-            max_pages=max_pages,
-            max_products=max_products,
-            stop_early=stop_early,
+            max_pages=safe_max_pages,
+            max_products=safe_max_products,
+            stop_early=safe_stop_early,
             progress_callback=progress_callback,
         )
 
@@ -58,18 +67,18 @@ def run_site_operation_engine(
         return run_cadastro_site_engine(
             raw_urls=raw_urls,
             requested_columns=requested_columns,
-            max_pages=max_pages,
-            max_products=max_products,
-            stop_early=stop_early,
+            max_pages=safe_max_pages,
+            max_products=safe_max_products,
+            stop_early=safe_stop_early,
             progress_callback=progress_callback,
         )
 
     return run_universal_site_engine(
         raw_urls=raw_urls,
         requested_columns=requested_columns,
-        max_pages=max_pages,
-        max_products=max_products,
-        stop_early=stop_early,
+        max_pages=safe_max_pages,
+        max_products=safe_max_products,
+        stop_early=safe_stop_early,
         progress_callback=progress_callback,
     )
 
