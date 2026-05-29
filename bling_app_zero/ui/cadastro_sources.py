@@ -41,6 +41,15 @@ def _copy_model(df: object) -> pd.DataFrame | None:
     return df.copy().fillna('') if _valid_model(df) else None
 
 
+def _first_existing_model(*models: object) -> pd.DataFrame | None:
+    """Retorna o primeiro modelo válido sem usar `DataFrame or DataFrame`."""
+    for model in models:
+        copied = _copy_model(model)
+        if copied is not None:
+            return copied
+    return None
+
+
 def _direct_api_model() -> pd.DataFrame | None:
     if _entry_context() != CONTEXT_BLING_API:
         return None
@@ -118,7 +127,10 @@ def select_estoque_model_for_cadastro(upload) -> pd.DataFrame:
 
     estoque_model = _copy_model(getattr(upload, 'estoque_model_df', None))
     if estoque_model is not None:
-        cadastro_model = _copy_model(getattr(upload, 'cadastro_model_df', None)) or _copy_model(getattr(upload, 'model_df', None))
+        cadastro_model = _first_existing_model(
+            getattr(upload, 'cadastro_model_df', None),
+            getattr(upload, 'model_df', None),
+        )
         save_home_models(cadastro_model, estoque_model, None, None, replace_missing=True)
         return estoque_model
 
