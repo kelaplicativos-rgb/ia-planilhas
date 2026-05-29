@@ -199,8 +199,16 @@ def _mirror_to_wizard_keys(
 ) -> None:
     normalized = _normalize_operation(operation)
     origem = source_df.copy().fillna('') if isinstance(source_df, pd.DataFrame) else pd.DataFrame()
-    cadastro_model = _copy_df(cadastro_model_df) or _copy_df(operation_model_df)
-    estoque_model = _copy_df(estoque_model_df) or _copy_df(operation_model_df)
+
+    # BLINGFIX: não use `df_a or df_b` com DataFrame. O pandas não permite
+    # avaliação booleana de DataFrame e lança ValueError: truth value is ambiguous.
+    operation_model = _copy_df(operation_model_df)
+    cadastro_model = _copy_df(cadastro_model_df)
+    if cadastro_model is None:
+        cadastro_model = operation_model.copy().fillna('') if operation_model is not None else None
+    estoque_model = _copy_df(estoque_model_df)
+    if estoque_model is None:
+        estoque_model = operation_model.copy().fillna('') if operation_model is not None else None
 
     if normalized == 'estoque':
         st.session_state[ESTOQUE_WIZARD_ORIGEM_SITE_KEY] = origem.copy().fillna('')
