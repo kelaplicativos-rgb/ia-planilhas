@@ -41,6 +41,11 @@ def _secret(name: str, default: str = '') -> str:
         return default
 
 
+def _secret_bool(name: str, default: bool = False) -> bool:
+    raw = _secret(name, '1' if default else '0').strip().lower()
+    return raw in {'1', 'true', 'sim', 'yes', 'on'}
+
+
 def _normalize_redirect_uri(value: str) -> str:
     configured = str(value or '').strip()
     if not configured:
@@ -79,8 +84,12 @@ def token_url() -> str:
     return _secret('token_url', TOKEN_URL_DEFAULT)
 
 
+def include_redirect_uri_in_authorize() -> bool:
+    return _secret_bool('include_redirect_uri_in_authorize', False)
+
+
 def _encode_state_payload(payload: dict[str, Any]) -> str:
-    raw = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+    raw = json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
     return base64.urlsafe_b64encode(raw).decode('ascii').rstrip('=')
 
 
@@ -98,10 +107,10 @@ def _decode_state_payload(state: str) -> dict[str, Any]:
 
 def _new_state(extra_context: dict[str, Any] | None = None) -> str:
     payload: dict[str, Any] = {
-        'nonce': secrets.token_urlsafe(24),
-        'created_at': datetime.now().isoformat(timespec='seconds'),
-        'source': STATE_SOURCE,
-        'session_id': get_user_session_id(),
+        'n': secrets.token_urlsafe(18),
+        't': datetime.now().isoformat(timespec='seconds'),
+        'src': STATE_SOURCE,
+        'sid': get_user_session_id(),
     }
     if isinstance(extra_context, dict):
         payload.update({k: v for k, v in extra_context.items() if isinstance(k, str)})
@@ -126,12 +135,14 @@ def build_authorization_url(extra_context: dict[str, Any] | None = None) -> str:
         st.session_state[RETURN_CONTEXT_KEY] = dict(extra_context)
 
     uri = redirect_uri()
+    include_redirect = include_redirect_uri_in_authorize()
     params = {
         'response_type': 'code',
         'client_id': cid,
-        'redirect_uri': uri,
         'state': state,
     }
+    if include_redirect:
+        params['redirect_uri'] = uri
 
     add_audit_event(
         'bling_oauth_authorization_url_built',
@@ -139,6 +150,7 @@ def build_authorization_url(extra_context: dict[str, Any] | None = None) -> str:
         status='OK',
         details={
             'redirect_uri': uri,
+            'include_redirect_uri_in_authorize': include_redirect,
             'has_client_id': bool(cid),
             'has_state': bool(state),
             'responsible_file': RESPONSIBLE_FILE,
@@ -169,12 +181,14 @@ def connection_status() -> dict[str, Any]:
             'message': 'Bling não conectado.',
             'error': str(exc),
             'required_redirect_uri': required_redirect_uri(),
+            'include_redirect_uri_in_authorize': include_redirect_uri_in_authorize(),
         }
     if not isinstance(token, dict):
         return {
             'connected': False,
             'message': 'Bling não conectado.',
             'required_redirect_uri': required_redirect_uri(),
+            'include_redirect_uri_in_authorize': include_redirect_uri_in_authorize(),
             **meta,
         }
     return {
@@ -185,6 +199,7 @@ def connection_status() -> dict[str, Any]:
         'store_mode': meta.get('store_mode', ''),
         'user_session_id': meta.get('user_session_id', ''),
         'required_redirect_uri': required_redirect_uri(),
+        'include_redirect_uri_in_authorize': include_redirect_uri_in_authorize(),
         'message': 'Bling conectado.' if token.get('access_token') else 'Bling não conectado.',
     }
 
@@ -259,7 +274,9 @@ def exchange_code_for_token(code: str) -> tuple[bool, str]:
 def _state_is_trusted(state: str, expected: str, payload: dict[str, Any]) -> bool:
     if expected and state and state == expected:
         return True
-    if payload.get('source') == STATE_SOURCE and payload.get('session_id'):
+    source = payload.get('source') or payload.get('src')
+    session_id = payload.get('session_id') or payload.get('sid')
+    if source == STATE_SOURCE and session_id:
         return True
     return not expected
 
@@ -299,7 +316,7 @@ def _force_download_query_params() -> None:
 
 def _restore_oauth_return_context(state_payload: dict[str, Any]) -> None:
     return_to = str(state_payload.get('return_to') or '').strip().lower()
-    session_id = str(state_payload.get('session_id') or get_user_session_id()).strip()
+    session_id = str(state_payload.get('session_id') or state_payload.get('sid') or get_user_session_id()).strip()
 
     st.session_state['home_boot_landing_rendered_once'] = True
     st.session_state['home_active_operation_v2'] = 'wizard_cadastro_estoque'
