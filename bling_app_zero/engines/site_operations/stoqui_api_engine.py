@@ -8,6 +8,7 @@ import pandas as pd
 import requests
 
 from bling_app_zero.core.column_contract import RequestedField, build_contract
+from bling_app_zero.engines.fast_site_scraper.constants import SAFE_CAPTURE_MAX_PRODUCTS, normalize_capture_limits
 
 RESPONSIBLE_FILE = 'bling_app_zero/engines/site_operations/stoqui_api_engine.py'
 STOQUI_REST_BASE = 'https://spb.stoqui.com.br/rest/v1'
@@ -58,24 +59,24 @@ def _emit(progress_callback: Callable[[dict], None] | None, payload: dict) -> No
         pass
 
 
+def _safe_max_products(value: int | None = None) -> int:
+    limits = normalize_capture_limits(max_products=value, mode='safe')
+    return int(limits['max_products'])
+
+
 def _split_raw_urls(raw_urls: str) -> list[str]:
     values = re.split(r'[\n,;\t ]+', str(raw_urls or '').strip())
     return [value.strip() for value in values if value.strip().startswith(('http://', 'https://'))]
 
 
 def can_handle_stoqui_url(raw_urls: str) -> bool:
-    # BLINGFIX: lojas Stoqui podem usar domínio próprio, como megacentereletronicos.com.br.
-    # Antes o motor só rodava quando a URL continha stoqui.com.br; nesses domínios o
-    # sistema caía no scraper genérico e encontrava HTML React vazio. Agora qualquer URL
-    # pública pode passar por uma tentativa leve de descoberta; se não for Stoqui, a
-    # execução retorna DataFrame vazio e o fluxo segue para o motor genérico.
     return bool(_split_raw_urls(raw_urls))
 
 
 def _extract_user_ids_from_text(text: str) -> list[str]:
     found: list[str] = []
     raw = str(text or '')
-    for pattern in (
+    patterns = (
         r'user_id\s*=\s*eq\.([0-9a-fA-F-]{36})',
         r'user_id=eq\.([0-9a-fA-F-]{36})',
         r'distinct_id=([0-9a-fA-F-]{36})',
@@ -85,7 +86,8 @@ def _extract_user_ids_from_text(text: str) -> list[str]:
         r'user_id["\']?\s*[:=]\s*["\']([0-9a-fA-F-]{36})["\']',
         r'usuario_id["\']?\s*[:=]\s*["\']([0-9a-fA-F-]{36})["\']',
         r'lojista_id["\']?\s*[:=]\s*["\']([0-9a-fA-F-]{36})["\']',
-    ):
+    )
+    for pattern in patterns:
         for match in re.findall(pattern, raw, flags=re.IGNORECASE):
             if UUID_RE.fullmatch(match) and match not in found:
                 found.append(match)
@@ -107,16 +109,15 @@ def _extract_anon_key(text: str) -> str:
     for key in JWT_RE.findall(raw):
         if len(key) > 80:
             return key
-    for pattern in (
+    patterns = (
         r'(?:anonKey|anon_key|SUPABASE_ANON_KEY|VITE_SUPABASE_ANON_KEY)["\']?\s*[:=]\s*["\']([^"\']+)["\']',
         r'(?:supabaseAnonKey|supabase_anon_key)["\']?\s*[:=]\s*["\']([^"\']+)["\']',
         r'apikey["\']?\s*[:=]\s*["\']([^"\']+)["\']',
-    ):
+    )
+    for pattern in patterns:
         match = re.search(pattern, raw, flags=re.IGNORECASE)
-        if match:
-            value = match.group(1).strip()
-            if value:
-                return value
+        if match and match.group(1).strip():
+            return match.group(1).strip()
     return ''
 
 
@@ -183,11 +184,9 @@ def _discover_from_public_pages(raw_urls: str) -> tuple[list[str], str, bool, st
                     user_ids.append(user_id)
             if not anon_key:
                 anon_key = _extract_anon_key(script_text)
-            has_public_api_credentials = bool(user_ids and anon_key)
-            if has_public_api_credentials or saw_stoqui_signal:
+            if bool(user_ids and anon_key) or saw_stoqui_signal:
                 break
-        has_public_api_credentials = bool(user_ids and anon_key)
-        if has_public_api_credentials or (user_ids and saw_stoqui_signal):
+        if bool(user_ids and anon_key) or (user_ids and saw_stoqui_signal):
             break
 
     return user_ids, anon_key, saw_stoqui_signal, public_root
@@ -206,13 +205,14 @@ def _headers(anon_key: str) -> dict[str, str]:
     return headers
 
 
-def _request_products(user_id: str, anon_key: str) -> list[dict]:
+def _request_products(user_id: str, anon_key: str, *, limit: int) -> list[dict]:
     endpoint = f'{STOQUI_REST_BASE}{STOQUI_PRODUCT_PATH}'
     params = {
         'select': RICH_PRODUCT_SELECT,
         'user_id': f'eq.{user_id}',
         'deletado_em': 'is.null',
         'order': 'oculto.asc,destaque.desc,criado_em.desc,id.desc',
+        'limit': str(max(1, min(SAFE_CAPTURE_MAX_PRODUCTS, int(limit or SAFE_CAPTURE_MAX_PRODUCTS)))),
     }
     try:
         response = requests.get(endpoint, params=params, headers=_headers(anon_key), timeout=DEFAULT_TIMEOUT)
@@ -270,7 +270,7 @@ def _category_value(product: dict) -> str:
 
 
 def _images_value(product: dict) -> str:
-    candidates = []
+    candidates: list[str] = []
     for key, value in product.items():
         key_text = str(key).lower()
         if not any(token in key_text for token in ('imagem', 'image', 'foto', 'photo', 'galeria', 'gallery')):
@@ -354,7 +354,6 @@ def _base_product_dict(product: dict, variation: dict | None = None, public_root
     variation_text = _variation_label(variation)
     if variation_text and variation_text.lower() not in descricao.lower():
         descricao = f'{descricao} - {variation_text}' if descricao else variation_text
-
     codigo = _first_value(
         _deep_pick(variation, ('codigo', 'sku', 'referencia', 'id')),
         _deep_pick(product, ('codigo', 'sku', 'referencia', 'cod_produto', 'id')),
@@ -430,9 +429,7 @@ def _to_dataframe(rows: list[dict[str, str]], requested_columns: Iterable[str] |
     defaults = DEFAULT_ESTOQUE_COLUMNS if operation == 'estoque' else DEFAULT_CADASTRO_COLUMNS
     columns = [str(column).strip() for column in (requested_columns or []) if str(column).strip()] or defaults
     contract = build_contract(columns)
-    output_rows = []
-    for row in rows:
-        output_rows.append({field.original: _value_for_field(row, field) for field in contract})
+    output_rows = [{field.original: _value_for_field(row, field) for field in contract} for row in rows]
     df = pd.DataFrame(output_rows).fillna('')
     for column in columns:
         if column not in df.columns:
@@ -445,10 +442,11 @@ def run_stoqui_site_engine(
     raw_urls: str,
     requested_columns: Iterable[str] | None = None,
     operation: str = 'cadastro',
-    max_products: int = 1_000_000,
+    max_products: int = SAFE_CAPTURE_MAX_PRODUCTS,
     progress_callback: Callable[[dict], None] | None = None,
 ) -> pd.DataFrame:
     normalized_operation = 'estoque' if str(operation or '').strip().lower() == 'estoque' else 'cadastro'
+    safe_max_products = _safe_max_products(max_products)
     if not can_handle_stoqui_url(raw_urls):
         return pd.DataFrame()
 
@@ -457,6 +455,8 @@ def run_stoqui_site_engine(
         'message': 'Verificando se o site usa motor Stoqui/React e API interna de produtos...',
         'progress': 0.10,
         'responsible_file': RESPONSIBLE_FILE,
+        'max_products': safe_max_products,
+        'safe_limited': True,
     })
     user_ids = _extract_user_ids_from_text(raw_urls)
     anon_key = _extract_anon_key(raw_urls)
@@ -482,11 +482,13 @@ def run_stoqui_site_engine(
 
     _emit(progress_callback, {
         'stage': 'API Stoqui',
-        'message': f'Consultando API interna Stoqui para {len(user_ids)} possível(is) catálogo(s)...',
+        'message': f'Consultando API interna Stoqui para {len(user_ids)} possível(is) catálogo(s), limite {safe_max_products} produto(s)...',
         'progress': 0.22,
         'stoqui_user_ids': len(user_ids),
         'has_anon_key': bool(anon_key),
         'stoqui_signal': bool(saw_stoqui_signal),
+        'max_products': safe_max_products,
+        'safe_limited': True,
         'responsible_file': RESPONSIBLE_FILE,
     })
 
@@ -494,10 +496,10 @@ def run_stoqui_site_engine(
     tried_ids = 0
     for user_id in user_ids:
         tried_ids += 1
-        chunk = _request_products(user_id, anon_key)
+        chunk = _request_products(user_id, anon_key, limit=safe_max_products - len(products))
         if chunk:
             products.extend(chunk)
-        if len(products) >= int(max_products or 1_000_000):
+        if len(products) >= safe_max_products:
             break
         if tried_ids >= 24 and not products:
             break
@@ -512,7 +514,7 @@ def run_stoqui_site_engine(
         })
         return pd.DataFrame()
 
-    rows = _flatten_products(products, public_root=public_root)[: int(max_products or 1_000_000)]
+    rows = _flatten_products(products, public_root=public_root)[:safe_max_products]
     df = _to_dataframe(rows, requested_columns, normalized_operation)
     _emit(progress_callback, {
         'stage': 'API Stoqui',
@@ -520,6 +522,8 @@ def run_stoqui_site_engine(
         'progress': 0.88,
         'rows': len(df),
         'columns': len(df.columns),
+        'max_products': safe_max_products,
+        'safe_limited': True,
         'responsible_file': RESPONSIBLE_FILE,
     })
     return df
