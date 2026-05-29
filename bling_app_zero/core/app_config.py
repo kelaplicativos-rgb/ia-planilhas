@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-APP_VERSION = '3.7.2-BLINGFIX-OAUTH-V3'
+APP_VERSION = '3.7.3-BLINGFIX-CONEXAO-BLING'
 
 PAGE_CONFIG = {
     'page_title': 'MapeiaAI',
