@@ -62,7 +62,6 @@ def _current_wizard_step() -> str:
     if query_step in VALID_SINGLE_PAGE_STEPS:
         st.session_state[WIZARD_STEP_KEY] = query_step
         return query_step
-
     step = str(st.session_state.get(WIZARD_STEP_KEY) or '').strip().lower()
     if step == 'gerar_estoque':
         st.session_state[WIZARD_STEP_KEY] = STEP_ORIGEM
@@ -91,10 +90,8 @@ def _start_wizard_context(context: str, *, step: str | None = None) -> None:
     st.session_state[ACTIVE_FLOW_KEY] = FLOW_WIZARD
     st.session_state[HOME_ALLOW_FLOW_KEY] = True
     st.session_state['home_single_page_flow_active'] = True
-
     normalized_context = CONTEXT_UNIVERSAL if context == CONTEXT_BLING_CSV else context
     set_entry_context(normalized_context)
-
     if normalized_context == CONTEXT_BLING_API:
         clear_finish_mode()
         clear_api_skip_flag()
@@ -106,7 +103,6 @@ def _start_wizard_context(context: str, *, step: str | None = None) -> None:
         st.session_state[WIZARD_STEP_KEY] = step
     else:
         st.session_state.pop(WIZARD_STEP_KEY, None)
-
     if context == CONTEXT_BLING_CSV:
         add_audit_event(
             'home_router_bling_csv_legacy_redirected_to_universal',
@@ -114,7 +110,6 @@ def _start_wizard_context(context: str, *, step: str | None = None) -> None:
             status='LEGADO_REDIRECIONADO',
             details={'responsible_file': RESPONSIBLE_FILE},
         )
-
     try:
         st.query_params['operation_v2'] = FLOW_WIZARD
         active_step = st.session_state.get(WIZARD_STEP_KEY)
@@ -132,7 +127,6 @@ def _set_single_page_wizard_state() -> None:
     st.session_state[ACTIVE_FLOW_KEY] = FLOW_WIZARD
     st.session_state[HOME_ALLOW_FLOW_KEY] = True
     st.session_state['home_single_page_flow_active'] = True
-
     current_step = _current_wizard_step()
     try:
         st.query_params['operation_v2'] = FLOW_WIZARD
@@ -151,16 +145,13 @@ def _requested_flow() -> str:
         st.session_state[HOME_BOOT_LOCK_KEY] = True
         _set_home_flow()
         return FLOW_HOME
-
     query_flow = _query_param('operation_v2')
     allow_flow = bool(st.session_state.get(HOME_ALLOW_FLOW_KEY, False))
     if query_flow and allow_flow:
         return query_flow
-
     flow = str(st.session_state.get(ACTIVE_FLOW_KEY) or '').strip()
     if flow:
         return flow
-
     return FLOW_HOME
 
 
@@ -193,21 +184,17 @@ def _render_same_tab_bling_link(auth_url: str) -> None:
     if not url:
         st.warning('Não consegui gerar o link de conexão com o Bling agora.')
         return
-
     try:
         st.link_button('Conectar ao Bling', url, use_container_width=True)
     except Exception:
-        st.markdown(f'[Conectar ao Bling]({url})')
-
-    with st.expander('Link direto de autenticação', expanded=False):
-        st.caption('Se o botão não abrir no celular, copie e cole este link em uma nova aba do navegador:')
-        st.code(url)
-
+        pass
+    st.info('Se o botão azul não abrir neste celular, use a URL direta abaixo.')
+    st.text_area('URL direta de autenticação do Bling', value=url, height=110, key='bling_auth_url_direct_visible')
     add_audit_event(
-        'home_router_native_bling_link_rendered',
+        'home_router_direct_bling_url_visible',
         area='HOME',
         status='OK',
-        details={'responsible_file': RESPONSIBLE_FILE, 'link_component': 'st.link_button'},
+        details={'responsible_file': RESPONSIBLE_FILE, 'link_component': 'text_area_visible'},
     )
 
 
@@ -216,7 +203,6 @@ def _render_bling_api_home_card() -> None:
         st.caption('Mais automático')
         st.markdown('#### Bling API')
         st.caption('Autentique o Bling primeiro. Depois escolha cadastro, estoque ou preços e envie no final pela API.')
-
         connected = bool(connection_status().get('connected'))
         if connected:
             st.success('Bling já conectado.')
@@ -224,7 +210,6 @@ def _render_bling_api_home_card() -> None:
                 _start_wizard_context(CONTEXT_BLING_API)
                 st.rerun()
             return
-
         try:
             auth_url = build_authorization_url({'return_to': 'start', 'source_step': 'home_bling_api_card'})
         except Exception as exc:
@@ -235,7 +220,6 @@ def _render_bling_api_home_card() -> None:
                 status='ERRO',
                 details={'error': str(exc), 'responsible_file': RESPONSIBLE_FILE},
             )
-
         if auth_url:
             _render_same_tab_bling_link(auth_url)
             st.caption('Após autorizar, você volta para escolher o tipo de envio da API.')
@@ -255,22 +239,19 @@ def render_professional_home() -> None:
             'responsible_file': RESPONSIBLE_FILE,
             'home_order': 'bling_api_destination_model',
             'style': 'professional_light_cards',
-            'bling_oauth_target': 'native_link_button',
+            'bling_oauth_target': 'visible_direct_url',
             'legacy_routes_removed': True,
             'bling_csv_legacy_redirected_to_universal': True,
         },
     )
-
     st.markdown('<div class="bling-home-section-title">Escolha como quer começar</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="bling-home-section-subtitle">Agora são dois caminhos: envio direto pela API ou modelo de destino.</div>',
         unsafe_allow_html=True,
     )
-
     col_api, col_universal = st.columns(2)
     with col_api:
         _render_bling_api_home_card()
-
     with col_universal:
         _render_home_card(
             'Modelo de destino',
@@ -296,16 +277,13 @@ def _redirect_legacy_flow_to_home(flow: str) -> None:
 
 def render_home_router() -> None:
     requested_flow = _requested_flow()
-
     if requested_flow in {'', FLOW_HOME}:
         _set_home_flow()
         render_professional_home()
         return
-
     if requested_flow in LEGACY_DISABLED_FLOWS:
         _redirect_legacy_flow_to_home(requested_flow)
         return
-
     _set_single_page_wizard_state()
     add_audit_event(
         'home_router_render_single_page_wizard',
