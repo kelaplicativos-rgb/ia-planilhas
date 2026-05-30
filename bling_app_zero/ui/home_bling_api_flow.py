@@ -37,6 +37,7 @@ RESPONSIBLE_FILE = 'bling_app_zero/ui/home_bling_api_flow.py'
 PRICE_UPDATE_OPERATION = OP_ATUALIZACAO_PRECO
 DIRECT_API_CONTRACT_KEY = 'direct_bling_api_contract_df'
 DIRECT_API_CONTRACT_ACTIVE_KEY = 'direct_bling_api_contract_active'
+API_STOCK_DEPOSIT_KEY = 'bling_api_stock_deposit_name'
 
 DIRECT_CONTRACT_SESSION_KEYS = (
     DIRECT_API_CONTRACT_KEY,
@@ -114,6 +115,24 @@ def apply_direct_api_contract(operation: str | None = None) -> pd.DataFrame:
     return model
 
 
+def _render_stock_deposit_field(operation: str) -> None:
+    op = normalize_direct_operation(operation)
+    if op != 'estoque':
+        return
+    st.markdown('##### Depósito do estoque')
+    st.caption('Informe o nome do depósito no Bling. Esse valor será aplicado em todos os produtos do envio de estoque.')
+    value = st.text_input(
+        'Nome do depósito no Bling',
+        value=str(st.session_state.get(API_STOCK_DEPOSIT_KEY) or '').strip(),
+        placeholder='Ex.: iFood, Geral, Loja, Estoque Principal',
+        key=API_STOCK_DEPOSIT_KEY,
+    ).strip()
+    if value:
+        st.success(f'Depósito selecionado: {value}')
+    else:
+        st.warning('Preencha o depósito antes de enviar estoque ao Bling.')
+
+
 def render_same_tab_connect_button(auth_url: str) -> None:
     safe_url = escape(str(auth_url or ''), quote=True)
     if not safe_url:
@@ -183,6 +202,7 @@ def render_bling_connection_step(section_title) -> None:
                 horizontal=True,
                 key='direct_bling_operation_choice',
             )
+            _render_stock_deposit_field(operation)
             if finish_mode() == FINISH_MODE_API:
                 apply_direct_api_contract(operation)
 
