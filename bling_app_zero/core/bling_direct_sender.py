@@ -68,6 +68,7 @@ class DirectSendResult:
     failed: int
     skipped: int
     errors: tuple[str, ...]
+    not_found_indices: tuple[int, ...] = ()
 
 
 def _secret(name: str, default: str = '') -> str:
@@ -228,7 +229,7 @@ def _api_error_message(index: object, response: requests.Response) -> str:
             'Desconecte o Bling, conecte novamente e tente enviar de novo.'
         )
     if status == 404:
-        return f'Linha {line}: endpoint ou produto não encontrado no Bling (404). Verifique ID/SKU e caminho da API. {preview}'
+        return f'Linha {line}: produto não encontrado no Bling (404). Separe esta linha para cadastro antes de atualizar estoque/preço. {preview}'
     if status == 422:
         return f'Linha {line}: dados recusados pelo Bling (422). Revise campos obrigatórios e formato. {preview}'
     return f'Linha {line}: status {status} · {preview}'
@@ -337,6 +338,7 @@ def send_dataframe_to_bling(df: pd.DataFrame, operation: str, *, limit: int | No
     failed = 0
     skipped = 0
     errors: list[str] = []
+    not_found_indices: list[int] = []
     auth_failed = False
 
     for index, row in rows.iterrows():
@@ -353,6 +355,11 @@ def send_dataframe_to_bling(df: pd.DataFrame, operation: str, *, limit: int | No
             response = requests.request(method, _url(path), headers=_headers(token), json=payload, timeout=30)
             if response.status_code >= 400:
                 failed += 1
+                if response.status_code == 404:
+                    try:
+                        not_found_indices.append(int(index))
+                    except Exception:
+                        pass
                 if response.status_code in {401, 403}:
                     auth_failed = True
                 if len(errors) < 8:
@@ -379,7 +386,14 @@ def send_dataframe_to_bling(df: pd.DataFrame, operation: str, *, limit: int | No
             details={'operation': operation, 'store_mode': store_mode, 'responsible_file': RESPONSIBLE_FILE},
         )
 
-    result = DirectSendResult(attempted=len(rows), sent=sent, failed=failed, skipped=skipped, errors=tuple(errors))
+    result = DirectSendResult(
+        attempted=len(rows),
+        sent=sent,
+        failed=failed,
+        skipped=skipped,
+        errors=tuple(errors),
+        not_found_indices=tuple(not_found_indices),
+    )
     add_audit_event(
         'bling_direct_flow_send_finished',
         area='BLING_ENVIO',
@@ -390,6 +404,7 @@ def send_dataframe_to_bling(df: pd.DataFrame, operation: str, *, limit: int | No
             'sent': result.sent,
             'failed': result.failed,
             'skipped': result.skipped,
+            'not_found_count': len(result.not_found_indices),
             'store_mode': store_mode,
             'responsible_file': RESPONSIBLE_FILE,
         },
