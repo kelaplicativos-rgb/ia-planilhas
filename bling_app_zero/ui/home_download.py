@@ -116,7 +116,6 @@ def get_template_upload() -> tuple[str, bytes] | None:
     data = st.session_state.get(DESTINATION_MODEL_UPLOAD_BYTES_KEY)
     if name and isinstance(data, (bytes, bytearray)) and data:
         return name, bytes(data)
-
     uploaded = st.session_state.get(DESTINATION_MODEL_UPLOAD_OBJECT_KEY)
     if uploaded is None:
         return None
@@ -176,7 +175,6 @@ def _render_optional_template_download(download_df: pd.DataFrame, key: str, sign
     if template_export is None:
         st.caption('Opcional: modelo preenchido fiel ao arquivo original não disponível agora.')
         return
-
     template_bytes, template_file_name, template_mime = template_export
     with st.expander('Opcional · Baixar também no formato do modelo anexado', expanded=False):
         st.caption('Use esta opção apenas se quiser manter o formato original do modelo.')
@@ -210,30 +208,53 @@ def _render_payload_preview(download_df: pd.DataFrame, operation: str) -> None:
             st.json(item.get('payload') or {})
 
 
+def _render_not_found_download(download_df: pd.DataFrame, not_found_indices: tuple[int, ...], key: str, signature: str, rules_sig: str) -> None:
+    valid_indices = [idx for idx in not_found_indices if idx in download_df.index]
+    if not valid_indices:
+        return
+    missing_df = download_df.loc[valid_indices].copy().fillna('')
+    if missing_df.empty:
+        return
+    missing_df.insert(0, 'motivo_bling', 'Produto não encontrado no Bling durante atualização de estoque/preço')
+    missing_df.insert(1, 'acao_recomendada', 'Cadastrar este produto no Bling e depois refazer o fluxo de atualização de estoque')
+    csv_bytes = missing_df.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+    st.warning(f'{len(missing_df)} produto(s) não encontrado(s) no Bling. Baixe esta lista para refazer o fluxo de Cadastro de Produtos.')
+    st.download_button(
+        '⬇️ Baixar produtos não encontrados para cadastro',
+        data=csv_bytes,
+        file_name='produtos_nao_encontrados_no_bling.csv',
+        mime='text/csv',
+        use_container_width=True,
+        key=f'download_not_found_bling_{key}_{signature}_{rules_sig}_{len(missing_df)}',
+    )
+    with st.expander('Prévia dos produtos não encontrados', expanded=False):
+        st.dataframe(missing_df.head(100), use_container_width=True)
+    add_audit_event(
+        'bling_direct_not_found_download_ready',
+        area='BLING_ENVIO',
+        status='OK',
+        details={'not_found_count': len(missing_df), 'responsible_file': 'bling_app_zero/ui/home_download.py'},
+    )
+
+
 def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: str, signature: str, rules_sig: str) -> None:
     operation = normalize_operation(operation)
     title = DIRECT_SEND_TEXT.get(operation, 'Envio direto ao Bling')
-
     st.markdown('##### Envio direto ao Bling')
     st.caption('Envia o resultado final diretamente para o Bling conectado.')
-
     status = connection_status()
     connected = bool(status.get('connected')) and is_direct_send_available()
     if not connected:
         st.warning('Bling não conectado. Volte ao início do caminho Bling API e conecte antes de enviar.')
         return
-
     if operation == OP_UNIVERSAL:
         st.warning('Envio direto exige operação definida: cadastro, estoque ou atualização de preços.')
         return
-
     st.success('Bling conectado. Envio direto disponível.')
     st.caption(f'Operação detectada: {operation_label(operation)} · Linhas prontas: {len(download_df)}')
-
     with st.expander('Prévia da tabela final', expanded=False):
         st.dataframe(download_df.head(50), use_container_width=True)
     _render_payload_preview(download_df, operation)
-
     button_key = f'send_direct_bling_{key}_{signature}_{rules_sig}'
     if st.button(f'🚀 {title}', use_container_width=True, key=button_key):
         with st.spinner('Realizando envio direto ao Bling...'):
@@ -244,6 +265,7 @@ def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: st
             st.warning(f'Envio parcial: {result.sent} enviada(s), {result.failed} falha(s), {result.skipped} ignorada(s).')
         else:
             st.error(f'Nenhuma linha foi enviada. Falhas: {result.failed}. Ignoradas: {result.skipped}.')
+        _render_not_found_download(download_df, tuple(getattr(result, 'not_found_indices', ())), key, signature, rules_sig)
         for error in result.errors:
             st.caption(error)
 
@@ -278,14 +300,8 @@ def _render_final_checklist(download_df: pd.DataFrame, operation: str, errors: l
         st.error('Download bloqueado. Corrija os itens abaixo antes de baixar o CSV final.')
         _render_validation_errors(errors, operation)
         st.caption('Volte para Mapeamento ou Revisão final, ajuste os campos e gere a prévia final novamente.')
-        add_audit_event(
-            'download_blocked_by_final_checklist',
-            area='DOWNLOAD',
-            status='BLOQUEADO',
-            details={'operation': operation, 'errors': errors[:20], 'row_count': len(download_df), 'home_entry_context': _entry_context()},
-        )
+        add_audit_event('download_blocked_by_final_checklist', area='DOWNLOAD', status='BLOQUEADO', details={'operation': operation, 'errors': errors[:20], 'row_count': len(download_df), 'home_entry_context': _entry_context()})
         return False
-
     st.success('Checklist aprovado: arquivo final validado para download.')
     st.caption('CSV com separador ; e codificação UTF-8-SIG será gerado a partir da base validada.')
     return True
@@ -302,53 +318,28 @@ def _render_csv_final(df: pd.DataFrame, operation: str, key: str) -> None:
     operation_title = operation_label(operation)
     st.markdown(f'##### {operation_badge(operation)}')
     st.caption(f'Arquivo final: {operation_title}. A saída principal é CSV com separador ; e UTF-8-SIG.')
-
     if st.session_state.pop('final_download_done', False):
         st.success('✅ Download concluído. Os dados continuam preservados nesta tela.')
-
     download_df, contract_applied, model_columns = download_dataframe_for_contract(df, operation)
     if not contract_applied:
         st.warning(_missing_contract_message())
         add_audit_event('download_contract_missing', area='DOWNLOAD', status='AGUARDANDO_MODELO', details={'home_entry_context': _entry_context()})
         return
-
     st.success('Modelo de destino aplicado. O arquivo final será gerado respeitando as colunas do modelo.')
     with st.expander('Colunas do modelo que serão preenchidas', expanded=False):
         st.caption(', '.join(model_columns))
-
     validation_errors = validate_final_df(download_df, operation)
     if not _render_final_checklist(download_df, operation, validation_errors):
         return
-
     signature = df_signature(download_df)
     rules_sig = rules_signature()
     csv_bytes = to_bling_csv_bytes(download_df.copy(), operation=operation, contract_columns=model_columns)
     csv_file_name = filename_for_operation(operation)
     widget_key = f'download_csv_{_entry_context() or "fluxo"}_{key}_{signature}_{rules_sig}'
-    save_download_snapshot(
-        download_df=download_df,
-        file_bytes=csv_bytes,
-        file_name=csv_file_name,
-        mime='text/csv',
-        operation=operation,
-        signature=signature,
-        rules_sig=rules_sig,
-        widget_key=widget_key,
-    )
-
+    save_download_snapshot(download_df=download_df, file_bytes=csv_bytes, file_name=csv_file_name, mime='text/csv', operation=operation, signature=signature, rules_sig=rules_sig, widget_key=widget_key)
     label = '⬇️ Baixar CSV Bling pronto para importar' if _is_bling_csv_context() else '⬇️ Baixar arquivo final'
     st.success('Arquivo final pronto.')
-    st.download_button(
-        label,
-        data=st.session_state.get(FINAL_DOWNLOAD_FILE_BYTES_KEY, csv_bytes),
-        file_name=str(st.session_state.get(FINAL_DOWNLOAD_FILE_NAME_KEY) or csv_file_name),
-        mime=str(st.session_state.get(FINAL_DOWNLOAD_MIME_KEY) or 'text/csv'),
-        use_container_width=True,
-        key=widget_key,
-        on_click=after_final_download,
-        args=(operation, signature, rules_sig),
-    )
-
+    st.download_button(label, data=st.session_state.get(FINAL_DOWNLOAD_FILE_BYTES_KEY, csv_bytes), file_name=str(st.session_state.get(FINAL_DOWNLOAD_FILE_NAME_KEY) or csv_file_name), mime=str(st.session_state.get(FINAL_DOWNLOAD_MIME_KEY) or 'text/csv'), use_container_width=True, key=widget_key, on_click=after_final_download, args=(operation, signature, rules_sig))
     _render_optional_template_download(download_df, key, signature, rules_sig)
 
 
@@ -360,11 +351,9 @@ def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
         else:
             st.warning('Ainda não há dados finais para concluir.')
             return
-
     if _is_api_context():
         _render_api_final(df, operation, key)
         return
-
     _render_csv_final(df, operation, key)
 
 
