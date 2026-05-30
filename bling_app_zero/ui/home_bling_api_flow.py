@@ -219,9 +219,11 @@ def _render_stock_deposit_field(operation: str) -> None:
     if op != 'estoque':
         return
     st.markdown('##### Depósito do estoque')
-    st.caption('Busque os depósitos reais da conta Bling e selecione um. O envio usará o ID do depósito quando disponível.')
+    st.caption('Use somente depósitos reais retornados pela API do Bling. O campo manual foi removido para evitar erro de envio.')
 
     if st.button('🔎 Buscar depósitos do Bling', use_container_width=True, key='bling_scan_stock_deposits'):
+        st.session_state.pop(API_STOCK_DEPOSIT_ID_KEY, None)
+        st.session_state.pop(API_STOCK_DEPOSIT_KEY, None)
         deposits, error = _fetch_stock_deposits()
         if error:
             st.warning(error)
@@ -244,16 +246,7 @@ def _render_stock_deposit_field(operation: str) -> None:
         st.success(f'Depósito selecionado: {selected_label}')
         return
 
-    value = st.text_input(
-        'Nome do depósito no Bling',
-        value=str(st.session_state.get(API_STOCK_DEPOSIT_KEY) or '').strip(),
-        placeholder='Ex.: iFood, Geral, Loja, Estoque Principal',
-        key=API_STOCK_DEPOSIT_KEY,
-    ).strip()
-    if value:
-        st.caption('Modo manual ativo. Preferencialmente use o botão de busca para selecionar um depósito real do Bling.')
-    else:
-        st.warning('Busque/selecione o depósito antes de enviar estoque ao Bling.')
+    st.warning('Nenhum depósito selecionado. Clique em “Buscar depósitos do Bling” e selecione um depósito real antes de continuar.')
 
 
 def render_same_tab_connect_button(auth_url: str) -> None:
