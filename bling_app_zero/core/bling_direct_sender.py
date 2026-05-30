@@ -20,6 +20,7 @@ from bling_app_zero.core.operation_contract import (
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_direct_sender.py'
 DEFAULT_API_BASE_URL = 'https://www.bling.com.br/Api/v3'
+API_STOCK_DEPOSIT_KEY = 'bling_api_stock_deposit_name'
 
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     'id': ('id produto', 'id_produto', 'idproduto', 'id', 'codigo bling', 'código bling'),
@@ -82,6 +83,13 @@ def _secret(name: str, default: str = '') -> str:
 
 def api_base_url() -> str:
     return (_secret('api_base_url', DEFAULT_API_BASE_URL) or DEFAULT_API_BASE_URL).rstrip('/')
+
+
+def _stock_deposit_name() -> str:
+    session_value = str(st.session_state.get(API_STOCK_DEPOSIT_KEY) or '').strip()
+    if session_value:
+        return session_value
+    return _secret('stock_deposit_name', _secret('default_stock_deposit_name', '')).strip()
 
 
 def _looks_like_local_path(value: str) -> bool:
@@ -281,7 +289,7 @@ def _payload_estoque(row: pd.Series, mapping: dict[str, str]) -> dict[str, Any] 
     }
     produto_id = _value(row, mapping, 'id')
     codigo = _value(row, mapping, 'codigo')
-    deposito = _value(row, mapping, 'deposito')
+    deposito = _value(row, mapping, 'deposito') or _stock_deposit_name()
     if produto_id:
         payload['produto'] = {'id': produto_id}
     elif codigo:
@@ -307,6 +315,8 @@ def _payload_for(operation: str, row: pd.Series, mapping: dict[str, str]) -> tup
             return None, 'Quantidade/saldo ausente ou inválido.'
         if not payload.get('produto'):
             return None, 'Estoque exige ID do produto ou código/SKU.'
+        if not payload.get('deposito'):
+            return None, 'Informe o nome do depósito no Bling antes de atualizar estoque.'
         return payload, ''
     return None, f'Operação sem envio direto configurado: {operation_label(operation)}.'
 
@@ -406,6 +416,7 @@ def send_dataframe_to_bling(df: pd.DataFrame, operation: str, *, limit: int | No
             'skipped': result.skipped,
             'not_found_count': len(result.not_found_indices),
             'store_mode': store_mode,
+            'stock_deposit_configured': bool(_stock_deposit_name()) if operation == OP_ESTOQUE else None,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
