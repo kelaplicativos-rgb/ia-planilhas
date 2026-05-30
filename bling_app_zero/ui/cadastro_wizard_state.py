@@ -329,9 +329,37 @@ def cadastro_context_ready() -> bool:
     return valid_df(df_origem) and valid_model(df_modelo)
 
 
+def _api_direct_source_df() -> pd.DataFrame | None:
+    for key in (CADASTRO_ORIGEM_PRICED_KEY, CADASTRO_ORIGEM_KEY, 'df_origem_planilha', 'df_site_bruto'):
+        df = st.session_state.get(key)
+        if valid_df(df):
+            return df.copy().fillna('')
+    return None
+
+
+def ensure_api_direct_final_df() -> pd.DataFrame | None:
+    if not _is_api_context():
+        return get_context_final_df()
+    current = get_context_final_df()
+    if valid_df(current):
+        return enforce_supplier_price_master_filter(current)
+    source = _api_direct_source_df()
+    if valid_df(source):
+        st.session_state['mapping_bling_api'] = {str(column): str(column) for column in source.columns}
+        st.session_state['mapping_confidence_bling_api'] = {str(column): 1.0 for column in source.columns}
+        st.session_state[CADASTRO_MAPPING_CONFIRMED_KEY] = True
+        st.session_state[CADASTRO_MAPPING_SIGNATURE_KEY] = df_signature(source)
+        set_context_final_df(source)
+        return enforce_supplier_price_master_filter(source)
+    return None
+
+
 def cadastro_mapping_ready() -> bool:
+    if _is_api_context():
+        df_final = ensure_api_direct_final_df()
+        return valid_df(df_final) and row_count_matches_source(df_final)
     raw_final = get_context_final_df()
-    df_final = enforce_cadastro_model_columns(raw_final) if not _is_api_context() else enforce_supplier_price_master_filter(raw_final)
+    df_final = enforce_cadastro_model_columns(raw_final)
     mapping = st.session_state.get(_context_mapping_key())
     if not isinstance(mapping, dict) or not mapping:
         mapping = st.session_state.get('mapping_cadastro')
@@ -365,6 +393,7 @@ __all__ = [
     'clear_cadastro_outputs_if_source_changed',
     'enforce_cadastro_model_columns',
     'enforce_supplier_price_master_filter',
+    'ensure_api_direct_final_df',
     'expected_source_rows',
     'get_context_final_df',
     'get_universal_final_df',
