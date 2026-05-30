@@ -21,6 +21,7 @@ from bling_app_zero.core.operation_contract import (
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_direct_sender.py'
 DEFAULT_API_BASE_URL = 'https://www.bling.com.br/Api/v3'
 API_STOCK_DEPOSIT_KEY = 'bling_api_stock_deposit_name'
+API_STOCK_DEPOSIT_ID_KEY = 'bling_api_stock_deposit_id'
 
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     'id': ('id produto', 'id_produto', 'idproduto', 'id', 'codigo bling', 'código bling'),
@@ -90,6 +91,10 @@ def _stock_deposit_name() -> str:
     if session_value:
         return session_value
     return _secret('stock_deposit_name', _secret('default_stock_deposit_name', '')).strip()
+
+
+def _stock_deposit_id() -> str:
+    return str(st.session_state.get(API_STOCK_DEPOSIT_ID_KEY) or _secret('stock_deposit_id', '')).strip()
 
 
 def _looks_like_local_path(value: str) -> bool:
@@ -289,13 +294,16 @@ def _payload_estoque(row: pd.Series, mapping: dict[str, str]) -> dict[str, Any] 
     }
     produto_id = _value(row, mapping, 'id')
     codigo = _value(row, mapping, 'codigo')
-    deposito = _value(row, mapping, 'deposito') or _stock_deposit_name()
+    deposito_id = _stock_deposit_id()
+    deposito_nome = _value(row, mapping, 'deposito') or _stock_deposit_name()
     if produto_id:
         payload['produto'] = {'id': produto_id}
     elif codigo:
         payload['produto'] = {'codigo': codigo}
-    if deposito:
-        payload['deposito'] = {'nome': deposito}
+    if deposito_id:
+        payload['deposito'] = {'id': deposito_id}
+    elif deposito_nome:
+        payload['deposito'] = {'nome': deposito_nome}
     return _clean_payload(payload)
 
 
@@ -316,7 +324,7 @@ def _payload_for(operation: str, row: pd.Series, mapping: dict[str, str]) -> tup
         if not payload.get('produto'):
             return None, 'Estoque exige ID do produto ou código/SKU.'
         if not payload.get('deposito'):
-            return None, 'Informe o nome do depósito no Bling antes de atualizar estoque.'
+            return None, 'Busque e selecione o depósito do Bling antes de atualizar estoque.'
         return payload, ''
     return None, f'Operação sem envio direto configurado: {operation_label(operation)}.'
 
@@ -416,7 +424,8 @@ def send_dataframe_to_bling(df: pd.DataFrame, operation: str, *, limit: int | No
             'skipped': result.skipped,
             'not_found_count': len(result.not_found_indices),
             'store_mode': store_mode,
-            'stock_deposit_configured': bool(_stock_deposit_name()) if operation == OP_ESTOQUE else None,
+            'stock_deposit_id': _stock_deposit_id() if operation == OP_ESTOQUE else None,
+            'stock_deposit_configured': bool(_stock_deposit_id() or _stock_deposit_name()) if operation == OP_ESTOQUE else None,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
