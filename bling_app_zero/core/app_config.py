@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-APP_VERSION = '3.8.0-BLINGFIX-API-SEM-MAPEAMENTO'
+APP_VERSION = '3.8.1-BLINGFIX-DEPOSITO-ESTOQUE-API'
 
 PAGE_CONFIG = {
     'page_title': 'MapeiaAI',
