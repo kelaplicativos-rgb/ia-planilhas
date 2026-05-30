@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from html import escape
-
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
@@ -25,7 +23,6 @@ HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
 FLOW_HOME = 'home'
 FLOW_WIZARD = 'wizard_cadastro_estoque'
 
-# Mantidos apenas para compatibilidade com imports antigos. O router não renderiza mais essas rotas.
 FLOW_PRICE_UPDATE = 'price_multistore_v2'
 FLOW_LINKS_UTEIS = 'links_uteis'
 FLOW_MODELOS_BLING = 'modelos_bling'
@@ -192,31 +189,25 @@ def _render_home_card(
 
 
 def _render_same_tab_bling_link(auth_url: str) -> None:
-    safe_url = escape(str(auth_url or ''), quote=True)
-    if not safe_url:
+    url = str(auth_url or '').strip()
+    if not url:
         st.warning('Não consegui gerar o link de conexão com o Bling agora.')
         return
 
-    st.markdown(
-        f'''
-<a href="{safe_url}" target="_self" style="
-    display:block;
-    width:100%;
-    box-sizing:border-box;
-    text-align:center;
-    text-decoration:none;
-    font-weight:900;
-    padding:0.78rem 1rem;
-    border-radius:0.78rem;
-    border:1px solid rgba(37,99,235,.28);
-    color:#ffffff;
-    background:#2563eb;
-    box-shadow:0 10px 22px rgba(37,99,235,.18);
-">
-    Conectar ao Bling
-</a>
-''',
-        unsafe_allow_html=True,
+    try:
+        st.link_button('Conectar ao Bling', url, use_container_width=True)
+    except Exception:
+        st.markdown(f'[Conectar ao Bling]({url})')
+
+    with st.expander('Link direto de autenticação', expanded=False):
+        st.caption('Se o botão não abrir no celular, copie e cole este link em uma nova aba do navegador:')
+        st.code(url)
+
+    add_audit_event(
+        'home_router_native_bling_link_rendered',
+        area='HOME',
+        status='OK',
+        details={'responsible_file': RESPONSIBLE_FILE, 'link_component': 'st.link_button'},
     )
 
 
@@ -236,8 +227,14 @@ def _render_bling_api_home_card() -> None:
 
         try:
             auth_url = build_authorization_url({'return_to': 'start', 'source_step': 'home_bling_api_card'})
-        except Exception:
+        except Exception as exc:
             auth_url = ''
+            add_audit_event(
+                'home_router_bling_auth_url_error',
+                area='HOME',
+                status='ERRO',
+                details={'error': str(exc), 'responsible_file': RESPONSIBLE_FILE},
+            )
 
         if auth_url:
             _render_same_tab_bling_link(auth_url)
@@ -258,7 +255,7 @@ def render_professional_home() -> None:
             'responsible_file': RESPONSIBLE_FILE,
             'home_order': 'bling_api_destination_model',
             'style': 'professional_light_cards',
-            'bling_oauth_target': 'same_tab',
+            'bling_oauth_target': 'native_link_button',
             'legacy_routes_removed': True,
             'bling_csv_legacy_redirected_to_universal': True,
         },
