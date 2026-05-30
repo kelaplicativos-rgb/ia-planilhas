@@ -177,6 +177,61 @@ def _float_or_none(value: str) -> float | None:
         return None
 
 
+def _digits_only(value: object) -> str:
+    return re.sub(r'\D+', '', str(value or ''))
+
+
+def _is_ean_like(value: object) -> bool:
+    """Detecta GTIN/EAN para impedir envio como ID interno do Bling."""
+    digits = _digits_only(value)
+    return len(digits) in {8, 12, 13, 14}
+
+
+def _looks_like_bling_internal_id(value: object) -> bool:
+    """ID interno do Bling costuma ser numérico, mas não pode ter formato de EAN/GTIN."""
+    text = str(value or '').strip()
+    digits = _digits_only(text)
+    if not text or not digits or digits != text:
+        return False
+    if _is_ean_like(digits):
+        return False
+    return 1 <= len(digits) <= 11
+
+
+def _stock_product_reference(row: pd.Series, mapping: dict[str, str]) -> dict[str, str]:
+    """Monta referência segura do produto para estoque.
+
+    BLINGFIX 2026-05-30:
+    A captura por site pode preencher "ID produto" com EAN/GTIN. Esse valor não é o
+    ID interno do Bling e gerava 404 em massa. Agora só enviamos produto.id quando
+    o valor parece ID interno real. Valores com cara de EAN/GTIN são enviados como
+    código apenas quando não houver SKU/código melhor disponível.
+    """
+    produto_id = _value(row, mapping, 'id')
+    codigo = _value(row, mapping, 'codigo')
+    gtin = _value(row, mapping, 'gtin')
+
+    if _looks_like_bling_internal_id(produto_id):
+        return {'id': produto_id}
+
+    if codigo and not _is_ean_like(codigo):
+        return {'codigo': codigo}
+
+    if codigo:
+        return {'codigo': codigo}
+
+    if gtin:
+        return {'codigo': gtin}
+
+    if produto_id and _is_ean_like(produto_id):
+        return {'codigo': produto_id}
+
+    if produto_id:
+        return {'codigo': produto_id}
+
+    return {}
+
+
 def _token() -> tuple[dict[str, Any] | None, str]:
     token, meta = load_token()
     if not isinstance(token, dict) or not token.get('access_token'):
@@ -292,14 +347,11 @@ def _payload_estoque(row: pd.Series, mapping: dict[str, str]) -> dict[str, Any] 
         'saldo': quantidade,
         'quantidade': quantidade,
     }
-    produto_id = _value(row, mapping, 'id')
-    codigo = _value(row, mapping, 'codigo')
+    produto = _stock_product_reference(row, mapping)
     deposito_id = _stock_deposit_id()
     deposito_nome = _value(row, mapping, 'deposito') or _stock_deposit_name()
-    if produto_id:
-        payload['produto'] = {'id': produto_id}
-    elif codigo:
-        payload['produto'] = {'codigo': codigo}
+    if produto:
+        payload['produto'] = produto
     if deposito_id:
         payload['deposito'] = {'id': deposito_id}
     elif deposito_nome:
@@ -322,7 +374,7 @@ def _payload_for(operation: str, row: pd.Series, mapping: dict[str, str]) -> tup
         if payload is None:
             return None, 'Quantidade/saldo ausente ou inválido.'
         if not payload.get('produto'):
-            return None, 'Estoque exige ID do produto ou código/SKU.'
+            return None, 'Estoque exige ID real do produto no Bling, código/SKU ou GTIN/EAN.'
         if not payload.get('deposito'):
             return None, 'Busque e selecione o depósito do Bling antes de atualizar estoque.'
         return payload, ''
@@ -361,6 +413,8 @@ def send_dataframe_to_bling(df: pd.DataFrame, operation: str, *, limit: int | No
 
     for index, row in rows.iterrows():
         row_id = _value(row, mapping, 'id')
+        if operation == OP_ESTOQUE and not _looks_like_bling_internal_id(row_id):
+            row_id = ''
         payload, skip_reason = _payload_for(operation, row, mapping)
         if payload is None:
             skipped += 1
