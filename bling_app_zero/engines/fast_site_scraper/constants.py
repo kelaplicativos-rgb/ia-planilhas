@@ -9,18 +9,25 @@ SMART_STOP_NO_GAIN_WINDOW = 80
 SMART_STOP_MIN_FOUND = 60
 DEVTOOLS_FALLBACK_MAX_PER_RUN = 12
 
-# BLINGFIX: limites seguros para não cortar a busca por site em 100 produtos.
-# O app continua protegido contra execução infinita, mas o modo completo agora
-# consegue varrer lojas maiores sem devolver só uma amostra pequena.
+# Modo seguro: usado apenas quando o usuário quer uma captura menor/controlada.
 SAFE_CAPTURE_MAX_PAGES = 250
 SAFE_CAPTURE_MAX_PRODUCTS = 1200
 SAFE_CAPTURE_MAX_DEPTH = 2
 SAFE_CAPTURE_TIMEOUT_SECONDS = 120
 
-DEEP_CAPTURE_MAX_PAGES = 600
-DEEP_CAPTURE_MAX_PRODUCTS = 5000
-DEEP_CAPTURE_MAX_DEPTH = 4
-DEEP_CAPTURE_TIMEOUT_SECONDS = 240
+# Modo profundo padrão: cadastro/preço/site completo sem a amostra antiga de 100 linhas.
+DEEP_CAPTURE_MAX_PAGES = 3000
+DEEP_CAPTURE_MAX_PRODUCTS = 20000
+DEEP_CAPTURE_MAX_DEPTH = 6
+DEEP_CAPTURE_TIMEOUT_SECONDS = 420
+
+# Modo fluxo contínuo: usado principalmente para Atualizar estoque por API,
+# onde o objetivo é deixar a busca fluir no site inteiro sem cair por
+# "quantidade segura". Ainda existe um teto técnico alto para evitar loop infinito.
+FLOW_CAPTURE_MAX_PAGES = 10000
+FLOW_CAPTURE_MAX_PRODUCTS = 100000
+FLOW_CAPTURE_MAX_DEPTH = 8
+FLOW_CAPTURE_TIMEOUT_SECONDS = 900
 
 RICH_DESCRIPTION_KINDS = {'descricao_complementar', 'ficha_tecnica', 'caracteristicas'}
 DESCRIPTION_TRIGGER_KINDS = {'descricao', 'descricao_curta', 'nome_apoio', *RICH_DESCRIPTION_KINDS}
@@ -43,19 +50,31 @@ def normalize_capture_limits(
     max_depth: int | None = None,
     mode: str = 'safe',
 ) -> dict[str, int]:
-    """Normaliza limites de captura por site com teto controlado.
+    """Normaliza limites de captura por site.
 
-    O teto antigo de 100 produtos impedia a leitura completa de lojas reais.
-    Agora o modo seguro permite até 1.200 produtos e o modo profundo até 5.000,
-    mantendo limites para evitar travamento no Streamlit Cloud.
+    safe  = captura controlada.
+    deep  = busca completa padrão.
+    flow  = fluxo contínuo para estoque/API sem parada por quantidade segura.
     """
     normalized_mode = str(mode or 'safe').strip().lower()
+    if normalized_mode in {'flow', 'continuous', 'stock_flow', 'estoque_flow', 'stock_balance_flow'}:
+        return {
+            'max_pages': _clamp_int(max_pages, FLOW_CAPTURE_MAX_PAGES, 1, FLOW_CAPTURE_MAX_PAGES),
+            'max_products': _clamp_int(max_products, FLOW_CAPTURE_MAX_PRODUCTS, 1, FLOW_CAPTURE_MAX_PRODUCTS),
+            'max_depth': _clamp_int(max_depth, FLOW_CAPTURE_MAX_DEPTH, 0, FLOW_CAPTURE_MAX_DEPTH),
+            'timeout_seconds': FLOW_CAPTURE_TIMEOUT_SECONDS,
+            'safe_limited': False,
+            'flow_mode': True,
+        }
+
     if normalized_mode in {'deep', 'deep_site_search', 'full_deep_scan'}:
         return {
             'max_pages': _clamp_int(max_pages, DEEP_CAPTURE_MAX_PAGES, 1, DEEP_CAPTURE_MAX_PAGES),
             'max_products': _clamp_int(max_products, DEEP_CAPTURE_MAX_PRODUCTS, 1, DEEP_CAPTURE_MAX_PRODUCTS),
             'max_depth': _clamp_int(max_depth, DEEP_CAPTURE_MAX_DEPTH, 0, DEEP_CAPTURE_MAX_DEPTH),
             'timeout_seconds': DEEP_CAPTURE_TIMEOUT_SECONDS,
+            'safe_limited': False,
+            'flow_mode': False,
         }
 
     return {
@@ -63,6 +82,8 @@ def normalize_capture_limits(
         'max_products': _clamp_int(max_products, SAFE_CAPTURE_MAX_PRODUCTS, 1, SAFE_CAPTURE_MAX_PRODUCTS),
         'max_depth': _clamp_int(max_depth, SAFE_CAPTURE_MAX_DEPTH, 0, SAFE_CAPTURE_MAX_DEPTH),
         'timeout_seconds': SAFE_CAPTURE_TIMEOUT_SECONDS,
+        'safe_limited': True,
+        'flow_mode': False,
     }
 
 
@@ -73,6 +94,10 @@ __all__ = [
     'DEEP_CAPTURE_TIMEOUT_SECONDS',
     'DESCRIPTION_TRIGGER_KINDS',
     'DEVTOOLS_FALLBACK_MAX_PER_RUN',
+    'FLOW_CAPTURE_MAX_DEPTH',
+    'FLOW_CAPTURE_MAX_PAGES',
+    'FLOW_CAPTURE_MAX_PRODUCTS',
+    'FLOW_CAPTURE_TIMEOUT_SECONDS',
     'MAX_WORKERS',
     'RESPONSIBLE_FILE',
     'RICH_DESCRIPTION_KINDS',
@@ -82,6 +107,7 @@ __all__ = [
     'SAFE_CAPTURE_TIMEOUT_SECONDS',
     'SLOW_LINK_SECONDS',
     'SMART_COMPLETE_TARGET',
+    'SMART_COMPLETE_RATIO',
     'SMART_STOP_COMPLETE_RATIO',
     'SMART_STOP_MIN_FOUND',
     'SMART_STOP_MIN_PROCESSED',
