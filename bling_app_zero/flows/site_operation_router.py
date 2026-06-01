@@ -21,6 +21,8 @@ class SiteEngineConfig:
 
 
 UNIVERSAL_ALIASES = {'universal', 'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}
+DEFAULT_SITE_MAX_PAGES = 250
+DEFAULT_SITE_MAX_PRODUCTS = 1200
 
 
 def normalize_site_operation(operation: str | None) -> str:
@@ -43,8 +45,8 @@ def config_for_site_operation(operation: str | None) -> SiteEngineConfig:
             description='Busca no site somente os campos pedidos pelo modelo escolhido. O que não for encontrado fica vazio.',
             button_label='Buscar no site e gerar origem de estoque',
             output_filename='origem_site_estoque.csv',
-            default_max_pages=80,
-            default_max_products=100,
+            default_max_pages=DEFAULT_SITE_MAX_PAGES,
+            default_max_products=DEFAULT_SITE_MAX_PRODUCTS,
             required_model=True,
         )
     if normalized == 'cadastro':
@@ -54,8 +56,8 @@ def config_for_site_operation(operation: str | None) -> SiteEngineConfig:
             description='Busca dados no site do fornecedor para preencher o modelo escolhido no mapeamento.',
             button_label='Buscar no site e gerar origem',
             output_filename='origem_site.csv',
-            default_max_pages=80,
-            default_max_products=100,
+            default_max_pages=DEFAULT_SITE_MAX_PAGES,
+            default_max_products=DEFAULT_SITE_MAX_PRODUCTS,
             required_model=False,
         )
     return SiteEngineConfig(
@@ -64,8 +66,8 @@ def config_for_site_operation(operation: str | None) -> SiteEngineConfig:
         description='Busca no site os campos pedidos pelo modelo anexado e gera uma origem unica.',
         button_label='Buscar no site e gerar origem unica',
         output_filename='origem_site_universal.csv',
-        default_max_pages=80,
-        default_max_products=100,
+        default_max_pages=DEFAULT_SITE_MAX_PAGES,
+        default_max_products=DEFAULT_SITE_MAX_PRODUCTS,
         required_model=True,
     )
 
@@ -85,12 +87,12 @@ def run_site_engine(
     limits = normalize_capture_limits(
         max_pages=max_pages,
         max_products=max_products,
-        mode='deep' if not all_products else 'safe',
+        mode='deep' if all_products else 'safe',
     )
     return pipeline(
         raw_urls,
         requested_columns=requested_columns,
-        all_products=False,
+        all_products=all_products,
         max_pages=limits['max_pages'],
         max_products=limits['max_products'],
         operation=normalized,
