@@ -7,6 +7,7 @@ from bling_app_zero.production.production_config import (
     get_production_config,
 )
 from bling_app_zero.production.user_context import clear_current_user, get_current_user, set_demo_user
+from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/production_sidebar.py'
 
@@ -34,12 +35,12 @@ def render_production_sidebar() -> None:
                 st.success(f'Logado: {user.email}')
                 if st.button('Sair do usuário demo', use_container_width=True, key='mapeiaai_clear_demo_user'):
                     clear_current_user()
-                    st.rerun()
+                    safe_rerun('production_sidebar_demo_user_cleared')
             else:
                 st.caption('Sem usuário autenticado nesta sessão.')
                 if st.button('Entrar como demo', use_container_width=True, key='mapeiaai_set_demo_user'):
                     set_demo_user()
-                    st.rerun()
+                    safe_rerun('production_sidebar_demo_user_set')
 
             st.caption('Produção real: substituir usuário demo por Supabase Auth/Clerk/Auth0.')
 
