@@ -3,6 +3,7 @@ from __future__ import annotations
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.features_runtime.router import active_contract, active_steps as runtime_active_steps, feature_needs_pricing
 from bling_app_zero.ui.cadastro_wizard_state import cadastro_context_ready
 from bling_app_zero.ui.home_wizard_constants import (
     CADASTRO_STEPS,
@@ -22,6 +23,7 @@ from bling_app_zero.ui.home_wizard_constants import (
     UNIVERSAL_STEPS,
     WIZARD_STEP_KEY,
 )
+from bling_app_zero.ui.home_wizard_rerun import safe_rerun, set_step_without_rerun
 from bling_app_zero.ui.home_wizard_state import has_home_models
 from bling_app_zero.ui.rules_center_step import rules_center_ready
 
@@ -37,50 +39,47 @@ AUTOFLOW_MANUAL_LOCK_KEY = 'bling_autofluxo_manual_navigation_lock'
 MANUAL_REVIEW_STEPS = {STEP_MAPEAMENTO, STEP_GERAR_ESTOQUE}
 
 
-def _sync_operation_from_model() -> str:
-    """Mantém o autoavanço no mesmo contrato universal do wizard.
+def _sync_operation_from_runtime() -> str:
+    """Mantém o autoavanço no contrato ativo do runtime.
 
-    BLINGFIX:
-    - o fluxo atual não identifica tipo do modelo;
-    - modelos de marketplace, fornecedor, Bling ou planilha própria são todos
-      contratos de destino;
-    - portanto o autofluxo não pode escolher cadastro/estoque pelo modelo, pois
-      isso reabre ping-pong contra o wizard universal.
+    Antes este arquivo forçava UNIVERSAL em qualquer modelo carregado. Agora ele
+    respeita cadastro/estoque/preço/API/CSV declarados no features_runtime.
     """
-    if not has_home_models():
-        return ''
-
+    contract = active_contract()
+    operation = contract.operation or UNIVERSAL_OPERATION_VALUE
     current = str(st.session_state.get(FLOW_OPERATION_KEY) or '').strip().lower()
-    if current != UNIVERSAL_OPERATION_VALUE:
-        st.session_state[FLOW_OPERATION_KEY] = UNIVERSAL_OPERATION_VALUE
-        st.session_state['operacao_final'] = UNIVERSAL_OPERATION_VALUE
-        st.session_state['tipo_operacao_final'] = UNIVERSAL_OPERATION_VALUE
-        st.session_state['home_detected_operation'] = UNIVERSAL_OPERATION_VALUE
+    if current != operation:
+        st.session_state[FLOW_OPERATION_KEY] = operation
+        st.session_state['operacao_final'] = operation
+        st.session_state['tipo_operacao_final'] = operation
+        st.session_state['home_detected_operation'] = operation
+        st.session_state['home_slim_flow_operation'] = operation
         add_audit_event(
-            'autofluxo_operation_synced_universal',
+            'autofluxo_operation_synced_runtime',
             area='AUTOFLOW',
             step=st.session_state.get(WIZARD_STEP_KEY),
             details={
-                'operation': UNIVERSAL_OPERATION_VALUE,
-                'reason': 'generic_destination_contract_no_model_type_detection',
+                'operation': operation,
+                'feature_contract': contract.key,
+                'mode': contract.mode,
+                'reason': 'runtime_feature_contract',
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
-    return UNIVERSAL_OPERATION_VALUE
+    return operation
 
 
 def _active_steps() -> list[str]:
-    return list(UNIVERSAL_STEPS or CADASTRO_STEPS)
+    steps = [step for step in runtime_active_steps() if step]
+    return steps or list(UNIVERSAL_STEPS or CADASTRO_STEPS)
 
 
 def _current_step() -> str:
     steps = _active_steps()
-    current = str(st.session_state.get(WIZARD_STEP_KEY) or STEP_MODELO).strip().lower()
-    if not has_home_models():
-        current = STEP_MODELO
-    elif current not in steps:
-        current = STEP_MODELO
-    st.session_state[WIZARD_STEP_KEY] = current
+    current = str(st.session_state.get(WIZARD_STEP_KEY) or (steps[0] if steps else STEP_MODELO)).strip().lower()
+    if current not in steps:
+        current = steps[0] if steps else STEP_MODELO
+    set_step_without_rerun(current)
     return current
 
 
@@ -95,6 +94,8 @@ def _current_origin() -> str:
 
 
 def _pricing_is_active() -> bool:
+    if not feature_needs_pricing():
+        return False
     if bool(st.session_state.get('home_precificacao_inicial')):
         return True
     if bool(st.session_state.get('home_pricing_enabled_toggle')):
@@ -128,7 +129,7 @@ def _next_step_for(step: str, operation: str) -> str:
     if step in {STEP_PREVIEW, STEP_DOWNLOAD}:
         return step
     if step not in steps:
-        return STEP_MODELO
+        return steps[0] if steps else STEP_MODELO
     index = steps.index(step)
     if index >= len(steps) - 1:
         return step
@@ -196,13 +197,9 @@ def _move_to_step(next_step: str, *, current: str, operation: str, reason: str) 
     if previous_signature == move_signature:
         return
 
-    st.session_state[WIZARD_STEP_KEY] = next_step
+    set_step_without_rerun(next_step)
     st.session_state[AUTOFLOW_LAST_STEP_KEY] = next_step
     st.session_state[AUTOFLOW_LAST_MOVE_KEY] = move_signature
-    try:
-        st.query_params['step'] = next_step
-    except Exception:
-        pass
     add_audit_event(
         'autofluxo_step_advanced',
         area='AUTOFLOW',
@@ -211,12 +208,13 @@ def _move_to_step(next_step: str, *, current: str, operation: str, reason: str) 
             'from': current,
             'to': next_step,
             'operation': operation,
+            'feature_contract': active_contract().key,
             'reason': reason,
             'human_click_removed': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
-    st.rerun()
+    safe_rerun('autofluxo_step_advanced', target_step=next_step)
 
 
 def _manual_navigation_is_locked() -> bool:
@@ -240,8 +238,7 @@ def run_home_autofluxo() -> None:
     """Autoavanço seguro do wizard.
 
     O auto-next fica desligado por padrão para preservar estabilidade visual.
-    Quando for reativado, opera no contrato universal e não tenta classificar o
-    modelo como cadastro/estoque.
+    Quando for reativado, opera no contrato ativo do runtime e não força universal.
     """
     if _manual_navigation_is_locked():
         add_audit_event(
@@ -258,7 +255,7 @@ def run_home_autofluxo() -> None:
     if not bool(st.session_state.get(HOME_ALLOW_OPERATION_KEY)):
         return
 
-    operation = _sync_operation_from_model()
+    operation = _sync_operation_from_runtime()
     current = _current_step()
 
     if _remember_direction_and_respect_back_navigation(current):
@@ -271,7 +268,6 @@ def run_home_autofluxo() -> None:
     paused_step = str(st.session_state.get(AUTOFLOW_PAUSE_STEP_KEY) or '').strip().lower()
     if paused_step == current:
         return
-
     if current in {STEP_PREVIEW, STEP_DOWNLOAD}:
         return
     if not operation:
