@@ -4,6 +4,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 from bling_app_zero.ui.mapping_constants import MAPPING_PAGE_SIZE
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/mapping_pagination.py'
@@ -133,7 +134,7 @@ def _change_mapping_page(mapping_key: str, next_index: int, *, direction: str, t
         'responsible_file': RESPONSIBLE_FILE,
     }
     add_audit_event('mapping_page_changed', area='MAPEAMENTO', details={'mapping_key': mapping_key, 'direction': direction, 'from_page': previous_index + 1, 'to_page': safe_next + 1, 'total_pages': total_pages, 'scroll_to_top': True, 'responsible_file': RESPONSIBLE_FILE})
-    st.rerun()
+    safe_rerun('mapping_page_changed')
 
 
 def _page_label(meta: dict) -> str:
