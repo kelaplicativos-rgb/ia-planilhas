@@ -3,6 +3,7 @@ from __future__ import annotations
 import streamlit as st
 
 from bling_app_zero.core.user_rules import get_user_rules, set_user_rules
+from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 from bling_app_zero.ui.rules_center_sections import PROTECTION_FIELDS
 from bling_app_zero.ui.rules_center_state import (
     RULES_CENTER_AUTOSAVE_SIGNATURE_KEY,
@@ -90,7 +91,7 @@ def render_rules_center_step(key_scope: str = 'ia_real') -> None:
                 st.session_state[RULES_CENTER_READY_KEY] = True
                 clear_mapping_rule_cache()
                 st.success('Padrão restaurado.')
-                st.rerun()
+                safe_rerun('rules_center_reset_to_default')
 
     st.caption('Depois disso, confira o resultado final antes de baixar.')
 
