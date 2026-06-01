@@ -24,8 +24,9 @@ from bling_app_zero.ui.site_progress import make_site_progress_callback, reset_s
 
 ALL_PAGES_LIMIT = 1_000_000
 ALL_PRODUCTS_LIMIT = 1_000_000
-STOCK_BALANCE_PAGES_LIMIT = 1
-STOCK_BALANCE_PRODUCTS_LIMIT = 5_000
+STOCK_BALANCE_PAGES_LIMIT = 1_000_000
+STOCK_BALANCE_PRODUCTS_LIMIT = 1_000_000
+STOCK_BALANCE_DEPTH_LIMIT = 5
 RESPONSIBLE_FILE = 'bling_app_zero/ui/site_panel_capture.py'
 
 
@@ -50,6 +51,11 @@ def _is_stock_balance_only(operation: str, deep_options: dict[str, int | bool] |
     return bool(options.get('stock_balance_only') or (contract.is_api and contract.operation == 'estoque' and operation == 'estoque'))
 
 
+def _is_stock_full_site_scan(operation: str, deep_options: dict[str, int | bool] | None) -> bool:
+    options = deep_options or {}
+    return bool(_is_stock_balance_only(operation, options) and options.get('stock_full_site_scan', True))
+
+
 def prepare_raw_urls_for_capture(
     *,
     operation: str,
@@ -59,12 +65,13 @@ def prepare_raw_urls_for_capture(
     status_box,
 ) -> tuple[str, dict[str, object]]:
     options = deep_options or {}
-    if _is_stock_balance_only(operation, options):
+    if _is_stock_balance_only(operation, options) and not _is_stock_full_site_scan(operation, options):
         return raw_urls, {
             'deep_capture_enabled': False,
             'stock_balance_only': True,
+            'stock_full_site_scan': False,
             'scan_mode': 'stock_balance_product_links_only',
-            'reason': 'Operação de estoque via API deve buscar somente saldos dos produtos informados, sem varredura profunda.',
+            'reason': 'Operação de estoque via API usando apenas links de produtos informados, sem varredura profunda.',
         }
 
     if not bool(options.get('enabled')):
@@ -82,36 +89,40 @@ def prepare_raw_urls_for_capture(
     if not result.product_urls:
         return raw_urls, {
             'deep_capture_enabled': True,
+            'stock_balance_only': _is_stock_balance_only(operation, options),
+            'stock_full_site_scan': _is_stock_full_site_scan(operation, options),
             'deep_capture_found_products': 0,
             'deep_capture_visited_pages': result.visited_pages,
-            'scan_mode': 'full_deep_scan_no_links_found',
+            'scan_mode': 'stock_balance_full_deep_scan_no_links_found' if _is_stock_balance_only(operation, options) else 'full_deep_scan_no_links_found',
         }
 
     st.session_state[f'site_deep_capture_urls_{operation}'] = result.raw_urls
     st.session_state[f'site_deep_capture_found_{operation}'] = len(result.product_urls)
     return result.raw_urls, {
         'deep_capture_enabled': True,
+        'stock_balance_only': _is_stock_balance_only(operation, options),
+        'stock_full_site_scan': _is_stock_full_site_scan(operation, options),
         'deep_capture_found_products': len(result.product_urls),
         'deep_capture_visited_pages': result.visited_pages,
         'deep_capture_scanned_pages': result.scanned_pages,
         'deep_capture_ignored_external_links': result.ignored_external_links,
         'deep_capture_max_depth': result.max_depth,
-        'scan_mode': 'full_deep_scan',
+        'scan_mode': 'stock_balance_full_deep_scan' if _is_stock_balance_only(operation, options) else 'full_deep_scan',
     }
 
 
 def capture_limits_for_operation(operation: str, deep_options: dict[str, int | bool] | None) -> tuple[int, int, bool]:
     """Define limites por tipo de busca.
 
-    Cadastro/site continua com busca completa. Estoque via API usa modo enxuto para
-    saldo por produto, evitando crawler profundo, timeout e mistura de dados de cadastro.
+    Cadastro/site continua com busca completa. Estoque via API também pode varrer o
+    site completo, mas o contrato ativo mantém apenas campos de saldo/estoque.
     """
     options = deep_options or {}
     if _is_stock_balance_only(operation, options):
         return (
-            max(1, int(options.get('max_pages') or STOCK_BALANCE_PAGES_LIMIT)),
-            max(1, int(options.get('max_products') or STOCK_BALANCE_PRODUCTS_LIMIT)),
-            False,
+            max(int(options.get('max_pages') or 0), STOCK_BALANCE_PAGES_LIMIT),
+            max(int(options.get('max_products') or 0), STOCK_BALANCE_PRODUCTS_LIMIT),
+            True,
         )
     if bool(options.get('enabled')):
         return (
@@ -163,6 +174,7 @@ def run_site_capture(
 
     started_at = time.time()
     stock_balance_only = _is_stock_balance_only(operation, deep_options)
+    stock_full_site_scan = _is_stock_full_site_scan(operation, deep_options)
     st.session_state['site_capture_started_at'] = started_at
     set_capture_state(operation=operation, running=True, finished=False)
     max_pages, max_products, all_products = capture_limits_for_operation(operation, deep_options)
@@ -178,15 +190,16 @@ def run_site_capture(
             'has_estoque_model': isinstance(df_modelo_estoque, pd.DataFrame),
             'deep_capture_requested': bool((deep_options or {}).get('enabled')),
             'stock_balance_only': stock_balance_only,
+            'stock_full_site_scan': stock_full_site_scan,
             'all_products': bool(all_products),
             'max_pages': int(max_pages),
             'max_products': int(max_products),
-            'scan_goal': 'saldo_estoque_produtos_informados' if stock_balance_only else 'site_completo_sem_amostra',
+            'scan_goal': 'saldo_estoque_site_completo' if stock_balance_only else 'site_completo_sem_amostra',
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
     reset_site_progress()
-    progress_text = 'Buscando saldos dos produtos informados...' if stock_balance_only else 'Escaneando o site completo atrás de produtos...'
+    progress_text = 'Escaneando o site completo para buscar saldos dos produtos...' if stock_balance_only else 'Escaneando o site completo atrás de produtos...'
     progress_bar = st.progress(0, text=progress_text)
     status_box = st.empty()
     try:
@@ -212,9 +225,9 @@ def run_site_capture(
         clear_site_df(operation, 'busca_publica_exception')
         set_capture_state(operation=operation, running=False, finished=False, error=message)
         finish_progress(progress_bar, status_box, text='Busca encerrada com erro.')
-        add_audit_event('site_capture_failed', area='SITE', step='entrada', status='ERRO', details={'operation': operation, 'stock_balance_only': stock_balance_only, 'error': message, 'error_type': exc.__class__.__name__, 'elapsed_seconds': round(time.time() - started_at, 2), 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('site_capture_failed', area='SITE', step='entrada', status='ERRO', details={'operation': operation, 'stock_balance_only': stock_balance_only, 'stock_full_site_scan': stock_full_site_scan, 'error': message, 'error_type': exc.__class__.__name__, 'elapsed_seconds': round(time.time() - started_at, 2), 'responsible_file': RESPONSIBLE_FILE})
         if stock_balance_only:
-            st.error('A busca de saldo dos produtos não conseguiu finalizar. Baixe o log debug.')
+            st.error('A busca completa de saldo dos produtos não conseguiu finalizar. Baixe o log debug.')
         else:
             st.error('A busca por site não conseguiu finalizar. Baixe o log debug.')
         return
@@ -223,12 +236,12 @@ def run_site_capture(
     columns = len(df_site.columns) if isinstance(df_site, pd.DataFrame) else 0
     if not isinstance(df_site, pd.DataFrame) or df_site.empty:
         clear_site_df(operation, 'busca_publica_vazia')
-        empty_message = 'A busca de saldo não encontrou dados válidos.' if stock_balance_only else 'A busca por site não encontrou dados válidos.'
+        empty_message = 'A busca completa de saldo não encontrou dados válidos.' if stock_balance_only else 'A busca por site não encontrou dados válidos.'
         set_capture_state(operation=operation, running=False, finished=False, error=empty_message, rows=0, columns=0)
         finish_progress(progress_bar, status_box, text='Busca encerrada sem dados encontrados.')
-        add_audit_event('site_capture_empty', area='SITE', step='entrada', status='AVISO', details={'operation': operation, 'stock_balance_only': stock_balance_only, 'rows': rows, 'columns': columns, 'elapsed_seconds': round(time.time() - started_at, 2), 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('site_capture_empty', area='SITE', step='entrada', status='AVISO', details={'operation': operation, 'stock_balance_only': stock_balance_only, 'stock_full_site_scan': stock_full_site_scan, 'rows': rows, 'columns': columns, 'elapsed_seconds': round(time.time() - started_at, 2), 'responsible_file': RESPONSIBLE_FILE})
         if stock_balance_only:
-            st.warning('Nenhum saldo encontrado. Confira os links de produto ou cole uma tabela com Código/ID e Quantidade.')
+            st.warning('Nenhum saldo encontrado. Confira o link inicial/categoria ou cole uma tabela com Código/ID e Quantidade.')
         else:
             st.warning('Nenhum dado encontrado. Confira os links ou use Site protegido.')
         return
@@ -247,12 +260,13 @@ def run_site_capture(
         'max_products': int(max_products),
         'all_products': bool(all_products),
         'stock_balance_only': stock_balance_only,
-        'scan_goal': 'saldo_estoque_produtos_informados' if stock_balance_only else 'site_completo_sem_amostra',
+        'stock_full_site_scan': stock_full_site_scan,
+        'scan_goal': 'saldo_estoque_site_completo' if stock_balance_only else 'site_completo_sem_amostra',
         'responsible_file': RESPONSIBLE_FILE,
     }
     details.update(deep_details)
     add_audit_event('site_capture_saved_to_state', area='SITE', step='entrada', status='OK', details=details)
-    finish_progress(progress_bar, status_box, text='Busca de saldos concluída.' if stock_balance_only else 'Busca por site concluída.')
+    finish_progress(progress_bar, status_box, text='Busca completa de saldos concluída.' if stock_balance_only else 'Busca por site concluída.')
     safe_rerun('site_capture_finished', target_step=STEP_MAPEAMENTO)
 
 
