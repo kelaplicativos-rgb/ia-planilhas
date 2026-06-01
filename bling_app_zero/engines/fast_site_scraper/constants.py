@@ -9,18 +9,18 @@ SMART_STOP_NO_GAIN_WINDOW = 80
 SMART_STOP_MIN_FOUND = 60
 DEVTOOLS_FALLBACK_MAX_PER_RUN = 12
 
-# BLINGFIX: limites duros para evitar travamento no Streamlit Cloud.
-# A UI pode esconder campos ou enviar valores altos, mas o motor nunca deve
-# aceitar varredura infinita em uma execução síncrona.
-SAFE_CAPTURE_MAX_PAGES = 80
-SAFE_CAPTURE_MAX_PRODUCTS = 100
+# BLINGFIX: limites seguros para não cortar a busca por site em 100 produtos.
+# O app continua protegido contra execução infinita, mas o modo completo agora
+# consegue varrer lojas maiores sem devolver só uma amostra pequena.
+SAFE_CAPTURE_MAX_PAGES = 250
+SAFE_CAPTURE_MAX_PRODUCTS = 1200
 SAFE_CAPTURE_MAX_DEPTH = 2
-SAFE_CAPTURE_TIMEOUT_SECONDS = 75
+SAFE_CAPTURE_TIMEOUT_SECONDS = 120
 
-DEEP_CAPTURE_MAX_PAGES = 250
-DEEP_CAPTURE_MAX_PRODUCTS = 300
-DEEP_CAPTURE_MAX_DEPTH = 3
-DEEP_CAPTURE_TIMEOUT_SECONDS = 120
+DEEP_CAPTURE_MAX_PAGES = 600
+DEEP_CAPTURE_MAX_PRODUCTS = 5000
+DEEP_CAPTURE_MAX_DEPTH = 4
+DEEP_CAPTURE_TIMEOUT_SECONDS = 240
 
 RICH_DESCRIPTION_KINDS = {'descricao_complementar', 'ficha_tecnica', 'caracteristicas'}
 DESCRIPTION_TRIGGER_KINDS = {'descricao', 'descricao_curta', 'nome_apoio', *RICH_DESCRIPTION_KINDS}
@@ -43,10 +43,11 @@ def normalize_capture_limits(
     max_depth: int | None = None,
     mode: str = 'safe',
 ) -> dict[str, int]:
-    """Normaliza limites de captura por site com teto duro.
+    """Normaliza limites de captura por site com teto controlado.
 
-    Nunca deixe o app receber 1_000_000 páginas/produtos em execução normal.
-    Isso derruba a captura no Streamlit Cloud e retorna DataFrame vazio.
+    O teto antigo de 100 produtos impedia a leitura completa de lojas reais.
+    Agora o modo seguro permite até 1.200 produtos e o modo profundo até 5.000,
+    mantendo limites para evitar travamento no Streamlit Cloud.
     """
     normalized_mode = str(mode or 'safe').strip().lower()
     if normalized_mode in {'deep', 'deep_site_search', 'full_deep_scan'}:
