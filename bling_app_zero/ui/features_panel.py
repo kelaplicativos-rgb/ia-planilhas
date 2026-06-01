@@ -7,6 +7,7 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.features.registry import list_features
 from bling_app_zero.features.state import clear_feature_state, set_feature_enabled
 from bling_app_zero.features.validator import validate_feature_architecture
+from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/features_panel.py'
 STATUS_LABELS = {
@@ -83,11 +84,11 @@ def _render_feature_detail(feature) -> None:
     if new_value != current:
         set_feature_enabled(feature.key, new_value)
         st.session_state[state_key] = new_value
-        st.rerun()
+        safe_rerun('feature_panel_toggle_changed')
 
     if st.button('Limpar estado deste módulo', use_container_width=True, key=f'feature_panel_clear_{feature.key}'):
         clear_feature_state(feature.key)
-        st.rerun()
+        safe_rerun('feature_panel_state_cleared')
 
 
 def render_features_panel() -> None:
