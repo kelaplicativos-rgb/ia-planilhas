@@ -21,6 +21,7 @@ from bling_app_zero.ui.home_wizard_constants import (
     STEP_ORIGEM,
     WIZARD_STEP_KEY,
 )
+from bling_app_zero.ui.home_wizard_rerun import safe_rerun, set_step_without_rerun
 from bling_app_zero.universal.model_contract_detector import MODEL_CONTRACT_TYPE_KEY, normalize_contract_operation
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_wizard_state.py'
@@ -227,7 +228,7 @@ def select_origin(origin: str, *, set_scroll_target: Callable[[str], None] | Non
     if operation != 'universal':
         st.session_state[MODEL_CONTRACT_TYPE_KEY] = operation
     clear_stale_cadastro_operation_state()
-    st.session_state[WIZARD_STEP_KEY] = STEP_ENTRADA
+    set_step_without_rerun(STEP_ENTRADA)
     scroll_callback_used = _set_scroll_target_safe(set_scroll_target, STEP_ENTRADA)
     add_audit_event(
         'single_page_origin_selected',
@@ -251,7 +252,7 @@ def select_origin(origin: str, *, set_scroll_target: Callable[[str], None] | Non
         st.query_params['operation'] = operation
     except Exception:
         pass
-    st.rerun()
+    safe_rerun('origin_selected', target_step=STEP_ENTRADA)
 
 
 def reset_wizard() -> None:
@@ -261,7 +262,7 @@ def reset_wizard() -> None:
     st.session_state.pop('origem_final', None)
     st.session_state.pop(QUICK_MODEL_READY_KEY, None)
     add_audit_event('wizard_reset', area='WIZARD', step='download', details={'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
-    st.rerun()
+    safe_rerun('wizard_reset', target_step=STEP_MODELO)
 
 
 def get_df_final_universal():
