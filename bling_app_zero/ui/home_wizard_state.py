@@ -5,6 +5,8 @@ from typing import Callable
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.features_runtime.router import active_steps as runtime_active_steps
+from bling_app_zero.features_runtime.router import feature_needs_model
 from bling_app_zero.ui.home_wizard_constants import (
     CADASTRO_STEPS,
     ESTOQUE_STEPS,
@@ -89,6 +91,8 @@ def has_universal_model() -> bool:
 
 
 def has_home_models() -> bool:
+    if not feature_needs_model():
+        return True
     return has_cadastro_model() or has_estoque_model() or has_preco_model() or has_universal_model()
 
 
@@ -137,7 +141,7 @@ def clear_stale_cadastro_operation_state() -> None:
 
 
 def ensure_universal_operation_state() -> str:
-    if not has_home_models():
+    if feature_needs_model() and not has_home_models():
         return ''
     operation = _contract_operation()
     clear_stale_cadastro_operation_state()
@@ -158,7 +162,10 @@ def selected_operation() -> str:
 
 def wizard_steps_for_operation(operation: str | None = None) -> list[str]:
     _ = operation
-    return list(UNIVERSAL_STEPS) if has_home_models() else [STEP_MODELO]
+    steps = runtime_active_steps()
+    if not feature_needs_model():
+        return [step for step in steps if step != STEP_MODELO]
+    return list(steps) if has_home_models() else [STEP_MODELO]
 
 
 def target_by_delta(current_step: str, operation: str, delta: int) -> str:
