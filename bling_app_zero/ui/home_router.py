@@ -14,6 +14,7 @@ from bling_app_zero.ui.flow_context import (
     set_entry_context,
 )
 from bling_app_zero.ui.home_wizard import render_home_wizard
+from bling_app_zero.ui.home_wizard_rerun import safe_rerun, set_step_without_rerun
 from bling_app_zero.ui.scroll_position import request_scroll_top
 
 ACTIVE_FLOW_KEY = 'home_active_operation_v2'
@@ -57,14 +58,14 @@ def _query_param(name: str) -> str:
 def _current_wizard_step() -> str:
     query_step = _query_param('step').lower()
     if query_step == 'gerar_estoque':
-        st.session_state[WIZARD_STEP_KEY] = STEP_ORIGEM
+        set_step_without_rerun(STEP_ORIGEM)
         return STEP_ORIGEM
     if query_step in VALID_SINGLE_PAGE_STEPS:
-        st.session_state[WIZARD_STEP_KEY] = query_step
+        set_step_without_rerun(query_step)
         return query_step
     step = str(st.session_state.get(WIZARD_STEP_KEY) or '').strip().lower()
     if step == 'gerar_estoque':
-        st.session_state[WIZARD_STEP_KEY] = STEP_ORIGEM
+        set_step_without_rerun(STEP_ORIGEM)
         return STEP_ORIGEM
     return step if step in VALID_SINGLE_PAGE_STEPS else ''
 
@@ -98,9 +99,9 @@ def _start_wizard_context(context: str, *, step: str | None = None) -> None:
         st.session_state.pop(WIZARD_STEP_KEY, None)
     elif normalized_context == CONTEXT_UNIVERSAL:
         activate_csv_finish_mode()
-        st.session_state[WIZARD_STEP_KEY] = step or STEP_MODELO
+        set_step_without_rerun(step or STEP_MODELO)
     elif step:
-        st.session_state[WIZARD_STEP_KEY] = step
+        set_step_without_rerun(step)
     else:
         st.session_state.pop(WIZARD_STEP_KEY, None)
     if context == CONTEXT_BLING_CSV:
@@ -176,7 +177,7 @@ def _render_home_card(
         if st.button(button, use_container_width=True, key=key):
             if context:
                 _start_wizard_context(context, step=step)
-            st.rerun()
+            safe_rerun('home_card_start_wizard', target_step=step or '')
 
 
 def _render_same_tab_bling_link(auth_url: str) -> None:
@@ -208,7 +209,7 @@ def _render_bling_api_home_card() -> None:
             st.success('Bling já conectado.')
             if st.button('Continuar via API', use_container_width=True, key='home_card_continue_bling_api'):
                 _start_wizard_context(CONTEXT_BLING_API)
-                st.rerun()
+                safe_rerun('home_card_continue_bling_api')
             return
         try:
             auth_url = build_authorization_url({'return_to': 'start', 'source_step': 'home_bling_api_card'})
@@ -227,7 +228,7 @@ def _render_bling_api_home_card() -> None:
             st.warning('Credenciais do Bling ainda não configuradas. Use Modelo de destino enquanto isso.')
             if st.button('Abrir etapa da API', use_container_width=True, key='home_card_open_bling_api_without_url'):
                 _start_wizard_context(CONTEXT_BLING_API)
-                st.rerun()
+                safe_rerun('home_card_open_bling_api_without_url')
 
 
 def render_professional_home() -> None:
