@@ -92,7 +92,13 @@ def after_final_download(operation: str, signature: str, rules_sig: str) -> None
     add_audit_event(
         'final_csv_download_completed_navigation_preserved',
         area='DOWNLOAD',
-        details={'operation': operation, 'signature': signature, 'rules_signature': rules_sig, 'download_state_preserved': True, 'home_entry_context': _entry_context()},
+        details={
+            'operation': operation,
+            'signature': signature,
+            'rules_signature': rules_sig,
+            'download_state_preserved': True,
+            'home_entry_context': _entry_context(),
+        },
     )
 
 
@@ -230,6 +236,26 @@ def _render_not_found_download(download_df: pd.DataFrame, not_found_indices: tup
     )
 
 
+def _render_send_progress(payload: dict, progress_bar, status_box) -> None:
+    total = int(payload.get('total') or 0)
+    processed = int(payload.get('processed') or 0)
+    sent = int(payload.get('sent') or 0)
+    failed = int(payload.get('failed') or 0)
+    skipped = int(payload.get('skipped') or 0)
+    ratio = float(payload.get('progress') or 0.0)
+    percent = max(0, min(100, int(round(ratio * 100))))
+    stage = str(payload.get('stage') or 'Enviando ao Bling')
+    text = f'{stage}: {processed}/{total} produto(s) · enviados {sent} · falhas {failed} · ignorados {skipped}'
+    try:
+        progress_bar.progress(percent, text=text)
+    except Exception:
+        pass
+    try:
+        status_box.caption(text)
+    except Exception:
+        pass
+
+
 def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: str, signature: str, rules_sig: str) -> None:
     operation = normalize_operation(operation)
     title = DIRECT_SEND_TEXT.get(operation, 'Envio direto ao Bling')
@@ -250,8 +276,19 @@ def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: st
     _render_payload_preview(download_df, operation)
     button_key = f'send_direct_bling_{key}_{signature}_{rules_sig}'
     if st.button(f'🚀 {title}', use_container_width=True, key=button_key):
+        progress_bar = st.progress(0, text=f'Preparando envio: 0/{len(download_df)} produto(s)')
+        status_box = st.empty()
+
+        def progress_callback(payload: dict) -> None:
+            _render_send_progress(payload, progress_bar, status_box)
+
         with st.spinner('Realizando envio direto ao Bling...'):
-            result = send_dataframe_to_bling(download_df.copy(), operation)
+            result = send_dataframe_to_bling(download_df.copy(), operation, progress_callback=progress_callback)
+        _render_send_progress(
+            {'stage': 'Envio concluído', 'processed': result.attempted, 'total': result.attempted, 'sent': result.sent, 'failed': result.failed, 'skipped': result.skipped, 'progress': 1.0},
+            progress_bar,
+            status_box,
+        )
         if result.sent and not result.failed and not result.skipped:
             st.success(f'Envio concluído: {result.sent} linha(s) enviada(s) ao Bling.')
         elif result.sent:
