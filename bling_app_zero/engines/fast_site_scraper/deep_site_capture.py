@@ -11,6 +11,9 @@ from bling_app_zero.engines.fast_site_scraper.constants import (
     DEEP_CAPTURE_MAX_DEPTH,
     DEEP_CAPTURE_MAX_PAGES,
     DEEP_CAPTURE_MAX_PRODUCTS,
+    FLOW_CAPTURE_MAX_DEPTH,
+    FLOW_CAPTURE_MAX_PAGES,
+    FLOW_CAPTURE_MAX_PRODUCTS,
 )
 from bling_app_zero.engines.fast_site_scraper.http_client import fetch_live
 from bling_app_zero.engines.fast_site_scraper.url_discovery import (
@@ -74,6 +77,36 @@ def _clamp_int(value: int | None, fallback: int, minimum: int, maximum: int) -> 
     return max(minimum, min(maximum, number))
 
 
+def _technical_max_pages(max_pages: int | None) -> int:
+    try:
+        requested = int(max_pages or DEFAULT_MAX_PAGES)
+    except Exception:
+        requested = DEFAULT_MAX_PAGES
+    if requested > DEEP_CAPTURE_MAX_PAGES:
+        return FLOW_CAPTURE_MAX_PAGES
+    return DEEP_CAPTURE_MAX_PAGES
+
+
+def _technical_max_products(max_products: int | None) -> int:
+    try:
+        requested = int(max_products or DEFAULT_MAX_PRODUCTS)
+    except Exception:
+        requested = DEFAULT_MAX_PRODUCTS
+    if requested > DEEP_CAPTURE_MAX_PRODUCTS:
+        return FLOW_CAPTURE_MAX_PRODUCTS
+    return DEEP_CAPTURE_MAX_PRODUCTS
+
+
+def _technical_max_depth(max_depth: int | None) -> int:
+    try:
+        requested = int(max_depth or DEFAULT_MAX_DEPTH)
+    except Exception:
+        requested = DEFAULT_MAX_DEPTH
+    if requested > DEEP_CAPTURE_MAX_DEPTH:
+        return FLOW_CAPTURE_MAX_DEPTH
+    return DEEP_CAPTURE_MAX_DEPTH
+
+
 def discover_deep_product_urls(
     raw_urls: str,
     *,
@@ -82,29 +115,33 @@ def discover_deep_product_urls(
     max_depth: int = DEFAULT_MAX_DEPTH,
     progress_callback: Callable[[dict], None] | None = None,
 ) -> DeepCaptureResult:
-    """Expande um domínio/categoria em links prováveis de produto com limite duro.
+    """Expande um domínio/categoria em links prováveis de produto.
 
-    BLINGFIX: antes a descoberta profunda podia aceitar até 5000 páginas e
-    10000 produtos, pesado demais para execução síncrona no Streamlit Cloud.
-    Agora ela respeita os mesmos tetos centrais usados pelo fluxo de captura.
+    Quando a UI pede busca total/estoque, usa teto técnico alto e não a antiga
+    quantidade segura. Isso evita derrubar a captura antes de varrer a loja.
     """
     starts = [norm_url(url) for url in split_urls(raw_urls) if norm_url(url)]
     starts = list(dict.fromkeys(starts))
     if not starts:
         return DeepCaptureResult([], 0, 0, 0, max_depth=0)
 
-    max_pages = _clamp_int(max_pages, DEFAULT_MAX_PAGES, 1, DEEP_CAPTURE_MAX_PAGES)
-    max_products = _clamp_int(max_products, DEFAULT_MAX_PRODUCTS, 1, DEEP_CAPTURE_MAX_PRODUCTS)
-    max_depth = _clamp_int(max_depth, DEFAULT_MAX_DEPTH, 0, DEEP_CAPTURE_MAX_DEPTH)
+    technical_pages = _technical_max_pages(max_pages)
+    technical_products = _technical_max_products(max_products)
+    technical_depth = _technical_max_depth(max_depth)
+    max_pages = _clamp_int(max_pages, DEFAULT_MAX_PAGES, 1, technical_pages)
+    max_products = _clamp_int(max_products, DEFAULT_MAX_PRODUCTS, 1, technical_products)
+    max_depth = _clamp_int(max_depth, DEFAULT_MAX_DEPTH, 0, technical_depth)
+    flow_mode = max_pages > DEEP_CAPTURE_MAX_PAGES or max_products > DEEP_CAPTURE_MAX_PRODUCTS or max_depth > DEEP_CAPTURE_MAX_DEPTH
 
     _emit(progress_callback, {
-        'stage': 'Captura profunda controlada',
-        'message': f'Expandindo site do fornecedor com limite de {max_pages} página(s), {max_products} produto(s) e profundidade {max_depth}.',
+        'stage': 'Captura profunda em fluxo contínuo' if flow_mode else 'Captura profunda',
+        'message': f'Expandindo site do fornecedor com limite técnico de {max_pages} página(s), {max_products} produto(s) e profundidade {max_depth}.',
         'progress': 0.10,
         'max_pages': max_pages,
         'max_products': max_products,
         'max_depth': max_depth,
-        'safe_limited': True,
+        'safe_limited': False,
+        'flow_mode': flow_mode,
     })
 
     queue: deque[tuple[str, int]] = deque((url, 0) for url in starts)
@@ -151,13 +188,14 @@ def discover_deep_product_urls(
         if scanned_pages % 10 == 0 or len(products) >= max_products:
             ratio = min(0.82, 0.12 + (0.70 * (len(visited) / max(max_pages, 1))))
             _emit(progress_callback, {
-                'stage': 'Captura profunda controlada',
+                'stage': 'Captura profunda em fluxo contínuo' if flow_mode else 'Captura profunda',
                 'message': f'{len(visited)} página(s) varrida(s), {len(products)} produto(s) provável(is) encontrado(s).',
                 'progress': ratio,
                 'visited_pages': len(visited),
                 'found_products': len(products),
                 'queued_pages': len(queue),
-                'safe_limited': True,
+                'safe_limited': False,
+                'flow_mode': flow_mode,
             })
 
     if len(products) < max_products:
@@ -181,7 +219,8 @@ def discover_deep_product_urls(
         'max_pages': max_pages,
         'max_products': max_products,
         'max_depth': max_depth,
-        'safe_limited': True,
+        'safe_limited': False,
+        'flow_mode': flow_mode,
     })
 
     return DeepCaptureResult(
