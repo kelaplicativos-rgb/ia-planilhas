@@ -9,21 +9,16 @@ SMART_STOP_NO_GAIN_WINDOW = 80
 SMART_STOP_MIN_FOUND = 60
 DEVTOOLS_FALLBACK_MAX_PER_RUN = 12
 
-# Modo seguro: usado apenas quando o usuário quer uma captura menor/controlada.
 SAFE_CAPTURE_MAX_PAGES = 250
 SAFE_CAPTURE_MAX_PRODUCTS = 1200
 SAFE_CAPTURE_MAX_DEPTH = 2
 SAFE_CAPTURE_TIMEOUT_SECONDS = 120
 
-# Modo profundo padrão: cadastro/preço/site completo sem a amostra antiga de 100 linhas.
 DEEP_CAPTURE_MAX_PAGES = 3000
 DEEP_CAPTURE_MAX_PRODUCTS = 20000
 DEEP_CAPTURE_MAX_DEPTH = 6
 DEEP_CAPTURE_TIMEOUT_SECONDS = 420
 
-# Modo fluxo contínuo: usado principalmente para Atualizar estoque por API,
-# onde o objetivo é deixar a busca fluir no site inteiro sem cair por
-# "quantidade segura". Ainda existe um teto técnico alto para evitar loop infinito.
 FLOW_CAPTURE_MAX_PAGES = 10000
 FLOW_CAPTURE_MAX_PRODUCTS = 100000
 FLOW_CAPTURE_MAX_DEPTH = 8
@@ -49,7 +44,7 @@ def normalize_capture_limits(
     max_products: int | None = None,
     max_depth: int | None = None,
     mode: str = 'safe',
-) -> dict[str, int]:
+) -> dict[str, int | bool]:
     """Normaliza limites de captura por site.
 
     safe  = captura controlada.
@@ -107,7 +102,6 @@ __all__ = [
     'SAFE_CAPTURE_TIMEOUT_SECONDS',
     'SLOW_LINK_SECONDS',
     'SMART_COMPLETE_TARGET',
-    'SMART_COMPLETE_RATIO',
     'SMART_STOP_COMPLETE_RATIO',
     'SMART_STOP_MIN_FOUND',
     'SMART_STOP_MIN_PROCESSED',
