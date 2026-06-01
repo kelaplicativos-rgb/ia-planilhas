@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 import pandas as pd
 import requests
@@ -396,7 +396,22 @@ def preview_payloads(df: pd.DataFrame, operation: str, *, limit: int = 5) -> lis
     return previews
 
 
-def send_dataframe_to_bling(df: pd.DataFrame, operation: str, *, limit: int | None = None) -> DirectSendResult:
+def _emit_progress(progress_callback: Callable[[dict[str, Any]], None] | None, payload: dict[str, Any]) -> None:
+    if not progress_callback:
+        return
+    try:
+        progress_callback(payload)
+    except Exception:
+        pass
+
+
+def send_dataframe_to_bling(
+    df: pd.DataFrame,
+    operation: str,
+    *,
+    limit: int | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> DirectSendResult:
     operation = normalize_operation(operation)
     token, store_mode = _token()
     if not isinstance(token, dict):
@@ -406,12 +421,15 @@ def send_dataframe_to_bling(df: pd.DataFrame, operation: str, *, limit: int | No
 
     mapping = _column_map(df.columns)
     rows = df.fillna('').head(limit) if limit else df.fillna('')
+    total = len(rows)
     sent = failed = skipped = 0
     errors: list[str] = []
     not_found_indices: list[int] = []
     auth_failed = False
 
-    for index, row in rows.iterrows():
+    _emit_progress(progress_callback, {'stage': 'Iniciando envio', 'processed': 0, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': 0.0})
+
+    for position, (index, row) in enumerate(rows.iterrows(), start=1):
         row_id = _value(row, mapping, 'id')
         if operation == OP_ESTOQUE and not _looks_like_bling_internal_id(row_id):
             row_id = ''
@@ -420,6 +438,7 @@ def send_dataframe_to_bling(df: pd.DataFrame, operation: str, *, limit: int | No
             skipped += 1
             if len(errors) < 8:
                 errors.append(f'Linha {index + 1}: {skip_reason}')
+            _emit_progress(progress_callback, {'stage': 'Enviando ao Bling', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
             continue
 
         if operation == OP_ESTOQUE:
@@ -432,6 +451,7 @@ def send_dataframe_to_bling(df: pd.DataFrame, operation: str, *, limit: int | No
                     pass
                 if len(errors) < 8:
                     errors.append(f'Linha {index + 1}: {resolve_reason}')
+                _emit_progress(progress_callback, {'stage': 'Enviando ao Bling', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
                 continue
 
         method, path = _endpoint_for(operation, row_id)
@@ -448,6 +468,7 @@ def send_dataframe_to_bling(df: pd.DataFrame, operation: str, *, limit: int | No
                     auth_failed = True
                 if len(errors) < 8:
                     errors.append(_api_error_message(index, response))
+                _emit_progress(progress_callback, {'stage': 'Enviando ao Bling', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
                 if auth_failed:
                     break
                 continue
@@ -456,6 +477,7 @@ def send_dataframe_to_bling(df: pd.DataFrame, operation: str, *, limit: int | No
             failed += 1
             if len(errors) < 8:
                 errors.append(f'Linha {index + 1}: {exc}')
+        _emit_progress(progress_callback, {'stage': 'Enviando ao Bling', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
 
     if auth_failed:
         try:
@@ -466,6 +488,7 @@ def send_dataframe_to_bling(df: pd.DataFrame, operation: str, *, limit: int | No
         add_audit_event('bling_direct_flow_auth_failed_token_cleared', area='BLING_ENVIO', status='ERRO', details={'operation': operation, 'store_mode': store_mode, 'responsible_file': RESPONSIBLE_FILE})
 
     result = DirectSendResult(attempted=len(rows), sent=sent, failed=failed, skipped=skipped, errors=tuple(errors), not_found_indices=tuple(not_found_indices))
+    _emit_progress(progress_callback, {'stage': 'Envio concluído', 'processed': result.attempted, 'total': result.attempted, 'sent': result.sent, 'failed': result.failed, 'skipped': result.skipped, 'progress': 1.0})
     add_audit_event(
         'bling_direct_flow_send_finished',
         area='BLING_ENVIO',
