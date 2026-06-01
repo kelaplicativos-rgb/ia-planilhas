@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/ai_real_advanced_panel.py'
 FINAL_UNIVERSAL_LEGACY_KEY = 'df_final_cadastro'
@@ -83,7 +84,6 @@ def _render_enrichment(df_final: pd.DataFrame) -> None:
     if not selected:
         st.caption('Selecione pelo menos uma opção para aplicar.')
         return
-
     if st.button('Aplicar enriquecimentos selecionados', use_container_width=True, key='ai_real_enrichment_apply'):
         fixed_df, applied = module.apply_enrichment(df_final, selected)
         if _looks_like_df(fixed_df):
@@ -97,7 +97,7 @@ def _render_enrichment(df_final: pd.DataFrame) -> None:
                 details={'applied_count': len(applied), 'responsible_file': RESPONSIBLE_FILE},
             )
             st.success(f'{len(applied)} enriquecimento(s) aplicado(s). Confira o preview antes de baixar.')
-            st.rerun()
+            safe_rerun('ai_real_enrichment_applied')
 
 
 def _render_ncm_review(df_final: pd.DataFrame) -> None:
@@ -138,7 +138,7 @@ def _render_ncm_review(df_final: pd.DataFrame) -> None:
                 details={'suggestions_count': len(suggestions), 'responsible_file': RESPONSIBLE_FILE},
             )
             st.success('NCMs revisados aplicados. Confira o preview antes de baixar.')
-            st.rerun()
+            safe_rerun('ai_real_ncm_reviewed_applied')
 
 
 def _render_final_report(df_final: pd.DataFrame) -> None:
