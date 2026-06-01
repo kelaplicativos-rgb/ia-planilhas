@@ -6,6 +6,7 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event, get_audit_events
 from bling_app_zero.core.debug import LOG_SESSION_KEY
+from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 from bling_app_zero.ui.maintenance_panel import LOG_BUNDLE_FILENAME, _build_log_bundle_zip
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/support_diagnostic_panel.py'
@@ -45,7 +46,7 @@ def render_support_diagnostic_panel() -> None:
             key='support_diagnostic_generate_button',
         ):
             _prepare_diagnostic_zip()
-            st.rerun()
+            safe_rerun('support_diagnostic_zip_generated')
 
         if not st.session_state.get(DIAGNOSTIC_READY_KEY):
             return
