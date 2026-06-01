@@ -11,6 +11,7 @@ from bling_app_zero.ui.cadastro_wizard_state import (
     set_context_final_df,
     valid_df,
 )
+from bling_app_zero.ui.home_download import _render_api_final
 from bling_app_zero.ui.home_shared import download_final, df_signature
 from bling_app_zero.universal.model_contract_detector import MODEL_CONTRACT_TYPE_KEY, normalize_contract_operation
 
@@ -40,13 +41,13 @@ def _is_api_context() -> bool:
 
 def _title() -> str:
     if _is_api_context():
-        return 'Envio direto ao Bling'
+        return 'Enviar para o Bling'
     return 'Download'
 
 
 def _caption() -> str:
     if _is_api_context():
-        return 'Envie exatamente o resultado revisado na prévia final para o Bling conectado.'
+        return 'Envie exatamente o resultado revisado na prévia final para o Bling conectado. Este caminho não baixa planilha como etapa principal.'
     return 'Baixe exatamente o mesmo arquivo conferido na prévia final.'
 
 
@@ -116,13 +117,19 @@ def _final_df_for_context(operation: str) -> pd.DataFrame | None:
     return _build_safe_download_df(operation)
 
 
-def _store_download_consistency(df_final: pd.DataFrame, operation: str) -> None:
+def _store_output_consistency(df_final: pd.DataFrame, operation: str) -> None:
     signature = df_signature(df_final)
     st.session_state['df_final_download_operation'] = operation
     st.session_state[DOWNLOAD_SIGNATURE_KEY] = signature
     st.session_state[PREVIEW_SAFE_KEY] = df_final.copy()
     st.session_state[PREVIEW_SIGNATURE_KEY] = signature
     set_context_final_df(df_final)
+
+
+def _render_optional_csv_backup(df_final: pd.DataFrame, operation: str) -> None:
+    with st.expander('Opcional · baixar cópia de segurança em CSV', expanded=False):
+        st.caption('Use apenas para auditoria local. A ação principal deste caminho é enviar pela API do Bling.')
+        download_final(df_final, operation, f'backup_{_entry_context()}_{operation}')
 
 
 def render_cadastro_download_step() -> None:
@@ -138,7 +145,14 @@ def render_cadastro_download_step() -> None:
     if not _is_api_context() and render_row_count_blocker(df_final):
         return
 
-    _store_download_consistency(df_final, operation)
+    _store_output_consistency(df_final, operation)
+
+    if _is_api_context():
+        st.success('Base revisada pronta para envio direto ao Bling.')
+        _render_api_final(df_final, operation, f'{_entry_context()}_{operation}')
+        _render_optional_csv_backup(df_final, operation)
+        return
+
     st.success('Download usando a mesma base blindada da prévia final.')
     download_final(df_final, operation, f'{_entry_context()}_{operation}')
 
