@@ -342,6 +342,14 @@ def _render_csv_final(df: pd.DataFrame, operation: str, key: str) -> None:
     st.download_button(label, data=st.session_state.get(FINAL_DOWNLOAD_FILE_BYTES_KEY, csv_bytes), file_name=str(st.session_state.get(FINAL_DOWNLOAD_FILE_NAME_KEY) or csv_file_name), mime=str(st.session_state.get(FINAL_DOWNLOAD_MIME_KEY) or 'text/csv'), use_container_width=True, key=widget_key, on_click=after_final_download, args=(operation, signature, rules_sig))
     _render_optional_template_download(download_df, key, signature, rules_sig)
 
+    status = connection_status()
+    if bool(status.get('connected')) and is_direct_send_available():
+        st.divider()
+        st.info('Bling conectado detectado. Você também pode enviar esta mesma tabela final direto pela API, sem depender do CSV.')
+        _render_direct_bling_send(download_df.copy().fillna(''), operation, f'{key}_csv_fallback', signature, rules_sig)
+    else:
+        st.caption('Para enviar direto ao Bling nesta tela, conecte o Bling no caminho Bling API.')
+
 
 def download_final(df: pd.DataFrame, operation: str, key: str) -> None:
     if df is None or df.empty:
