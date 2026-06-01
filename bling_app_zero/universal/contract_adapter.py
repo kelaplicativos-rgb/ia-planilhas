@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 
 from bling_app_zero.universal.model_contract_detector import MODEL_CONTRACT_TYPE_KEY, normalize_contract_operation
@@ -10,18 +12,59 @@ CONTEXT_BLING_CSV = 'bling_csv'
 CONTEXT_UNIVERSAL = 'universal'
 
 
+def _normalize_column_name(value: object) -> str:
+    text = str(value or '').strip().lower()
+    text = text.replace('ã', 'a').replace('á', 'a').replace('à', 'a').replace('â', 'a')
+    text = text.replace('é', 'e').replace('ê', 'e')
+    text = text.replace('í', 'i')
+    text = text.replace('ó', 'o').replace('ô', 'o').replace('õ', 'o')
+    text = text.replace('ú', 'u').replace('ç', 'c')
+    text = re.sub(r'[^a-z0-9]+', ' ', text)
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def _is_bling_internal_id_column(column: object) -> bool:
+    """Identifica somente colunas de ID interno do Bling.
+
+    Essa coluna não deve receber ID de site, GTIN, SKU nem código do fornecedor.
+    Ela só poderia ser preenchida quando já vier do próprio Bling; por regra de
+    saída do sistema ela nasce vazia para evitar atualização errada por API/CSV.
+    """
+    normalized = _normalize_column_name(column)
+    return normalized in {
+        'id',
+        'id produto',
+        'id produto bling',
+        'id bling',
+        'codigo bling',
+        'código bling',
+    }
+
+
+def _clear_bling_internal_id_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return df
+    out = df.copy().fillna('')
+    for column in out.columns:
+        if _is_bling_internal_id_column(column):
+            out[column] = ''
+    return out
+
+
 def adapt_dataframe_to_model_contract(df: pd.DataFrame, df_model: pd.DataFrame | None) -> pd.DataFrame:
     """Adapta a saída final para ficar fiel ao modelo anexado."""
     if not isinstance(df, pd.DataFrame):
         return pd.DataFrame()
     if not isinstance(df_model, pd.DataFrame) or not len(df_model.columns):
-        return df.copy()
+        return _clear_bling_internal_id_columns(df.copy()).reset_index(drop=True)
 
-    out = df.copy().fillna('')
+    out = _clear_bling_internal_id_columns(df.copy().fillna(''))
     contract_columns = [str(column) for column in df_model.columns]
     adapted = pd.DataFrame(index=out.index)
     for column in contract_columns:
-        if column in out.columns:
+        if _is_bling_internal_id_column(column):
+            adapted[column] = ''
+        elif column in out.columns:
             adapted[column] = out[column].fillna('').astype(str)
         else:
             adapted[column] = ''
@@ -108,13 +151,7 @@ def _bling_model_keys_for_operation(op: str) -> list[str]:
 
 
 def model_for_operation(operation: str) -> pd.DataFrame | None:
-    """Busca modelo salvo na sessão respeitando o caminho da Home.
-
-    BLINGRESET:
-    - Bling API não usa modelo de planilha.
-    - Bling CSV só pode usar modelos Bling.
-    - Modelo Universal só pode usar modelo Universal.
-    """
+    """Busca modelo salvo na sessão respeitando o caminho da Home."""
     context = _entry_context()
     op = _resolved_operation(operation)
 
