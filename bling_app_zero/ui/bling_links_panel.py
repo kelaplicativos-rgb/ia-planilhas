@@ -6,6 +6,7 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.debug import add_debug
+from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/bling_links_panel.py'
 
@@ -172,7 +173,6 @@ def _ensure_links_state() -> None:
             details={'links_count': len(DEFAULT_POST_DOWNLOAD_LINKS), 'responsible_file': RESPONSIBLE_FILE},
         )
         return
-
     st.session_state[LINKS_STATE_KEY] = _dedupe_links(current)
 
 
@@ -227,7 +227,7 @@ def _start_price_multistore_flow() -> None:
         pass
 
     add_audit_event('post_download_price_multistore_opened', area='DOWNLOAD_LINKS', status='OK', details={'responsible_file': RESPONSIBLE_FILE})
-    st.rerun()
+    safe_rerun('post_download_price_multistore_opened')
 
 
 def _render_next_flow_card(operation: str) -> None:
@@ -325,7 +325,7 @@ def _render_add_link_form(operation: str) -> None:
         ok, message = _add_custom_link(label, url, hint, link_operation)
         if ok:
             st.success(message)
-            st.rerun()
+            safe_rerun('post_download_custom_link_added')
         st.warning(message)
 
 
@@ -358,20 +358,20 @@ def _render_edit_links_panel(operation: str) -> None:
             with col_up:
                 if st.button('↑', key=f'post_download_link_up_{index}', use_container_width=True):
                     _move_link(index, -1)
-                    st.rerun()
+                    safe_rerun('post_download_link_reordered')
             with col_down:
                 if st.button('↓', key=f'post_download_link_down_{index}', use_container_width=True):
                     _move_link(index, 1)
-                    st.rerun()
+                    safe_rerun('post_download_link_reordered')
             with col_delete:
                 if st.button('Excluir', key=f'post_download_link_delete_{index}', use_container_width=True):
                     _delete_link(index)
-                    st.rerun()
+                    safe_rerun('post_download_link_deleted')
 
     st.markdown('---')
     if st.button('Restaurar links padrão', use_container_width=True, key='post_download_reset_default_links'):
         _reset_links()
-        st.rerun()
+        safe_rerun('post_download_links_reset')
 
 
 def render_bling_links_panel() -> None:
