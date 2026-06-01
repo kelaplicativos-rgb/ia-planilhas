@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
-from streamlit.errors import StreamlitAPIException
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_direct_sender import is_direct_send_available, preview_payloads, send_dataframe_to_bling
@@ -93,13 +92,7 @@ def after_final_download(operation: str, signature: str, rules_sig: str) -> None
     add_audit_event(
         'final_csv_download_completed_navigation_preserved',
         area='DOWNLOAD',
-        details={
-            'operation': operation,
-            'signature': signature,
-            'rules_signature': rules_sig,
-            'download_state_preserved': True,
-            'home_entry_context': _entry_context(),
-        },
+        details={'operation': operation, 'signature': signature, 'rules_signature': rules_sig, 'download_state_preserved': True, 'home_entry_context': _entry_context()},
     )
 
 
@@ -176,16 +169,16 @@ def _render_optional_template_download(download_df: pd.DataFrame, key: str, sign
         st.caption('Opcional: modelo preenchido fiel ao arquivo original não disponível agora.')
         return
     template_bytes, template_file_name, template_mime = template_export
-    with st.expander('Opcional · Baixar também no formato do modelo anexado', expanded=False):
-        st.caption('Use esta opção apenas se quiser manter o formato original do modelo.')
-        st.download_button(
-            '⬇️ Baixar modelo preenchido',
-            data=template_bytes,
-            file_name=template_file_name,
-            mime=template_mime,
-            use_container_width=True,
-            key=f'download_template_optional_{key}_{signature}_{rules_sig}',
-        )
+    st.markdown('##### Opcional · Baixar também no formato do modelo anexado')
+    st.caption('Use esta opção apenas se quiser manter o formato original do modelo.')
+    st.download_button(
+        '⬇️ Baixar modelo preenchido',
+        data=template_bytes,
+        file_name=template_file_name,
+        mime=template_mime,
+        use_container_width=True,
+        key=f'download_template_optional_{key}_{signature}_{rules_sig}',
+    )
 
 
 def _render_payload_preview(download_df: pd.DataFrame, operation: str) -> None:
@@ -199,13 +192,13 @@ def _render_payload_preview(download_df: pd.DataFrame, operation: str) -> None:
         st.success(f'Payload pronto para prévia: {ok_count} linha(s) válida(s).')
     if ignored_count:
         st.warning(f'{ignored_count} linha(s) da prévia seriam ignoradas por falta de campo obrigatório.')
-    with st.expander('Prévia real do payload que será enviado ao Bling', expanded=False):
-        for index, item in enumerate(payload_preview, start=1):
-            st.markdown(f'**Linha {index} · {item.get("status", "") }**')
-            motivo = str(item.get('motivo') or '').strip()
-            if motivo:
-                st.caption(motivo)
-            st.json(item.get('payload') or {})
+    st.markdown('##### Prévia real do payload que será enviado ao Bling')
+    for index, item in enumerate(payload_preview, start=1):
+        st.markdown(f'**Linha {index} · {item.get("status", "")}**')
+        motivo = str(item.get('motivo') or '').strip()
+        if motivo:
+            st.caption(motivo)
+        st.json(item.get('payload') or {})
 
 
 def _render_not_found_download(download_df: pd.DataFrame, not_found_indices: tuple[int, ...], key: str, signature: str, rules_sig: str) -> None:
@@ -218,7 +211,7 @@ def _render_not_found_download(download_df: pd.DataFrame, not_found_indices: tup
     missing_df.insert(0, 'motivo_bling', 'Produto não encontrado no Bling durante atualização de estoque/preço')
     missing_df.insert(1, 'acao_recomendada', 'Cadastrar este produto no Bling e depois refazer o fluxo de atualização de estoque')
     csv_bytes = missing_df.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
-    st.warning(f'{len(missing_df)} produto(s) não encontrado(s) no Bling. Baixe esta lista para refazer o fluxo de Cadastro de Produtos.')
+    st.warning(f'{len(missing_df)} produto(s) não encontrado(s) no Bling. Baixe esta lista para cadastro/conferência.')
     st.download_button(
         '⬇️ Baixar produtos não encontrados para cadastro',
         data=csv_bytes,
@@ -227,8 +220,8 @@ def _render_not_found_download(download_df: pd.DataFrame, not_found_indices: tup
         use_container_width=True,
         key=f'download_not_found_bling_{key}_{signature}_{rules_sig}_{len(missing_df)}',
     )
-    with st.expander('Prévia dos produtos não encontrados', expanded=False):
-        st.dataframe(missing_df.head(100), use_container_width=True)
+    st.markdown('##### Prévia dos produtos não encontrados')
+    st.dataframe(missing_df.head(100), use_container_width=True)
     add_audit_event(
         'bling_direct_not_found_download_ready',
         area='BLING_ENVIO',
@@ -252,8 +245,8 @@ def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: st
         return
     st.success('Bling conectado. Envio direto disponível.')
     st.caption(f'Operação detectada: {operation_label(operation)} · Linhas prontas: {len(download_df)}')
-    with st.expander('Prévia da tabela final', expanded=False):
-        st.dataframe(download_df.head(50), use_container_width=True)
+    st.markdown('##### Prévia da tabela final')
+    st.dataframe(download_df.head(50), use_container_width=True)
     _render_payload_preview(download_df, operation)
     button_key = f'send_direct_bling_{key}_{signature}_{rules_sig}'
     if st.button(f'🚀 {title}', use_container_width=True, key=button_key):
@@ -282,16 +275,9 @@ def _render_api_final(df: pd.DataFrame, operation: str, key: str) -> None:
 def _render_validation_errors(errors: list[str], operation: str) -> None:
     if not errors:
         return
-    try:
-        with st.expander(f'{operation_badge(operation)} · Conferência antes do download', expanded=True):
-            for error in errors:
-                st.warning(error)
-    except StreamlitAPIException as exc:
-        if 'Expanders may not be nested' not in str(exc):
-            raise
-        st.markdown(f'##### {operation_badge(operation)} · Conferência antes do download')
-        for error in errors:
-            st.warning(error)
+    st.markdown(f'##### {operation_badge(operation)} · Conferência antes do download')
+    for error in errors:
+        st.warning(error)
 
 
 def _render_final_checklist(download_df: pd.DataFrame, operation: str, errors: list[str]) -> bool:
@@ -326,8 +312,7 @@ def _render_csv_final(df: pd.DataFrame, operation: str, key: str) -> None:
         add_audit_event('download_contract_missing', area='DOWNLOAD', status='AGUARDANDO_MODELO', details={'home_entry_context': _entry_context()})
         return
     st.success('Modelo de destino aplicado. O arquivo final será gerado respeitando as colunas do modelo.')
-    with st.expander('Colunas do modelo que serão preenchidas', expanded=False):
-        st.caption(', '.join(model_columns))
+    st.caption('Colunas do modelo que serão preenchidas: ' + ', '.join(model_columns))
     validation_errors = validate_final_df(download_df, operation)
     if not _render_final_checklist(download_df, operation, validation_errors):
         return
