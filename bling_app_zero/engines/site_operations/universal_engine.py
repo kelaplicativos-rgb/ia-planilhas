@@ -42,10 +42,10 @@ def run_universal_site_engine(
     progress_callback: Callable[[dict], None] | None = None,
 ) -> pd.DataFrame:
     """Motor universal para SITE -> origem única baseada no modelo anexado."""
-    limits = normalize_capture_limits(max_pages=max_pages, max_products=max_products, mode='safe' if stop_early else 'deep')
+    capture_stop_early = bool(stop_early)
+    limits = normalize_capture_limits(max_pages=max_pages, max_products=max_products, mode='safe' if capture_stop_early else 'deep')
     max_pages = limits['max_pages']
     max_products = limits['max_products']
-    stop_early = True
 
     columns = cadastro_columns(requested_columns)
     plan = build_submotor_plan('universal', columns)
@@ -59,7 +59,8 @@ def run_universal_site_engine(
         'internal_operation': internal_operation,
         'max_pages': max_pages,
         'max_products': max_products,
-        'safe_limited': True,
+        'stop_early': capture_stop_early,
+        'safe_limited': capture_stop_early,
     })
 
     if can_handle_stoqui_url(raw_urls):
@@ -79,7 +80,7 @@ def run_universal_site_engine(
         operation=internal_operation,
         max_pages=max_pages,
         max_products=max_products,
-        stop_early=stop_early,
+        stop_early=capture_stop_early,
         progress_callback=progress_callback,
     )
 
