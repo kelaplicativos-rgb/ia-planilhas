@@ -29,11 +29,11 @@ def run_estoque_site_engine(
     stop_early: bool = True,
     progress_callback: Callable[[dict], None] | None = None,
 ) -> pd.DataFrame:
-    """Motor independente para SITE -> origem de ESTOQUE com limite seguro."""
-    limits = normalize_capture_limits(max_pages=max_pages, max_products=max_products, mode='safe' if stop_early else 'deep')
+    """Motor independente para SITE -> origem de ESTOQUE com limite controlado."""
+    capture_stop_early = bool(stop_early)
+    limits = normalize_capture_limits(max_pages=max_pages, max_products=max_products, mode='safe' if capture_stop_early else 'deep')
     max_pages = limits['max_pages']
     max_products = limits['max_products']
-    stop_early = True
 
     columns = estoque_columns(requested_columns)
     if not columns:
@@ -52,7 +52,8 @@ def run_estoque_site_engine(
         'submotors': plan.active,
         'max_pages': max_pages,
         'max_products': max_products,
-        'safe_limited': True,
+        'stop_early': capture_stop_early,
+        'safe_limited': capture_stop_early,
     })
 
     if can_handle_stoqui_url(raw_urls):
@@ -72,6 +73,6 @@ def run_estoque_site_engine(
         operation='estoque',
         max_pages=max_pages,
         max_products=max_products,
-        stop_early=stop_early,
+        stop_early=capture_stop_early,
         progress_callback=progress_callback,
     )
