@@ -7,6 +7,7 @@ from bling_app_zero.ai.ai_config import ai_is_enabled, get_ai_settings
 from bling_app_zero.ai.ai_openai_mapping_suggester import suggest_mapping_with_openai
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.home_autofluxo import pause_home_autofluxo_for_manual_review
+from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 from bling_app_zero.ui.mapping_constants import EMPTY_CHOOSE_OPTION, EMPTY_LEAVE_OPTION, MANUAL_WRITE_OPTION
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/ai_mapping_apply_panel.py'
@@ -113,7 +114,7 @@ def _render_ai_suggestions_body(
         applied = _apply_suggestions(mapping_key, current_mapping, rows, operation=operation, engine=engine)
         if applied:
             st.success(f'{applied} sugestão(ões) aplicada(s). Revise e confirme o mapeamento manualmente.')
-            st.rerun()
+            safe_rerun('ai_mapping_apply_suggestions_applied')
         else:
             st.info('Nenhuma sugestão foi aplicada porque os campos já estavam preenchidos.')
 
@@ -148,7 +149,6 @@ def render_ai_mapping_apply_panel(
             operation=operation,
         )
         return
-
     with st.expander('🤖 Aplicar sugestões da IA', expanded=False):
         _render_ai_suggestions_body(
             settings=settings,
