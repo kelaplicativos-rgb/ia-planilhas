@@ -28,6 +28,12 @@ def normalize_operation(operation: str | None) -> str:
     return 'universal'
 
 
+def _limit_mode(selected: str, stop_early: bool) -> str:
+    if selected == 'estoque' and not stop_early:
+        return 'stock_balance_flow'
+    return 'safe' if stop_early else 'deep'
+
+
 def run_site_operation_engine(
     *,
     operation: str,
@@ -40,19 +46,17 @@ def run_site_operation_engine(
 ) -> pd.DataFrame:
     """Roteador central dos motores por site com limite controlado.
 
-    BLINGFIX: o roteador continua normalizando limites para proteger o app,
-    mas não força mais parada antecipada. Quando a UI pedir todos os produtos,
-    `stop_early=False` chega até o scraper final.
+    Para estoque em modo completo, usa fluxo contínuo e não a quantidade segura.
     """
     selected = normalize_operation(operation)
     safe_stop_early = bool(stop_early)
     limits = normalize_capture_limits(
         max_pages=max_pages,
         max_products=max_products,
-        mode='safe' if safe_stop_early else 'deep',
+        mode=_limit_mode(selected, safe_stop_early),
     )
-    safe_max_pages = limits['max_pages']
-    safe_max_products = limits['max_products']
+    safe_max_pages = int(limits['max_pages'])
+    safe_max_products = int(limits['max_products'])
 
     if selected == 'estoque':
         return run_estoque_site_engine(
