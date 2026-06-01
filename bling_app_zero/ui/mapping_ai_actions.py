@@ -9,6 +9,7 @@ from bling_app_zero.core.ai_mapping_assistant import (
     apply_ai_mapping_assist,
     merge_ai_suggestions,
 )
+from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 from bling_app_zero.ui.mapping_constants import CADASTRO_MAPPING_CONFIRMED_KEY, CADASTRO_MAPPING_SIGNATURE_KEY
 from bling_app_zero.ui.mapping_widget_state import clear_mapping_widgets
 
@@ -75,7 +76,7 @@ def apply_ai_to_session_mapping(
     clear_mapping_widgets(mapping_key)
     st.session_state.pop(f'{mapping_key}_order', None)
     st.session_state[status_key] = f'applied:{result.applied}'
-    st.rerun()
+    safe_rerun('ai_mapping_actions_applied')
 
 
 def render_ai_button(
