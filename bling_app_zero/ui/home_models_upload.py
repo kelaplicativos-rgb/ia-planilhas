@@ -15,6 +15,7 @@ from bling_app_zero.ui.home_models_state import (
     df_log_summary,
     models_signature,
 )
+from bling_app_zero.ui.home_wizard_rerun import safe_rerun, set_step_without_rerun
 from bling_app_zero.ui.home_wizard_scroll import set_scroll_target
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_models_upload.py'
@@ -53,7 +54,7 @@ def auto_forward_after_first_model_upload(cadastro_model: pd.DataFrame | None, e
         )
         return
     st.session_state[MODEL_UPLOAD_AUTOFORWARDED_KEY] = signature
-    st.session_state[WIZARD_STEP_KEY] = STEP_ORIGEM
+    set_step_without_rerun(STEP_ORIGEM)
     set_scroll_target(STEP_ORIGEM)
     add_audit_event(
         'home_model_uploaded_auto_forward_to_origin',
@@ -70,17 +71,7 @@ def auto_forward_after_first_model_upload(cadastro_model: pd.DataFrame | None, e
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
-    try:
-        st.query_params['step'] = STEP_ORIGEM
-    except Exception as exc:
-        add_audit_event(
-            'home_model_autoforward_query_param_failed',
-            area='MODELO',
-            step=STEP_ORIGEM,
-            status='AVISO',
-            details={'error': str(exc), 'responsible_file': RESPONSIBLE_FILE},
-        )
-    st.rerun()
+    safe_rerun('home_model_uploaded_auto_forward', target_step=STEP_ORIGEM)
 
 
 def remember_original_model_upload(upload: object) -> None:
