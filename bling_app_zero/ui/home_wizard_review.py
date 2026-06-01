@@ -6,6 +6,7 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.home_wizard_constants import STEP_REGRAS
+from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 from bling_app_zero.ui.home_wizard_state import (
     FINAL_CHECK_REPORT_KEY,
     SAFE_FIX_SUGGESTIONS_KEY,
@@ -150,7 +151,7 @@ def render_safe_fixes() -> None:
                 },
             )
             st.success(f'{len(applied)} correção(ões) segura(s) aplicada(s). Confira o preview antes de baixar.')
-            st.rerun()
+            safe_rerun('home_wizard_safe_fixes_applied')
         else:
             st.warning('Nenhuma alteração foi aplicada.')
 
