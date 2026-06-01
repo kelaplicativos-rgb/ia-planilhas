@@ -8,6 +8,8 @@ import pandas as pd
 from bling_app_zero.core.exporter import sanitize_for_bling
 from bling_app_zero.core.text import clean_cell, normalize_key
 from bling_app_zero.engines.fast_site_scraper.constants import (
+    DEEP_CAPTURE_MAX_PAGES,
+    DEEP_CAPTURE_MAX_PRODUCTS,
     SAFE_CAPTURE_MAX_PAGES,
     SAFE_CAPTURE_MAX_PRODUCTS,
     normalize_capture_limits,
@@ -19,8 +21,8 @@ from bling_app_zero.universal.model_contract_detector import normalize_contract_
 
 VALID_OPERATIONS = {'cadastro', 'estoque', 'universal', 'atualizacao_preco'}
 UNIVERSAL_ALIASES = {'universal', 'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}
-ALL_PAGES_LIMIT = SAFE_CAPTURE_MAX_PAGES
-ALL_PRODUCTS_LIMIT = SAFE_CAPTURE_MAX_PRODUCTS
+ALL_PAGES_LIMIT = DEEP_CAPTURE_MAX_PAGES
+ALL_PRODUCTS_LIMIT = DEEP_CAPTURE_MAX_PRODUCTS
 ESTOQUE_COLUMN_SIGNALS = (
     'estoque',
     'saldo',
@@ -283,20 +285,26 @@ def run_pipeline(
     progress_callback: Callable[[dict], None] | None = None,
 ) -> pd.DataFrame:
     selected_operation = _infer_operation_from_columns(operation, requested_columns)
-    limits = normalize_capture_limits(max_pages=max_pages, max_products=max_products, mode='safe')
-    selected_max_pages = _bounded_limit(limits['max_pages'], ALL_PAGES_LIMIT, SAFE_CAPTURE_MAX_PAGES)
-    selected_max_products = _bounded_limit(limits['max_products'], ALL_PRODUCTS_LIMIT, SAFE_CAPTURE_MAX_PRODUCTS)
+    capture_all = bool(all_products)
+    mode = 'deep' if capture_all else 'safe'
+    hard_pages = DEEP_CAPTURE_MAX_PAGES if capture_all else SAFE_CAPTURE_MAX_PAGES
+    hard_products = DEEP_CAPTURE_MAX_PRODUCTS if capture_all else SAFE_CAPTURE_MAX_PRODUCTS
+    limits = normalize_capture_limits(max_pages=max_pages, max_products=max_products, mode=mode)
+    selected_max_pages = _bounded_limit(limits['max_pages'], ALL_PAGES_LIMIT if capture_all else SAFE_CAPTURE_MAX_PAGES, hard_pages)
+    selected_max_products = _bounded_limit(limits['max_products'], ALL_PRODUCTS_LIMIT if capture_all else SAFE_CAPTURE_MAX_PRODUCTS, hard_products)
+    stop_early = not capture_all
 
     if progress_callback:
         progress_callback({
             'stage': 'Preparando',
-            'message': 'Preparando motor por modelo de destino com limite seguro...',
+            'message': 'Preparando motor por modelo de destino em modo completo...' if capture_all else 'Preparando motor por modelo de destino com limite seguro...',
             'progress': 0.02,
             'operation': selected_operation,
             'max_pages': selected_max_pages,
             'max_products': selected_max_products,
-            'all_products': False,
-            'safe_limited': True,
+            'all_products': capture_all,
+            'stop_early': stop_early,
+            'safe_limited': not capture_all,
         })
 
     df_result = run_site_operation_engine(
@@ -305,7 +313,7 @@ def run_pipeline(
         requested_columns=requested_columns,
         max_pages=selected_max_pages,
         max_products=selected_max_products,
-        stop_early=True,
+        stop_early=stop_early,
         progress_callback=progress_callback,
     )
 
