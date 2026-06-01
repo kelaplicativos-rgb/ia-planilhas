@@ -168,8 +168,8 @@ def _go_to_step(step: str) -> None:
 
 def _label_for(step: str) -> str:
     contract = active_contract()
-    if contract.is_api and step == STEP_MAPEAMENTO:
-        return 'Preparar envio'
+    if contract.is_api and step == STEP_ENTRADA:
+        return 'Dados'
     if contract.is_api and step == STEP_DOWNLOAD:
         return 'Enviar para o Bling'
     return str(STEP_LABELS.get(step, step)).strip()
@@ -209,11 +209,9 @@ def _pending_message_for(step: str) -> str:
         if step == STEP_ORIGEM:
             return 'Escolha Arquivo ou Site para buscar os produtos que serão enviados ao Bling.'
         if step == STEP_ENTRADA:
-            return 'Carregue os produtos da origem para preparar o envio direto.'
-        if step == STEP_MAPEAMENTO:
-            return 'Prepare os campos obrigatórios da API antes da prévia de envio.'
-        if step == STEP_PREVIEW:
-            return 'Confira a prévia antes de enviar para o Bling.'
+            return 'Carregue os produtos da origem para liberar o envio direto.'
+        if step == STEP_DOWNLOAD:
+            return 'Carregue os dados para enviar direto ao Bling.'
     if step == STEP_MODELO:
         return 'Anexe ou confirme o modelo de destino para liberar a próxima etapa.'
     if step == STEP_ORIGEM:
@@ -253,6 +251,19 @@ def _render_safe_step_nav(steps: list[str], active_step: str) -> None:
     previous_step = steps[index - 1] if index > 0 else ''
     next_step = steps[index + 1] if index < len(steps) - 1 else ''
     can_go_next = bool(next_step) and _can_advance_from(active_step)
+    contract = active_contract()
+
+    if contract.is_api and can_go_next:
+        _go_to_step(next_step)
+        add_audit_event(
+            'wizard_api_auto_next_applied',
+            area='WIZARD',
+            step=next_step,
+            details={'from': active_step, 'to': next_step, 'responsible_file': RESPONSIBLE_FILE},
+        )
+        safe_rerun('wizard_api_auto_next', target_step=next_step)
+        return
+
     st.markdown('---')
     col_back, col_status, col_next = st.columns([1, 1.4, 1])
     with col_back:
@@ -295,7 +306,9 @@ def _resolve_active_step(active_step: str, *, has_model: bool, start_at_origin: 
     if active_step == STEP_ORIGEM and current_origin_choice() in {'arquivo', 'site'}:
         return STEP_ENTRADA if STEP_ENTRADA in steps else active_step
     if active_step == STEP_ENTRADA and universal_context_ready():
-        if contract.is_api or not feature_needs_pricing():
+        if contract.is_api:
+            return STEP_DOWNLOAD if STEP_DOWNLOAD in steps else active_step
+        if not feature_needs_pricing():
             return STEP_MAPEAMENTO if STEP_MAPEAMENTO in steps else active_step
         return STEP_PRECIFICACAO if STEP_PRECIFICACAO in steps else active_step
     if active_step == STEP_PRECIFICACAO and not feature_needs_pricing():
