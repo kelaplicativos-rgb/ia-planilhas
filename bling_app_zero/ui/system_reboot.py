@@ -7,6 +7,7 @@ import streamlit as st
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.cache_control import clear_streamlit_cache
 from bling_app_zero.ui.home_wizard_constants import STEP_MODELO, WIZARD_STEP_KEY
+from bling_app_zero.ui.home_wizard_rerun import safe_rerun, set_step_without_rerun
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/system_reboot.py'
 REBOOT_CONFIRM_KEY = 'system_reboot_confirm_visible'
@@ -51,7 +52,7 @@ def reboot_system_to_home() -> None:
     removed_keys = _clear_session_state()
     _clear_query_params()
 
-    st.session_state[WIZARD_STEP_KEY] = STEP_MODELO
+    set_step_without_rerun(STEP_MODELO)
     st.session_state[REBOOT_LAST_KEY] = time.time()
     st.session_state['system_reboot_completed'] = True
 
@@ -67,7 +68,7 @@ def reboot_system_to_home() -> None:
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
-    st.rerun()
+    safe_rerun('system_reboot_completed', target_step=STEP_MODELO)
 
 
 def render_system_reboot_button() -> None:
@@ -80,7 +81,7 @@ def render_system_reboot_button() -> None:
                 step=st.session_state.get(WIZARD_STEP_KEY),
                 details={'responsible_file': RESPONSIBLE_FILE},
             )
-            st.rerun()
+            safe_rerun('system_reboot_confirm_opened')
         return
 
     st.warning(
@@ -96,7 +97,7 @@ def render_system_reboot_button() -> None:
                 step=st.session_state.get(WIZARD_STEP_KEY),
                 details={'responsible_file': RESPONSIBLE_FILE},
             )
-            st.rerun()
+            safe_rerun('system_reboot_cancelled')
     with col_confirm:
         if st.button('Sim, limpar tudo', use_container_width=True, key='system_reboot_confirm'):
             reboot_system_to_home()
