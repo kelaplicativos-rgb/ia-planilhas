@@ -18,7 +18,36 @@ def _first_state_value(*keys: str) -> object:
     return ''
 
 
+def active_mode() -> str:
+    context = str(st.session_state.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower()
+    finish = str(st.session_state.get(FINISH_MODE_KEY) or '').strip().lower()
+    if finish == 'api_direct' or context in {'bling', 'bling_api'}:
+        return 'api'
+    return 'csv'
+
+
 def active_operation() -> str:
+    """Resolve a operação ativa sem deixar estado legado sobrescrever a escolha da API.
+
+    No modo API direta, a escolha do rádio `direct_bling_operation_choice` precisa ter
+    prioridade sobre chaves antigas como `model_contract_type` ou `operacao_final`.
+    Isso evita o fluxo de estoque herdar cadastro ou universal de um fluxo anterior.
+    """
+    if active_mode() == 'api':
+        direct_choice = st.session_state.get('direct_bling_operation_choice')
+        if direct_choice not in (None, ''):
+            return str(direct_choice)
+        return str(
+            _first_state_value(
+                'home_slim_flow_operation',
+                'home_detected_operation',
+                'operacao_final',
+                'tipo_operacao_final',
+                MODEL_CONTRACT_TYPE_KEY,
+            )
+            or ''
+        )
+
     return str(
         _first_state_value(
             MODEL_CONTRACT_TYPE_KEY,
@@ -28,18 +57,9 @@ def active_operation() -> str:
             'tipo_operacao_final',
             'tipo_operacao_site',
             'operation_site',
-            'direct_bling_operation_choice',
         )
         or ''
     )
-
-
-def active_mode() -> str:
-    context = str(st.session_state.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower()
-    finish = str(st.session_state.get(FINISH_MODE_KEY) or '').strip().lower()
-    if context in {'bling', 'bling_api'} or finish == 'api_direct':
-        return 'api'
-    return 'csv'
 
 
 def active_contract() -> FeatureContract:
