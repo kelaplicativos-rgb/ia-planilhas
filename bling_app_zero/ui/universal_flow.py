@@ -7,7 +7,9 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.files import read_uploaded_file
+from bling_app_zero.features_runtime.router import active_contract
 from bling_app_zero.pipelines.site_pipeline import run_pipeline as run_site_pipeline
+from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 from bling_app_zero.ui.shared_calculator import render_shared_calculator
 from bling_app_zero.ui.shared_final_csv import render_shared_final_csv
 from bling_app_zero.ui.shared_mapping import clear_shared_mapping_widgets, render_shared_contract_mapping, suggest_shared_mapping
@@ -22,6 +24,26 @@ RESPONSIBLE_FILE = 'bling_app_zero/ui/universal_flow.py'
 SOURCE_MODE_UPLOAD = 'Anexar arquivo de origem'
 SOURCE_MODE_SITE = 'Buscar produtos por site'
 SUPPORTED_UPLOAD_LABEL = 'Formatos aceitos: XLSX, XLS, CSV, XLSM, XLSB, XML, HTML, MHTML e PDF. No celular, o seletor fica livre para evitar bloqueio falso do Android.'
+
+
+def _is_universal_csv_context() -> bool:
+    contract = active_contract()
+    return contract.key == 'universal_csv' or (contract.mode == 'csv' and contract.operation == 'universal')
+
+
+def _render_contract_guard() -> bool:
+    if _is_universal_csv_context():
+        return True
+    contract = active_contract()
+    st.warning('Este fluxo é exclusivo para Mapear planilha por contrato / Universal CSV.')
+    st.caption(f'Contrato ativo atual: {contract.key}. Use o fluxo principal para {contract.label}.')
+    add_audit_event(
+        'universal_flow_blocked_outside_universal_csv',
+        area='UNIVERSAL',
+        status='BLOQUEADO',
+        details={'active_contract': contract.key, 'operation': contract.operation, 'mode': contract.mode, 'responsible_file': RESPONSIBLE_FILE},
+    )
+    return False
 
 
 def _read_upload(uploaded_file) -> pd.DataFrame | None:
@@ -108,7 +130,6 @@ def _render_model_step() -> pd.DataFrame | None:
     if not isinstance(model, pd.DataFrame):
         st.info('Envie a planilha/contrato final para começar.')
         return None
-
     st.success('Contrato final recebido.')
     st.caption('A planilha final seguirá exatamente essas colunas e essa ordem.')
     st.dataframe(model.head(3).astype(str), use_container_width=True, height=145)
@@ -206,12 +227,15 @@ def _render_ai_tools(source: pd.DataFrame, model: pd.DataFrame) -> None:
             st.session_state[UNIVERSAL_ENGINE_KEY] = engine
             clear_shared_mapping_widgets('mapeiaai_universal')
             st.success('Sugestões de mapeamento atualizadas.')
-            st.rerun()
+            safe_rerun('universal_ai_mapping_regenerated')
     with col2:
         st.caption('Regras ativas: título até 59 caracteres, texto fiel aos dados e descrição complementar persuasiva quando houver coluna compatível.')
 
 
 def render_universal_flow() -> None:
+    if not _render_contract_guard():
+        return
+
     st.markdown('## Mapear planilha por contrato')
     st.caption('O anexo define a saída. A origem fornece os dados. A IA real ajuda a correlacionar cabeçalhos e conteúdo.')
 
