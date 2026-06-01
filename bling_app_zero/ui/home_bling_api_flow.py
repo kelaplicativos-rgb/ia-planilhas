@@ -41,6 +41,7 @@ RESPONSIBLE_FILE = 'bling_app_zero/ui/home_bling_api_flow.py'
 PRICE_UPDATE_OPERATION = OP_ATUALIZACAO_PRECO
 DIRECT_API_CONTRACT_KEY = 'direct_bling_api_contract_df'
 DIRECT_API_CONTRACT_ACTIVE_KEY = 'direct_bling_api_contract_active'
+DIRECT_OPERATION_APPLIED_KEY = 'direct_bling_operation_applied'
 API_STOCK_DEPOSIT_KEY = 'bling_api_stock_deposit_name'
 API_STOCK_DEPOSIT_ID_KEY = 'bling_api_stock_deposit_id'
 API_STOCK_DEPOSIT_OPTIONS_KEY = 'bling_api_stock_deposit_options'
@@ -48,6 +49,7 @@ DEFAULT_API_BASE_URL = 'https://www.bling.com.br/Api/v3'
 
 DIRECT_CONTRACT_SESSION_KEYS = (
     DIRECT_API_CONTRACT_KEY,
+    DIRECT_OPERATION_APPLIED_KEY,
     'home_modelo_universal_df',
     'df_modelo_universal',
     'modelo_universal_df',
@@ -82,6 +84,11 @@ def _direct_operation() -> str:
     choice = normalize_direct_operation(st.session_state.get('direct_bling_operation_choice'))
     if choice in DIRECT_OPERATION_LABELS:
         return choice
+
+    applied = normalize_direct_operation(st.session_state.get(DIRECT_OPERATION_APPLIED_KEY))
+    if applied in DIRECT_OPERATION_LABELS:
+        return applied
+
     return normalize_direct_operation(st.session_state.get('home_slim_flow_operation'))
 
 
@@ -105,7 +112,13 @@ def clear_direct_api_contract() -> None:
 def apply_direct_api_contract(operation: str | None = None) -> pd.DataFrame:
     op = normalize_direct_operation(operation or _direct_operation())
     model = direct_api_contract_model(op)
-    st.session_state['direct_bling_operation_choice'] = op
+
+    # Nunca escreva em st.session_state['direct_bling_operation_choice'] aqui.
+    # Essa chave pertence ao widget st.radio. Depois que o radio é instanciado,
+    # o Streamlit bloqueia alteração manual nessa chave e derruba o app com
+    # StreamlitAPIException. Use uma chave interna para registrar a operação
+    # efetivamente aplicada no contrato direto da API.
+    st.session_state[DIRECT_OPERATION_APPLIED_KEY] = op
     st.session_state[DIRECT_API_CONTRACT_ACTIVE_KEY] = True
     st.session_state[DIRECT_API_CONTRACT_KEY] = model.copy()
     st.session_state[CADASTRO_MODELO_KEY] = model.copy()
