@@ -45,6 +45,7 @@ DIRECT_OPERATION_APPLIED_KEY = 'direct_bling_operation_applied'
 API_STOCK_DEPOSIT_KEY = 'bling_api_stock_deposit_name'
 API_STOCK_DEPOSIT_ID_KEY = 'bling_api_stock_deposit_id'
 API_STOCK_DEPOSIT_OPTIONS_KEY = 'bling_api_stock_deposit_options'
+API_STOCK_DEPOSIT_AUTOLOAD_KEY = 'bling_api_stock_deposit_autoload_attempted'
 DEFAULT_API_BASE_URL = 'https://www.bling.com.br/Api/v3'
 
 DIRECT_CONTRACT_SESSION_KEYS = (
@@ -84,11 +85,9 @@ def _direct_operation() -> str:
     choice = normalize_direct_operation(st.session_state.get('direct_bling_operation_choice'))
     if choice in DIRECT_OPERATION_LABELS:
         return choice
-
     applied = normalize_direct_operation(st.session_state.get(DIRECT_OPERATION_APPLIED_KEY))
     if applied in DIRECT_OPERATION_LABELS:
         return applied
-
     return normalize_direct_operation(st.session_state.get('home_slim_flow_operation'))
 
 
@@ -113,11 +112,6 @@ def apply_direct_api_contract(operation: str | None = None) -> pd.DataFrame:
     op = normalize_direct_operation(operation or _direct_operation())
     model = direct_api_contract_model(op)
 
-    # Nunca escreva em st.session_state['direct_bling_operation_choice'] aqui.
-    # Essa chave pertence ao widget st.radio. Depois que o radio é instanciado,
-    # o Streamlit bloqueia alteração manual nessa chave e derruba o app com
-    # StreamlitAPIException. Use uma chave interna para registrar a operação
-    # efetivamente aplicada no contrato direto da API.
     st.session_state[DIRECT_OPERATION_APPLIED_KEY] = op
     st.session_state[DIRECT_API_CONTRACT_ACTIVE_KEY] = True
     st.session_state[DIRECT_API_CONTRACT_KEY] = model.copy()
@@ -229,16 +223,33 @@ def _fetch_stock_deposits() -> tuple[list[dict[str, str]], str]:
     return [], 'Não consegui buscar depósitos automaticamente. ' + ' | '.join(errors[:4])
 
 
+def _ensure_stock_deposits_loaded() -> None:
+    deposits = st.session_state.get(API_STOCK_DEPOSIT_OPTIONS_KEY)
+    if isinstance(deposits, list) and deposits:
+        return
+    if st.session_state.get(API_STOCK_DEPOSIT_AUTOLOAD_KEY):
+        return
+    st.session_state[API_STOCK_DEPOSIT_AUTOLOAD_KEY] = True
+    deposits, error = _fetch_stock_deposits()
+    if error:
+        st.caption(error)
+    elif deposits:
+        st.success(f'{len(deposits)} depósito(s) encontrado(s) automaticamente.')
+
+
 def _render_stock_deposit_field(operation: str) -> None:
     op = normalize_direct_operation(operation)
     if op != 'estoque':
         return
     st.markdown('##### Depósito do estoque')
-    st.caption('Use somente depósitos reais retornados pela API do Bling. O campo manual foi removido para evitar erro de envio.')
+    st.caption('O sistema tenta buscar automaticamente os depósitos reais do Bling. Se houver mais de um, selecione o correto.')
 
-    if st.button('🔎 Buscar depósitos do Bling', use_container_width=True, key='bling_scan_stock_deposits'):
+    _ensure_stock_deposits_loaded()
+
+    if st.button('🔄 Atualizar depósitos do Bling', use_container_width=True, key='bling_scan_stock_deposits'):
         st.session_state.pop(API_STOCK_DEPOSIT_ID_KEY, None)
         st.session_state.pop(API_STOCK_DEPOSIT_KEY, None)
+        st.session_state[API_STOCK_DEPOSIT_AUTOLOAD_KEY] = True
         deposits, error = _fetch_stock_deposits()
         if error:
             st.warning(error)
@@ -254,14 +265,14 @@ def _render_stock_deposit_field(operation: str) -> None:
             if current_id and str(item.get('id') or '').strip() == current_id:
                 default_index = index
                 break
-        selected_label = st.selectbox('Selecione o depósito do Bling', labels, index=default_index, key='bling_stock_deposit_select')
+        selected_label = st.selectbox('Depósito do Bling', labels, index=default_index, key='bling_stock_deposit_select')
         selected = deposits[labels.index(selected_label)]
         st.session_state[API_STOCK_DEPOSIT_ID_KEY] = str(selected.get('id') or '').strip()
         st.session_state[API_STOCK_DEPOSIT_KEY] = str(selected.get('nome') or selected_label).strip()
         st.success(f'Depósito selecionado: {selected_label}')
         return
 
-    st.warning('Nenhum depósito selecionado. Clique em “Buscar depósitos do Bling” e selecione um depósito real antes de continuar.')
+    st.warning('Nenhum depósito selecionado. Atualize os depósitos do Bling antes de enviar estoque.')
 
 
 def render_same_tab_connect_button(auth_url: str) -> None:
@@ -316,16 +327,27 @@ def render_callback_hint(callback_url: str) -> None:
     )
 
 
+def _activate_short_api_flow(operation: str) -> None:
+    previous = normalize_direct_operation(st.session_state.get(DIRECT_OPERATION_APPLIED_KEY))
+    activate_api_finish_mode()
+    apply_direct_api_contract(operation)
+    if not st.session_state.get(WIZARD_STEP_KEY):
+        set_step_without_rerun(STEP_ORIGEM)
+    if previous and previous != operation:
+        set_step_without_rerun(STEP_ORIGEM)
+        set_scroll_target(STEP_ORIGEM)
+
+
 def render_bling_connection_step(section_title) -> None:
     section_title(1, 'Bling API')
     with st.container(border=True):
-        st.caption('Conecte ao Bling para enviar cadastro, estoque ou preços direto pela API. Este caminho não usa modelo de planilha nem gera CSV Bling.')
+        st.caption('Fluxo curto: escolha a operação, carregue os dados e envie direto ao Bling. Não usa modelo de planilha.')
         status = connection_status()
         connected = bool(status.get('connected'))
         callback_url = str(status.get('required_redirect_uri') or required_redirect_uri()).strip()
 
         if connected:
-            st.success('Bling conectado. Escolha o tipo de envio direto.')
+            st.success('Bling conectado. O modo API direta já está ativo.')
             operation = st.radio(
                 'O que deseja fazer no Bling?',
                 options=direct_operation_options(),
@@ -333,18 +355,10 @@ def render_bling_connection_step(section_title) -> None:
                 horizontal=True,
                 key='direct_bling_operation_choice',
             )
+            _activate_short_api_flow(operation)
             _render_stock_deposit_field(operation)
-            if finish_mode() == FINISH_MODE_API:
-                apply_direct_api_contract(operation)
+            st.caption('Etapas deste caminho: Origem dos dados → Dados carregados → Enviar ao Bling.')
 
-            if st.button('Usar envio direto pela API', use_container_width=True, key='use_direct_bling_mode'):
-                activate_api_finish_mode()
-                apply_direct_api_contract(operation)
-                set_step_without_rerun(STEP_ORIGEM)
-                set_scroll_target(STEP_ORIGEM)
-                safe_rerun('bling_api_direct_mode_selected', target_step=STEP_ORIGEM)
-
-            st.caption('Para gerar arquivo manual, volte para a Home e use modelo de destino.')
             if st.button('Desconectar Bling', use_container_width=True, key='entry_disconnect_bling'):
                 disconnect()
                 clear_direct_api_contract()
