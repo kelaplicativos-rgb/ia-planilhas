@@ -33,6 +33,7 @@ from bling_app_zero.ui.flow_context import (
     finish_mode,
 )
 from bling_app_zero.ui.home_wizard_constants import STEP_ORIGEM, WIZARD_STEP_KEY
+from bling_app_zero.ui.home_wizard_rerun import safe_rerun, set_step_without_rerun
 from bling_app_zero.ui.home_wizard_scroll import set_scroll_target
 from bling_app_zero.universal.model_contract_detector import MODEL_CONTRACT_TYPE_KEY
 
@@ -104,6 +105,7 @@ def clear_direct_api_contract() -> None:
 def apply_direct_api_contract(operation: str | None = None) -> pd.DataFrame:
     op = normalize_direct_operation(operation or _direct_operation())
     model = direct_api_contract_model(op)
+    st.session_state['direct_bling_operation_choice'] = op
     st.session_state[DIRECT_API_CONTRACT_ACTIVE_KEY] = True
     st.session_state[DIRECT_API_CONTRACT_KEY] = model.copy()
     st.session_state[CADASTRO_MODELO_KEY] = model.copy()
@@ -325,16 +327,16 @@ def render_bling_connection_step(section_title) -> None:
             if st.button('Usar envio direto pela API', use_container_width=True, key='use_direct_bling_mode'):
                 activate_api_finish_mode()
                 apply_direct_api_contract(operation)
-                st.session_state[WIZARD_STEP_KEY] = STEP_ORIGEM
+                set_step_without_rerun(STEP_ORIGEM)
                 set_scroll_target(STEP_ORIGEM)
-                st.rerun()
+                safe_rerun('bling_api_direct_mode_selected', target_step=STEP_ORIGEM)
 
             st.caption('Para gerar arquivo manual, volte para a Home e use modelo de destino.')
             if st.button('Desconectar Bling', use_container_width=True, key='entry_disconnect_bling'):
                 disconnect()
                 clear_direct_api_contract()
                 clear_finish_mode()
-                st.rerun()
+                safe_rerun('bling_api_disconnected', target_step=STEP_ORIGEM)
             return
 
         st.warning('Bling não conectado. Conecte para liberar o envio direto pela API.')
