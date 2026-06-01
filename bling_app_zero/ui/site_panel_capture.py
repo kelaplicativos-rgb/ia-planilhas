@@ -7,8 +7,11 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.engines.fast_site_scraper.deep_site_capture import discover_deep_product_urls
+from bling_app_zero.features_runtime.router import active_contract, feature_needs_model
 from bling_app_zero.flows.site_operation_router import run_site_engine
 from bling_app_zero.ui.home_shared import load_site_pipeline
+from bling_app_zero.ui.home_wizard_constants import STEP_MAPEAMENTO
+from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 from bling_app_zero.ui.site_outputs import save_site_source
 from bling_app_zero.ui.site_panel_state import (
     UNIVERSAL_OPERATION,
@@ -82,13 +85,7 @@ def prepare_raw_urls_for_capture(
 
 
 def capture_limits_for_operation(operation: str, deep_options: dict[str, int | bool] | None) -> tuple[int, int, bool]:
-    """Mantém o objetivo do sistema: varrer o site completo por padrão.
-
-    O limite baixo usado temporariamente para evitar travamento cortava o objetivo
-    principal do produto. A busca normal volta a ser ampla. A captura profunda
-    ainda pode ter limites visuais para descoberta de links, mas o motor final
-    recebe `all_products=True` e limites amplos para não retornar só uma amostra.
-    """
+    """Mantém o objetivo do sistema: varrer o site completo por padrão."""
     _ = operation
     options = deep_options or {}
     if bool(options.get('enabled')):
@@ -97,8 +94,25 @@ def capture_limits_for_operation(operation: str, deep_options: dict[str, int | b
             max(int(options.get('max_products') or 0), ALL_PRODUCTS_LIMIT),
             True,
         )
-
     return ALL_PAGES_LIMIT, ALL_PRODUCTS_LIMIT, True
+
+
+def _missing_model_blocked(operation: str, requested_columns: list[str] | None) -> bool:
+    return bool(feature_needs_model() and operation in {UNIVERSAL_OPERATION} and not has_columns(requested_columns))
+
+
+def _persist_operation_state(operation: str) -> None:
+    contract = active_contract()
+    st.session_state['operation_site'] = operation
+    st.session_state['tipo_operacao_site'] = operation
+    st.session_state['operacao_final'] = operation
+    st.session_state['tipo_operacao_final'] = operation
+    st.session_state['origem_final'] = 'site'
+    st.session_state['home_slim_flow_operation'] = contract.operation
+    st.session_state['home_slim_flow_origin'] = 'site'
+    st.session_state['active_feature_contract_key'] = contract.key
+    st.session_state['active_feature_operation'] = contract.operation
+    st.session_state['active_feature_mode'] = contract.mode
 
 
 def run_site_capture(
@@ -116,10 +130,10 @@ def run_site_capture(
         st.warning('Cole pelo menos um link para buscar.')
         add_audit_event('site_capture_blocked_missing_urls', area='SITE', step='entrada', status='BLOQUEADO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
         return
-    if operation in {UNIVERSAL_OPERATION} and not has_columns(requested_columns):
+    if _missing_model_blocked(operation, requested_columns):
         clear_site_df(operation, 'busca_sem_modelo_destino')
         st.error('Busca bloqueada: modelo de destino ausente.')
-        add_audit_event('site_capture_blocked_missing_model', area='SITE', step='entrada', status='BLOQUEADO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('site_capture_blocked_missing_model', area='SITE', step='entrada', status='BLOQUEADO', details={'operation': operation, 'feature_contract': active_contract().key, 'responsible_file': RESPONSIBLE_FILE})
         return
 
     started_at = time.time()
@@ -132,6 +146,7 @@ def run_site_capture(
         step='entrada',
         details={
             'operation': operation,
+            'feature_contract': active_contract().key,
             'requested_columns_count': len(requested_columns or []),
             'has_cadastro_model': isinstance(df_modelo_cadastro, pd.DataFrame),
             'has_estoque_model': isinstance(df_modelo_estoque, pd.DataFrame),
@@ -185,14 +200,11 @@ def run_site_capture(
 
     save_site_source(df_site, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, operation)
     store_site_df(operation, df_site)
-    st.session_state['operation_site'] = operation
-    st.session_state['tipo_operacao_site'] = operation
-    st.session_state['operacao_final'] = operation
-    st.session_state['tipo_operacao_final'] = operation
-    st.session_state['origem_final'] = 'site'
+    _persist_operation_state(operation)
     set_capture_state(operation=operation, running=False, finished=True, rows=rows, columns=columns)
     details = {
         'operation': operation,
+        'feature_contract': active_contract().key,
         'rows': rows,
         'columns': columns,
         'elapsed_seconds': round(time.time() - started_at, 2),
@@ -205,7 +217,7 @@ def run_site_capture(
     details.update(deep_details)
     add_audit_event('site_capture_saved_to_state', area='SITE', step='entrada', status='OK', details=details)
     finish_progress(progress_bar, status_box, text='Busca por site concluída.')
-    st.rerun()
+    safe_rerun('site_capture_finished', target_step=STEP_MAPEAMENTO)
 
 
 __all__ = ['capture_limits_for_operation', 'run_site_capture']
