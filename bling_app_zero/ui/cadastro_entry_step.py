@@ -24,7 +24,8 @@ from bling_app_zero.ui.home_models import (
     get_home_universal_model,
 )
 from bling_app_zero.ui.home_shared import df_signature, preview_df
-from bling_app_zero.ui.home_wizard_constants import STEP_LABELS, STEP_PRECIFICACAO, WIZARD_STEP_KEY
+from bling_app_zero.ui.home_wizard_constants import STEP_LABELS, STEP_MAPEAMENTO, STEP_PRECIFICACAO, WIZARD_STEP_KEY
+from bling_app_zero.ui.home_wizard_rerun import safe_rerun, set_step_without_rerun
 from bling_app_zero.ui.home_wizard_scroll import set_scroll_target
 from bling_app_zero.ui.smart_upload import SmartUploadResult
 
@@ -165,20 +166,27 @@ def _destination_model(upload) -> pd.DataFrame:
     return select_cadastro_model(upload)
 
 
+def _next_step_after_source_loaded() -> str:
+    if _is_api_context():
+        return STEP_MAPEAMENTO
+    return STEP_PRECIFICACAO
+
+
 def _auto_advance_after_source_loaded(df_origem: pd.DataFrame, df_modelo: pd.DataFrame) -> None:
     if not valid_df(df_origem) or not valid_model(df_modelo):
         return
-    signature = df_signature(df_origem) + ':' + df_signature(df_modelo)
+    signature = df_signature(df_origem) + ':' + df_signature(df_modelo) + ':' + _next_step_after_source_loaded()
     if st.session_state.get(ENTRY_AUTOSCROLL_SIGNATURE_KEY) == signature:
         return
     st.session_state[ENTRY_AUTOSCROLL_SIGNATURE_KEY] = signature
-    st.session_state[WIZARD_STEP_KEY] = STEP_PRECIFICACAO
-    set_scroll_target(STEP_PRECIFICACAO)
+    next_step = _next_step_after_source_loaded()
+    set_step_without_rerun(next_step)
+    set_scroll_target(next_step)
     try:
-        st.query_params['step'] = STEP_PRECIFICACAO
+        st.query_params['step'] = next_step
     except Exception:
         pass
-    st.rerun()
+    safe_rerun('source_loaded_auto_advance', target_step=next_step)
 
 
 def render_cadastro_entrada_step() -> None:
@@ -194,7 +202,9 @@ def render_cadastro_entrada_step() -> None:
 
     if valid_df(df_origem):
         origem_nome = 'Busca do site' if site_origin else 'Dados importados'
-        proxima_etapa = _step_label(STEP_PRECIFICACAO)
+        proxima_etapa = _step_label(_next_step_after_source_loaded())
+        if _is_api_context():
+            proxima_etapa = 'Preparar envio ao Bling'
         st.success(f'{origem_nome} carregados com sucesso. {len(df_origem)} linha(s) encontradas. Próxima etapa: {proxima_etapa}.')
         if site_origin:
             resolved_from = str(st.session_state.get('cadastro_entry_site_source_resolved_from') or '').strip()
