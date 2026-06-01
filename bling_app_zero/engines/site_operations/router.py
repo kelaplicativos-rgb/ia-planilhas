@@ -38,20 +38,21 @@ def run_site_operation_engine(
     stop_early: bool = True,
     progress_callback: Callable[[dict], None] | None = None,
 ) -> pd.DataFrame:
-    """Roteador central dos motores por site com limite duro.
+    """Roteador central dos motores por site com limite controlado.
 
-    BLINGFIX: este roteador não deve aceitar 1_000_000 páginas/produtos em
-    chamadas diretas. Mesmo fora da UI, os limites passam pelo normalizador.
+    BLINGFIX: o roteador continua normalizando limites para proteger o app,
+    mas não força mais parada antecipada. Quando a UI pedir todos os produtos,
+    `stop_early=False` chega até o scraper final.
     """
     selected = normalize_operation(operation)
+    safe_stop_early = bool(stop_early)
     limits = normalize_capture_limits(
         max_pages=max_pages,
         max_products=max_products,
-        mode='safe' if stop_early else 'deep',
+        mode='safe' if safe_stop_early else 'deep',
     )
     safe_max_pages = limits['max_pages']
     safe_max_products = limits['max_products']
-    safe_stop_early = True
 
     if selected == 'estoque':
         return run_estoque_site_engine(
