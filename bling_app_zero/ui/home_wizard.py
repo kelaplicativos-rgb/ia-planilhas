@@ -3,6 +3,14 @@ from __future__ import annotations
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.features_runtime.router import (
+    active_contract,
+    active_steps as runtime_active_steps,
+    feature_needs_mapping,
+    feature_needs_model,
+    feature_needs_pricing,
+    feature_needs_rules_review,
+)
 from bling_app_zero.ui.ai_real_advanced_panel import render_ai_real_advanced_panel
 from bling_app_zero.ui.flow_context import (
     CONTEXT_BLING_API,
@@ -33,12 +41,12 @@ from bling_app_zero.ui.home_wizard_constants import (
     WIZARD_STEP_KEY,
 )
 from bling_app_zero.ui.home_wizard_price_update import (
-    PRICE_UPDATE_OPERATION,
     bind_price_update_single_sheet,
     is_price_update_contract,
     render_price_update_single_sheet_notice,
 )
 from bling_app_zero.ui.home_wizard_pricing_step import render_pricing_step
+from bling_app_zero.ui.home_wizard_rerun import safe_rerun, set_step_without_rerun
 from bling_app_zero.ui.home_wizard_review import render_final_checker, render_safe_fixes
 from bling_app_zero.ui.home_wizard_scroll import inject_scroll_to_target, render_step_anchor
 from bling_app_zero.ui.home_wizard_state import (
@@ -46,7 +54,6 @@ from bling_app_zero.ui.home_wizard_state import (
     SINGLE_PAGE_FLOW,
     UNIVERSAL_OPERATION,
     UNIVERSAL_REVIEW_OPERATION,
-    UNIVERSAL_STEPS,
     came_from_bling_quick_model,
     clear_stale_cadastro_operation_state,
     current_origin_choice,
@@ -101,6 +108,13 @@ def _section_title(number: int, title: str) -> None:
     st.markdown(f'### {number}. {title}')
 
 
+def _active_steps() -> list[str]:
+    steps = [step for step in runtime_active_steps() if step in ACTIVE_RENDER_STEPS]
+    if not feature_needs_model():
+        steps = [step for step in steps if step != STEP_MODELO]
+    return steps or [STEP_ORIGEM, STEP_ENTRADA, STEP_MAPEAMENTO, STEP_PREVIEW, STEP_DOWNLOAD]
+
+
 def _context_mapping_keys() -> tuple[str, str]:
     return CONTEXT_MAPPING_KEYS.get(_entry_context(), CONTEXT_MAPPING_KEYS[CONTEXT_BLING_API])
 
@@ -124,7 +138,7 @@ def _context_confidence() -> dict:
 
 
 def _model_available() -> bool:
-    return bool(has_home_models()) or _is_api_direct_mode()
+    return bool(has_home_models()) or not feature_needs_model() or _is_api_direct_mode()
 
 
 def _current_contract_operation() -> str:
@@ -147,16 +161,17 @@ def _is_price_update_contract() -> bool:
 
 def _go_to_step(step: str) -> None:
     normalized = str(step or '').strip().lower()
-    if normalized not in ACTIVE_RENDER_STEPS:
+    if normalized not in _active_steps():
         return
-    st.session_state[WIZARD_STEP_KEY] = normalized
-    try:
-        st.query_params['step'] = normalized
-    except Exception:
-        pass
+    set_step_without_rerun(normalized)
 
 
 def _label_for(step: str) -> str:
+    contract = active_contract()
+    if contract.is_api and step == STEP_MAPEAMENTO:
+        return 'Preparar envio'
+    if contract.is_api and step == STEP_DOWNLOAD:
+        return 'Enviar para o Bling'
     return str(STEP_LABELS.get(step, step)).strip()
 
 
@@ -183,16 +198,22 @@ def _can_advance_from(step: str) -> bool:
         return universal_context_ready()
     if step == STEP_PRECIFICACAO:
         return True
-    if step == STEP_MAPEAMENTO:
-        return universal_mapping_ready()
-    if step == STEP_REGRAS:
-        return universal_mapping_ready()
-    if step == STEP_PREVIEW:
+    if step in {STEP_MAPEAMENTO, STEP_REGRAS, STEP_PREVIEW}:
         return universal_mapping_ready()
     return False
 
 
 def _pending_message_for(step: str) -> str:
+    contract = active_contract()
+    if contract.is_api:
+        if step == STEP_ORIGEM:
+            return 'Escolha Arquivo ou Site para buscar os produtos que serão enviados ao Bling.'
+        if step == STEP_ENTRADA:
+            return 'Carregue os produtos da origem para preparar o envio direto.'
+        if step == STEP_MAPEAMENTO:
+            return 'Prepare os campos obrigatórios da API antes da prévia de envio.'
+        if step == STEP_PREVIEW:
+            return 'Confira a prévia antes de enviar para o Bling.'
     if step == STEP_MODELO:
         return 'Anexe ou confirme o modelo de destino para liberar a próxima etapa.'
     if step == STEP_ORIGEM:
@@ -216,10 +237,8 @@ def _render_step_progress(steps: list[str], active_step: str) -> None:
     index = steps.index(active_step)
     total = len(steps)
     percent = int(((index + 1) / total) * 100)
-
     st.caption(f'Etapa {index + 1} de {total} · {_label_for(active_step)}')
     st.progress(max(1, min(100, percent)))
-
     done_labels = [_label_for(step) for step in steps[:index] if _step_is_done(step)]
     if done_labels:
         with st.expander('Resumo das etapas concluídas', expanded=False):
@@ -234,28 +253,15 @@ def _render_safe_step_nav(steps: list[str], active_step: str) -> None:
     previous_step = steps[index - 1] if index > 0 else ''
     next_step = steps[index + 1] if index < len(steps) - 1 else ''
     can_go_next = bool(next_step) and _can_advance_from(active_step)
-
     st.markdown('---')
     col_back, col_status, col_next = st.columns([1, 1.4, 1])
-
     with col_back:
         if previous_step and st.button('⬅️ Voltar', use_container_width=True, key=f'wizard_local_back_{active_step}'):
             _go_to_step(previous_step)
-            add_audit_event(
-                'wizard_local_back_clicked',
-                area='WIZARD',
-                step=previous_step,
-                details={
-                    'from': active_step,
-                    'to': previous_step,
-                    'state_preserved': True,
-                    'responsible_file': RESPONSIBLE_FILE,
-                },
-            )
-            st.rerun()
+            add_audit_event('wizard_local_back_clicked', area='WIZARD', step=previous_step, details={'from': active_step, 'to': previous_step, 'state_preserved': True, 'responsible_file': RESPONSIBLE_FILE})
+            safe_rerun('wizard_back_clicked', target_step=previous_step)
         elif not previous_step:
             st.caption('Início do fluxo')
-
     with col_status:
         if next_step:
             if can_go_next:
@@ -264,29 +270,13 @@ def _render_safe_step_nav(steps: list[str], active_step: str) -> None:
                 render_pending_notice(_pending_message_for(active_step))
         else:
             st.success('Última etapa do fluxo.')
-
     with col_next:
         if next_step:
             if can_go_next:
-                if st.button(
-                    f'Próximo: {_label_for(next_step)}',
-                    use_container_width=True,
-                    key=f'wizard_local_next_{active_step}',
-                ):
+                if st.button(f'Próximo: {_label_for(next_step)}', use_container_width=True, key=f'wizard_local_next_{active_step}'):
                     _go_to_step(next_step)
-                    add_audit_event(
-                        'wizard_local_next_clicked',
-                        area='WIZARD',
-                        step=next_step,
-                        details={
-                            'from': active_step,
-                            'to': next_step,
-                            'prerequisite_ok': True,
-                            'state_preserved': True,
-                            'responsible_file': RESPONSIBLE_FILE,
-                        },
-                    )
-                    st.rerun()
+                    add_audit_event('wizard_local_next_clicked', area='WIZARD', step=next_step, details={'from': active_step, 'to': next_step, 'prerequisite_ok': True, 'state_preserved': True, 'responsible_file': RESPONSIBLE_FILE})
+                    safe_rerun('wizard_next_clicked', target_step=next_step)
             else:
                 _render_blocked_next_state(next_step)
         else:
@@ -294,35 +284,29 @@ def _render_safe_step_nav(steps: list[str], active_step: str) -> None:
 
 
 def _resolve_active_step(active_step: str, *, has_model: bool, start_at_origin: bool) -> str:
-    """Evita tela parada em etapa já concluída e mantém foco na próxima ação.
-
-    BLINGFIX:
-    - modelo carregado leva para Origem dos dados;
-    - origem escolhida leva para Dados importados;
-    - dados carregados levam para Precificação;
-    - precificação só é pulada automaticamente quando não houver configuração ativa.
-    """
+    steps = _active_steps()
+    if active_step not in steps:
+        return steps[0]
+    contract = active_contract()
     if start_at_origin and active_step == STEP_MODELO:
-        return STEP_ORIGEM
+        return STEP_ORIGEM if STEP_ORIGEM in steps else steps[0]
     if has_model and active_step == STEP_MODELO:
-        return STEP_ORIGEM
+        return STEP_ORIGEM if STEP_ORIGEM in steps else steps[0]
     if active_step == STEP_ORIGEM and current_origin_choice() in {'arquivo', 'site'}:
-        return STEP_ENTRADA
+        return STEP_ENTRADA if STEP_ENTRADA in steps else active_step
     if active_step == STEP_ENTRADA and universal_context_ready():
-        return STEP_PRECIFICACAO
-    if active_step == STEP_PRECIFICACAO:
-        pricing_enabled = bool(st.session_state.get('home_precificacao_inicial')) or bool(st.session_state.get('home_pricing_enabled_toggle'))
-        pricing_configured = isinstance(st.session_state.get('home_pricing_config'), dict) and bool(st.session_state.get('home_pricing_config'))
-        if not pricing_enabled and not pricing_configured:
-            return STEP_MAPEAMENTO
+        if contract.is_api or not feature_needs_pricing():
+            return STEP_MAPEAMENTO if STEP_MAPEAMENTO in steps else active_step
+        return STEP_PRECIFICACAO if STEP_PRECIFICACAO in steps else active_step
+    if active_step == STEP_PRECIFICACAO and not feature_needs_pricing():
+        return STEP_MAPEAMENTO if STEP_MAPEAMENTO in steps else active_step
     return active_step
 
 
 def _render_model_step(section_number: int = 2) -> None:
-    if _is_api_direct_mode():
+    if not feature_needs_model() or _is_api_direct_mode():
         return
     from bling_app_zero.ui.home_models import render_home_bling_models
-
     render_step_anchor(STEP_MODELO)
     _section_title(section_number, _label_for(STEP_MODELO))
     with st.container(border=True):
@@ -338,7 +322,6 @@ def _render_origin_step(section_number: int = 3) -> None:
         _section_title(section_number, _label_for(STEP_ENTRADA))
         render_price_update_single_sheet_notice()
         return
-
     _section_title(section_number, _label_for(STEP_ORIGEM))
     if not _model_available():
         render_pending_notice('Liberado após escolher o caminho do fluxo.')
@@ -352,13 +335,9 @@ def _render_origin_step(section_number: int = 3) -> None:
     with col1:
         if st.button('📎 Arquivo', use_container_width=True, key='origin_choose_file'):
             select_origin('arquivo', set_scroll_target=None)
-            _go_to_step(STEP_ENTRADA)
-            st.rerun()
     with col2:
         if st.button('🌐 Site', use_container_width=True, key='origin_choose_site'):
             select_origin('site', set_scroll_target=None)
-            _go_to_step(STEP_ENTRADA)
-            st.rerun()
     if selected in {'arquivo', 'site'}:
         st.success('Origem selecionada.')
     else:
@@ -379,37 +358,17 @@ def _render_universal_entrada(section_number: int = 4) -> None:
     if origin not in {'arquivo', 'site'}:
         render_pending_notice('Escolha a origem primeiro.')
         return
-    add_audit_event(
-        'single_page_origin_data_rendered',
-        area='UNIVERSAL',
-        step=STEP_ENTRADA,
-        details={
-            'origin': origin,
-            'operation': _current_contract_operation(),
-            'finish_mode': _finish_mode(),
-            'home_entry_context': _entry_context(),
-            'single_page_flow': SINGLE_PAGE_FLOW,
-            'responsible_file': RESPONSIBLE_FILE,
-        },
-    )
+    add_audit_event('single_page_origin_data_rendered', area='UNIVERSAL', step=STEP_ENTRADA, details={'origin': origin, 'operation': _current_contract_operation(), 'finish_mode': _finish_mode(), 'home_entry_context': _entry_context(), 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
     if origin == 'site':
         from bling_app_zero.ui.site_panel import render_site_panel
-
         render_site_panel()
     render_universal_entrada_step()
 
 
 def _render_pricing_step(section_number: int = 5) -> None:
-    render_pricing_step(
-        section_number=section_number,
-        step_key=STEP_PRECIFICACAO,
-        section_title=_section_title,
-        model_available=_model_available(),
-        is_price_update=_is_price_update_contract(),
-        is_api_direct=_is_api_direct_mode(),
-        is_universal_entry=_is_universal_entry(),
-        render_price_update_notice=render_price_update_single_sheet_notice,
-    )
+    if not feature_needs_pricing():
+        return
+    render_pricing_step(section_number=section_number, step_key=STEP_PRECIFICACAO, section_title=_section_title, model_available=_model_available(), is_price_update=_is_price_update_contract(), is_api_direct=_is_api_direct_mode(), is_universal_entry=_is_universal_entry(), render_price_update_notice=render_price_update_single_sheet_notice)
 
 
 def _render_universal_mapeamento(section_number: int = 6) -> None:
@@ -423,13 +382,15 @@ def _render_universal_mapeamento(section_number: int = 6) -> None:
         return
     if _is_api_direct_mode():
         apply_direct_api_contract()
-        st.caption('Modo Envio direto: confirme a ligação dos dados de origem com os campos da API do Bling.')
+        st.caption('Modo Envio direto: o sistema prepara os campos internos da API do Bling sem exigir modelo de planilha.')
     elif _is_price_update_contract() and not _is_universal_entry():
         st.caption('A mesma planilha foi vinculada como origem e modelo. Confirme os campos para manter o contrato do arquivo final.')
     render_universal_mapeamento_step()
 
 
 def _render_ai_review_step(section_number: int = 7) -> None:
+    if not feature_needs_rules_review():
+        return
     render_step_anchor(STEP_REGRAS)
     _section_title(section_number, _label_for(STEP_REGRAS))
     if not _model_available():
@@ -438,25 +399,15 @@ def _render_ai_review_step(section_number: int = 7) -> None:
     if not universal_mapping_ready():
         render_pending_notice('Confirme o mapeamento manual primeiro.')
         return
-
     df_source = st.session_state.get(UNIVERSAL_ORIGEM_PRICED_KEY)
     if not looks_like_loaded_df(df_source):
         df_source = st.session_state.get(UNIVERSAL_ORIGEM_KEY)
     df_modelo = st.session_state.get(UNIVERSAL_MODELO_KEY)
-
     st.caption('Revise os campos ligados e aplique as proteções finais antes da prévia final.')
-    render_mapping_review_panel(
-        operation=UNIVERSAL_REVIEW_OPERATION,
-        mapping=_context_mapping(),
-        confidence=_context_confidence(),
-        df_source=df_source,
-        target_columns=[str(column) for column in getattr(df_modelo, 'columns', [])],
-    )
-
+    render_mapping_review_panel(operation=UNIVERSAL_REVIEW_OPERATION, mapping=_context_mapping(), confidence=_context_confidence(), df_source=df_source, target_columns=[str(column) for column in getattr(df_modelo, 'columns', [])])
     render_final_checker(df_source, df_modelo)
     render_safe_fixes()
     render_ai_real_advanced_panel()
-
     st.markdown('#### Ajustes avançados do arquivo final')
     render_rules_center_step()
 
@@ -465,10 +416,10 @@ def _render_universal_preview(section_number: int = 8) -> None:
     render_step_anchor(STEP_PREVIEW)
     _section_title(section_number, _label_for(STEP_PREVIEW))
     if not _model_available():
-        render_pending_notice('Liberado após o mapeamento.')
+        render_pending_notice('Liberado após o preparo dos dados.')
         return
     if not universal_mapping_ready():
-        render_pending_notice('Confirme o mapeamento primeiro.')
+        render_pending_notice('Confirme o preparo dos campos primeiro.')
         return
     render_universal_preview_step()
 
@@ -477,12 +428,12 @@ def _render_universal_download(section_number: int = 9) -> None:
     render_step_anchor(STEP_DOWNLOAD)
     _section_title(section_number, _label_for(STEP_DOWNLOAD))
     if _is_api_direct_mode():
-        st.caption('Envio direto pela API do Bling.')
+        st.caption('Envio direto pela API do Bling. CSV fica apenas como backup opcional.')
     if not _model_available():
         render_pending_notice('Liberado no final.')
         return
     if not universal_mapping_ready():
-        render_pending_notice('Confirme o mapeamento primeiro.')
+        render_pending_notice('Confirme o preparo dos campos primeiro.')
         return
     clear_stale_cadastro_operation_state()
     render_universal_download_step()
@@ -501,10 +452,9 @@ def _query_step() -> str:
 
 
 def _active_start_step() -> str:
-    current = str(st.session_state.get(WIZARD_STEP_KEY) or _query_step() or STEP_MODELO).strip().lower()
-    if current not in ACTIVE_RENDER_STEPS:
-        return STEP_MODELO
-    return current
+    steps = _active_steps()
+    current = str(st.session_state.get(WIZARD_STEP_KEY) or _query_step() or steps[0]).strip().lower()
+    return current if current in steps else steps[0]
 
 
 def _render_active_step(step: str, section_number: int) -> None:
@@ -527,8 +477,7 @@ def _render_active_step(step: str, section_number: int) -> None:
 
 
 def _render_steps_from(start_step: str, *, skip_model: bool) -> None:
-    """Renderiza somente a etapa ativa e uma navegação local segura."""
-    steps = [step for step in ACTIVE_RENDER_STEPS if not (skip_model and step == STEP_MODELO)]
+    steps = [step for step in _active_steps() if not (skip_model and step == STEP_MODELO)]
     if start_step not in steps:
         start_step = steps[0]
     _go_to_step(start_step)
@@ -561,48 +510,20 @@ def render_home_wizard() -> None:
     if direct_mode:
         apply_direct_api_contract()
         has_model = True
-    elif not has_model:
-        st.session_state[WIZARD_STEP_KEY] = STEP_MODELO
+    elif feature_needs_model() and not has_model:
+        set_step_without_rerun(STEP_MODELO)
         st.session_state.pop('home_slim_flow_origin', None)
-        add_audit_event(
-            'wizard_model_first_guard_active',
-            area='WIZARD',
-            step=STEP_MODELO,
-            details={
-                'reason': 'missing_destination_model',
-                'single_page_flow': SINGLE_PAGE_FLOW,
-                'finish_mode': mode,
-                'home_entry_context': context,
-                'responsible_file': RESPONSIBLE_FILE,
-            },
-        )
-        _render_step_progress(ACTIVE_RENDER_STEPS, STEP_MODELO)
+        add_audit_event('wizard_model_first_guard_active', area='WIZARD', step=STEP_MODELO, details={'reason': 'missing_destination_model', 'single_page_flow': SINGLE_PAGE_FLOW, 'finish_mode': mode, 'home_entry_context': context, 'responsible_file': RESPONSIBLE_FILE})
+        _render_step_progress([STEP_MODELO], STEP_MODELO)
         _render_model_step(1 if context != CONTEXT_BLING_API else 2)
-        _render_safe_step_nav(ACTIVE_RENDER_STEPS, STEP_MODELO)
+        _render_safe_step_nav([STEP_MODELO], STEP_MODELO)
         inject_scroll_to_target()
         return
 
-    start_at_origin = came_from_bling_quick_model() or direct_mode
-    active_step = _active_start_step()
-    active_step = _resolve_active_step(active_step, has_model=has_model, start_at_origin=start_at_origin)
-
-    add_audit_event(
-        'wizard_single_step_rendered',
-        area='WIZARD',
-        step=active_step,
-        details={
-            'operation': operation or 'universal',
-            'steps': UNIVERSAL_STEPS,
-            'render_mode': 'one_step_at_a_time_with_safe_nav',
-            'single_page_flow': SINGLE_PAGE_FLOW,
-            'skip_model_step': start_at_origin,
-            'active_start_step': active_step,
-            'finish_mode': mode,
-            'home_entry_context': context,
-            'responsible_file': RESPONSIBLE_FILE,
-        },
-    )
-
+    start_at_origin = came_from_bling_quick_model() or direct_mode or not feature_needs_model()
+    active_step = _resolve_active_step(_active_start_step(), has_model=has_model, start_at_origin=start_at_origin)
+    steps = _active_steps()
+    add_audit_event('wizard_single_step_rendered', area='WIZARD', step=active_step, details={'operation': operation or 'universal', 'feature_contract': active_contract().key, 'steps': steps, 'render_mode': 'runtime_contract_safe_nav', 'single_page_flow': SINGLE_PAGE_FLOW, 'skip_model_step': start_at_origin, 'active_start_step': active_step, 'finish_mode': mode, 'home_entry_context': context, 'responsible_file': RESPONSIBLE_FILE})
     _render_steps_from(active_step, skip_model=start_at_origin)
     inject_scroll_to_target()
 
