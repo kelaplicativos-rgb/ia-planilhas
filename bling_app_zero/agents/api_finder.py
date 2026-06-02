@@ -8,12 +8,13 @@ from urllib.parse import urljoin, urlparse
 import pandas as pd
 
 from bling_app_zero.core.audit import add_audit_event
-from bling_app_zero.engines.fast_site_scraper.http_client import fetch_live
+from bling_app_zero.engines.fast_site_scraper.http_client import fetch_live, fetch_many_live
 from bling_app_zero.engines.fast_site_scraper.url_discovery import norm_url, split_urls
 
 RESPONSIBLE_FILE = 'bling_app_zero/agents/api_finder.py'
 API_HINT_RE = re.compile(r'''(?P<url>(?:https?:)?//[^"'\s<>]+|/[^"'\s<>]*(?:api|produto|product|catalog|estoque|stock|json)[^"'\s<>]*)''', re.I)
 JSON_KEYS = ('products', 'produtos', 'items', 'data', 'results', 'rows', 'records')
+MAX_API_CANDIDATES_TO_CONFIRM = 6
 
 
 @dataclass(frozen=True)
@@ -143,8 +144,7 @@ def _extract_rows_from_payload(payload: object, max_items: int = 500) -> list[di
     return rows
 
 
-def _confirm_json_candidate(candidate: ApiCandidate, max_items: int = 3) -> ApiCandidate:
-    raw = fetch_live(candidate.url, timeout=4)
+def _confirm_json_candidate(candidate: ApiCandidate, raw: str, max_items: int = 3) -> ApiCandidate:
     payload = _json_payload(raw)
     if payload is None:
         return candidate
@@ -158,6 +158,24 @@ def _confirm_json_candidate(candidate: ApiCandidate, max_items: int = 3) -> ApiC
         content_type='json',
         json_confirmed=True,
     )
+
+
+def _confirm_candidates(candidates: list[ApiCandidate]) -> list[ApiCandidate]:
+    top = candidates[:MAX_API_CANDIDATES_TO_CONFIRM]
+    if not top:
+        return []
+    fetched = fetch_many_live([candidate.url for candidate in top], timeout=3, workers=min(6, len(top)))
+    confirmed: list[ApiCandidate] = []
+    by_url = {candidate.url: candidate for candidate in top}
+    for url, raw in fetched.items():
+        candidate = by_url.get(url)
+        if candidate is None:
+            continue
+        confirmed.append(_confirm_json_candidate(candidate, raw))
+    for candidate in top:
+        if candidate.url not in fetched:
+            confirmed.append(candidate)
+    return confirmed
 
 
 def find_site_api(raw_urls: str, platform: str = 'generico') -> ApiFinderResult:
@@ -174,10 +192,7 @@ def find_site_api(raw_urls: str, platform: str = 'generico') -> ApiFinderResult:
                 all_candidates[candidate.url] = candidate
 
     raw_candidates = sorted(all_candidates.values(), key=lambda item: item.score, reverse=True)[:12]
-    confirmed: list[ApiCandidate] = []
-    for candidate in raw_candidates:
-        checked = _confirm_json_candidate(candidate)
-        confirmed.append(checked)
+    confirmed = _confirm_candidates(raw_candidates)
 
     candidates = sorted(confirmed, key=lambda item: (item.json_confirmed, item.score), reverse=True)[:20]
     best_candidate = candidates[0] if candidates and candidates[0].json_confirmed and candidates[0].score >= 70 else None
@@ -198,6 +213,7 @@ def find_site_api(raw_urls: str, platform: str = 'generico') -> ApiFinderResult:
             'platform': platform,
             'found': result.found,
             'best_url': result.best_url,
+            'confirmed_candidates': sum(1 for item in result.candidates if item.json_confirmed),
             'candidates': [asdict(item) for item in result.candidates[:10]],
             'responsible_file': RESPONSIBLE_FILE,
         },
