@@ -10,6 +10,7 @@ from bling_app_zero.ui.estoque_wizard_state import (
     sync_manual_stock_output,
     valid_model,
 )
+from bling_app_zero.ui.flow_guard import render_flow_blocker
 from bling_app_zero.ui.rules_center_step import render_rules_center_step
 from bling_app_zero.ui.shared_pricing import render_shared_pricing
 
@@ -32,10 +33,18 @@ def render_estoque_gerar_step() -> None:
     df_origem, source_name = current_stock_source()
 
     if not valid_model(df_modelo):
-        st.error('Modelo de destino ausente. Volte para a entrada.')
+        render_flow_blocker(
+            'Modelo de destino ausente. Volte para a entrada e carregue o modelo de estoque que será preenchido no final.',
+            title='Mapeamento de estoque bloqueado',
+            action_label='Continuar',
+        )
         return
     if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
-        st.warning('Nenhuma origem de dados carregada. Volte para a entrada.')
+        render_flow_blocker(
+            'Nenhuma origem de dados carregada. Volte para a entrada e carregue a planilha ou a captura do site antes de mapear.',
+            title='Mapeamento de estoque bloqueado',
+            action_label='Continuar',
+        )
         return
 
     st.info(f'Origem em uso no mapeamento: {source_name or "Origem de dados"}')
