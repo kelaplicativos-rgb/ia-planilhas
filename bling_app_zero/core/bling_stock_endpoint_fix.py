@@ -1,0 +1,2 @@
+ENDPOINT = '/estoques'
+OPERATION = 'B'
