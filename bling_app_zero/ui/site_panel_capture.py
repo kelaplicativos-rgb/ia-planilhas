@@ -77,19 +77,25 @@ def _orange_notice(message: str) -> None:
     )
 
 
-def _smartscan_success_notice(report) -> None:
+def _smartscan_notice_payload(report, *, rows: int) -> dict[str, object]:
     try:
         quality = report.quality
         platform = report.platform
-        warnings = '<br>'.join(f'• {item}' for item in quality.warnings[:5])
-        _orange_notice(
-            f'<b>BLINGSMARTSCAN concluído.</b><br>'
-            f'Plataforma provável: <b>{platform.platform}</b> ({int(platform.confidence * 100)}%).<br>'
-            f'Qualidade da captura: <b>{quality.score}/100</b>. Produtos: <b>{quality.rows}</b>.<br>'
-            f'{warnings}'
-        )
+        return {
+            'title': 'BLINGSMARTSCAN concluído.',
+            'platform': platform.platform,
+            'confidence': int(platform.confidence * 100),
+            'score': int(quality.score),
+            'rows': int(rows or quality.rows),
+            'warnings': [str(item) for item in list(quality.warnings or [])[:5]],
+        }
     except Exception:
-        pass
+        return {'title': 'BLINGSMARTSCAN concluído.', 'rows': int(rows or 0), 'warnings': []}
+
+
+def _store_smartscan_notice(operation: str, report, *, rows: int) -> None:
+    st.session_state[f'blingsmartscan_notice_{operation}'] = _smartscan_notice_payload(report, rows=rows)
+    st.session_state['blingsmartscan_last_notice'] = _smartscan_notice_payload(report, rows=rows)
 
 
 def prepare_raw_urls_for_capture(
@@ -290,6 +296,7 @@ def run_site_capture(
             st.session_state[f'blingsmartscan_report_{operation}'] = asdict(smart_report)
         except Exception:
             st.session_state[f'blingsmartscan_report_{operation}'] = {'message': getattr(smart_report, 'message', '')}
+        _store_smartscan_notice(operation, smart_report, rows=rows)
 
     details = {
         'operation': operation,
@@ -310,10 +317,8 @@ def run_site_capture(
         details['blingsmartscan_report'] = asdict(smart_report)
     add_audit_event('blingsmartscan_ui_saved_to_state', area='SITE', step='entrada', status='OK', details=details)
 
-    if smart_report is not None:
-        _smartscan_success_notice(smart_report)
     if deep_details.get('deep_capture_stopped_by_budget'):
-        _orange_notice(f'O BLINGSMARTSCAN encontrou {rows} produto(s) neste lote e parou para evitar queda do sistema. Você pode rodar outro lote depois.')
+        st.session_state['blingsmartscan_budget_notice'] = f'O BLINGSMARTSCAN encontrou {rows} produto(s) neste lote e parou para evitar queda do sistema. Você pode rodar outro lote depois.'
     finish_progress(progress_bar, status_box, text='BLINGSMARTSCAN concluído.')
     safe_rerun('blingsmartscan_finished', target_step=STEP_MAPEAMENTO)
 
