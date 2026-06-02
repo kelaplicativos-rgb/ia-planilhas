@@ -11,6 +11,7 @@ from bling_app_zero.ui.estoque_wizard_state import (
     LEGACY_ESTOQUE_FINAL_KEY,
     LEGACY_ESTOQUE_MAPPING_KEY,
 )
+from bling_app_zero.ui.flow_guard import render_flow_blocker
 from bling_app_zero.ui.home_shared import df_signature
 
 CADASTRO_SOURCE_SIGNATURE_KEY = 'cadastro_source_signature_atual'
@@ -295,9 +296,10 @@ def render_row_count_blocker(df_final: pd.DataFrame | None) -> bool:
     if expected <= 0 or current == expected:
         return False
     short_label = _supplier_origin_short_label()
-    st.error(
-        f'Proteção ativada: a {short_label} tem {expected} produto(s), mas o arquivo final tem {current}. '
-        'Volte para Entrada, confira a origem e refaça/confirme o mapeamento antes de baixar.'
+    render_flow_blocker(
+        f'A {short_label} tem {expected} produto(s), mas o arquivo final tem {current}. Volte para Entrada, confira a origem e refaça/confirme o mapeamento antes de baixar.',
+        title='Proteção ativada',
+        action_label='Download',
     )
     st.caption(
         'O sistema bloqueou o avanço para evitar perda silenciosa de produtos no CSV final. '
@@ -332,91 +334,92 @@ def store_cadastro_context(
 
 
 def cadastro_context_ready() -> bool:
+    return valid_df(st.session_state.get(CADASTRO_ORIGEM_KEY)) and valid_model(st.session_state.get(CADASTRO_MODELO_KEY))
+
+
+def get_cadastro_context() -> tuple[pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None]:
+    return (
+        st.session_state.get(CADASTRO_ORIGEM_KEY),
+        st.session_state.get(CADASTRO_MODELO_KEY),
+        st.session_state.get(CADASTRO_MODELO_ESTOQUE_KEY),
+    )
+
+
+def set_mapping_confirmed(mapping: dict, df_origem: pd.DataFrame | None) -> None:
+    st.session_state[CADASTRO_MAPPING_CONFIRMED_KEY] = True
+    if isinstance(mapping, dict):
+        st.session_state[_context_mapping_key()] = dict(mapping)
+        st.session_state['mapping_cadastro'] = dict(mapping)
+    if isinstance(df_origem, pd.DataFrame):
+        signature = df_signature(df_origem)
+        st.session_state[CADASTRO_MAPPING_SIGNATURE_KEY] = signature
+
+
+def mapping_confirmed_for(df_origem: pd.DataFrame | None) -> bool:
     if _smartscan_manual_continue_pending():
         return False
-    df_origem = st.session_state.get(CADASTRO_ORIGEM_KEY)
-    df_modelo = st.session_state.get(CADASTRO_MODELO_KEY)
-    return valid_df(df_origem) and valid_model(df_modelo)
+    if not bool(st.session_state.get(CADASTRO_MAPPING_CONFIRMED_KEY)):
+        return False
+    if not isinstance(df_origem, pd.DataFrame):
+        return False
+    return st.session_state.get(CADASTRO_MAPPING_SIGNATURE_KEY) == df_signature(df_origem)
 
 
-def _api_direct_source_df() -> pd.DataFrame | None:
-    for key in (CADASTRO_ORIGEM_PRICED_KEY, CADASTRO_ORIGEM_KEY, 'df_origem_planilha', 'df_site_bruto'):
-        df = st.session_state.get(key)
-        if valid_df(df):
-            return df.copy().fillna('')
-    return None
-
-
-def ensure_api_direct_final_df() -> pd.DataFrame | None:
-    if not _is_api_context():
-        return get_context_final_df()
-    current = get_context_final_df()
-    if valid_df(current):
-        return enforce_supplier_price_master_filter(current)
-    source = _api_direct_source_df()
-    if valid_df(source):
-        st.session_state['mapping_bling_api'] = {str(column): str(column) for column in source.columns}
-        st.session_state['mapping_confidence_bling_api'] = {str(column): 1.0 for column in source.columns}
-        st.session_state[CADASTRO_MAPPING_CONFIRMED_KEY] = True
-        st.session_state[CADASTRO_MAPPING_SIGNATURE_KEY] = df_signature(source)
-        set_context_final_df(source)
-        return enforce_supplier_price_master_filter(source)
-    return None
-
-
-def cadastro_mapping_ready() -> bool:
-    if _is_api_context():
-        df_final = ensure_api_direct_final_df()
-        return valid_df(df_final) and row_count_matches_source(df_final)
-    raw_final = get_context_final_df()
-    df_final = enforce_cadastro_model_columns(raw_final)
+def get_context_mapping() -> dict:
     mapping = st.session_state.get(_context_mapping_key())
-    if not isinstance(mapping, dict) or not mapping:
-        mapping = st.session_state.get('mapping_cadastro')
-    confirmed = bool(st.session_state.get(CADASTRO_MAPPING_CONFIRMED_KEY))
-    return valid_df(df_final) and row_count_matches_source(df_final) and isinstance(mapping, dict) and bool(mapping) and confirmed
+    if isinstance(mapping, dict):
+        return mapping
+    fallback = st.session_state.get('mapping_cadastro')
+    return fallback if isinstance(fallback, dict) else {}
+
+
+def get_context_confidence() -> dict:
+    confidence = st.session_state.get(CONTEXT_CONFIDENCE_KEYS.get(_entry_context(), 'mapping_confidence_universal'))
+    if isinstance(confidence, dict):
+        return confidence
+    fallback = st.session_state.get('mapping_confidence_cadastro')
+    return fallback if isinstance(fallback, dict) else {}
+
+
+def set_context_mapping(mapping: dict | None, confidence: dict | None = None) -> None:
+    if isinstance(mapping, dict):
+        st.session_state[_context_mapping_key()] = dict(mapping)
+        st.session_state['mapping_cadastro'] = dict(mapping)
+    if isinstance(confidence, dict):
+        st.session_state[CONTEXT_CONFIDENCE_KEYS.get(_entry_context(), 'mapping_confidence_universal')] = dict(confidence)
+        st.session_state['mapping_confidence_cadastro'] = dict(confidence)
+
+
+def build_import_hint() -> str:
+    return BLING_IMPORTADOR_PRODUTOS_URL
 
 
 __all__ = [
-    'BLING_IMPORTADOR_PRODUTOS_URL',
-    'CADASTRO_EXPECTED_ROWS_KEY',
-    'CADASTRO_EXPECTED_SIGNATURE_KEY',
-    'CADASTRO_MAPPING_CONFIRMED_KEY',
-    'CADASTRO_MAPPING_SIGNATURE_KEY',
     'CADASTRO_MODELO_ESTOQUE_KEY',
     'CADASTRO_MODELO_KEY',
     'CADASTRO_ORIGEM_KEY',
     'CADASTRO_ORIGEM_PRICED_KEY',
-    'CADASTRO_OUTPUT_KEYS',
-    'CADASTRO_SOURCE_SIGNATURE_KEY',
-    'CADASTRO_STOCK_OUTPUT_KEYS',
-    'CADASTRO_SUPPLIER_PRICE_MASTER_FILTER_KEY',
-    'CADASTRO_SUPPLIER_PRICE_MASTER_ROWS_KEY',
-    'CADASTRO_SUPPLIER_PRICE_MASTER_RULE_NAME',
-    'CADASTRO_SUPPLIER_PRICE_MASTER_SIGNATURE_KEY',
-    'LEGACY_CADASTRO_FINAL_KEY',
-    'UNIVERSAL_FINAL_KEY',
-    'activate_supplier_price_master_filter',
+    'build_import_hint',
     'cadastro_context_ready',
-    'cadastro_mapping_ready',
     'clear_cadastro_outputs',
     'clear_cadastro_outputs_if_source_changed',
     'enforce_cadastro_model_columns',
-    'enforce_supplier_price_master_filter',
-    'ensure_api_direct_final_df',
     'expected_source_rows',
+    'get_cadastro_context',
+    'get_context_confidence',
     'get_context_final_df',
+    'get_context_mapping',
     'get_universal_final_df',
-    'is_site_origin',
+    'mapping_confirmed_for',
     'render_row_count_blocker',
     'render_supplier_price_master_notice',
     'row_count_matches_source',
     'set_context_final_df',
+    'set_context_mapping',
+    'set_mapping_confirmed',
     'set_universal_final_df',
     'store_cadastro_context',
     'store_expected_source_rows',
-    'supplier_price_master_expected_rows',
-    'supplier_price_master_filter_active',
     'valid_df',
     'valid_model',
 ]
