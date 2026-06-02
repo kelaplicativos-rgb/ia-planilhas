@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from html import escape
-
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
@@ -158,39 +156,39 @@ def _requested_flow() -> str:
     return FLOW_HOME
 
 
-def _render_bling_auth_link(auth_url: str) -> None:
+def _render_bling_manual_connection(auth_url: str) -> None:
     url = str(auth_url or '').strip()
     if not url:
-        st.warning('Não consegui gerar o link de conexão com o Bling agora.')
+        st.warning('Não consegui gerar o link de autenticação do Bling agora.')
         return
-    safe_url = escape(url, quote=True)
-    st.markdown(
-        f'''
-        <a href="{safe_url}" target="_blank" rel="noopener noreferrer" style="
-            display:block;
-            width:100%;
-            box-sizing:border-box;
-            text-align:center;
-            text-decoration:none;
-            border:1px solid #d93232;
-            border-radius:14px;
-            padding:0.85rem 1rem;
-            font-weight:700;
-            color:#5f6b7a;
-            background:#ffffff;
-            margin-top:0.6rem;
-        ">🔗 Entrar e conectar ao Bling</a>
-        ''',
-        unsafe_allow_html=True,
+
+    st.info('Copie o link abaixo e abra no navegador. Depois de autorizar no Bling, volte para esta tela.')
+    st.text_area(
+        'Link de autenticação do Bling',
+        value=url,
+        height=110,
+        key='bling_auth_url_manual_copy',
+        help='Toque e segure no celular para copiar. Abra em uma nova aba ou no navegador externo.',
     )
-    with st.expander('URL direta de autenticação', expanded=False):
-        st.caption('Use esta URL se o botão não abrir corretamente neste celular.')
-        st.text_area('URL do Bling', value=url, height=100, key='bling_auth_url_direct_visible')
+    with st.expander('Como conectar', expanded=False):
+        st.markdown(
+            '1. Toque e segure no campo do link.\n'
+            '2. Copie a URL.\n'
+            '3. Abra em uma nova aba do navegador.\n'
+            '4. Autorize o aplicativo no Bling.\n'
+            '5. Volte para este app e toque em **Já conectei / verificar conexão**.'
+        )
+    if st.button('✅ Já conectei / verificar conexão', use_container_width=True, key='home_bling_verify_connection'):
+        if bool(connection_status().get('connected')):
+            _start_wizard_context(CONTEXT_BLING_API)
+            safe_rerun('home_bling_verify_connected')
+        else:
+            st.warning('Ainda não detectei a conexão. Conclua a autorização no Bling e volte para verificar novamente.')
     add_audit_event(
-        'home_router_light_bling_url_visible',
+        'home_router_manual_bling_connection_visible',
         area='HOME',
         status='OK',
-        details={'responsible_file': RESPONSIBLE_FILE, 'link_component': 'html_anchor_target_blank'},
+        details={'responsible_file': RESPONSIBLE_FILE, 'connection_mode': 'manual_copy_url_no_button'},
     )
 
 
@@ -210,20 +208,19 @@ def _render_light_entry_home() -> None:
                 _start_wizard_context(CONTEXT_BLING_API)
                 safe_rerun('home_light_continue_connected_bling')
         else:
-            st.caption('Para cadastrar produtos ou atualizar estoque direto pela API.')
+            st.caption('Método manual mais estável para celular: copie o link, autorize no Bling e volte para verificar.')
             try:
-                auth_url = build_authorization_url({'return_to': 'start', 'source_step': 'home_light_entry'})
+                auth_url = build_authorization_url({'return_to': 'start', 'source_step': 'home_manual_connection'})
             except Exception as exc:
                 auth_url = ''
                 add_audit_event(
-                    'home_router_light_bling_auth_url_error',
+                    'home_router_manual_bling_auth_url_error',
                     area='HOME',
                     status='ERRO',
                     details={'error': str(exc), 'responsible_file': RESPONSIBLE_FILE},
                 )
             if auth_url:
-                _render_bling_auth_link(auth_url)
-                st.caption('O Bling pode abrir em nova aba. Depois de autorizar, volte para o app.')
+                _render_bling_manual_connection(auth_url)
             else:
                 st.warning('Credenciais do Bling ainda não configuradas. Você ainda pode continuar sem conectar.')
 
@@ -241,7 +238,7 @@ def _render_light_entry_home() -> None:
         details={
             'responsible_file': RESPONSIBLE_FILE,
             'connected': connected,
-            'home_order': 'connect_or_continue_without_bling_clean',
+            'home_order': 'manual_bling_or_continue_without_bling',
             'lazy_flow_entry': True,
         },
     )
@@ -254,9 +251,9 @@ def render_professional_home() -> None:
         status='OK',
         details={
             'responsible_file': RESPONSIBLE_FILE,
-            'home_order': 'connect_or_continue_without_bling_clean',
-            'style': 'clean_light_entry_only',
-            'bling_oauth_target': 'html_anchor_target_blank',
+            'home_order': 'manual_bling_or_continue_without_bling',
+            'style': 'clean_manual_connection_entry',
+            'bling_oauth_target': 'manual_copy_url_no_button',
             'legacy_routes_removed': True,
             'lazy_flow_entry': True,
         },
