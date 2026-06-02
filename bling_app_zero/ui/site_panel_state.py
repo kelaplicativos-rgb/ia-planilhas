@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.ui.alerts import render_alert
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/site_panel_state.py'
 UNIVERSAL_OPERATION = 'universal'
@@ -136,10 +137,7 @@ def has_urls(raw_urls: str) -> bool:
 
 
 def orange_warning(message: str) -> None:
-    st.markdown(
-        f'<div style="background:#fff3e0;border:1px solid #ffcc80;border-left:6px solid #fb8c00;color:#5d3200;border-radius:12px;padding:12px 14px;margin:8px 0;font-size:0.95rem;">⚠️ {message}</div>',
-        unsafe_allow_html=True,
-    )
+    render_alert(str(message or ''), title='Atenção', variant='warning')
 
 
 def set_capture_state(*, operation: str, running: bool, finished: bool, error: str = '', rows: int = 0, columns: int = 0) -> None:
