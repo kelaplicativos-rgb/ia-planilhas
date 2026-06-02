@@ -4,8 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.agents.blingsmartcore import apply_blingsmartcore
-from bling_app_zero.core.exporter import sanitize_for_bling, to_bling_csv_bytes
-from bling_app_zero.core.operation_contract import filename_for_operation
+from bling_app_zero.core.exporter import filename_for_operation, sanitize_for_bling, to_bling_csv_bytes
 from bling_app_zero.ui.cadastro_wizard_state import (
     enforce_cadastro_model_columns,
     get_context_final_df,
