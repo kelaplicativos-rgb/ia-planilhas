@@ -169,14 +169,19 @@ def _render_scan_total_notice(operation: str) -> None:
 
 
 def _render_running_state(operation: str) -> None:
+    st.markdown('### Busca em andamento')
     if _is_stock_api_balance_mode(operation):
-        orange_warning('Busca de saldos em andamento em modo seguro. O sistema está localizando produtos do site sem sobrecarregar a sessão do celular.')
+        orange_warning('Busca de saldos em andamento em modo seguro. Aguarde finalizar. Para proteger o celular, outras ações ficam bloqueadas durante a captura.')
     else:
-        orange_warning('Busca por site em andamento. Acompanhe a barra de progresso e aguarde os dados importados aparecerem.')
+        orange_warning('Busca por site em andamento. Aguarde finalizar. Para proteger o celular, outras ações ficam bloqueadas durante a captura.')
     render_site_progress_history()
-    if st.button('🧹 Limpar busca travada e tentar novamente', use_container_width=True, key=f'limpar_captura_travada_{operation}'):
-        clear_stuck_capture(operation)
-        safe_rerun('site_capture_stuck_cleared', target_step=STEP_ENTRADA)
+    st.info('A tela está em modo seguro: campos, botões e módulos pesados ficam ocultos enquanto a busca roda.')
+    with st.expander('Busca parece travada?', expanded=False):
+        st.caption('Use esta opção apenas se a busca parou por muito tempo ou se a conexão caiu.')
+        if st.button('🧹 Limpar busca travada e tentar novamente', use_container_width=True, key=f'limpar_captura_travada_{operation}'):
+            clear_stuck_capture(operation)
+            safe_rerun('site_capture_stuck_cleared', target_step=STEP_ENTRADA)
+    add_audit_event('site_panel_running_guard_rendered', area='SITE', step='entrada', status='INFO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
 
 
 def _render_last_error(error: str, operation: str) -> None:
@@ -262,6 +267,10 @@ def render_site_panel() -> None:
         else:
             orange_warning('A busca anterior ficou travada e foi destravada automaticamente. Revise os links e execute novamente.')
 
+    if bool(st.session_state.get('site_capture_running')):
+        _render_running_state(operation)
+        return
+
     df_site_bruto = get_site_df(operation)
     if isinstance(df_site_bruto, pd.DataFrame) and not df_site_bruto.empty:
         add_audit_event(
@@ -286,17 +295,13 @@ def render_site_panel() -> None:
     deep_options = _scan_total_options(operation)
     _render_scan_total_notice(operation)
 
-    running = bool(st.session_state.get('site_capture_running'))
-    has_urls_value = has_urls(raw_urls)
-    if running:
-        _render_running_state(operation)
-
     error = str(st.session_state.get('site_capture_error') or '').strip()
     _render_last_error(error, operation)
 
     button_label = '🔎 Buscar saldos em modo seguro' if stock_balance_only else '🚀 Buscar produtos agora'
     needs_model = feature_needs_model()
-    button_disabled = running or not has_urls_value or (needs_model and operation in {UNIVERSAL_OPERATION} and not has_columns(requested_columns))
+    has_urls_value = has_urls(raw_urls)
+    button_disabled = not has_urls_value or (needs_model and operation in {UNIVERSAL_OPERATION} and not has_columns(requested_columns))
 
     if not has_urls_value:
         orange_warning('Cole pelo menos um link para liberar a busca.')
