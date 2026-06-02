@@ -23,7 +23,9 @@ API_STOCK_DEPOSIT_KEY = 'bling_api_stock_deposit_name'
 API_STOCK_DEPOSIT_ID_KEY = 'bling_api_stock_deposit_id'
 API_STOCK_DEPOSIT_OPTIONS_KEY = 'bling_api_stock_deposit_options'
 PRODUCT_RESOLUTION_CACHE_KEY = 'bling_safe_product_resolution_cache_v7'
+CATEGORY_RESOLUTION_CACHE_KEY = 'bling_safe_category_resolution_cache_v2'
 PRODUCT_LOOKUP_TIMEOUT = 12
+CATEGORY_LOOKUP_TIMEOUT = 12
 DEPOSIT_LOOKUP_TIMEOUT = 15
 SEND_TIMEOUT = 30
 
@@ -31,7 +33,7 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     'id': ('id produto bling', 'id_produto_bling', 'id bling', 'id_bling', 'id produto bling api', 'id produto'),
     'codigo': ('código', 'codigo', 'sku', 'ref', 'referencia', 'referência', 'codigo produto', 'código produto', 'cod produto', 'cod'),
     'nome': ('nome', 'produto', 'título', 'titulo', 'nome produto', 'nome do produto', 'descrição produto', 'descricao produto'),
-    'descricao': ('descrição', 'descricao', 'descrição curta', 'descricao curta', 'descrição do produto', 'descricao do produto', 'detalhes'),
+    'descricao': ('descrição', 'descricao', 'descrição curta', 'descricao curta', 'descrição do produto', 'descricao do produto', 'detalhes', 'descricao complementar', 'descrição complementar'),
     'preco': ('preço', 'preco', 'preço unitário', 'preco unitario', 'preço unitário (obrigatório)', 'preco unitario (obrigatorio)', 'valor', 'valor venda', 'preço de venda', 'preco de venda'),
     'gtin': ('gtin', 'ean', 'codigo de barras', 'código de barras', 'gtin/ean'),
     'marca': ('marca', 'fabricante'),
@@ -39,6 +41,8 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     'ncm': ('ncm',),
     'quantidade': ('quantidade', 'saldo', 'estoque', 'balanço', 'balanco', 'qtd', 'qtde'),
     'deposito': ('depósito', 'deposito', 'nome depósito', 'nome deposito', 'depósito padrão', 'deposito padrao'),
+    'categoria': ('categoria', 'categoria produto', 'categoria do produto', 'departamento', 'grupo'),
+    'imagens': ('imagens', 'imagem', 'url imagem', 'url imagens', 'fotos', 'foto'),
 }
 
 
@@ -150,12 +154,17 @@ def _unique_non_empty(values: Iterable[object]) -> list[str]:
 def _clean_payload(payload: dict[str, Any]) -> dict[str, Any]:
     clean: dict[str, Any] = {}
     for key, value in payload.items():
-        if value in ('', None, {}):
+        if value in ('', None, {}, []):
             continue
         if isinstance(value, dict):
-            nested = {k: v for k, v in value.items() if v not in ('', None, {})}
+            nested = {k: v for k, v in value.items() if v not in ('', None, {}, [])}
             if nested:
                 clean[key] = nested
+            continue
+        if isinstance(value, list):
+            items = [item for item in value if item not in ('', None, {}, [])]
+            if items:
+                clean[key] = items
             continue
         clean[key] = value
     return clean
@@ -191,6 +200,14 @@ def _resolution_cache() -> dict[str, str]:
     if not isinstance(cache, dict):
         cache = {}
         st.session_state[PRODUCT_RESOLUTION_CACHE_KEY] = cache
+    return cache
+
+
+def _category_cache() -> dict[str, str]:
+    cache = st.session_state.get(CATEGORY_RESOLUTION_CACHE_KEY)
+    if not isinstance(cache, dict):
+        cache = {}
+        st.session_state[CATEGORY_RESOLUTION_CACHE_KEY] = cache
     return cache
 
 
@@ -236,6 +253,113 @@ def _resolve_product_by_candidate(token: dict[str, Any], candidate: str) -> str:
 
 def _row_candidates(row: pd.Series, mapping: dict[str, str]) -> list[str]:
     return _unique_non_empty([_value(row, mapping, 'id'), _value(row, mapping, 'codigo'), _value(row, mapping, 'gtin')])
+
+
+def _category_name_from_row(row: pd.Series, mapping: dict[str, str]) -> str:
+    raw = _value(row, mapping, 'categoria')
+    text = _clean_text(raw, limit=120)
+    if not text:
+        return ''
+    parts = [part.strip() for part in re.split(r'[>/|;]+', text) if part.strip()]
+    parts = [part for part in parts if _normalize_column_name(part) not in {'home', 'inicio', 'loja', 'produtos', 'produto'}]
+    return _clean_text(parts[-1] if parts else text, limit=80)
+
+
+def _category_paths() -> list[str]:
+    configured = _secret('category_path', _secret('categories_path', ''))
+    paths = [configured] if configured else []
+    paths.extend(['/categorias/produtos', '/categorias'])
+    out: list[str] = []
+    for path in paths:
+        value = str(path or '').strip()
+        if value and value not in out:
+            out.append(value)
+    return out
+
+
+def _category_item_id(item: dict[str, Any]) -> str:
+    return str(item.get('id') or item.get('idCategoria') or item.get('codigo') or '').strip()
+
+
+def _category_item_name(item: dict[str, Any]) -> str:
+    return str(item.get('descricao') or item.get('nome') or item.get('name') or item.get('description') or '').strip()
+
+
+def _resolve_category_id(token: dict[str, Any], category_name: str) -> str:
+    name = _clean_text(category_name, limit=80)
+    if not name:
+        return ''
+    key = name.lower()
+    cache = _category_cache()
+    if key in cache:
+        return str(cache.get(key) or '')
+
+    headers = _headers(token)
+    for path in _category_paths():
+        for params in ({'descricao': name}, {'nome': name}, {'criterio': name}, {'pesquisa': name}):
+            try:
+                response = requests.get(_url(path), headers=headers, params=params, timeout=CATEGORY_LOOKUP_TIMEOUT)
+                if response.status_code >= 400:
+                    continue
+                for item in _extract_items(response.json()):
+                    item_id = _category_item_id(item)
+                    item_name = _category_item_name(item)
+                    if item_id and item_name and item_name.lower() == key:
+                        cache[key] = item_id
+                        add_audit_event('bling_safe_category_resolved', area='BLING_ENVIO', status='OK', details={'category': name, 'category_id': item_id, 'path': path, 'responsible_file': RESPONSIBLE_FILE})
+                        return item_id
+            except Exception:
+                continue
+
+    if _secret('auto_create_categories', '1').lower() not in {'1', 'true', 'sim', 'yes', 'on'}:
+        cache[key] = ''
+        return ''
+
+    payload_candidates = (
+        {'descricao': name},
+        {'nome': name},
+        {'descricao': name, 'tipo': 'P'},
+    )
+    for path in _category_paths():
+        for payload in payload_candidates:
+            try:
+                response = requests.post(_url(path), headers=headers, json=payload, timeout=SEND_TIMEOUT)
+                if response.status_code >= 400:
+                    continue
+                data = response.json() if str(response.text or '').strip() else {}
+                items = _extract_items(data)
+                item_id = ''
+                if isinstance(data, dict):
+                    item_id = _category_item_id(data)
+                    nested_data = data.get('data') or data.get('dados')
+                    if isinstance(nested_data, dict):
+                        item_id = item_id or _category_item_id(nested_data)
+                if not item_id and items:
+                    item_id = _category_item_id(items[0])
+                if item_id:
+                    cache[key] = item_id
+                    add_audit_event('bling_safe_category_created', area='BLING_ENVIO', status='OK', details={'category': name, 'category_id': item_id, 'path': path, 'payload': payload, 'responsible_file': RESPONSIBLE_FILE})
+                    return item_id
+            except Exception as exc:
+                add_audit_event('bling_safe_category_create_exception', area='BLING_ENVIO', status='AVISO', details={'category': name, 'error': str(exc)[:180], 'responsible_file': RESPONSIBLE_FILE})
+                continue
+
+    cache[key] = ''
+    add_audit_event('bling_safe_category_not_resolved', area='BLING_ENVIO', status='AVISO', details={'category': name, 'paths': _category_paths(), 'responsible_file': RESPONSIBLE_FILE})
+    return ''
+
+
+def _valid_image_urls(raw: str) -> list[str]:
+    urls: list[str] = []
+    for piece in re.split(r'[|,;\n]+', str(raw or '')):
+        url = piece.strip()
+        if not url.lower().startswith(('http://', 'https://')):
+            continue
+        if '@' in url.rsplit('/', 1)[-1] and not re.search(r'\.(png|jpg|jpeg|webp)(\?|$)', url.lower()):
+            continue
+        if url not in urls:
+            urls.append(url)
+    return urls[:5]
 
 
 def _normalize_deposit(item: dict[str, Any]) -> dict[str, str] | None:
@@ -345,7 +469,7 @@ def _emit_progress(callback: Callable[[dict[str, Any]], None] | None, payload: d
         pass
 
 
-def _cadastro_payload(row: pd.Series, mapping: dict[str, str]) -> dict[str, Any] | None:
+def _base_cadastro_payload(row: pd.Series, mapping: dict[str, str]) -> dict[str, Any] | None:
     codigo = _clean_text(_value(row, mapping, 'codigo') or _value(row, mapping, 'gtin'), limit=80)
     nome_raw = _clean_text(_value(row, mapping, 'nome'), limit=120)
     descricao = _clean_text(_value(row, mapping, 'descricao'), limit=1000)
@@ -372,19 +496,57 @@ def _cadastro_payload(row: pd.Series, mapping: dict[str, str]) -> dict[str, Any]
     ncm = _digits_only(_value(row, mapping, 'ncm'))
     if len(ncm) == 8:
         payload['tributacao'] = {'ncm': ncm}
-
-    # Não enviar categoria por descrição nem imagens externas no cadastro direto.
-    # Esses campos causavam VALIDATION_ERROR 400 em lote. Depois podem ser tratados
-    # em etapa própria quando houver ID de categoria/formato de mídia confirmado.
     return _clean_payload(payload)
 
 
+def _cadastro_payload_variants(token: dict[str, Any], row: pd.Series, mapping: dict[str, str]) -> list[tuple[str, dict[str, Any]]]:
+    base = _base_cadastro_payload(row, mapping)
+    if not base:
+        return []
+    category_name = _category_name_from_row(row, mapping)
+    category_id = _resolve_category_id(token, category_name) if category_name else ''
+    image_urls = _valid_image_urls(_value(row, mapping, 'imagens'))
+
+    full = dict(base)
+    if category_id:
+        full['categoria'] = {'id': category_id}
+    elif category_name:
+        full['categoria'] = {'descricao': category_name}
+    if image_urls:
+        full['midia'] = {'imagens': [{'link': url} for url in image_urls]}
+
+    with_category = dict(base)
+    if category_id:
+        with_category['categoria'] = {'id': category_id}
+    elif category_name:
+        with_category['categoria'] = {'descricao': category_name}
+
+    variants: list[tuple[str, dict[str, Any]]] = []
+    for label, payload in (
+        ('completo_categoria_imagem', full),
+        ('categoria_sem_imagem', with_category),
+        ('minimo_sem_categoria_imagem', base),
+    ):
+        cleaned = _clean_payload(payload)
+        marker = str(sorted(cleaned.items()))
+        if cleaned and marker not in {str(sorted(item.items())) for _lbl, item in variants}:
+            variants.append((label, cleaned))
+    return variants
+
+
 def _cadastro_preview_payloads(df: pd.DataFrame, *, limit: int = 5) -> list[dict[str, Any]]:
+    token, _meta = load_token()
     mapping = _column_map(df.columns)
     previews: list[dict[str, Any]] = []
     for _index, row in df.fillna('').head(limit).iterrows():
-        payload = _cadastro_payload(row, mapping)
-        previews.append({'payload': payload or {}, 'status': 'OK' if payload else 'IGNORADO', 'motivo': '' if payload else 'Nome/código insuficiente para cadastro.'})
+        if isinstance(token, dict) and token.get('access_token'):
+            variants = _cadastro_payload_variants(token, row, mapping)
+            payload = variants[0][1] if variants else None
+            motivo = '' if payload else 'Nome/código insuficiente para cadastro.'
+        else:
+            payload = _base_cadastro_payload(row, mapping)
+            motivo = '' if payload else 'Nome/código insuficiente para cadastro.'
+        previews.append({'payload': payload or {}, 'status': 'OK' if payload else 'IGNORADO', 'motivo': motivo})
     return previews
 
 
@@ -436,31 +598,46 @@ def _send_cadastro_dataframe_to_bling(df: pd.DataFrame, *, limit: int | None = N
 
     for position, (index, row) in enumerate(rows.iterrows(), start=1):
         line = int(index) + 1 if isinstance(index, int) else position
-        payload = _cadastro_payload(row, mapping)
-        if not payload:
+        variants = _cadastro_payload_variants(token, row, mapping)
+        if not variants:
             skipped += 1
             if len(errors) < 8:
                 errors.append(f'Linha {line}: nome/código insuficiente para cadastro.')
             _emit_progress(progress_callback, {'stage': 'Cadastrando no Bling', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
             continue
-        try:
-            response = requests.post(_url(create_path), headers=_headers(token), json=payload, timeout=SEND_TIMEOUT)
-            if response.status_code >= 400:
-                failed += 1
-                if len(errors) < 8:
-                    errors.append(f'Linha {line}: Bling recusou cadastro ({response.status_code}). {str(response.text or "")[:500]}')
-                add_audit_event('bling_safe_cadastro_payload_failed', area='BLING_ENVIO', status='AVISO', details={'line': line, 'status': int(response.status_code), 'payload': payload, 'response_preview': str(response.text or '')[:500], 'responsible_file': RESPONSIBLE_FILE})
-            else:
-                sent += 1
-        except Exception as exc:
+
+        ok = False
+        attempt_logs: list[dict[str, Any]] = []
+        last_response: requests.Response | None = None
+        for strategy, payload in variants:
+            try:
+                response = requests.post(_url(create_path), headers=_headers(token), json=payload, timeout=SEND_TIMEOUT)
+                last_response = response
+                attempt_logs.append({'strategy': strategy, 'status': int(response.status_code), 'payload': payload, 'response_preview': str(response.text or '')[:240]})
+                if response.status_code < 400:
+                    ok = True
+                    add_audit_event('bling_safe_cadastro_strategy_succeeded', area='BLING_ENVIO', status='OK', details={'line': line, 'strategy': strategy, 'attempts': attempt_logs[-3:], 'responsible_file': RESPONSIBLE_FILE})
+                    break
+                if response.status_code in {401, 403}:
+                    break
+            except Exception as exc:
+                attempt_logs.append({'strategy': strategy, 'status': 'EXCEPTION', 'error': str(exc)[:240], 'payload': payload})
+                continue
+
+        if ok:
+            sent += 1
+        else:
             failed += 1
+            status = getattr(last_response, 'status_code', 'sem resposta')
+            preview = str(getattr(last_response, 'text', '') or '')[:500]
             if len(errors) < 8:
-                errors.append(f'Linha {line}: falha técnica no cadastro: {exc}')
+                errors.append(f'Linha {line}: Bling recusou cadastro ({status}) após {len(variants)} tentativa(s). {preview}')
+            add_audit_event('bling_safe_cadastro_payload_failed', area='BLING_ENVIO', status='AVISO', details={'line': line, 'status': status, 'attempts': attempt_logs[-5:], 'responsible_file': RESPONSIBLE_FILE})
         _emit_progress(progress_callback, {'stage': 'Cadastrando no Bling', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
 
     result = DirectSendResult(total, sent, failed, skipped, tuple(errors), tuple())
     _emit_progress(progress_callback, {'stage': 'Cadastro concluído', 'processed': total, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': 1.0})
-    add_audit_event('bling_safe_cadastro_send_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'attempted': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'payload_mode': 'minimal_safe_no_category_no_images', 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('bling_safe_cadastro_send_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'attempted': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'payload_mode': 'smart_category_image_with_fallbacks', 'responsible_file': RESPONSIBLE_FILE})
     return result
 
 
