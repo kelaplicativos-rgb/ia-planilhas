@@ -6,8 +6,8 @@ import streamlit as st
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.features_runtime.router import active_contract, feature_needs_model
 from bling_app_zero.ui.home_shared import show_contract
+from bling_app_zero.ui.home_wizard_constants import STEP_ENTRADA, STEP_MAPEAMENTO
 from bling_app_zero.ui.home_wizard_rerun import safe_rerun
-from bling_app_zero.ui.home_wizard_constants import STEP_ENTRADA
 from bling_app_zero.ui.manual_table_import_panel import render_manual_table_import_panel
 from bling_app_zero.ui.site_models import (
     choose_site_cadastro_model_df,
@@ -171,6 +171,39 @@ def _render_last_error(error: str, operation: str) -> None:
         st.code(error)
 
 
+def _clear_smartscan_manual_flags() -> None:
+    for key in (
+        'blingsmartscan_manual_continue_required',
+        'blingsmartscan_ready_to_continue',
+        'blingsmartscan_continue_target_step',
+        'blingsmartscan_finished_operation',
+        'blingsmartscan_finished_rows',
+        'blingsmartscan_finished_columns',
+    ):
+        st.session_state.pop(key, None)
+
+
+def _render_ready_state(operation: str, df_site_bruto: pd.DataFrame, stock_balance_only: bool) -> None:
+    rows = len(df_site_bruto)
+    columns = len(df_site_bruto.columns)
+    title = 'Saldos capturados e salvos' if stock_balance_only else 'Produtos capturados e salvos'
+    st.success(f'{title}: {rows} produto(s), {columns} coluna(s).')
+    notice = st.session_state.get(f'blingsmartscan_notice_{operation}') or st.session_state.get('blingsmartscan_last_notice') or {}
+    if isinstance(notice, dict) and notice:
+        with st.expander('Resumo do BLINGSMARTSCAN', expanded=False):
+            if notice.get('platform'):
+                st.caption(f"Plataforma provável: {notice.get('platform')} ({notice.get('confidence', 0)}%).")
+            if notice.get('score') is not None:
+                st.metric('Qualidade da captura', f"{notice.get('score')}/100")
+            for warning in list(notice.get('warnings') or [])[:5]:
+                st.warning(str(warning))
+    st.caption('O resultado já está salvo. Para evitar travamento no celular, o avanço agora é manual.')
+    if st.button('Continuar para o próximo passo', use_container_width=True, key=f'continuar_pos_smartscan_{operation}'):
+        _clear_smartscan_manual_flags()
+        add_audit_event('site_panel_manual_continue_clicked', area='SITE', step=STEP_MAPEAMENTO, status='OK', details={'operation': operation, 'rows': rows, 'columns': columns, 'stock_balance_only': stock_balance_only, 'responsible_file': RESPONSIBLE_FILE})
+        safe_rerun('site_capture_manual_continue', target_step=STEP_MAPEAMENTO)
+
+
 def _render_universal_fallback(
     *,
     operation: str,
@@ -209,12 +242,13 @@ def render_site_panel() -> None:
     df_site_bruto = get_site_df(operation)
     if isinstance(df_site_bruto, pd.DataFrame) and not df_site_bruto.empty:
         add_audit_event(
-            'site_panel_compacted_after_origin_ready',
+            'site_panel_ready_after_origin_capture',
             area='SITE',
             step='entrada',
             status='OK',
-            details={'operation': operation, 'rows': len(df_site_bruto), 'columns': len(df_site_bruto.columns), 'stock_balance_only': stock_balance_only, 'responsible_file': RESPONSIBLE_FILE},
+            details={'operation': operation, 'rows': len(df_site_bruto), 'columns': len(df_site_bruto.columns), 'stock_balance_only': stock_balance_only, 'manual_continue': True, 'responsible_file': RESPONSIBLE_FILE},
         )
+        _render_ready_state(operation, df_site_bruto, stock_balance_only)
         return
 
     title = 'Buscar saldos de todos os produtos' if stock_balance_only else 'Buscar produtos no site'
