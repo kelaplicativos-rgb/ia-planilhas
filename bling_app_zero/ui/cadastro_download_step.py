@@ -4,7 +4,8 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.agents.blingsmartcore import apply_blingsmartcore
-from bling_app_zero.core.exporter import sanitize_for_bling
+from bling_app_zero.core.exporter import sanitize_for_bling, to_bling_csv_bytes
+from bling_app_zero.core.operation_contract import filename_for_operation
 from bling_app_zero.ui.cadastro_wizard_state import (
     enforce_cadastro_model_columns,
     get_context_final_df,
@@ -13,7 +14,7 @@ from bling_app_zero.ui.cadastro_wizard_state import (
     valid_df,
 )
 from bling_app_zero.ui.home_download import _render_api_final
-from bling_app_zero.ui.home_shared import download_final, df_signature
+from bling_app_zero.ui.home_shared import df_signature, download_final
 from bling_app_zero.universal.model_contract_detector import MODEL_CONTRACT_TYPE_KEY, normalize_contract_operation
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/cadastro_download_step.py'
@@ -157,9 +158,26 @@ def _store_output_consistency(df_final: pd.DataFrame, operation: str) -> None:
 
 
 def _render_optional_csv_backup(df_final: pd.DataFrame, operation: str) -> None:
-    with st.expander('Opcional · baixar cópia de segurança em CSV', expanded=False):
-        st.caption('Use apenas para auditoria local. A ação principal deste caminho é enviar pela API do Bling.')
-        download_final(df_final, operation, f'backup_{_entry_context()}_{operation}')
+    """Backup CSV simples no modo API.
+
+    Não pode chamar download_final aqui porque download_final, em contexto API,
+    renderiza de novo a tela de envio ao Bling. Isso duplicava o bloco de API e
+    podia trocar o texto/botão para cadastro mesmo quando a operação real era estoque.
+    """
+    try:
+        csv_bytes = to_bling_csv_bytes(df_final.copy().fillna(''), operation)
+    except Exception:
+        csv_bytes = df_final.copy().fillna('').to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+    file_name = filename_for_operation(operation)
+    st.caption('Opcional · baixar cópia de segurança em CSV')
+    st.download_button(
+        '⬇️ Baixar backup CSV',
+        data=csv_bytes,
+        file_name=file_name,
+        mime='text/csv; charset=utf-8',
+        use_container_width=True,
+        key=f'backup_csv_simples_{_entry_context()}_{operation}_{df_signature(df_final)}',
+    )
 
 
 def render_cadastro_download_step() -> None:
