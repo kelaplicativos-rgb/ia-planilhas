@@ -7,11 +7,13 @@ import streamlit as st
 
 PROGRESS_LOG_KEY = 'site_progress_log'
 PROGRESS_LAST_KEY = 'site_progress_last'
+PROGRESS_HEARTBEAT_KEY = 'site_capture_heartbeat_at'
 
 
 def reset_site_progress() -> None:
     st.session_state[PROGRESS_LOG_KEY] = []
     st.session_state[PROGRESS_LAST_KEY] = {}
+    st.session_state[PROGRESS_HEARTBEAT_KEY] = time.time()
 
 
 def append_site_progress(payload: dict) -> None:
@@ -21,6 +23,7 @@ def append_site_progress(payload: dict) -> None:
     log.append(item)
     st.session_state[PROGRESS_LOG_KEY] = log[-80:]
     st.session_state[PROGRESS_LAST_KEY] = item
+    st.session_state[PROGRESS_HEARTBEAT_KEY] = time.time()
 
 
 def _safe_cell(value: object) -> str:
@@ -32,6 +35,18 @@ def _safe_cell(value: object) -> str:
     except Exception:
         pass
     return str(value)
+
+
+def _safe_progress_value(payload: dict | None) -> float:
+    if not isinstance(payload, dict):
+        return 0.05
+    try:
+        value = float(payload.get('progress') or 0.0)
+    except Exception:
+        value = 0.0
+    if value > 1:
+        value = value / 100.0
+    return max(0.05, min(0.95, value))
 
 
 def _safe_progress_dataframe(rows: list[dict]) -> pd.DataFrame:
@@ -101,7 +116,31 @@ def make_site_progress_callback(progress_bar, status_box):
 
 
 def render_site_progress_history() -> None:
+    """Recria o feedback visual quando o Streamlit reroda durante uma captura.
+
+    No celular, a barra original pode sumir após rerun/WebSocket. O histórico salvo em
+    session_state permite reconstruir uma barra leve em vez de deixar a tela parecendo travada.
+    """
     log = st.session_state.get(PROGRESS_LOG_KEY) or []
+    last = st.session_state.get(PROGRESS_LAST_KEY) or {}
+    running = bool(st.session_state.get('site_capture_running', False))
+
+    if isinstance(last, dict) and last:
+        progress = _safe_progress_value(last)
+        stage = str(last.get('stage') or 'Busca em andamento')
+        message = str(last.get('message') or stage)
+        st.progress(progress, text=f'{stage} · {int(progress * 100)}%')
+        st.caption(message)
+    elif running:
+        try:
+            started_at = float(st.session_state.get('site_capture_started_at') or 0.0)
+        except Exception:
+            started_at = 0.0
+        age = max(0.0, time.time() - started_at) if started_at > 0 else 0.0
+        progress = max(0.05, min(0.75, age / 90.0))
+        st.progress(progress, text=f'Busca em andamento · {int(progress * 100)}%')
+        st.caption('A captura está rodando em modo seguro. Se ficar parada por muito tempo, use “Limpar busca travada”.')
+
     if not log:
         return
     with st.sidebar:
