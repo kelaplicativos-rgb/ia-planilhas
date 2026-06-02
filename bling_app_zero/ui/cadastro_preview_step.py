@@ -12,6 +12,7 @@ from bling_app_zero.ui.cadastro_wizard_state import (
     set_universal_final_df,
     valid_df,
 )
+from bling_app_zero.ui.flow_guard import render_flow_blocker
 from bling_app_zero.ui.home_shared import preview_df
 from bling_app_zero.universal.model_contract_detector import MODEL_CONTRACT_TYPE_KEY, normalize_contract_operation
 
@@ -158,7 +159,11 @@ def render_cadastro_preview_step() -> None:
     df_final = _context_final_df()
 
     if not valid_df(df_final):
-        st.warning('A prévia final ainda não foi gerada. Volte para o mapeamento e confirme os campos.')
+        render_flow_blocker(
+            'A prévia final ainda não foi gerada. Volte para o mapeamento e confirme os campos obrigatórios antes de continuar.',
+            title='Prévia final bloqueada',
+            action_label='Continuar',
+        )
         return
 
     df_preview = _final_preview_df(df_final, operation)
