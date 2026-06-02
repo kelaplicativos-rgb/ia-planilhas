@@ -44,9 +44,7 @@ def build_shared_final_dataframe(source: pd.DataFrame, contract: pd.DataFrame, m
         output = empty_universal_output(contract, rows=0)
     else:
         output = build_universal_output(source, contract, mapping)
-    output = apply_shared_text_rules(output)
-    output, _ = apply_blingsmartcore(output, origin='preview_final', operation='universal')
-    return output
+    return apply_shared_text_rules(output)
 
 
 def render_shared_final_csv(
