@@ -287,6 +287,10 @@ def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: st
         add_audit_event('bling_direct_send_result_rendered', area='BLING_ENVIO', status='OK' if result.failed == 0 else 'PARCIAL', details={'operation': operation, 'attempted': result.attempted, 'sent': result.sent, 'failed': result.failed, 'skipped': result.skipped, 'not_found_count': len(result.not_found_indices), 'responsible_file': 'bling_app_zero/ui/home_download.py'})
 
 
+def _render_api_final(df_final: pd.DataFrame, operation: str, key: str = 'api_final') -> None:
+    _render_direct_bling_send(df_final, operation, key, df_signature(df_final), rules_signature())
+
+
 def render_download(df_final: pd.DataFrame, operation: str, key: str = 'final') -> None:
     operation = normalize_operation(operation)
     if not isinstance(df_final, pd.DataFrame) or df_final.empty:
@@ -326,6 +330,7 @@ def download_final(df_final: pd.DataFrame, operation: str, key: str = 'final') -
 
 
 __all__ = [
+    '_render_api_final',
     'df_signature',
     'download_dataframe_for_contract',
     'download_final',
