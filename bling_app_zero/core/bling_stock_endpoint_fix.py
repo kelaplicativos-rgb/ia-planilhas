@@ -1,2 +1,0 @@
-ENDPOINT = '/estoques'
-OPERATION = 'B'
