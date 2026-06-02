@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from html import escape
+from html import escape, unescape
 
 import streamlit as st
 
@@ -159,24 +159,31 @@ def _requested_flow() -> str:
     return FLOW_HOME
 
 
+def _clean_oauth_url(url: str) -> str:
+    # Nunca envie URL escapada para st.link_button. Se o & virar &amp;,
+    # o Bling recebe amp;client_id e acusa client_id não informado.
+    return unescape(str(url or '').strip()).replace('&amp;', '&')
+
+
 def _request_bling_link(auth_url: str) -> None:
-    st.session_state[BLING_AUTH_READY_KEY] = str(auth_url or '').strip()
+    st.session_state[BLING_AUTH_READY_KEY] = _clean_oauth_url(auth_url)
     add_audit_event(
         'home_router_bling_auth_link_requested',
         area='HOME',
         status='OK',
-        details={'responsible_file': RESPONSIBLE_FILE, 'connection_mode': 'button_then_native_link_button'},
+        details={'responsible_file': RESPONSIBLE_FILE, 'connection_mode': 'button_then_native_link_button_raw_url'},
     )
     st.rerun()
 
 
 def _render_open_bling_link(url: str) -> None:
-    safe_url = escape(str(url or '').strip(), quote=True)
-    if not safe_url:
+    raw_url = _clean_oauth_url(url)
+    if not raw_url:
         return
+    safe_url = escape(raw_url, quote=True)
     st.success('Link oficial do Bling pronto. Toque abaixo para abrir a autorização.')
     try:
-        st.link_button('Abrir tela oficial do Bling', safe_url, use_container_width=True)
+        st.link_button('Abrir tela oficial do Bling', raw_url, use_container_width=True)
     except Exception:
         st.markdown(
             f'<a href="{safe_url}" target="_blank" rel="noopener noreferrer" style="display:block;text-align:center;text-decoration:none;border:1px solid #d0d5dd;border-radius:14px;padding:0.85rem 1rem;font-weight:700;color:#5f6b7a;background:#ffffff;">Abrir tela oficial do Bling</a>',
@@ -185,12 +192,12 @@ def _render_open_bling_link(url: str) -> None:
 
 
 def _render_bling_connection(auth_url: str) -> None:
-    url = str(auth_url or '').strip()
+    url = _clean_oauth_url(auth_url)
     if not url:
         st.warning('Não consegui gerar a autorização do Bling agora.')
         return
 
-    ready_url = str(st.session_state.get(BLING_AUTH_READY_KEY) or '').strip()
+    ready_url = _clean_oauth_url(st.session_state.get(BLING_AUTH_READY_KEY) or '')
     if ready_url:
         _render_open_bling_link(ready_url)
     else:
@@ -213,7 +220,7 @@ def _render_bling_connection(auth_url: str) -> None:
         'home_router_bling_connection_visible',
         area='HOME',
         status='OK',
-        details={'responsible_file': RESPONSIBLE_FILE, 'connection_mode': 'native_link_no_iframe_hidden_fallback'},
+        details={'responsible_file': RESPONSIBLE_FILE, 'connection_mode': 'native_link_raw_url_no_iframe_hidden_fallback'},
     )
 
 
@@ -264,7 +271,7 @@ def _render_light_entry_home() -> None:
         details={
             'responsible_file': RESPONSIBLE_FILE,
             'connected': connected,
-            'home_order': 'native_link_bling_or_continue_without',
+            'home_order': 'native_link_bling_or_continue_without_raw_url',
             'lazy_flow_entry': True,
         },
     )
@@ -277,9 +284,9 @@ def render_professional_home() -> None:
         status='OK',
         details={
             'responsible_file': RESPONSIBLE_FILE,
-            'home_order': 'native_link_bling_or_continue_without',
+            'home_order': 'native_link_bling_or_continue_without_raw_url',
             'style': 'clean_connection_entry_no_iframe',
-            'bling_oauth_target': 'native_link_button_hidden_fallback',
+            'bling_oauth_target': 'native_link_button_raw_url_hidden_fallback',
             'legacy_routes_removed': True,
             'lazy_flow_entry': True,
         },
