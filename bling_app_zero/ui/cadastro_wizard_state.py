@@ -33,6 +33,10 @@ HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
 CONTEXT_BLING_API = 'bling_api'
 CONTEXT_BLING_CSV = 'bling_csv'
 CONTEXT_UNIVERSAL = 'universal'
+SMARTSCAN_MANUAL_KEYS = (
+    'blingsmartscan_manual_continue_required',
+    'blingsmartscan_ready_to_continue',
+)
 CONTEXT_FINAL_KEYS = {
     CONTEXT_BLING_API: 'df_final_bling_api',
     CONTEXT_BLING_CSV: 'df_final_bling_csv',
@@ -96,6 +100,10 @@ def _context_final_key() -> str:
 
 def _context_mapping_key() -> str:
     return CONTEXT_MAPPING_KEYS.get(_entry_context(), 'mapping_universal')
+
+
+def _smartscan_manual_continue_pending() -> bool:
+    return any(bool(st.session_state.get(key)) for key in SMARTSCAN_MANUAL_KEYS)
 
 
 def valid_df(df: object) -> bool:
@@ -324,6 +332,8 @@ def store_cadastro_context(
 
 
 def cadastro_context_ready() -> bool:
+    if _smartscan_manual_continue_pending():
+        return False
     df_origem = st.session_state.get(CADASTRO_ORIGEM_KEY)
     df_modelo = st.session_state.get(CADASTRO_MODELO_KEY)
     return valid_df(df_origem) and valid_model(df_modelo)
