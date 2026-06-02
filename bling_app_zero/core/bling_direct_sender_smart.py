@@ -16,13 +16,15 @@ from bling_app_zero.core.bling_direct_sender_safe import (
 )
 from bling_app_zero.core.bling_smart_enrichment import enrich_product_payload_fields
 from bling_app_zero.core.bling_token_store import load_token
-from bling_app_zero.core.operation_contract import OP_CADASTRO, OP_ESTOQUE, normalize_operation
+from bling_app_zero.core.operation_contract import OP_CADASTRO, normalize_operation
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_direct_sender_smart.py'
 DEFAULT_API_BASE_URL = 'https://www.bling.com.br/Api/v3'
 SEND_TIMEOUT = 30
+LOOKUP_TIMEOUT = 15
 CATEGORY_TIMEOUT = 15
-CATEGORY_CACHE_KEY = 'bling_smart_sender_category_cache_v1'
+CATEGORY_CACHE_KEY = 'bling_smart_sender_category_cache_v2'
+PRODUCT_CACHE_KEY = 'bling_smart_sender_product_cache_v2'
 
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     'codigo': ('código', 'codigo', 'sku', 'ref', 'referencia', 'referência', 'codigo produto', 'código produto', 'cod produto', 'cod'),
@@ -117,6 +119,20 @@ def _clean_text(value: object, limit: int = 120) -> str:
     return text[:limit]
 
 
+def _sanitize_code(value: object, *, fallback: object = '') -> str:
+    raw = str(value or '').strip() or str(fallback or '').strip()
+    if not raw:
+        return ''
+    if raw.lower().startswith(('http://', 'https://')):
+        raw = raw.rstrip('/').rsplit('/', 1)[-1]
+    raw = raw.replace('@', '-')
+    raw = re.sub(r'[^A-Za-z0-9._-]+', '-', raw).strip('-._')
+    digits = _digits_only(raw)
+    if len(digits) in {8, 12, 13, 14}:
+        return digits
+    return raw[:60]
+
+
 def _clean_payload(payload: dict[str, Any]) -> dict[str, Any]:
     clean: dict[str, Any] = {}
     for key, value in payload.items():
@@ -152,12 +168,68 @@ def _extract_items(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _product_cache() -> dict[str, str]:
+    cache = st.session_state.get(PRODUCT_CACHE_KEY)
+    if not isinstance(cache, dict):
+        cache = {}
+        st.session_state[PRODUCT_CACHE_KEY] = cache
+    return cache
+
+
 def _category_cache() -> dict[str, str]:
     cache = st.session_state.get(CATEGORY_CACHE_KEY)
     if not isinstance(cache, dict):
         cache = {}
         st.session_state[CATEGORY_CACHE_KEY] = cache
     return cache
+
+
+def _item_id(item: dict[str, Any]) -> str:
+    return str(item.get('id') or item.get('idProduto') or '').strip()
+
+
+def _item_identifiers(item: dict[str, Any]) -> list[str]:
+    tributacao = item.get('tributacao') if isinstance(item.get('tributacao'), dict) else {}
+    return [str(v or '').strip() for v in (item.get('codigo'), item.get('sku'), item.get('gtin'), item.get('ean'), item.get('codigoBarras'), tributacao.get('gtin'), tributacao.get('ean')) if str(v or '').strip()]
+
+
+def _resolve_product_id(token: dict[str, Any], candidates: Iterable[object]) -> str:
+    headers = _headers(token)
+    cache = _product_cache()
+    lookup_path = _secret('product_lookup_path', '/produtos') or '/produtos'
+    for candidate in candidates:
+        value = _sanitize_code(candidate)
+        if not value:
+            continue
+        key = value.lower()
+        if key in cache:
+            return str(cache.get(key) or '')
+        for params in ({'codigo': value}, {'criterio': value}, {'pesquisa': value}):
+            try:
+                response = requests.get(_url(lookup_path), headers=headers, params=params, timeout=LOOKUP_TIMEOUT)
+                if response.status_code >= 400:
+                    continue
+                items = _extract_items(response.json())
+                exact: list[str] = []
+                loose: list[str] = []
+                for item in items:
+                    item_id = _item_id(item)
+                    if not item_id:
+                        continue
+                    identifiers = [identifier.lower() for identifier in _item_identifiers(item)]
+                    if key in identifiers:
+                        exact.append(item_id)
+                    elif len(items) == 1:
+                        loose.append(item_id)
+                product_id = exact[0] if exact else (loose[0] if loose else '')
+                if product_id:
+                    cache[key] = product_id
+                    add_audit_event('bling_smart_product_resolved_for_upsert', area='BLING_ENVIO', status='OK', details={'candidate': value, 'product_id': product_id, 'params': params, 'responsible_file': RESPONSIBLE_FILE})
+                    return product_id
+            except Exception as exc:
+                add_audit_event('bling_smart_product_lookup_exception', area='BLING_ENVIO', status='AVISO', details={'candidate': value, 'error': str(exc)[:180], 'responsible_file': RESPONSIBLE_FILE})
+        cache[key] = ''
+    return ''
 
 
 def _category_paths() -> list[str]:
@@ -188,7 +260,6 @@ def _resolve_or_create_category(token: dict[str, Any], category_name: str) -> st
     cache = _category_cache()
     if key in cache:
         return str(cache.get(key) or '')
-
     headers = _headers(token)
     for path in _category_paths():
         for params in ({'descricao': name}, {'nome': name}, {'criterio': name}, {'pesquisa': name}):
@@ -204,14 +275,11 @@ def _resolve_or_create_category(token: dict[str, Any], category_name: str) -> st
                         return item_id
             except Exception:
                 continue
-
     if _secret('auto_create_categories', '1').lower() not in {'1', 'true', 'sim', 'yes', 'on'}:
         cache[key] = ''
         return ''
-
-    payloads = ({'descricao': name}, {'nome': name}, {'descricao': name, 'tipo': 'P'})
     for path in _category_paths():
-        for payload in payloads:
+        for payload in ({'descricao': name}, {'nome': name}, {'descricao': name, 'tipo': 'P'}):
             try:
                 response = requests.post(_url(path), headers=headers, json=payload, timeout=SEND_TIMEOUT)
                 if response.status_code >= 400:
@@ -235,8 +303,9 @@ def _resolve_or_create_category(token: dict[str, Any], category_name: str) -> st
 
 
 def _base_payload(row: pd.Series, mapping: dict[str, str]) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    code = _clean_text(_value(row, mapping, 'codigo') or _value(row, mapping, 'gtin'), 80)
+    raw_code = _value(row, mapping, 'codigo') or _value(row, mapping, 'gtin')
     gtin = _digits_only(_value(row, mapping, 'gtin'))
+    code = _sanitize_code(raw_code or gtin)
     enrichment = enrich_product_payload_fields(
         name=_value(row, mapping, 'nome'),
         description=_value(row, mapping, 'descricao'),
@@ -248,14 +317,12 @@ def _base_payload(row: pd.Series, mapping: dict[str, str]) -> tuple[dict[str, An
     name = _clean_text(enrichment.name, 120)
     if len(name) < 2:
         return None, {'reason': 'nome_insuficiente', 'enrichment': enrichment}
-
-    payload: dict[str, Any] = {
-        'nome': name,
-        'codigo': code or name[:80],
-        'tipo': 'P',
-        'situacao': 'A',
-        'unidade': _clean_text(_value(row, mapping, 'unidade') or 'UN', 6) or 'UN',
-    }
+    payload: dict[str, Any] = {'nome': name, 'tipo': 'P', 'situacao': 'A'}
+    if code:
+        payload['codigo'] = code
+    unit = _clean_text(_value(row, mapping, 'unidade') or 'UN', 6).upper()
+    if re.fullmatch(r'[A-Z0-9]{1,6}', unit):
+        payload['unidade'] = unit
     if enrichment.description and enrichment.description.lower() != name.lower():
         payload['descricaoCurta'] = enrichment.description
     price = _number_value(_value(row, mapping, 'preco'))
@@ -267,12 +334,7 @@ def _base_payload(row: pd.Series, mapping: dict[str, str]) -> tuple[dict[str, An
     ncm = _digits_only(_value(row, mapping, 'ncm'))
     if len(ncm) == 8:
         payload['tributacao'] = {'ncm': ncm}
-    meta = {
-        'category': enrichment.category,
-        'images': list(enrichment.image_urls),
-        'confidence': enrichment.confidence,
-        'warnings': list(enrichment.warnings),
-    }
+    meta = {'category': enrichment.category, 'images': list(enrichment.image_urls), 'confidence': enrichment.confidence, 'warnings': list(enrichment.warnings), 'code': code, 'gtin': gtin, 'raw_code': str(raw_code or '')}
     return _clean_payload(payload), meta
 
 
@@ -283,7 +345,6 @@ def _payload_variants(token: dict[str, Any], row: pd.Series, mapping: dict[str, 
     category = str(meta.get('category') or '').strip()
     category_id = _resolve_or_create_category(token, category) if category else ''
     images = list(meta.get('images') or [])
-
     full = dict(base)
     if category_id:
         full['categoria'] = {'id': category_id}
@@ -291,19 +352,23 @@ def _payload_variants(token: dict[str, Any], row: pd.Series, mapping: dict[str, 
         full['categoria'] = {'descricao': category}
     if images:
         full['midia'] = {'imagens': [{'link': url} for url in images]}
-
     with_category = dict(base)
     if category_id:
         with_category['categoria'] = {'id': category_id}
     elif category:
         with_category['categoria'] = {'descricao': category}
-
+    no_format_risk = {k: v for k, v in base.items() if k not in {'unidade', 'marca', 'preco', 'tributacao', 'descricaoCurta'}}
+    name_only = {'nome': base.get('nome', 'Produto sem nome'), 'tipo': 'P', 'situacao': 'A'}
+    if base.get('codigo'):
+        name_only['codigo'] = base['codigo']
     variants: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
     seen: set[str] = set()
     for label, payload in (
         ('smart_completo_categoria_imagem', full),
         ('smart_categoria_sem_imagem', with_category),
         ('smart_minimo_sem_categoria_imagem', base),
+        ('smart_sem_campos_de_formato_risco', no_format_risk),
+        ('smart_nome_codigo_minimo', name_only),
     ):
         cleaned = _clean_payload(payload)
         marker = repr(sorted(cleaned.items()))
@@ -333,8 +398,7 @@ def _smart_preview_payloads(df: pd.DataFrame, *, limit: int = 5) -> list[dict[st
 
 
 def preview_payloads(df: pd.DataFrame, operation: str, *, limit: int = 5) -> list[dict[str, Any]]:
-    normalized = normalize_operation(operation)
-    if normalized == OP_CADASTRO:
+    if normalize_operation(operation) == OP_CADASTRO:
         return _smart_preview_payloads(df, limit=limit)
     return _safe_preview_payloads(df, operation, limit=limit)
 
@@ -348,6 +412,24 @@ def _emit_progress(callback: Callable[[dict[str, Any]], None] | None, payload: d
         pass
 
 
+def _update_existing_product(token: dict[str, Any], product_id: str, variants: list[tuple[str, dict[str, Any], dict[str, Any]]]) -> tuple[bool, list[dict[str, Any]]]:
+    attempts: list[dict[str, Any]] = []
+    for strategy, payload, meta in variants:
+        update_payload = dict(payload)
+        # Em atualização, evitar trocar código se ele foi justamente o motivo da colisão.
+        for method in ('PUT', 'PATCH'):
+            try:
+                response = requests.request(method, _url(f'/produtos/{product_id}'), headers=_headers(token), json=update_payload, timeout=SEND_TIMEOUT)
+                attempts.append({'mode': 'update_existing', 'method': method, 'product_id': product_id, 'strategy': strategy, 'status': int(response.status_code), 'confidence': meta.get('confidence'), 'response_preview': str(response.text or '')[:300]})
+                if response.status_code < 400:
+                    return True, attempts
+                if response.status_code in {401, 403, 404}:
+                    break
+            except Exception as exc:
+                attempts.append({'mode': 'update_existing', 'method': method, 'product_id': product_id, 'strategy': strategy, 'status': 'EXCEPTION', 'error': str(exc)[:240]})
+    return False, attempts
+
+
 def _send_cadastro_smart(df: pd.DataFrame, *, limit: int | None = None, progress_callback: Callable[[dict[str, Any]], None] | None = None) -> DirectSendResult:
     token, _meta = load_token()
     if not isinstance(token, dict) or not token.get('access_token'):
@@ -359,7 +441,6 @@ def _send_cadastro_smart(df: pd.DataFrame, *, limit: int | None = None, progress
     errors: list[str] = []
     create_path = _secret('product_create_path', '/produtos') or '/produtos'
     _emit_progress(progress_callback, {'stage': 'Iniciando cadastro inteligente', 'processed': 0, 'total': total, 'sent': 0, 'failed': 0, 'skipped': 0, 'progress': 0.0})
-
     for position, (index, row) in enumerate(rows.iterrows(), start=1):
         line = int(index) + 1 if isinstance(index, int) else position
         variants = _payload_variants(token, row, mapping)
@@ -369,7 +450,16 @@ def _send_cadastro_smart(df: pd.DataFrame, *, limit: int | None = None, progress
                 errors.append(f'Linha {line}: nome/código insuficiente para cadastro.')
             _emit_progress(progress_callback, {'stage': 'Cadastrando no Bling', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
             continue
-
+        first_meta = variants[0][2]
+        candidates = [first_meta.get('code'), first_meta.get('gtin'), first_meta.get('raw_code')]
+        existing_id = _resolve_product_id(token, candidates)
+        if existing_id:
+            ok_update, update_attempts = _update_existing_product(token, existing_id, variants)
+            if ok_update:
+                sent += 1
+                add_audit_event('bling_smart_cadastro_upsert_updated', area='BLING_ENVIO', status='OK', details={'line': line, 'product_id': existing_id, 'attempts': update_attempts[-3:], 'responsible_file': RESPONSIBLE_FILE})
+                _emit_progress(progress_callback, {'stage': 'Atualizando produto existente no Bling', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
+                continue
         ok = False
         attempts: list[dict[str, Any]] = []
         last_response: requests.Response | None = None
@@ -377,42 +467,43 @@ def _send_cadastro_smart(df: pd.DataFrame, *, limit: int | None = None, progress
             try:
                 response = requests.post(_url(create_path), headers=_headers(token), json=payload, timeout=SEND_TIMEOUT)
                 last_response = response
-                attempts.append({'strategy': strategy, 'status': int(response.status_code), 'confidence': meta.get('confidence'), 'category': meta.get('category'), 'category_id': meta.get('category_id'), 'warnings': meta.get('warnings'), 'response_preview': str(response.text or '')[:300]})
+                response_text = str(response.text or '')
+                attempts.append({'mode': 'create', 'strategy': strategy, 'status': int(response.status_code), 'confidence': meta.get('confidence'), 'category': meta.get('category'), 'category_id': meta.get('category_id'), 'warnings': meta.get('warnings'), 'payload_keys': sorted(payload.keys()), 'response_preview': response_text[:500]})
                 if response.status_code < 400:
                     ok = True
                     add_audit_event('bling_smart_cadastro_strategy_succeeded', area='BLING_ENVIO', status='OK', details={'line': line, 'strategy': strategy, 'meta': meta, 'responsible_file': RESPONSIBLE_FILE})
                     break
+                if response.status_code == 400 and ('código' in response_text.lower() or 'codigo' in response_text.lower()):
+                    resolved_after_error = _resolve_product_id(token, candidates)
+                    if resolved_after_error:
+                        ok_update, update_attempts = _update_existing_product(token, resolved_after_error, variants)
+                        attempts.extend(update_attempts[-4:])
+                        if ok_update:
+                            ok = True
+                            add_audit_event('bling_smart_cadastro_duplicate_code_updated', area='BLING_ENVIO', status='OK', details={'line': line, 'product_id': resolved_after_error, 'strategy': strategy, 'responsible_file': RESPONSIBLE_FILE})
+                            break
                 if response.status_code in {401, 403}:
                     break
             except Exception as exc:
-                attempts.append({'strategy': strategy, 'status': 'EXCEPTION', 'error': str(exc)[:240]})
+                attempts.append({'mode': 'create', 'strategy': strategy, 'status': 'EXCEPTION', 'error': str(exc)[:240]})
                 continue
-
         if ok:
             sent += 1
         else:
             failed += 1
             status = getattr(last_response, 'status_code', 'sem resposta')
-            preview = str(getattr(last_response, 'text', '') or '')[:500]
+            preview = str(getattr(last_response, 'text', '') or '')[:700]
             if len(errors) < 8:
-                errors.append(f'Linha {line}: Bling recusou cadastro inteligente ({status}) após {len(variants)} tentativa(s). {preview}')
-            add_audit_event('bling_smart_cadastro_failed', area='BLING_ENVIO', status='AVISO', details={'line': line, 'status': status, 'attempts': attempts[-5:], 'responsible_file': RESPONSIBLE_FILE})
+                errors.append(f'Linha {line}: Bling recusou cadastro/upsert inteligente ({status}) após {len(variants)} tentativa(s). {preview}')
+            add_audit_event('bling_smart_cadastro_failed', area='BLING_ENVIO', status='AVISO', details={'line': line, 'status': status, 'attempts': attempts[-8:], 'responsible_file': RESPONSIBLE_FILE})
         _emit_progress(progress_callback, {'stage': 'Cadastrando no Bling', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
-
     _emit_progress(progress_callback, {'stage': 'Cadastro inteligente concluído', 'processed': total, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': 1.0})
-    add_audit_event('bling_smart_cadastro_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'attempted': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'mode': 'heuristic_category_image_fallback', 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('bling_smart_cadastro_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'attempted': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'mode': 'upsert_heuristic_category_image_fallback', 'responsible_file': RESPONSIBLE_FILE})
     return DirectSendResult(total, sent, failed, skipped, tuple(errors), tuple())
 
 
-def send_dataframe_to_bling(
-    df: pd.DataFrame,
-    operation: str,
-    *,
-    limit: int | None = None,
-    progress_callback: Callable[[dict[str, Any]], None] | None = None,
-) -> DirectSendResult:
-    normalized = normalize_operation(operation)
-    if normalized == OP_CADASTRO:
+def send_dataframe_to_bling(df: pd.DataFrame, operation: str, *, limit: int | None = None, progress_callback: Callable[[dict[str, Any]], None] | None = None) -> DirectSendResult:
+    if normalize_operation(operation) == OP_CADASTRO:
         return _send_cadastro_smart(df, limit=limit, progress_callback=progress_callback)
     return _safe_send_dataframe_to_bling(df, operation, limit=limit, progress_callback=progress_callback)
 
