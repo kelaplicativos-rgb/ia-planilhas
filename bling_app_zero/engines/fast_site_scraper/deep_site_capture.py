@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -7,10 +8,12 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
+from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.engines.fast_site_scraper.constants import (
     DEEP_CAPTURE_MAX_DEPTH,
     DEEP_CAPTURE_MAX_PAGES,
     DEEP_CAPTURE_MAX_PRODUCTS,
+    DISCOVERY_BUDGET_SECONDS,
     FLOW_CAPTURE_MAX_DEPTH,
     FLOW_CAPTURE_MAX_PAGES,
     FLOW_CAPTURE_MAX_PRODUCTS,
@@ -38,6 +41,8 @@ class DeepCaptureResult:
     scanned_pages: int
     ignored_external_links: int
     max_depth: int
+    stopped_by_budget: bool = False
+    stop_reason: str = ''
 
     @property
     def raw_urls(self) -> str:
@@ -107,6 +112,10 @@ def _technical_max_depth(max_depth: int | None) -> int:
     return DEEP_CAPTURE_MAX_DEPTH
 
 
+def _time_left(started: float, budget_seconds: float) -> float:
+    return max(0.0, float(budget_seconds) - (time.perf_counter() - started))
+
+
 def discover_deep_product_urls(
     raw_urls: str,
     *,
@@ -114,12 +123,14 @@ def discover_deep_product_urls(
     max_products: int = DEFAULT_MAX_PRODUCTS,
     max_depth: int = DEFAULT_MAX_DEPTH,
     progress_callback: Callable[[dict], None] | None = None,
+    budget_seconds: int | float = DISCOVERY_BUDGET_SECONDS,
 ) -> DeepCaptureResult:
-    """Expande um domínio/categoria em links prováveis de produto.
+    """Expande um domínio/categoria em links prováveis de produto sem travar o app.
 
-    Quando a UI pede busca total/estoque, usa teto técnico alto e não a antiga
-    quantidade segura. Isso evita derrubar a captura antes de varrer a loja.
+    A busca profunda agora tem orçamento real de tempo. Quando o orçamento acaba,
+    devolve os links parciais encontrados em vez de deixar o Streamlit cair.
     """
+    started = time.perf_counter()
     starts = [norm_url(url) for url in split_urls(raw_urls) if norm_url(url)]
     starts = list(dict.fromkeys(starts))
     if not starts:
@@ -132,16 +143,18 @@ def discover_deep_product_urls(
     max_products = _clamp_int(max_products, DEFAULT_MAX_PRODUCTS, 1, technical_products)
     max_depth = _clamp_int(max_depth, DEFAULT_MAX_DEPTH, 0, technical_depth)
     flow_mode = max_pages > DEEP_CAPTURE_MAX_PAGES or max_products > DEEP_CAPTURE_MAX_PRODUCTS or max_depth > DEEP_CAPTURE_MAX_DEPTH
+    budget_seconds = max(8.0, float(budget_seconds or DISCOVERY_BUDGET_SECONDS))
 
     _emit(progress_callback, {
-        'stage': 'Captura profunda em fluxo contínuo' if flow_mode else 'Captura profunda',
-        'message': f'Expandindo site do fornecedor com limite técnico de {max_pages} página(s), {max_products} produto(s) e profundidade {max_depth}.',
+        'stage': 'Captura profunda controlada',
+        'message': f'Expandindo site com limite seguro de {max_pages} página(s), {max_products} produto(s), profundidade {max_depth} e orçamento de {int(budget_seconds)}s.',
         'progress': 0.10,
         'max_pages': max_pages,
         'max_products': max_products,
         'max_depth': max_depth,
-        'safe_limited': False,
+        'safe_limited': True,
         'flow_mode': flow_mode,
+        'budget_seconds': int(budget_seconds),
     })
 
     queue: deque[tuple[str, int]] = deque((url, 0) for url in starts)
@@ -150,8 +163,15 @@ def discover_deep_product_urls(
     products: list[str] = []
     ignored_external = 0
     scanned_pages = 0
+    stopped_by_budget = False
+    stop_reason = ''
 
     while queue and len(visited) < max_pages and len(products) < max_products:
+        if _time_left(started, budget_seconds) <= 1.5:
+            stopped_by_budget = True
+            stop_reason = 'Busca pausada por limite de tempo técnico. Resultado parcial preservado.'
+            break
+
         url, depth = queue.popleft()
         if url in visited:
             continue
@@ -165,7 +185,8 @@ def discover_deep_product_urls(
         if depth > max_depth:
             continue
 
-        html = fetch_live(url, timeout=6)
+        fetch_timeout = min(4.0, max(1.5, _time_left(started, budget_seconds)))
+        html = fetch_live(url, timeout=fetch_timeout)
         scanned_pages += 1
         if not html:
             continue
@@ -185,21 +206,22 @@ def discover_deep_product_urls(
                 queued.add(link)
                 queue.append((link, depth + 1))
 
-        if scanned_pages % 10 == 0 or len(products) >= max_products:
+        if scanned_pages % 8 == 0 or len(products) >= max_products:
             ratio = min(0.82, 0.12 + (0.70 * (len(visited) / max(max_pages, 1))))
             _emit(progress_callback, {
-                'stage': 'Captura profunda em fluxo contínuo' if flow_mode else 'Captura profunda',
+                'stage': 'Captura profunda controlada',
                 'message': f'{len(visited)} página(s) varrida(s), {len(products)} produto(s) provável(is) encontrado(s).',
                 'progress': ratio,
                 'visited_pages': len(visited),
                 'found_products': len(products),
                 'queued_pages': len(queue),
-                'safe_limited': False,
+                'safe_limited': True,
                 'flow_mode': flow_mode,
+                'seconds_left': round(_time_left(started, budget_seconds), 1),
             })
 
-    if len(products) < max_products:
-        feed_budget = max_products - len(products)
+    if len(products) < max_products and _time_left(started, budget_seconds) > 5:
+        feed_budget = min(max_products - len(products), 250)
         try:
             feed_urls = discover_from_feeds(starts, max_products=feed_budget)
         except Exception:
@@ -210,17 +232,37 @@ def discover_deep_product_urls(
                 if len(products) >= max_products:
                     break
 
+    if stopped_by_budget:
+        add_audit_event(
+            'site_deep_capture_budget_reached',
+            area='SITE',
+            step='entrada',
+            status='AVISO',
+            details={
+                'visited_pages': len(visited),
+                'scanned_pages': scanned_pages,
+                'found_products': len(products),
+                'max_pages': max_pages,
+                'max_products': max_products,
+                'budget_seconds': int(budget_seconds),
+                'stop_reason': stop_reason,
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+
     _emit(progress_callback, {
         'stage': 'Captura profunda pronta',
-        'message': f'{len(products)} link(s) de produto preparado(s) para o motor existente.',
+        'message': f'{len(products)} link(s) de produto preparado(s). {stop_reason}'.strip(),
         'progress': 0.88,
         'visited_pages': len(visited),
         'found_products': len(products),
         'max_pages': max_pages,
         'max_products': max_products,
         'max_depth': max_depth,
-        'safe_limited': False,
+        'safe_limited': True,
         'flow_mode': flow_mode,
+        'stopped_by_budget': stopped_by_budget,
+        'stop_reason': stop_reason,
     })
 
     return DeepCaptureResult(
@@ -229,6 +271,8 @@ def discover_deep_product_urls(
         scanned_pages=scanned_pages,
         ignored_external_links=ignored_external,
         max_depth=max_depth,
+        stopped_by_budget=stopped_by_budget,
+        stop_reason=stop_reason,
     )
 
 
