@@ -25,7 +25,8 @@ API_STOCK_DEPOSIT_ID_KEY = 'bling_api_stock_deposit_id'
 PRODUCT_LOOKUP_CACHE_KEY = 'bling_product_lookup_cache_by_code_v1'
 
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
-    'id': ('id produto', 'id_produto', 'idproduto', 'id', 'codigo bling', 'código bling'),
+    # Não usar coluna genérica "id" como ID Bling. Em origem site, "id" costuma ser ID do fornecedor/site.
+    'id': ('id produto bling', 'id_produto_bling', 'id bling', 'id_bling', 'codigo bling', 'código bling'),
     'codigo': ('código', 'codigo', 'sku', 'ref', 'referencia', 'referência', 'codigo produto', 'código produto'),
     'nome': ('nome', 'produto', 'título', 'titulo', 'nome produto', 'nome do produto', 'descrição produto', 'descricao produto'),
     'descricao': ('descrição', 'descricao', 'descrição curta', 'descricao curta', 'descrição do produto', 'descricao do produto', 'descricao complementar', 'descrição complementar', 'detalhes', 'observação', 'observacao'),
@@ -175,16 +176,21 @@ def _looks_like_bling_internal_id(value: object) -> bool:
 
 
 def _stock_product_reference(row: pd.Series, mapping: dict[str, str]) -> dict[str, str]:
-    produto_id = _value(row, mapping, 'id')
+    """Escolhe a referência correta para atualizar estoque.
+
+    Para origem site, a coluna "id" normalmente é ID do fornecedor/site, não ID interno do Bling.
+    Por isso estoque deve priorizar código/SKU e GTIN para resolver o produto no Bling.
+    """
     codigo = _value(row, mapping, 'codigo')
     gtin = _value(row, mapping, 'gtin')
+    produto_id = _value(row, mapping, 'id')
 
-    if _looks_like_bling_internal_id(produto_id):
-        return {'id': produto_id}
     if codigo:
         return {'codigo': codigo}
     if gtin:
         return {'codigo': gtin}
+    if _looks_like_bling_internal_id(produto_id):
+        return {'id': produto_id}
     if produto_id:
         return {'codigo': produto_id}
     return {}
@@ -480,8 +486,6 @@ def _send_stock_payload(token: dict[str, Any], row_id: str, payload: dict[str, A
                     return response, attempts, product_resolved
                 if response.status_code in {401, 403}:
                     return response, attempts, product_resolved
-                # 404 costuma indicar rota incorreta; 422 costuma indicar formato de payload.
-                # Para estes casos, testamos a próxima rota/variante sem marcar produto como ausente.
                 if response.status_code not in {404, 405, 422}:
                     break
             except Exception as exc:
@@ -540,7 +544,10 @@ def send_dataframe_to_bling(
                     errors.append(f'Linha {index + 1}: {resolve_reason}')
                 _emit_progress(progress_callback, {'stage': 'Enviando ao Bling', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
                 continue
-            product_resolved = bool(str((payload.get('produto') or {}).get('id') or '').strip())
+            resolved_product_id = str((payload.get('produto') or {}).get('id') or '').strip()
+            product_resolved = bool(resolved_product_id)
+            if resolved_product_id:
+                row_id = resolved_product_id
 
         try:
             if operation == OP_ESTOQUE:
