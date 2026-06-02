@@ -90,7 +90,13 @@ def _api_path_secret(name: str, default: str) -> str:
             'bling_direct_invalid_api_path_secret_ignored',
             area='BLING_ENVIO',
             status='CORRIGIDO',
-            details={'secret_name': name, 'configured_value': value, 'fallback_value': default, 'reason': 'Campo de endpoint da API recebeu caminho local/arquivo. Usando endpoint padrão do Bling.', 'responsible_file': RESPONSIBLE_FILE},
+            details={
+                'secret_name': name,
+                'configured_value': value,
+                'fallback_value': default,
+                'reason': 'Campo de endpoint da API recebeu caminho local/arquivo. Usando endpoint padrão do Bling.',
+                'responsible_file': RESPONSIBLE_FILE,
+            },
         )
         return default
     return value
@@ -302,18 +308,21 @@ def _resolve_stock_payload_product(token: dict[str, Any], payload: dict[str, Any
     resolved_id = _resolve_product_id_by_code(token, code)
     if resolved_id:
         payload['produto'] = {'id': resolved_id}
+        payload['_produto_resolvido_por_codigo'] = code
         return payload, ''
     return None, f'Produto não encontrado no Bling pelo código/SKU/GTIN: {code or "vazio"}. Cadastre o produto antes de atualizar saldo.'
 
 
-def _api_error_message(index: object, response: requests.Response) -> str:
+def _api_error_message(index: object, response: requests.Response, *, operation: str = '', product_resolved: bool = False) -> str:
     status = int(response.status_code)
     preview = str(response.text or '')[:240]
     line = int(index) + 1 if isinstance(index, int) else index
     if status in {401, 403}:
         return f'Linha {line}: Bling recusou a autorização ({status}). O token pode ter expirado ou o app não tem permissão para esta operação. Desconecte o Bling, conecte novamente e tente enviar de novo.'
+    if status == 404 and operation == OP_ESTOQUE and product_resolved:
+        return f'Linha {line}: produto foi encontrado no Bling, mas o endpoint/payload de estoque retornou 404. Revise rota/permissão de estoque no app Bling. {preview}'
     if status == 404:
-        return f'Linha {line}: produto não encontrado no Bling (404). Separe esta linha para cadastro antes de atualizar estoque/preço. {preview}'
+        return f'Linha {line}: produto ou endpoint não encontrado no Bling (404). {preview}'
     if status == 422:
         return f'Linha {line}: dados recusados pelo Bling (422). Revise campos obrigatórios e formato. {preview}'
     return f'Linha {line}: status {status} · {preview}'
@@ -405,6 +414,83 @@ def _emit_progress(progress_callback: Callable[[dict[str, Any]], None] | None, p
         pass
 
 
+def _stock_quantity(payload: dict[str, Any]) -> float | None:
+    value = payload.get('saldo') if payload.get('saldo') is not None else payload.get('quantidade')
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def _stock_payload_variants(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    produto = payload.get('produto') if isinstance(payload.get('produto'), dict) else {}
+    deposito = payload.get('deposito') if isinstance(payload.get('deposito'), dict) else {}
+    quantidade = _stock_quantity(payload)
+    variants: list[dict[str, Any]] = []
+    base = {'produto': produto, 'deposito': deposito}
+    if quantidade is not None:
+        variants.append(_clean_payload({**base, 'saldo': quantidade, 'quantidade': quantidade}))
+        variants.append(_clean_payload({**base, 'saldo': quantidade}))
+        variants.append(_clean_payload({**base, 'quantidade': quantidade}))
+    variants.append(_clean_payload(payload))
+    unique: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in variants:
+        marker = str(sorted(item.items()))
+        if item and marker not in seen:
+            unique.append(item)
+            seen.add(marker)
+    return unique
+
+
+def _stock_endpoint_attempts(row_id: str) -> list[tuple[str, str]]:
+    configured_method, configured_path = _endpoint_for(OP_ESTOQUE, row_id)
+    defaults = [
+        (configured_method, configured_path),
+        ('POST', '/estoques/saldos'),
+        ('PUT', '/estoques/saldos/{idProduto}'.replace('{idProduto}', row_id)),
+        ('PATCH', '/estoques/saldos/{idProduto}'.replace('{idProduto}', row_id)),
+        ('POST', '/estoques'),
+    ]
+    unique: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for method, path in defaults:
+        if not path or '{' in path or '}' in path:
+            continue
+        key = (str(method or 'POST').upper(), str(path))
+        if key not in seen:
+            unique.append(key)
+            seen.add(key)
+    return unique
+
+
+def _send_stock_payload(token: dict[str, Any], row_id: str, payload: dict[str, Any]) -> tuple[requests.Response | None, list[dict[str, Any]], bool]:
+    product_resolved = bool(str((payload.get('produto') or {}).get('id') or '').strip())
+    attempts: list[dict[str, Any]] = []
+    last_response: requests.Response | None = None
+    variants = _stock_payload_variants(payload)
+    for method, path in _stock_endpoint_attempts(row_id):
+        for variant_index, variant in enumerate(variants, start=1):
+            try:
+                response = requests.request(method, _url(path), headers=_headers(token), json=variant, timeout=30)
+                last_response = response
+                attempts.append({'method': method, 'path': path, 'status': int(response.status_code), 'variant': variant_index, 'response_preview': str(response.text or '')[:180]})
+                if response.status_code < 400:
+                    add_audit_event('bling_stock_send_strategy_succeeded', area='BLING_ENVIO', status='OK', details={'method': method, 'path': path, 'variant': variant_index, 'attempts': attempts[-5:], 'responsible_file': RESPONSIBLE_FILE})
+                    return response, attempts, product_resolved
+                if response.status_code in {401, 403}:
+                    return response, attempts, product_resolved
+                # 404 costuma indicar rota incorreta; 422 costuma indicar formato de payload.
+                # Para estes casos, testamos a próxima rota/variante sem marcar produto como ausente.
+                if response.status_code not in {404, 405, 422}:
+                    break
+            except Exception as exc:
+                attempts.append({'method': method, 'path': path, 'status': 'EXCEPTION', 'variant': variant_index, 'response_preview': str(exc)[:180]})
+                continue
+    add_audit_event('bling_stock_send_strategy_failed', area='BLING_ENVIO', status='AVISO', details={'product_resolved': product_resolved, 'attempts': attempts[-12:], 'responsible_file': RESPONSIBLE_FILE})
+    return last_response, attempts, product_resolved
+
+
 def send_dataframe_to_bling(
     df: pd.DataFrame,
     operation: str,
@@ -441,6 +527,7 @@ def send_dataframe_to_bling(
             _emit_progress(progress_callback, {'stage': 'Enviando ao Bling', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
             continue
 
+        product_resolved = False
         if operation == OP_ESTOQUE:
             payload, resolve_reason = _resolve_stock_payload_product(token, payload)
             if payload is None:
@@ -453,13 +540,23 @@ def send_dataframe_to_bling(
                     errors.append(f'Linha {index + 1}: {resolve_reason}')
                 _emit_progress(progress_callback, {'stage': 'Enviando ao Bling', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
                 continue
+            product_resolved = bool(str((payload.get('produto') or {}).get('id') or '').strip())
 
-        method, path = _endpoint_for(operation, row_id)
         try:
-            response = requests.request(method, _url(path), headers=_headers(token), json=payload, timeout=30)
+            if operation == OP_ESTOQUE:
+                response, _attempts, product_resolved = _send_stock_payload(token, row_id, payload)
+                if response is None:
+                    failed += 1
+                    if len(errors) < 8:
+                        errors.append(f'Linha {index + 1}: falha técnica ao chamar endpoint de estoque do Bling.')
+                    continue
+            else:
+                method, path = _endpoint_for(operation, row_id)
+                response = requests.request(method, _url(path), headers=_headers(token), json=payload, timeout=30)
+
             if response.status_code >= 400:
                 failed += 1
-                if response.status_code == 404:
+                if response.status_code == 404 and not (operation == OP_ESTOQUE and product_resolved):
                     try:
                         not_found_indices.append(int(index))
                     except Exception:
@@ -467,7 +564,7 @@ def send_dataframe_to_bling(
                 if response.status_code in {401, 403}:
                     auth_failed = True
                 if len(errors) < 8:
-                    errors.append(_api_error_message(index, response))
+                    errors.append(_api_error_message(index, response, operation=operation, product_resolved=product_resolved))
                 _emit_progress(progress_callback, {'stage': 'Enviando ao Bling', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
                 if auth_failed:
                     break
@@ -493,7 +590,18 @@ def send_dataframe_to_bling(
         'bling_direct_flow_send_finished',
         area='BLING_ENVIO',
         status='OK' if result.failed == 0 else 'PARCIAL',
-        details={'operation': operation, 'attempted': result.attempted, 'sent': result.sent, 'failed': result.failed, 'skipped': result.skipped, 'not_found_count': len(result.not_found_indices), 'store_mode': store_mode, 'stock_deposit_id': _stock_deposit_id() if operation == OP_ESTOQUE else None, 'stock_deposit_configured': bool(_stock_deposit_id() or _stock_deposit_name()) if operation == OP_ESTOQUE else None, 'responsible_file': RESPONSIBLE_FILE},
+        details={
+            'operation': operation,
+            'attempted': result.attempted,
+            'sent': result.sent,
+            'failed': result.failed,
+            'skipped': result.skipped,
+            'not_found_count': len(result.not_found_indices),
+            'store_mode': store_mode,
+            'stock_deposit_id': _stock_deposit_id() if operation == OP_ESTOQUE else None,
+            'stock_deposit_configured': bool(_stock_deposit_id() or _stock_deposit_name()) if operation == OP_ESTOQUE else None,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
     )
     return result
 
