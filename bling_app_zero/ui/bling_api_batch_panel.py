@@ -13,7 +13,7 @@ from bling_app_zero.core.operation_contract import OP_CADASTRO, OP_ESTOQUE, norm
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/bling_api_batch_panel.py'
 BATCH_SIZE = 25
-BATCH_STATE_KEY = 'bling_api_batch_send_state_v1'
+BATCH_STATE_KEY = 'bling_api_batch_send_state_v2'
 
 DIRECT_SEND_TEXT = {
     OP_CADASTRO: 'Cadastrar produtos no Bling',
@@ -39,6 +39,8 @@ def _empty_state(identity: str, total: int, operation: str) -> dict[str, Any]:
         'not_found_indices': [],
         'done': False,
         'started': False,
+        'auto_running': False,
+        'paused': False,
     }
 
 
@@ -70,7 +72,7 @@ def _render_payload_preview(download_df: pd.DataFrame, operation: str) -> None:
     if ignored_count:
         st.warning(f'{ignored_count} linha(s) da prévia seriam ignoradas por falta de campo obrigatório.')
     with st.expander('Prévia curta do payload', expanded=False):
-        st.caption('Prévia limitada a 5 linhas. O envio real roda em lotes para não travar a tela.')
+        st.caption('Prévia limitada a 5 linhas. O envio real roda automaticamente em lotes para não travar a tela.')
         for index, item in enumerate(payload_preview, start=1):
             st.markdown(f'**Linha {index} · {item.get("status", "")}**')
             motivo = str(item.get('motivo') or '').strip()
@@ -86,7 +88,8 @@ def _render_progress(state: dict[str, Any]) -> None:
     failed = int(state.get('failed') or 0)
     skipped = int(state.get('skipped') or 0)
     progress = attempted / max(total, 1)
-    st.progress(min(100, int(progress * 100)), text=f'Progresso: {attempted}/{total} · enviados {sent} · falhas {failed} · ignorados {skipped}')
+    label = 'Envio automático em andamento' if state.get('auto_running') and not state.get('done') else 'Progresso'
+    st.progress(min(100, int(progress * 100)), text=f'{label}: {attempted}/{total} · enviados {sent} · falhas {failed} · ignorados {skipped}')
     cols = st.columns(4)
     cols[0].metric('Processados', attempted)
     cols[1].metric('Enviados', sent)
@@ -142,6 +145,58 @@ def _render_final_result(download_df: pd.DataFrame, state: dict[str, Any], key: 
     render_autocadastro_panel(download_df, payload, key=key)
 
 
+def _send_one_batch(download_df: pd.DataFrame, operation: str, state: dict[str, Any]) -> dict[str, Any]:
+    total = int(state.get('total') or len(download_df))
+    batch_start = int(state.get('offset') or 0)
+    batch_end = min(batch_start + BATCH_SIZE, total)
+    batch_df = download_df.iloc[batch_start:batch_end].copy().fillna('')
+
+    progress_bar = st.progress(0, text=f'Enviando lote {batch_start + 1}-{batch_end} de {total}...')
+    status_box = st.empty()
+
+    def _progress(payload: dict[str, Any]) -> None:
+        processed = int(payload.get('processed') or 0)
+        batch_total = int(payload.get('total') or len(batch_df))
+        sent = int(payload.get('sent') or 0)
+        failed = int(payload.get('failed') or 0)
+        skipped = int(payload.get('skipped') or 0)
+        ratio = float(payload.get('progress') or 0.0)
+        progress_bar.progress(min(100, int(ratio * 100)), text=f'Lote: {processed}/{batch_total} · enviados {sent} · falhas {failed} · ignorados {skipped}')
+        status_box.caption(f'Lote {batch_start + 1}-{batch_end} de {total}')
+
+    result = send_dataframe_to_bling(batch_df, operation, progress_callback=_progress)
+    _append_batch_result(state, result, batch_start)
+    state['offset'] = batch_end
+    state['done'] = batch_end >= total
+    if state['done']:
+        state['auto_running'] = False
+        state['paused'] = False
+    st.session_state[BATCH_STATE_KEY] = state
+
+    add_audit_event(
+        'bling_api_batch_sent',
+        area='BLING_ENVIO',
+        status='OK' if int(result.failed) == 0 else 'PARCIAL',
+        details={
+            'operation': operation,
+            'batch_start': batch_start,
+            'batch_end': batch_end,
+            'total': total,
+            'sent': int(result.sent),
+            'failed': int(result.failed),
+            'skipped': int(result.skipped),
+            'auto_running': bool(state.get('auto_running')),
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+    try:
+        progress_bar.empty()
+        status_box.empty()
+    except Exception:
+        pass
+    return state
+
+
 def render_bling_api_batch_panel(download_df: pd.DataFrame, operation: str, key: str, signature: str, rules_sig: str) -> None:
     operation = normalize_operation(operation)
     st.markdown('### Envio direto ao Bling')
@@ -160,60 +215,42 @@ def render_bling_api_batch_panel(download_df: pd.DataFrame, operation: str, key:
     _render_progress(state)
 
     total = int(state.get('total') or len(download_df))
-    offset = int(state.get('offset') or 0)
     done = bool(state.get('done'))
     started = bool(state.get('started'))
+    auto_running = bool(state.get('auto_running')) and not done and not bool(state.get('paused'))
+
+    if auto_running:
+        st.info('Envio automático ativo. O sistema envia um lote por vez e continua sozinho até finalizar ou pausar.')
+        _send_one_batch(download_df, operation, state)
+        st.rerun()
 
     col1, col2 = st.columns(2)
     with col1:
-        start_label = 'Iniciar envio em lotes' if not started else 'Enviar próximo lote'
-        if not done and st.button(start_label, use_container_width=True, key=f'batch_send_next_{identity}'):
+        auto_label = 'Iniciar envio automático' if not started else 'Continuar automaticamente'
+        if not done and st.button(auto_label, use_container_width=True, key=f'batch_send_auto_{identity}'):
             state['started'] = True
-            batch_start = int(state.get('offset') or 0)
-            batch_end = min(batch_start + BATCH_SIZE, total)
-            batch_df = download_df.iloc[batch_start:batch_end].copy().fillna('')
-            progress_bar = st.progress(0, text=f'Enviando lote {batch_start + 1}-{batch_end} de {total}...')
-            status_box = st.empty()
-
-            def _progress(payload: dict[str, Any]) -> None:
-                processed = int(payload.get('processed') or 0)
-                batch_total = int(payload.get('total') or len(batch_df))
-                sent = int(payload.get('sent') or 0)
-                failed = int(payload.get('failed') or 0)
-                skipped = int(payload.get('skipped') or 0)
-                ratio = float(payload.get('progress') or 0.0)
-                progress_bar.progress(min(100, int(ratio * 100)), text=f'Lote: {processed}/{batch_total} · enviados {sent} · falhas {failed} · ignorados {skipped}')
-                status_box.caption(f'Lote {batch_start + 1}-{batch_end} de {total}')
-
-            result = send_dataframe_to_bling(batch_df, operation, progress_callback=_progress)
-            _append_batch_result(state, result, batch_start)
-            state['offset'] = batch_end
-            state['done'] = batch_end >= total
+            state['auto_running'] = True
+            state['paused'] = False
             st.session_state[BATCH_STATE_KEY] = state
-            add_audit_event(
-                'bling_api_batch_sent',
-                area='BLING_ENVIO',
-                status='OK' if int(result.failed) == 0 else 'PARCIAL',
-                details={
-                    'operation': operation,
-                    'batch_start': batch_start,
-                    'batch_end': batch_end,
-                    'total': total,
-                    'sent': int(result.sent),
-                    'failed': int(result.failed),
-                    'skipped': int(result.skipped),
-                    'responsible_file': RESPONSIBLE_FILE,
-                },
-            )
-            try:
-                progress_bar.empty()
-                status_box.empty()
-            except Exception:
-                pass
             st.rerun()
     with col2:
+        if not done and st.button('Enviar apenas 1 lote', use_container_width=True, key=f'batch_send_one_{identity}'):
+            state['started'] = True
+            state['auto_running'] = False
+            state['paused'] = True
+            _send_one_batch(download_df, operation, state)
+            st.rerun()
+
+    col3, col4 = st.columns(2)
+    with col3:
+        if not done and started and st.button('Pausar envio automático', use_container_width=True, key=f'batch_send_pause_{identity}'):
+            state['auto_running'] = False
+            state['paused'] = True
+            st.session_state[BATCH_STATE_KEY] = state
+            st.rerun()
+    with col4:
         if st.button('Reiniciar envio em lotes', use_container_width=True, key=f'batch_send_reset_{identity}'):
-            _reset_state(identity, len(download_df), operation)
+            _reset_state(identity, total, operation)
             st.rerun()
 
     if done or int(state.get('failed') or 0) or int(state.get('skipped') or 0):
