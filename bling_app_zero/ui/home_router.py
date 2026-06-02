@@ -180,26 +180,81 @@ def _render_home_card(
             safe_rerun('home_card_start_wizard', target_step=step or '')
 
 
-def _render_same_tab_bling_link(auth_url: str) -> None:
+def _render_bling_auth_link(auth_url: str) -> None:
     url = str(auth_url or '').strip()
     if not url:
         st.warning('Não consegui gerar o link de conexão com o Bling agora.')
         return
     try:
-        st.link_button('Conectar ao Bling', url, use_container_width=True)
+        st.link_button('🔗 Entrar e conectar ao Bling', url, use_container_width=True)
     except Exception:
         pass
-    st.info('Se o botão azul não abrir neste celular, use a URL direta abaixo.')
-    st.text_area('URL direta de autenticação do Bling', value=url, height=110, key='bling_auth_url_direct_visible')
+    with st.expander('URL direta de autenticação', expanded=False):
+        st.caption('Use esta URL se o botão não abrir corretamente neste celular.')
+        st.text_area('URL do Bling', value=url, height=100, key='bling_auth_url_direct_visible')
     add_audit_event(
-        'home_router_direct_bling_url_visible',
+        'home_router_light_bling_url_visible',
         area='HOME',
         status='OK',
-        details={'responsible_file': RESPONSIBLE_FILE, 'link_component': 'text_area_visible'},
+        details={'responsible_file': RESPONSIBLE_FILE, 'link_component': 'link_button_light_home'},
+    )
+
+
+def _render_light_entry_home() -> None:
+    connected = bool(connection_status().get('connected'))
+    st.markdown('<div class="bling-home-section-title">Como deseja começar?</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="bling-home-section-subtitle">Escolha somente a entrada inicial. O sistema carregará o próximo módulo apenas depois do botão Continuar.</div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.container(border=True):
+        st.markdown('#### 1. Conectar ao Bling')
+        if connected:
+            st.success('Bling já conectado nesta sessão.')
+            if st.button('Continuar com Bling conectado', use_container_width=True, key='home_light_continue_connected_bling'):
+                _start_wizard_context(CONTEXT_BLING_API)
+                safe_rerun('home_light_continue_connected_bling')
+        else:
+            st.caption('Use esta opção para cadastro, atualização de estoque ou preço direto pela API. O Bling pode abrir em nova aba; depois de autorizar, volte para o app.')
+            try:
+                auth_url = build_authorization_url({'return_to': 'start', 'source_step': 'home_light_entry'})
+            except Exception as exc:
+                auth_url = ''
+                add_audit_event(
+                    'home_router_light_bling_auth_url_error',
+                    area='HOME',
+                    status='ERRO',
+                    details={'error': str(exc), 'responsible_file': RESPONSIBLE_FILE},
+                )
+            if auth_url:
+                _render_bling_auth_link(auth_url)
+                st.caption('Após concluir a autorização no Bling, volte para esta tela e toque em Continuar com Bling conectado.')
+            else:
+                st.warning('Credenciais do Bling ainda não configuradas. Você ainda pode continuar sem conectar.')
+
+    with st.container(border=True):
+        st.markdown('#### 2. Continuar sem conectar')
+        st.caption('Use esta opção para trabalhar com planilha/modelo, CSV, XML, PDF ou preparar dados sem envio direto pela API.')
+        if st.button('Continuar sem conectar', use_container_width=True, key='home_light_continue_without_bling'):
+            _start_wizard_context(CONTEXT_UNIVERSAL, step=STEP_MODELO)
+            safe_rerun('home_light_continue_without_bling', target_step=STEP_MODELO)
+
+    add_audit_event(
+        'home_router_render_light_entry_home',
+        area='HOME',
+        status='OK',
+        details={
+            'responsible_file': RESPONSIBLE_FILE,
+            'connected': connected,
+            'home_order': 'connect_or_continue_without_bling',
+            'lazy_flow_entry': True,
+        },
     )
 
 
 def _render_bling_api_home_card() -> None:
+    # Mantido para compatibilidade com chamadas antigas; a home atual usa _render_light_entry_home.
     with st.container(border=True):
         st.caption('Mais automático')
         st.markdown('#### Bling API')
@@ -222,7 +277,7 @@ def _render_bling_api_home_card() -> None:
                 details={'error': str(exc), 'responsible_file': RESPONSIBLE_FILE},
             )
         if auth_url:
-            _render_same_tab_bling_link(auth_url)
+            _render_bling_auth_link(auth_url)
             st.caption('Após autorizar, você volta para escolher o tipo de envio da API.')
         else:
             st.warning('Credenciais do Bling ainda não configuradas. Use Modelo de destino enquanto isso.')
@@ -238,31 +293,14 @@ def render_professional_home() -> None:
         status='OK',
         details={
             'responsible_file': RESPONSIBLE_FILE,
-            'home_order': 'bling_api_destination_model',
-            'style': 'professional_light_cards',
-            'bling_oauth_target': 'visible_direct_url',
+            'home_order': 'connect_or_continue_without_bling',
+            'style': 'light_entry_only',
+            'bling_oauth_target': 'visible_link_only',
             'legacy_routes_removed': True,
-            'bling_csv_legacy_redirected_to_universal': True,
+            'lazy_flow_entry': True,
         },
     )
-    st.markdown('<div class="bling-home-section-title">Escolha como quer começar</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="bling-home-section-subtitle">Agora são dois caminhos: envio direto pela API ou modelo de destino.</div>',
-        unsafe_allow_html=True,
-    )
-    col_api, col_universal = st.columns(2)
-    with col_api:
-        _render_bling_api_home_card()
-    with col_universal:
-        _render_home_card(
-            'Modelo de destino',
-            'Use qualquer planilha final com cabeçalho próprio: marketplace, fornecedor ou layout personalizado.',
-            'Iniciar com modelo de destino',
-            context=CONTEXT_UNIVERSAL,
-            step=STEP_MODELO,
-            key='home_card_open_universal',
-            badge='Flexível',
-        )
+    _render_light_entry_home()
 
 
 def _redirect_legacy_flow_to_home(flow: str) -> None:
