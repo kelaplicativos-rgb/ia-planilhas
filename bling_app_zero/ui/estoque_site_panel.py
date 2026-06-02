@@ -8,6 +8,8 @@ import streamlit as st
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.features_runtime.router import active_contract, feature_needs_model
 from bling_app_zero.flows.site_operation_router import run_site_engine
+from bling_app_zero.ui.alerts import render_alert
+from bling_app_zero.ui.flow_guard import render_flow_blocker
 from bling_app_zero.ui.home_shared import load_site_pipeline, show_contract
 from bling_app_zero.ui.home_wizard_constants import STEP_MAPEAMENTO
 from bling_app_zero.ui.home_wizard_rerun import safe_rerun
@@ -42,10 +44,7 @@ def _has_columns(columns: list[str] | None) -> bool:
 
 
 def _orange_warning(message: str) -> None:
-    st.markdown(
-        f'<div style="background:#fff3e0;border:1px solid #ffcc80;border-left:6px solid #fb8c00;color:#5d3200;border-radius:12px;padding:12px 14px;margin:8px 0;font-size:0.95rem;">⚠️ {message}</div>',
-        unsafe_allow_html=True,
-    )
+    render_alert(str(message or ''), title='Atenção', variant='warning')
 
 
 def _finish_progress(progress, status_box=None, text: str = 'Captura encerrada.') -> None:
@@ -137,7 +136,6 @@ def _render_stock_model_contract() -> tuple[pd.DataFrame | None, list[str] | Non
             show_contract(requested_columns)
         st.caption('Modo API direta: não é necessário modelo de destino. O sistema usa os campos do contrato ativo do Bling.')
         return None, requested_columns
-
     upload = render_optional_site_model_upload(OPERATION)
     df_modelo_estoque = choose_site_estoque_model_df(upload)
     df_modelo = choose_site_model_df(upload, OPERATION)
@@ -147,7 +145,11 @@ def _render_stock_model_contract() -> tuple[pd.DataFrame | None, list[str] | Non
             show_contract(requested_columns)
         st.caption('A busca por site vai tentar preencher somente as colunas acima. O que não for encontrado fica vazio.')
     else:
-        st.error('Carregue o modelo de destino desta atualização. A busca só será feita nas colunas desse modelo.')
+        render_flow_blocker(
+            'Carregue o modelo de destino desta atualização. A busca só será feita nas colunas desse modelo.',
+            title='Busca por site bloqueada',
+            action_label='Buscar no site',
+        )
     return df_modelo, requested_columns
 
 
@@ -179,11 +181,19 @@ def _run_stock_site_capture(raw_urls: str, requested_columns: list[str] | None, 
     raw_urls = str(raw_urls or '').strip()
     if not raw_urls:
         _clear_stock_site_df('busca_publica_sem_links')
-        st.warning('Informe pelo menos um link antes de iniciar a busca por site.')
+        render_flow_blocker(
+            'Informe pelo menos um link antes de iniciar a busca por site.',
+            title='Busca por site bloqueada',
+            action_label='Buscar no site',
+        )
         return
     if feature_needs_model() and not _has_columns(requested_columns):
         _clear_stock_site_df('busca_sem_modelo')
-        st.error('Busca bloqueada: o modelo de destino precisa definir exatamente quais colunas serão preenchidas.')
+        render_flow_blocker(
+            'Busca bloqueada: o modelo de destino precisa definir exatamente quais colunas serão preenchidas.',
+            title='Busca por site bloqueada',
+            action_label='Buscar no site',
+        )
         return
     reset_site_progress()
     progress_bar = st.progress(0, text='Buscando dados no site...')
@@ -196,14 +206,22 @@ def _run_stock_site_capture(raw_urls: str, requested_columns: list[str] | None, 
         _set_stock_capture_state(running=False, error=message)
         _finish_progress(progress_bar, status_box, text='Busca encerrada com erro.')
         add_audit_event('stock_site_capture_failed', area='SITE', step='entrada', status='ERRO', details={'operation': OPERATION, 'feature_contract': active_contract().key, 'error': message, 'error_type': exc.__class__.__name__, 'responsible_file': RESPONSIBLE_FILE})
-        st.error('A busca por site não conseguiu finalizar. Baixe o diagnóstico para correção na sidebar.')
+        render_flow_blocker(
+            'A busca por site não conseguiu finalizar. Baixe o diagnóstico para correção na sidebar.',
+            title='Busca por site interrompida',
+            action_label='Continuar',
+        )
         return
     if not isinstance(df_site, pd.DataFrame) or df_site.empty:
         _clear_stock_site_df('busca_publica_vazia')
         _set_stock_capture_state(running=False, error='A busca por site não encontrou dados válidos.')
         _finish_progress(progress_bar, status_box, text='Busca encerrada sem dados.')
         add_audit_event('stock_site_capture_empty', area='SITE', step='entrada', status='AVISO', details={'operation': OPERATION, 'feature_contract': active_contract().key, 'responsible_file': RESPONSIBLE_FILE})
-        st.warning('A busca por site não encontrou dados válidos. Confira os links ou use a compatibilidade universal.')
+        render_flow_blocker(
+            'A busca por site não encontrou dados válidos. Confira os links ou use a compatibilidade universal.',
+            title='Busca por site sem dados',
+            action_label='Continuar',
+        )
         return
     save_site_source(df_site=df_site, raw_urls=raw_urls, requested_columns=requested_columns, df_modelo_cadastro=None, df_modelo_estoque=df_modelo_estoque, df_modelo=df_modelo_estoque, operation=OPERATION)
     _store_stock_site_df(df_site)
@@ -238,7 +256,11 @@ def render_estoque_site_panel() -> None:
     button_label = 'Buscar no site e gerar origem'
     button_disabled = running or (feature_needs_model() and not _has_columns(requested_columns))
     if feature_needs_model() and not _has_columns(requested_columns):
-        st.caption('O botão será liberado quando o modelo de destino estiver carregado.')
+        render_flow_blocker(
+            'O botão será liberado quando o modelo de destino estiver carregado.',
+            title='Busca por site bloqueada',
+            action_label=button_label,
+        )
     if st.button(button_label, use_container_width=True, disabled=button_disabled, key='buscar_site_estoque_independente'):
         add_audit_event('stock_site_capture_main_button_clicked', area='SITE', step='entrada', details={'operation': OPERATION, 'feature_contract': active_contract().key, 'capture_mode': 'public', 'responsible_file': RESPONSIBLE_FILE})
         _run_stock_site_capture(raw_urls, requested_columns, df_modelo_estoque)
