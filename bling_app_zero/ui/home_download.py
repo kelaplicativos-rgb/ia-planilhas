@@ -14,7 +14,6 @@ from bling_app_zero.core.operation_contract import (
     OP_UNIVERSAL,
     normalize_operation,
     operation_badge,
-    operation_label,
 )
 from bling_app_zero.core.rules_signature import rules_signature
 from bling_app_zero.core.template_download_exporter import (
@@ -27,8 +26,6 @@ from bling_app_zero.core.validators import validate_final_df
 from bling_app_zero.ui.flow_context import (
     entry_context as _entry_context,
     is_bling_api_context as _is_api_context,
-    is_bling_csv_context as _is_bling_csv_context,
-    is_universal_context as _is_universal_context,
 )
 from bling_app_zero.universal.contract_adapter import adapt_dataframe_to_model_contract, model_for_operation
 
@@ -324,4 +321,15 @@ def render_download_final(df_final: pd.DataFrame, operation: str, key: str = 'fi
     render_download(df_final, operation, key)
 
 
-__all__ = ['df_signature', 'download_dataframe_for_contract', 'download_label', 'render_download', 'render_download_final']
+def download_final(df_final: pd.DataFrame, operation: str, key: str = 'final') -> None:
+    render_download(df_final, operation, key)
+
+
+__all__ = [
+    'df_signature',
+    'download_dataframe_for_contract',
+    'download_final',
+    'download_label',
+    'render_download',
+    'render_download_final',
+]
