@@ -6,7 +6,7 @@ import streamlit as st
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.features_runtime.router import active_contract, feature_needs_model
 from bling_app_zero.ui.home_shared import show_contract
-from bling_app_zero.ui.home_wizard_constants import STEP_ENTRADA, STEP_MAPEAMENTO
+from bling_app_zero.ui.home_wizard_constants import STEP_DOWNLOAD, STEP_ENTRADA, STEP_MAPEAMENTO
 from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 from bling_app_zero.ui.manual_table_import_panel import render_manual_table_import_panel
 from bling_app_zero.ui.site_models import (
@@ -60,6 +60,17 @@ def _site_operation() -> str:
 def _is_stock_api_balance_mode(operation: str) -> bool:
     contract = active_contract()
     return bool(contract.is_api and contract.operation == 'estoque' and operation == 'estoque')
+
+
+def _next_step_after_site_capture() -> str:
+    contract = active_contract()
+    if contract.is_api:
+        return STEP_DOWNLOAD
+    return STEP_MAPEAMENTO
+
+
+def _next_step_label() -> str:
+    return 'Enviar para o Bling' if active_contract().is_api else 'Mapeamento'
 
 
 def _render_site_models_inline(operation: str) -> tuple[object, pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, list[str] | None]:
@@ -187,6 +198,8 @@ def _render_ready_state(operation: str, df_site_bruto: pd.DataFrame, stock_balan
     rows = len(df_site_bruto)
     columns = len(df_site_bruto.columns)
     title = 'Saldos capturados e salvos' if stock_balance_only else 'Produtos capturados e salvos'
+    next_step = _next_step_after_site_capture()
+    next_label = _next_step_label()
     st.success(f'{title}: {rows} produto(s), {columns} coluna(s).')
     notice = st.session_state.get(f'blingsmartscan_notice_{operation}') or st.session_state.get('blingsmartscan_last_notice') or {}
     if isinstance(notice, dict) and notice:
@@ -197,11 +210,11 @@ def _render_ready_state(operation: str, df_site_bruto: pd.DataFrame, stock_balan
                 st.metric('Qualidade da captura', f"{notice.get('score')}/100")
             for warning in list(notice.get('warnings') or [])[:5]:
                 st.warning(str(warning))
-    st.caption('O resultado já está salvo. Para evitar travamento no celular, o avanço agora é manual.')
-    if st.button('Continuar para o próximo passo', use_container_width=True, key=f'continuar_pos_smartscan_{operation}'):
+    st.caption(f'O resultado já está salvo em Origem dos dados. Toque abaixo para seguir para {next_label}.')
+    if st.button(f'Continuar para {next_label}', use_container_width=True, key=f'continuar_pos_smartscan_{operation}'):
         _clear_smartscan_manual_flags()
-        add_audit_event('site_panel_manual_continue_clicked', area='SITE', step=STEP_MAPEAMENTO, status='OK', details={'operation': operation, 'rows': rows, 'columns': columns, 'stock_balance_only': stock_balance_only, 'responsible_file': RESPONSIBLE_FILE})
-        safe_rerun('site_capture_manual_continue', target_step=STEP_MAPEAMENTO)
+        add_audit_event('site_panel_manual_continue_clicked', area='SITE', step=next_step, status='OK', details={'operation': operation, 'rows': rows, 'columns': columns, 'stock_balance_only': stock_balance_only, 'target_step': next_step, 'responsible_file': RESPONSIBLE_FILE})
+        safe_rerun('site_capture_manual_continue', target_step=next_step)
 
 
 def _render_universal_fallback(
@@ -246,7 +259,7 @@ def render_site_panel() -> None:
             area='SITE',
             step='entrada',
             status='OK',
-            details={'operation': operation, 'rows': len(df_site_bruto), 'columns': len(df_site_bruto.columns), 'stock_balance_only': stock_balance_only, 'manual_continue': True, 'responsible_file': RESPONSIBLE_FILE},
+            details={'operation': operation, 'rows': len(df_site_bruto), 'columns': len(df_site_bruto.columns), 'stock_balance_only': stock_balance_only, 'manual_continue': True, 'target_step': _next_step_after_site_capture(), 'responsible_file': RESPONSIBLE_FILE},
         )
         _render_ready_state(operation, df_site_bruto, stock_balance_only)
         return
