@@ -12,6 +12,8 @@ RESPONSIBLE_FILE = 'bling_app_zero/ui/site_panel_state.py'
 UNIVERSAL_OPERATION = 'universal'
 UNIVERSAL_ALIASES = {'universal', 'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}
 SITE_CAPTURE_STALE_SECONDS = 90
+SITE_CAPTURE_NO_HEARTBEAT_SECONDS = 45
+PROGRESS_HEARTBEAT_KEY = 'site_capture_heartbeat_at'
 LEGACY_AUTH_KEYS = (
     'guided_login_confirmed_logged_in',
     'guided_login_capture_config',
@@ -148,10 +150,13 @@ def set_capture_state(*, operation: str, running: bool, finished: bool, error: s
     st.session_state['site_capture_result_ready'] = bool(finished and not error and rows > 0)
     st.session_state['site_capture_rows'] = int(rows or 0)
     st.session_state['site_capture_columns'] = int(columns or 0)
+    if running:
+        st.session_state[PROGRESS_HEARTBEAT_KEY] = time.time()
 
 
 def clear_stuck_capture(operation: str) -> None:
     clear_site_df(operation, 'captura_travada_limpa_manualmente')
+    st.session_state.pop(PROGRESS_HEARTBEAT_KEY, None)
     set_capture_state(
         operation=operation,
         running=False,
@@ -165,6 +170,14 @@ def clear_stuck_capture(operation: str) -> None:
         status='AVISO',
         details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE},
     )
+
+
+def _seconds_since_state(key: str) -> float:
+    try:
+        value = float(st.session_state.get(key) or 0.0)
+    except Exception:
+        value = 0.0
+    return time.time() - value if value > 0 else 999999.0
 
 
 def recover_stale_capture_if_needed(operation: str, *, max_age_seconds: int = SITE_CAPTURE_STALE_SECONDS) -> bool:
@@ -182,17 +195,28 @@ def recover_stale_capture_if_needed(operation: str, *, max_age_seconds: int = SI
     except Exception:
         started_at = 0.0
     age = time.time() - started_at if started_at > 0 else max_age_seconds + 1
+    heartbeat_age = _seconds_since_state(PROGRESS_HEARTBEAT_KEY)
     has_result = isinstance(get_site_df(operation), pd.DataFrame)
+    rows = int(st.session_state.get('site_capture_rows') or 0)
+    has_progress_log = bool(st.session_state.get('site_progress_log') or [])
 
-    if has_result or age < max_age_seconds:
+    if has_result:
+        return False
+
+    stale_by_age = age >= max_age_seconds
+    stale_by_heartbeat = heartbeat_age >= SITE_CAPTURE_NO_HEARTBEAT_SECONDS and rows <= 0
+    stale_without_log = age >= SITE_CAPTURE_NO_HEARTBEAT_SECONDS and not has_progress_log and rows <= 0
+
+    if not (stale_by_age or stale_by_heartbeat or stale_without_log):
         return False
 
     clear_site_df(operation, 'captura_travada_auto_timeout')
+    st.session_state.pop(PROGRESS_HEARTBEAT_KEY, None)
     set_capture_state(
         operation=operation,
         running=False,
         finished=False,
-        error='A captura anterior demorou demais ou foi interrompida. Execute novamente com captura profunda controlada ou cole links de categoria/produto.',
+        error='A captura anterior ficou sem progresso recente ou foi interrompida. Execute novamente com menos links ou use a compatibilidade universal.',
     )
     add_audit_event(
         'site_capture_unstuck_auto_timeout',
@@ -202,7 +226,11 @@ def recover_stale_capture_if_needed(operation: str, *, max_age_seconds: int = SI
         details={
             'operation': operation,
             'age_seconds': round(age, 2),
+            'heartbeat_age_seconds': round(heartbeat_age, 2),
             'max_age_seconds': max_age_seconds,
+            'no_heartbeat_seconds': SITE_CAPTURE_NO_HEARTBEAT_SECONDS,
+            'has_progress_log': has_progress_log,
+            'rows': rows,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
