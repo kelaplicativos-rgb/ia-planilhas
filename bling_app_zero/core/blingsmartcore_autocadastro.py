@@ -8,12 +8,13 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.operation_contract import OP_CADASTRO
-from bling_app_zero.ui.cadastro_wizard_state import CADASTRO_ORIGEM_KEY, CADASTRO_ORIGEM_PRICED_KEY
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/blingsmartcore_autocadastro.py'
 AUTOCADASTRO_SOURCE_KEY = 'blingsmartcore_autocadastro_source_df'
 AUTOCADASTRO_SIGNATURE_KEY = 'blingsmartcore_autocadastro_signature'
 AUTOCADASTRO_REASON_KEY = 'blingsmartcore_autocadastro_reason'
+CADASTRO_ORIGEM_KEY = 'cadastro_wizard_df_origem'
+CADASTRO_ORIGEM_PRICED_KEY = 'cadastro_wizard_df_para_mapear'
 
 
 def _line_indices_from_errors(errors: list[str] | tuple[str, ...]) -> set[int]:
@@ -61,8 +62,6 @@ def build_not_sent_dataframe(download_df: pd.DataFrame, result_payload: dict[str
     candidate_indices = sorted(index for index in (not_found_indices | error_indices) if 0 <= index < len(download_df))
 
     if not candidate_indices and (int(result_payload.get('failed') or 0) > 0 or int(result_payload.get('skipped') or 0) > 0):
-        # Fallback seguro: se a API informou falhas, mas não devolveu linha específica,
-        # preserva a base inteira para conferência em vez de perder rastreabilidade.
         candidate_indices = list(range(len(download_df)))
 
     if not candidate_indices:
