@@ -17,6 +17,7 @@ from bling_app_zero.ui.flow_context import (
     is_bling_csv_context as _is_bling_csv_context,
     is_universal_context as _is_universal_context,
 )
+from bling_app_zero.ui.flow_guard import render_flow_blocker
 from bling_app_zero.ui.home_models import (
     get_home_cadastro_model,
     get_home_estoque_model,
@@ -214,17 +215,37 @@ def render_cadastro_entrada_step() -> None:
             preview_df('Dados importados', df_origem)
         _auto_advance_after_source_loaded(df_origem, df_modelo)
     elif site_origin:
-        st.warning('Busque os dados no site para continuar.')
+        render_flow_blocker(
+            'Busque os dados no site para liberar a próxima etapa.',
+            title='Entrada bloqueada',
+            action_label='Continuar',
+        )
     elif getattr(upload, 'attachments', None):
-        st.warning('Arquivo recebido, mas ainda não encontrei uma tabela válida.')
+        render_flow_blocker(
+            'Arquivo recebido, mas ainda não encontrei uma tabela válida. Confira se a planilha possui cabeçalho e linhas de produto.',
+            title='Entrada bloqueada',
+            action_label='Continuar',
+        )
     else:
-        st.warning('Envie os dados para continuar.')
+        render_flow_blocker(
+            'Envie uma planilha válida ou carregue uma origem do site para continuar.',
+            title='Entrada bloqueada',
+            action_label='Continuar',
+        )
 
     if not valid_model(df_modelo):
         if _is_api_context():
-            st.error('Contrato interno da API não foi carregado. Volte ao início do caminho Bling API e selecione o envio direto.')
+            render_flow_blocker(
+                'Contrato interno da API não foi carregado. Volte ao início do caminho Bling API e selecione o envio direto.',
+                title='Modelo bloqueado',
+                action_label='Continuar',
+            )
         else:
-            st.error('Modelo de destino ausente. Volte na primeira etapa e envie o modelo que será preenchido no final.')
+            render_flow_blocker(
+                'Modelo de destino ausente. Volte na primeira etapa e envie o modelo que será preenchido no final.',
+                title='Modelo bloqueado',
+                action_label='Continuar',
+            )
 
 
 __all__ = [
