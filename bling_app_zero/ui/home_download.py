@@ -327,8 +327,15 @@ def render_download(df_final: pd.DataFrame, operation: str, key: str = 'final') 
         st.success(f'Contrato aplicado: {operation_badge(operation)} · {len(model_columns)} coluna(s).')
     if _is_api_context():
         _render_direct_bling_send(download_df, operation, key, signature, rules_sig)
-        with st.expander('Backup opcional em CSV', expanded=False):
-            st.download_button(download_label(), data=csv_bytes, file_name=file_name, mime='text/csv; charset=utf-8', use_container_width=True, key=f'download_csv_backup_{key}_{signature}_{rules_sig}')
+        st.caption('Backup opcional em CSV')
+        st.download_button(
+            download_label(),
+            data=csv_bytes,
+            file_name=file_name,
+            mime='text/csv; charset=utf-8',
+            use_container_width=True,
+            key=f'download_csv_backup_{key}_{signature}_{rules_sig}',
+        )
         return
     st.download_button(download_label(), data=csv_bytes, file_name=file_name, mime='text/csv; charset=utf-8', use_container_width=True, key=f'download_csv_{key}_{signature}_{rules_sig}', on_click=after_final_download, args=(operation, signature, rules_sig))
     _render_optional_template_download(download_df, key, signature, rules_sig)
