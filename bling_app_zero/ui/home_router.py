@@ -3,7 +3,6 @@ from __future__ import annotations
 from html import escape
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_oauth import build_authorization_url, connection_status
@@ -24,7 +23,7 @@ ACTIVE_FLOW_KEY = 'home_active_operation_v2'
 HOME_ALLOW_FLOW_KEY = 'home_allow_operation_v2_session'
 HOME_BOOT_LOCK_KEY = 'home_boot_landing_rendered_once'
 HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
-BLING_AUTH_REDIRECT_KEY = 'home_bling_auth_redirect_url'
+BLING_AUTH_READY_KEY = 'home_bling_auth_ready_url'
 FLOW_HOME = 'home'
 FLOW_WIZARD = 'wizard_cadastro_estoque'
 
@@ -160,40 +159,29 @@ def _requested_flow() -> str:
     return FLOW_HOME
 
 
-def _render_pending_bling_redirect() -> None:
-    url = str(st.session_state.get(BLING_AUTH_REDIRECT_KEY) or '').strip()
-    if not url:
-        return
-    safe_url = escape(url, quote=True)
-    st.info('Abrindo a tela oficial do Bling para autorização...')
-    components.html(
-        f'''
-        <script>
-        const target = "{safe_url}";
-        try {{ window.top.location.href = target; }}
-        catch (e1) {{
-          try {{ window.parent.location.href = target; }}
-          catch (e2) {{ window.location.href = target; }}
-        }}
-        </script>
-        <meta http-equiv="refresh" content="0; url={safe_url}">
-        <div style="font-family:sans-serif;padding:12px;">
-            Abrindo Bling... <a href="{safe_url}" target="_top">toque aqui se não abrir</a>
-        </div>
-        ''',
-        height=90,
-    )
-
-
-def _request_bling_redirect(auth_url: str) -> None:
-    st.session_state[BLING_AUTH_REDIRECT_KEY] = str(auth_url or '').strip()
+def _request_bling_link(auth_url: str) -> None:
+    st.session_state[BLING_AUTH_READY_KEY] = str(auth_url or '').strip()
     add_audit_event(
-        'home_router_bling_auth_redirect_requested',
+        'home_router_bling_auth_link_requested',
         area='HOME',
         status='OK',
-        details={'responsible_file': RESPONSIBLE_FILE, 'connection_mode': 'button_then_same_tab_redirect'},
+        details={'responsible_file': RESPONSIBLE_FILE, 'connection_mode': 'button_then_native_link_button'},
     )
     st.rerun()
+
+
+def _render_open_bling_link(url: str) -> None:
+    safe_url = escape(str(url or '').strip(), quote=True)
+    if not safe_url:
+        return
+    st.success('Link oficial do Bling pronto. Toque abaixo para abrir a autorização.')
+    try:
+        st.link_button('Abrir tela oficial do Bling', safe_url, use_container_width=True)
+    except Exception:
+        st.markdown(
+            f'<a href="{safe_url}" target="_blank" rel="noopener noreferrer" style="display:block;text-align:center;text-decoration:none;border:1px solid #d0d5dd;border-radius:14px;padding:0.85rem 1rem;font-weight:700;color:#5f6b7a;background:#ffffff;">Abrir tela oficial do Bling</a>',
+            unsafe_allow_html=True,
+        )
 
 
 def _render_bling_connection(auth_url: str) -> None:
@@ -202,16 +190,20 @@ def _render_bling_connection(auth_url: str) -> None:
         st.warning('Não consegui gerar a autorização do Bling agora.')
         return
 
-    if st.button('Conectar ao Bling', use_container_width=True, key='home_bling_connect_redirect_button'):
-        _request_bling_redirect(url)
+    ready_url = str(st.session_state.get(BLING_AUTH_READY_KEY) or '').strip()
+    if ready_url:
+        _render_open_bling_link(ready_url)
+    else:
+        if st.button('Conectar ao Bling', use_container_width=True, key='home_bling_prepare_link_button'):
+            _request_bling_link(url)
 
     with st.expander('Problemas para abrir?', expanded=False):
-        st.caption('Use apenas se o redirecionamento automático não abrir no seu navegador.')
-        st.text_area('Link alternativo de autenticação', value=url, height=100, key='bling_auth_url_fallback_hidden')
+        st.caption('Use apenas se o botão “Abrir tela oficial do Bling” não abrir no seu navegador.')
+        st.text_area('Link alternativo de autenticação', value=ready_url or url, height=100, key='bling_auth_url_fallback_hidden')
 
     if st.button('Já autorizei no Bling / verificar conexão', use_container_width=True, key='home_bling_verify_connection'):
         if bool(connection_status().get('connected')):
-            st.session_state.pop(BLING_AUTH_REDIRECT_KEY, None)
+            st.session_state.pop(BLING_AUTH_READY_KEY, None)
             _start_wizard_context(CONTEXT_BLING_API)
             safe_rerun('home_bling_verify_connected')
         else:
@@ -221,12 +213,11 @@ def _render_bling_connection(auth_url: str) -> None:
         'home_router_bling_connection_visible',
         area='HOME',
         status='OK',
-        details={'responsible_file': RESPONSIBLE_FILE, 'connection_mode': 'button_redirect_with_hidden_fallback'},
+        details={'responsible_file': RESPONSIBLE_FILE, 'connection_mode': 'native_link_no_iframe_hidden_fallback'},
     )
 
 
 def _render_light_entry_home() -> None:
-    _render_pending_bling_redirect()
     connected = bool(connection_status().get('connected'))
     st.markdown('<div class="bling-home-section-title">Começar</div>', unsafe_allow_html=True)
     st.markdown(
@@ -237,7 +228,7 @@ def _render_light_entry_home() -> None:
     with st.container(border=True):
         st.markdown('#### Conectar ao Bling')
         if connected:
-            st.session_state.pop(BLING_AUTH_REDIRECT_KEY, None)
+            st.session_state.pop(BLING_AUTH_READY_KEY, None)
             st.success('Bling já conectado.')
             if st.button('Continuar com Bling conectado', use_container_width=True, key='home_light_continue_connected_bling'):
                 _start_wizard_context(CONTEXT_BLING_API)
@@ -245,7 +236,7 @@ def _render_light_entry_home() -> None:
         else:
             st.caption('Você será levado para a tela oficial do Bling para autorizar o acesso.')
             try:
-                auth_url = build_authorization_url({'return_to': 'start', 'source_step': 'home_button_redirect_connection'})
+                auth_url = build_authorization_url({'return_to': 'start', 'source_step': 'home_native_link_connection'})
             except Exception as exc:
                 auth_url = ''
                 add_audit_event(
@@ -273,7 +264,7 @@ def _render_light_entry_home() -> None:
         details={
             'responsible_file': RESPONSIBLE_FILE,
             'connected': connected,
-            'home_order': 'button_redirect_bling_or_continue_without',
+            'home_order': 'native_link_bling_or_continue_without',
             'lazy_flow_entry': True,
         },
     )
@@ -286,9 +277,9 @@ def render_professional_home() -> None:
         status='OK',
         details={
             'responsible_file': RESPONSIBLE_FILE,
-            'home_order': 'button_redirect_bling_or_continue_without',
-            'style': 'clean_connection_entry',
-            'bling_oauth_target': 'button_same_tab_redirect_hidden_fallback',
+            'home_order': 'native_link_bling_or_continue_without',
+            'style': 'clean_connection_entry_no_iframe',
+            'bling_oauth_target': 'native_link_button_hidden_fallback',
             'legacy_routes_removed': True,
             'lazy_flow_entry': True,
         },
