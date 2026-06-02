@@ -26,3 +26,19 @@ def test_row_count_protection_uses_flow_blocker() -> None:
     assert 'from bling_app_zero.ui.flow_guard import render_flow_blocker' in source
     assert 'Proteção ativada' in source
     assert 'perda silenciosa de produtos' in source
+
+
+def test_cadastro_preview_missing_result_uses_flow_blocker() -> None:
+    source = Path('bling_app_zero/ui/cadastro_preview_step.py').read_text(encoding='utf-8')
+
+    assert 'from bling_app_zero.ui.flow_guard import render_flow_blocker' in source
+    assert 'Prévia final bloqueada' in source
+    assert 'A prévia final ainda não foi gerada' in source
+
+
+def test_estoque_preview_missing_result_uses_flow_blocker() -> None:
+    source = Path('bling_app_zero/ui/estoque_preview_step.py').read_text(encoding='utf-8')
+
+    assert 'from bling_app_zero.ui.flow_guard import render_flow_blocker' in source
+    assert 'Preview de estoque bloqueado' in source
+    assert 'O preview de estoque ainda não foi gerado' in source
