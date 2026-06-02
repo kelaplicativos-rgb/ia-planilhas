@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.credits import check_mapping_credit, consume_mapping_credit, credits_enabled
+from bling_app_zero.ui.flow_guard import render_flow_blocker
 from bling_app_zero.ui.home_shared import df_signature
 from bling_app_zero.ui.home_wizard_constants import STEP_REGRAS, WIZARD_STEP_KEY
 from bling_app_zero.ui.home_wizard_scroll import set_scroll_target
@@ -75,14 +76,13 @@ def _missing_required_targets(mapping: dict[str, str], target_columns: list[str]
     return missing
 
 
-def _render_blocking_list(title: str, items: list[str]) -> None:
-    if not items:
-        return
+def _format_blocking_items(items: list[str]) -> str:
     visible = items[:BLINGFIX_REQUIRED_MAX_LIST]
-    st.warning(f'{title}: ' + ', '.join(visible))
+    suffix = ''
     hidden_count = len(items) - len(visible)
     if hidden_count > 0:
-        st.caption(f'Mais {hidden_count} item(ns) oculto(s). Ajuste os campos sinalizados para continuar.')
+        suffix = f' e mais {hidden_count} item(ns)'
+    return ', '.join(visible) + suffix
 
 
 def _mapping_blockers(mapping: dict[str, str], target_columns: list[str]) -> list[str]:
@@ -91,10 +91,18 @@ def _mapping_blockers(mapping: dict[str, str], target_columns: list[str]) -> lis
     duplicated = _duplicated_source_columns(mapping)
     if missing:
         blockers.append('required')
-        _render_blocking_list('Campos obrigatórios sem ligação', missing)
+        render_flow_blocker(
+            'Campos obrigatórios sem ligação: ' + _format_blocking_items(missing),
+            title='Mapeamento bloqueado',
+            action_label='Confirmar mapeamento',
+        )
     if duplicated:
         blockers.append('duplicated')
-        _render_blocking_list('Colunas de origem repetidas', duplicated)
+        render_flow_blocker(
+            'Colunas de origem repetidas: ' + _format_blocking_items(duplicated),
+            title='Mapeamento bloqueado',
+            action_label='Confirmar mapeamento',
+        )
         st.caption('Use a mesma coluna apenas quando for realmente necessário com valor fixo/manual. Para evitar erro no CSV final, a confirmação fica bloqueada.')
     return blockers
 
@@ -106,8 +114,11 @@ def _render_credit_status(signature: str) -> bool:
     if check.allowed:
         st.info(f'💳 {check.message} Saldo atual: {check.balance} crédito(s).')
         return True
-    st.error(f'💳 {check.message} Saldo atual: {check.balance} crédito(s).')
-    st.caption('Adicione créditos no sidebar para liberar a confirmação desta planilha mapeada.')
+    render_flow_blocker(
+        f'💳 {check.message} Saldo atual: {check.balance} crédito(s). Adicione créditos no sidebar para liberar a confirmação desta planilha mapeada.',
+        title='Crédito insuficiente',
+        action_label='Confirmar mapeamento',
+    )
     return False
 
 
@@ -125,14 +136,20 @@ def render_confirm_mapping_button(
 
     blockers = _mapping_blockers(mapping, target_columns)
     if blockers:
-        st.info('Revise os campos sinalizados. A confirmação será liberada quando o mapeamento estiver válido.')
         return
 
     has_credit = _render_credit_status(signature)
+    if not has_credit:
+        return
+
     st.info('Revise os campos necessários e clique em Confirmar mapeamento para liberar a revisão final.')
     if st.button('Confirmar mapeamento', use_container_width=True, key=f'{mapping_key}_confirm', disabled=credits_enabled() and not has_credit):
         if not consume_mapping_credit(signature, operation='cadastro'):
-            st.error('Créditos insuficientes para confirmar esta planilha mapeada.')
+            render_flow_blocker(
+                'Créditos insuficientes para confirmar esta planilha mapeada.',
+                title='Crédito insuficiente',
+                action_label='Confirmar mapeamento',
+            )
             return
         st.session_state[CADASTRO_MAPPING_CONFIRMED_KEY] = True
         st.session_state[CADASTRO_MAPPING_SIGNATURE_KEY] = signature
