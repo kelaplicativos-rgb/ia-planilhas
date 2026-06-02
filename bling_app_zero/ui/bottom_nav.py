@@ -26,39 +26,15 @@ def _go_home() -> None:
     _clear_navigation_params()
 
 
-def _set_wizard(step: str | None = None) -> None:
-    request_scroll_top()
-    st.session_state[ACTIVE_FLOW_KEY] = FLOW_WIZARD
-    st.session_state[HOME_ALLOW_FLOW_KEY] = True
-    st.session_state['home_single_page_flow_active'] = True
-    if step:
-        st.session_state['bling_wizard_step'] = step
-    try:
-        st.query_params['operation_v2'] = FLOW_WIZARD
-        if step:
-            st.query_params['step'] = step
-        else:
-            st.query_params.pop('step', None)
-        for key in ('flow', 'origem', 'operacao', 'operation'):
-            st.query_params.pop(key, None)
-    except Exception:
-        pass
-
-
 def render_bottom_nav() -> None:
+    active_flow = str(st.session_state.get(ACTIVE_FLOW_KEY) or '').strip()
+    if active_flow in {'', FLOW_HOME}:
+        return
+
     st.markdown('---')
-    st.caption('Menu rápido do sistema')
-    col1, col2 = st.columns(2)
-
-    with col1:
-        if st.button('Home', key='bottom_nav_home', use_container_width=True):
-            _go_home()
-            st.rerun()
-
-    with col2:
-        if st.button('Fluxo Universal', key='bottom_nav_universal', use_container_width=True):
-            _set_wizard('modelo')
-            st.rerun()
+    if st.button('⬅️ Voltar para o início', key='bottom_nav_home', use_container_width=True):
+        _go_home()
+        st.rerun()
 
 
 __all__ = ['render_bottom_nav']
