@@ -185,9 +185,21 @@ def _render_optional_template_download(download_df: pd.DataFrame, key: str, sign
 
 
 def _render_payload_preview(download_df: pd.DataFrame, operation: str) -> None:
-    payload_preview = preview_payloads(download_df.copy(), operation, limit=5)
+    preview_limit = 5
+    preview_source = download_df.head(preview_limit).copy().fillna('')
+    add_audit_event(
+        'bling_payload_preview_limited_on_ui',
+        area='BLING_ENVIO',
+        status='OK',
+        details={
+            'source_rows': len(download_df),
+            'preview_rows': len(preview_source),
+            'responsible_file': 'bling_app_zero/ui/home_download.py',
+        },
+    )
+    payload_preview = preview_payloads(preview_source, operation, limit=preview_limit)
     if not payload_preview:
-        st.warning('Não consegui montar prévia de payload para envio. Confira o mapeamento dos campos obrigatórios.')
+        st.warning('Não consegui montar prévia de payload para envio. Confira os campos obrigatórios.')
         return
     ok_count = sum(1 for item in payload_preview if item.get('status') == 'OK')
     ignored_count = len(payload_preview) - ok_count
@@ -196,6 +208,7 @@ def _render_payload_preview(download_df: pd.DataFrame, operation: str) -> None:
     if ignored_count:
         st.warning(f'{ignored_count} linha(s) da prévia seriam ignoradas por falta de campo obrigatório.')
     st.markdown('##### Prévia real do payload que será enviado ao Bling')
+    st.caption('Prévia limitada a 5 linhas para não travar o celular. O envio completo só roda depois do botão.')
     for index, item in enumerate(payload_preview, start=1):
         st.markdown(f'**Linha {index} · {item.get("status", "")}**')
         motivo = str(item.get('motivo') or '').strip()
