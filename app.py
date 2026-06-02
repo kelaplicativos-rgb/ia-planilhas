@@ -11,6 +11,7 @@ from bling_app_zero.ui.alerts import enforce_attention_alert_policy
 from bling_app_zero.ui.home import render_home
 from bling_app_zero.ui.layout import inject_streamlit_toolbar_fix
 from bling_app_zero.ui.sidebar_tools import render_sidebar_tools
+from bling_app_zero.ui.startup_guard import ensure_app_ready
 
 
 def main() -> None:
@@ -19,9 +20,12 @@ def main() -> None:
     inject_streamlit_toolbar_fix()
     clear_cache_once_per_version(APP_VERSION)
 
+    if not ensure_app_ready():
+        return
+
     restore_mapping_widget_state_from_snapshot()
     process_oauth_callback()
-    add_audit_event('app_started', area='APP', details={'version': APP_VERSION, 'mode': 'fast_start_no_debug_boot'})
+    add_audit_event('app_started', area='APP', details={'version': APP_VERSION, 'mode': 'session_guarded_start'})
 
     try:
         render_sidebar_tools()
