@@ -22,7 +22,7 @@ DEFAULT_API_BASE_URL = 'https://www.bling.com.br/Api/v3'
 API_STOCK_DEPOSIT_KEY = 'bling_api_stock_deposit_name'
 API_STOCK_DEPOSIT_ID_KEY = 'bling_api_stock_deposit_id'
 API_STOCK_DEPOSIT_OPTIONS_KEY = 'bling_api_stock_deposit_options'
-PRODUCT_RESOLUTION_CACHE_KEY = 'bling_safe_product_resolution_cache_v4'
+PRODUCT_RESOLUTION_CACHE_KEY = 'bling_safe_product_resolution_cache_v7'
 PRODUCT_LOOKUP_TIMEOUT = 12
 DEPOSIT_LOOKUP_TIMEOUT = 15
 SEND_TIMEOUT = 30
@@ -103,6 +103,14 @@ def _number_value(value: object) -> float | None:
         return float(text)
     except Exception:
         return None
+
+
+def _api_number(value: float) -> int | float:
+    try:
+        number = float(value)
+        return int(number) if number.is_integer() else number
+    except Exception:
+        return value
 
 
 def _unique_non_empty(values: Iterable[object]) -> list[str]:
@@ -263,17 +271,20 @@ def _resolve_deposit_id(token: dict[str, Any], preferred_name: str = '') -> str:
 
 
 def _stock_payload(product_id: str, deposit_id: str, quantity: float) -> dict[str, Any]:
-    stock_field = (_secret('stock_quantity_field', 'saldo') or 'saldo').strip()
-    if stock_field not in {'saldo', 'quantidade'}:
-        stock_field = 'saldo'
-    return {'produto': {'id': str(product_id)}, 'deposito': {'id': str(deposit_id)}, stock_field: quantity}
+    return {
+        'produto': {'id': str(product_id)},
+        'deposito': {'id': str(deposit_id)},
+        'operacao': 'B',
+        'quantidade': _api_number(quantity),
+    }
 
 
 def _stock_endpoint_attempts(product_id: str) -> list[tuple[str, str]]:
-    configured_path = _secret('stock_write_path', '/estoques/saldos') or '/estoques/saldos'
+    configured_path = _secret('stock_write_path', '/estoques') or '/estoques'
     configured_method = (_secret('stock_update_method', 'POST') or 'POST').upper()
     raw = [
         (configured_method, configured_path),
+        ('POST', '/estoques'),
         ('POST', '/estoques/saldos'),
         ('PUT', f'/estoques/saldos/{product_id}'),
         ('PATCH', f'/estoques/saldos/{product_id}'),
@@ -397,7 +408,7 @@ def _send_stock_dataframe_to_bling(df: pd.DataFrame, *, limit: int | None = None
             status = getattr(last_response, 'status_code', 'sem resposta')
             preview = str(getattr(last_response, 'text', '') or '')[:180]
             if len(errors) < 8:
-                errors.append(f'Linha {line}: Bling recusou estoque ({status}). Payload limpo: produto.id + deposito.id + {list(payload.keys())[-1]}. {preview}')
+                errors.append(f'Linha {line}: Bling recusou estoque ({status}). Primeiro endpoint tentado: /estoques. {preview}')
             add_audit_event('bling_safe_stock_clean_payload_failed', area='BLING_ENVIO', status='AVISO', details={'line': line, 'product_id': product_id, 'deposit_id': deposit_id, 'quantity': qty, 'payload': payload, 'attempts': attempts[-6:], 'responsible_file': RESPONSIBLE_FILE})
         _emit_progress(progress_callback, {'stage': 'Enviando ao Bling', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
 
