@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
 import pandas as pd
@@ -150,13 +151,38 @@ def _ensure_stock_deposit_ready() -> None:
             add_audit_event('bling_safe_stock_deposit_auto_selected_single', area='BLING_ENVIO', status='OK', details={'deposit_id': item_id, 'deposit_name': item_name, 'responsible_file': RESPONSIBLE_FILE})
 
 
+def _product_not_found_line_numbers(errors: tuple[str, ...]) -> set[int]:
+    lines: set[int] = set()
+    for error in errors:
+        text = str(error or '')
+        low = text.lower()
+        if 'produto não encontrado' not in low and 'produto nao encontrado' not in low:
+            continue
+        match = re.search(r'linha\s+(\d+)', low)
+        if not match:
+            continue
+        try:
+            lines.add(int(match.group(1)))
+        except Exception:
+            pass
+    return lines
+
+
 def _only_product_not_found_indices(result: DirectSendResult) -> tuple[int, ...]:
     if not result.not_found_indices:
         return ()
-    joined_errors = '\n'.join(str(error or '') for error in result.errors).lower()
-    if 'produto não encontrado' in joined_errors or 'produto nao encontrado' in joined_errors:
-        return result.not_found_indices
-    return ()
+    product_lines = _product_not_found_line_numbers(result.errors)
+    if not product_lines:
+        return ()
+    fixed: list[int] = []
+    for index in result.not_found_indices:
+        try:
+            line_number = int(index) + 1
+        except Exception:
+            continue
+        if line_number in product_lines:
+            fixed.append(int(index))
+    return tuple(fixed)
 
 
 def send_dataframe_to_bling(
