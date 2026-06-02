@@ -21,7 +21,6 @@ from bling_app_zero.features_runtime.router import active_contract, feature_need
 from bling_app_zero.flows.site_operation_router import run_site_engine
 from bling_app_zero.ui.home_shared import load_site_pipeline
 from bling_app_zero.ui.home_wizard_constants import STEP_MAPEAMENTO
-from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 from bling_app_zero.ui.site_outputs import save_site_source
 from bling_app_zero.ui.site_panel_state import (
     UNIVERSAL_OPERATION,
@@ -44,7 +43,7 @@ def finish_progress(progress, status_box=None, text: str = 'Captura encerrada.')
     if progress is not None:
         try:
             progress.progress(100, text=text)
-            time.sleep(0.15)
+            time.sleep(0.10)
             progress.empty()
         except Exception:
             pass
@@ -94,8 +93,9 @@ def _smartscan_notice_payload(report, *, rows: int) -> dict[str, object]:
 
 
 def _store_smartscan_notice(operation: str, report, *, rows: int) -> None:
-    st.session_state[f'blingsmartscan_notice_{operation}'] = _smartscan_notice_payload(report, rows=rows)
-    st.session_state['blingsmartscan_last_notice'] = _smartscan_notice_payload(report, rows=rows)
+    payload = _smartscan_notice_payload(report, rows=rows)
+    st.session_state[f'blingsmartscan_notice_{operation}'] = payload
+    st.session_state['blingsmartscan_last_notice'] = payload
 
 
 def prepare_raw_urls_for_capture(
@@ -153,11 +153,6 @@ def prepare_raw_urls_for_capture(
 
 
 def capture_limits_for_operation(operation: str, deep_options: dict[str, int | bool] | None) -> tuple[int, int, bool]:
-    """Define limites seguros por tipo de busca.
-
-    O BLINGSMARTSCAN trabalha em lote técnico: captura o máximo seguro, salva parcial,
-    valida com IA operacional e permite continuar sem derrubar o Streamlit.
-    """
     options = deep_options or {}
     if _is_stock_balance_only(operation, options):
         return (
@@ -194,6 +189,15 @@ def _persist_operation_state(operation: str) -> None:
 
 def _run_current_site_engine(**kwargs) -> pd.DataFrame:
     return run_site_engine(pipeline=load_site_pipeline(), **kwargs)
+
+
+def _mark_manual_continue(operation: str, rows: int, columns: int) -> None:
+    st.session_state['blingsmartscan_manual_continue_required'] = True
+    st.session_state['blingsmartscan_ready_to_continue'] = True
+    st.session_state['blingsmartscan_continue_target_step'] = STEP_MAPEAMENTO
+    st.session_state['blingsmartscan_finished_operation'] = operation
+    st.session_state['blingsmartscan_finished_rows'] = int(rows)
+    st.session_state['blingsmartscan_finished_columns'] = int(columns)
 
 
 def run_site_capture(
@@ -311,6 +315,7 @@ def run_site_capture(
         'stock_full_site_scan': stock_full_site_scan,
         'scan_goal': 'blingsmartscan_saldo_estoque' if stock_balance_only else 'blingsmartscan_cadastro',
         'responsible_file': RESPONSIBLE_FILE,
+        'manual_continue_required': True,
     }
     details.update(deep_details)
     if smart_report is not None:
@@ -319,8 +324,9 @@ def run_site_capture(
 
     if deep_details.get('deep_capture_stopped_by_budget'):
         st.session_state['blingsmartscan_budget_notice'] = f'O BLINGSMARTSCAN encontrou {rows} produto(s) neste lote e parou para evitar queda do sistema. Você pode rodar outro lote depois.'
-    finish_progress(progress_bar, status_box, text='BLINGSMARTSCAN concluído.')
-    safe_rerun('blingsmartscan_finished', target_step=STEP_MAPEAMENTO)
+    _mark_manual_continue(operation, rows, columns)
+    finish_progress(progress_bar, status_box, text='BLINGSMARTSCAN concluído. Resultado salvo.')
+    st.success(f'BLINGSMARTSCAN concluiu e salvou {rows} produto(s). Toque em Continuar para ir ao mapeamento.')
 
 
 __all__ = ['capture_limits_for_operation', 'run_site_capture']
