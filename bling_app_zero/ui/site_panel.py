@@ -4,6 +4,14 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.engines.fast_site_scraper.constants import (
+    FLOW_CAPTURE_MAX_DEPTH,
+    FLOW_CAPTURE_MAX_PAGES,
+    FLOW_CAPTURE_MAX_PRODUCTS,
+    SAFE_CAPTURE_MAX_DEPTH,
+    SAFE_CAPTURE_MAX_PAGES,
+    SAFE_CAPTURE_MAX_PRODUCTS,
+)
 from bling_app_zero.features_runtime.router import active_contract, feature_needs_model
 from bling_app_zero.ui.home_shared import show_contract
 from bling_app_zero.ui.home_wizard_constants import STEP_DOWNLOAD, STEP_ENTRADA, STEP_MAPEAMENTO
@@ -32,12 +40,12 @@ from bling_app_zero.ui.site_panel_state import (
 from bling_app_zero.ui.site_progress import render_site_progress_history
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/site_panel.py'
-SCAN_TOTAL_MAX_PAGES = 1_000_000
-SCAN_TOTAL_MAX_PRODUCTS = 1_000_000
-SCAN_TOTAL_MAX_DEPTH = 5
-STOCK_BALANCE_MAX_PAGES = 1_000_000
-STOCK_BALANCE_MAX_PRODUCTS = 1_000_000
-STOCK_BALANCE_MAX_DEPTH = 5
+SCAN_TOTAL_MAX_PAGES = SAFE_CAPTURE_MAX_PAGES
+SCAN_TOTAL_MAX_PRODUCTS = SAFE_CAPTURE_MAX_PRODUCTS
+SCAN_TOTAL_MAX_DEPTH = SAFE_CAPTURE_MAX_DEPTH
+STOCK_BALANCE_MAX_PAGES = FLOW_CAPTURE_MAX_PAGES
+STOCK_BALANCE_MAX_PRODUCTS = FLOW_CAPTURE_MAX_PRODUCTS
+STOCK_BALANCE_MAX_DEPTH = FLOW_CAPTURE_MAX_DEPTH
 SUPPORTED_SITE_OPERATIONS = {'cadastro', 'estoque', 'atualizacao_preco', UNIVERSAL_OPERATION}
 
 
@@ -105,7 +113,7 @@ def _render_urls_input(operation: str) -> str:
             height=120,
             key=f'urls_site_{operation}',
             placeholder='https://site.com.br\nhttps://site.com.br/categoria\nhttps://site.com.br/produto-1',
-            help='Cole a home, categoria ou links de produtos. Neste modo o sistema varre todos os produtos encontrados, mas extrai somente campos de estoque/saldo para envio ao Bling.',
+            help='Cole a home, categoria ou links de produtos. O sistema varre em lote seguro para evitar queda da sessão no celular.',
         )
 
     return st.text_area(
@@ -128,6 +136,7 @@ def _scan_total_options(operation: str) -> dict[str, int | bool]:
             'scan_total_ui': True,
             'stock_balance_only': True,
             'stock_full_site_scan': True,
+            'budget_seconds': 24,
         }
     return {
         'enabled': True,
@@ -137,6 +146,7 @@ def _scan_total_options(operation: str) -> dict[str, int | bool]:
         'scan_total_ui': True,
         'stock_balance_only': False,
         'stock_full_site_scan': False,
+        'budget_seconds': 24,
     }
 
 
@@ -144,7 +154,7 @@ def _render_scan_total_notice(operation: str) -> None:
     if _is_stock_api_balance_mode(operation):
         st.markdown(
             '<div style="background:#fff3e0;border:1px solid #ffcc80;border-left:6px solid #fb8c00;color:#5d3200;border-radius:12px;padding:12px 14px;margin:8px 0;font-size:0.95rem;">'
-            '📦 <b>Modo saldo de estoque completo:</b> o sistema varre todos os produtos encontrados no site, mas prepara somente ID/código/GTIN, quantidade/saldo e depósito. Não limita a 120 produtos.'
+            '📦 <b>Modo saldo de estoque completo:</b> o sistema varre os produtos encontrados em lote seguro, prepara ID/código/GTIN, quantidade/saldo e depósito, e evita processamento gigante em uma única sessão do celular.'
             '</div>',
             unsafe_allow_html=True,
         )
@@ -160,7 +170,7 @@ def _render_scan_total_notice(operation: str) -> None:
 
 def _render_running_state(operation: str) -> None:
     if _is_stock_api_balance_mode(operation):
-        orange_warning('Busca completa de saldos em andamento. O sistema está localizando todos os produtos do site e mantendo somente os campos de estoque.')
+        orange_warning('Busca de saldos em andamento em modo seguro. O sistema está localizando produtos do site sem sobrecarregar a sessão do celular.')
     else:
         orange_warning('Busca por site em andamento. Acompanhe a barra de progresso e aguarde os dados importados aparecerem.')
     render_site_progress_history()
@@ -284,7 +294,7 @@ def render_site_panel() -> None:
     error = str(st.session_state.get('site_capture_error') or '').strip()
     _render_last_error(error, operation)
 
-    button_label = '🔎 Buscar saldos de todos os produtos' if stock_balance_only else '🚀 Buscar produtos agora'
+    button_label = '🔎 Buscar saldos em modo seguro' if stock_balance_only else '🚀 Buscar produtos agora'
     needs_model = feature_needs_model()
     button_disabled = running or not has_urls_value or (needs_model and operation in {UNIVERSAL_OPERATION} and not has_columns(requested_columns))
 
@@ -302,7 +312,7 @@ def render_site_panel() -> None:
             details={
                 'operation': operation,
                 'feature_contract': active_contract().key,
-                'capture_mode': 'stock_balance_full_site_search' if stock_balance_only else 'full_site_search',
+                'capture_mode': 'stock_balance_safe_site_search' if stock_balance_only else 'full_site_search',
                 'max_pages': int(deep_options.get('max_pages') or SCAN_TOTAL_MAX_PAGES),
                 'max_products': int(deep_options.get('max_products') or SCAN_TOTAL_MAX_PRODUCTS),
                 'max_depth': int(deep_options.get('max_depth') or 0),
