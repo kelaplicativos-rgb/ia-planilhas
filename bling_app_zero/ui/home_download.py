@@ -4,9 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
-from bling_app_zero.core.bling_direct_sender_safe import is_direct_send_available, preview_payloads, send_dataframe_to_bling
 from bling_app_zero.core.bling_oauth import connection_status
-from bling_app_zero.core.blingsmartcore_autocadastro import render_autocadastro_panel
 from bling_app_zero.core.exporter import filename_for_operation, to_bling_csv_bytes
 from bling_app_zero.core.operation_contract import (
     OP_ATUALIZACAO_PRECO,
@@ -24,6 +22,7 @@ from bling_app_zero.core.template_download_exporter import (
     output_name_for_template,
 )
 from bling_app_zero.core.validators import validate_final_df
+from bling_app_zero.ui.bling_api_batch_panel import render_bling_api_batch_panel
 from bling_app_zero.ui.flow_context import (
     entry_context as _entry_context,
     is_bling_api_context as _is_api_context,
@@ -41,15 +40,7 @@ FINAL_DOWNLOAD_SIGNATURE_KEY = 'final_download_signature'
 FINAL_DOWNLOAD_RULES_SIGNATURE_KEY = 'final_download_rules_signature'
 FINAL_DOWNLOAD_OPERATION_KEY = 'final_download_operation'
 FINAL_DOWNLOAD_WIDGET_KEY = 'final_download_widget_key'
-DIRECT_SEND_RESULT_STATE_KEY = 'bling_direct_send_last_result_v3'
 PRESERVED_DOWNLOAD_OPERATIONS = {OP_CADASTRO, OP_ESTOQUE, OP_UNIVERSAL, OP_ATUALIZACAO_PRECO}
-
-DIRECT_SEND_TEXT = {
-    OP_CADASTRO: 'Cadastrar produtos no Bling',
-    OP_ESTOQUE: 'Atualizar estoque no Bling',
-    OP_ATUALIZACAO_PRECO: 'Atualizar preços no Bling',
-    OP_UNIVERSAL: 'Envio direto ao Bling',
-}
 
 
 def df_signature(df: pd.DataFrame) -> str:
@@ -186,183 +177,11 @@ def _render_optional_template_download(download_df: pd.DataFrame, key: str, sign
     )
 
 
-def _render_payload_preview(download_df: pd.DataFrame, operation: str) -> None:
-    preview_limit = 5
-    preview_source = download_df.head(preview_limit).copy().fillna('')
-    add_audit_event(
-        'bling_payload_preview_limited_on_ui',
-        area='BLING_ENVIO',
-        status='OK',
-        details={
-            'source_rows': len(download_df),
-            'preview_rows': len(preview_source),
-            'responsible_file': 'bling_app_zero/ui/home_download.py',
-        },
-    )
-    payload_preview = preview_payloads(preview_source, operation, limit=preview_limit)
-    if not payload_preview:
-        st.warning('Não consegui montar prévia de payload para envio. Confira os campos obrigatórios.')
-        return
-    ok_count = sum(1 for item in payload_preview if item.get('status') == 'OK')
-    ignored_count = len(payload_preview) - ok_count
-    if ok_count:
-        st.success(f'Payload pronto para prévia: {ok_count} linha(s) válida(s).')
-    if ignored_count:
-        st.warning(f'{ignored_count} linha(s) da prévia seriam ignoradas por falta de campo obrigatório.')
-    st.markdown('##### Prévia real do payload que será enviado ao Bling')
-    st.caption('Prévia limitada a 5 linhas para não travar o celular. O envio completo só roda depois do botão.')
-    for index, item in enumerate(payload_preview, start=1):
-        st.markdown(f'**Linha {index} · {item.get("status", "")}**')
-        motivo = str(item.get('motivo') or '').strip()
-        if motivo:
-            st.caption(motivo)
-        st.json(item.get('payload') or {})
-
-
-def _render_not_found_download(download_df: pd.DataFrame, not_found_indices: tuple[int, ...], key: str, signature: str, rules_sig: str) -> None:
-    valid_indices = [idx for idx in not_found_indices if idx in download_df.index]
-    if not valid_indices:
-        return
-    missing_df = download_df.loc[valid_indices].copy().fillna('')
-    if missing_df.empty:
-        return
-    missing_df.insert(0, 'motivo_bling', 'Produto não encontrado no Bling durante atualização de estoque/preço')
-    missing_df.insert(1, 'acao_recomendada', 'Cadastrar este produto no Bling e depois refazer o fluxo de atualização de estoque')
-    csv_bytes = missing_df.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
-    st.warning(f'{len(missing_df)} produto(s) não encontrado(s) no Bling. Baixe esta lista para cadastro/conferência.')
-    st.download_button(
-        '⬇️ Baixar produtos não encontrados para cadastro',
-        data=csv_bytes,
-        file_name='produtos_nao_encontrados_no_bling.csv',
-        mime='text/csv',
-        use_container_width=True,
-        key=f'download_not_found_bling_{key}_{signature}_{rules_sig}_{len(missing_df)}',
-    )
-    st.markdown('##### Prévia dos produtos não encontrados')
-    st.dataframe(missing_df.head(100), use_container_width=True)
-    add_audit_event(
-        'bling_direct_not_found_download_ready',
-        area='BLING_ENVIO',
-        status='OK',
-        details={'not_found_count': len(missing_df), 'responsible_file': 'bling_app_zero/ui/home_download.py'},
-    )
-
-
-def _render_send_progress(payload: dict, progress_bar, status_box) -> None:
-    total = int(payload.get('total') or 0)
-    processed = int(payload.get('processed') or 0)
-    sent = int(payload.get('sent') or 0)
-    failed = int(payload.get('failed') or 0)
-    skipped = int(payload.get('skipped') or 0)
-    ratio = float(payload.get('progress') or 0.0)
-    percent = max(0, min(100, int(round(ratio * 100))))
-    stage = str(payload.get('stage') or 'Enviando ao Bling')
-    text = f'{stage}: {processed}/{total} produto(s) · enviados {sent} · falhas {failed} · ignorados {skipped}'
-    try:
-        progress_bar.progress(percent, text=text)
-    except Exception:
-        pass
-    try:
-        status_box.caption(text)
-    except Exception:
-        pass
-
-
-def _result_identity(operation: str, key: str, signature: str, rules_sig: str) -> str:
-    return f'{normalize_operation(operation)}::{key}::{signature}::{rules_sig}'
-
-
-def _store_direct_send_result(result, operation: str, key: str, signature: str, rules_sig: str) -> None:
-    st.session_state[DIRECT_SEND_RESULT_STATE_KEY] = {
-        'identity': _result_identity(operation, key, signature, rules_sig),
-        'operation': normalize_operation(operation),
-        'attempted': int(result.attempted),
-        'sent': int(result.sent),
-        'failed': int(result.failed),
-        'skipped': int(result.skipped),
-        'errors': list(result.errors or ()),
-        'not_found_indices': list(result.not_found_indices or ()),
-    }
-
-
-def _render_persisted_direct_send_result(download_df: pd.DataFrame, operation: str, key: str, signature: str, rules_sig: str) -> None:
-    data = st.session_state.get(DIRECT_SEND_RESULT_STATE_KEY)
-    if not isinstance(data, dict):
-        return
-    if data.get('identity') != _result_identity(operation, key, signature, rules_sig):
-        return
-
-    attempted = int(data.get('attempted') or 0)
-    sent = int(data.get('sent') or 0)
-    failed = int(data.get('failed') or 0)
-    skipped = int(data.get('skipped') or 0)
-    errors = [str(error) for error in list(data.get('errors') or [])]
-    not_found_indices = tuple(int(item) for item in list(data.get('not_found_indices') or []) if str(item).lstrip('-').isdigit())
-
-    st.markdown('### Resultado do envio ao Bling')
-    if attempted == 0:
-        st.error('Envio não iniciado: nenhum produto foi processado.')
-    elif failed == 0 and skipped == 0:
-        st.success(f'Envio concluído com sucesso: {sent}/{attempted} produto(s) enviado(s) ao Bling.')
-    elif sent > 0:
-        st.warning(f'Envio parcialmente concluído: {sent}/{attempted} enviado(s), {failed} falha(s), {skipped} ignorado(s).')
-    else:
-        st.error(f'Envio não concluído: 0/{attempted} enviado(s), {failed} falha(s), {skipped} ignorado(s).')
-
-    cols = st.columns(4)
-    cols[0].metric('Processados', attempted)
-    cols[1].metric('Enviados', sent)
-    cols[2].metric('Falhas', failed)
-    cols[3].metric('Ignorados', skipped)
-
-    for error in errors[:8]:
-        st.error(error)
-    _render_not_found_download(download_df, not_found_indices, key, signature, rules_sig)
-    render_autocadastro_panel(download_df, data, key=f'{key}_{signature}_{rules_sig}')
-
-    add_audit_event(
-        'bling_direct_send_result_visible_persisted',
-        area='BLING_ENVIO',
-        status='OK' if failed == 0 and skipped == 0 else 'PARCIAL',
-        details={
-            'operation': operation,
-            'attempted': attempted,
-            'sent': sent,
-            'failed': failed,
-            'skipped': skipped,
-            'responsible_file': 'bling_app_zero/ui/home_download.py',
-        },
-    )
-
-
 def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: str, signature: str, rules_sig: str) -> None:
     operation = normalize_operation(operation)
     if not _is_api_context():
         return
-    st.markdown('### Envio direto ao Bling')
-    status = connection_status()
-    if not status.get('connected'):
-        st.warning('Bling não conectado. Conecte o Bling no início do fluxo para enviar direto pela API.')
-        return
-    if not is_direct_send_available():
-        st.warning('Token do Bling indisponível. Reconecte o Bling e tente novamente.')
-        return
-    _render_payload_preview(download_df, operation)
-    _render_persisted_direct_send_result(download_df, operation, key, signature, rules_sig)
-    button_text = DIRECT_SEND_TEXT.get(operation, 'Enviar ao Bling')
-    if st.button(button_text, use_container_width=True, key=f'direct_send_bling_{key}_{signature}_{rules_sig}'):
-        add_audit_event('bling_direct_send_clicked', area='BLING_ENVIO', status='INICIADO', details={'operation': operation, 'rows': len(download_df), 'responsible_file': 'bling_app_zero/ui/home_download.py'})
-        progress_bar = st.progress(0, text='Enviando ao Bling...')
-        status_box = st.empty()
-        result = send_dataframe_to_bling(download_df, operation, progress_callback=lambda payload: _render_send_progress(payload, progress_bar, status_box))
-        _store_direct_send_result(result, operation, key, signature, rules_sig)
-        try:
-            progress_bar.empty()
-            status_box.empty()
-        except Exception:
-            pass
-        _render_persisted_direct_send_result(download_df, operation, key, signature, rules_sig)
-        add_audit_event('bling_direct_send_result_rendered', area='BLING_ENVIO', status='OK' if result.failed == 0 else 'PARCIAL', details={'operation': operation, 'attempted': result.attempted, 'sent': result.sent, 'failed': result.failed, 'skipped': result.skipped, 'not_found_count': len(result.not_found_indices), 'responsible_file': 'bling_app_zero/ui/home_download.py'})
+    render_bling_api_batch_panel(download_df, operation, key, signature, rules_sig)
 
 
 def _render_api_final(df_final: pd.DataFrame, operation: str, key: str = 'api_final') -> None:
