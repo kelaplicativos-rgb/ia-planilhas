@@ -8,6 +8,7 @@ from bling_app_zero.core.exporter import sanitize_for_bling
 from bling_app_zero.engines.estoque_engine import MissingEstoqueModelError
 from bling_app_zero.ui.estoque_sources import file_name, safe_read_source, source_files_from_upload
 from bling_app_zero.ui.estoque_wizard_state import ESTOQUE_MODELO_KEY, clear_estoque_outputs, set_stock_output
+from bling_app_zero.ui.flow_guard import render_flow_blocker
 from bling_app_zero.ui.home_models import get_home_estoque_model
 from bling_app_zero.ui.home_shared import download_final, load_estoque_pipeline, preview_df, show_mapping
 
@@ -73,18 +74,26 @@ def build_stock_outputs_from_dataframe(
     model = _model_or_internal(df_modelo)
     if not isinstance(df_origem, pd.DataFrame) or df_origem.empty:
         clear_estoque_outputs()
-        st.warning('Nenhuma origem válida de estoque foi encontrada para gerar a planilha.')
+        render_flow_blocker(
+            'Nenhuma origem válida de estoque foi encontrada para gerar a planilha.',
+            title='Estoque bloqueado',
+            action_label='Gerar estoque',
+        )
         return
     run_estoque_pipeline = load_estoque_pipeline()
     try:
         df_final, mapping = run_estoque_pipeline(df_origem, model, deposito=deposito)
     except MissingEstoqueModelError as exc:
         clear_estoque_outputs()
-        st.error(str(exc))
+        render_flow_blocker(str(exc), title='Estoque bloqueado', action_label='Gerar estoque')
         return
     except Exception as exc:
         clear_estoque_outputs()
-        st.error('Não foi possível gerar o estoque. Confira a origem, o modelo e o depósito informado.')
+        render_flow_blocker(
+            'Não foi possível gerar o estoque. Confira a origem, o modelo e o depósito informado.',
+            title='Estoque bloqueado',
+            action_label='Gerar estoque',
+        )
         st.caption(str(exc) or exc.__class__.__name__)
         return
     df_final = _final_preview_df(df_final, model)
@@ -97,7 +106,11 @@ def build_stock_outputs(upload, df_modelo: pd.DataFrame | None, deposito: str) -
     source_files = source_files_from_upload(upload)
     if not source_files:
         clear_estoque_outputs()
-        st.warning('Anexei os arquivos, mas ainda não consegui identificar uma origem válida para o estoque.')
+        render_flow_blocker(
+            'Anexei os arquivos, mas ainda não consegui identificar uma origem válida para o estoque.',
+            title='Estoque bloqueado',
+            action_label='Gerar estoque',
+        )
         return
     run_estoque_pipeline = load_estoque_pipeline()
     results: list[dict[str, object]] = []
@@ -109,11 +122,15 @@ def build_stock_outputs(upload, df_modelo: pd.DataFrame | None, deposito: str) -
             df_final, mapping = run_estoque_pipeline(df_origem, model, deposito=deposito)
         except MissingEstoqueModelError as exc:
             clear_estoque_outputs()
-            st.error(str(exc))
+            render_flow_blocker(str(exc), title='Estoque bloqueado', action_label='Gerar estoque')
             return
         except Exception as exc:
             clear_estoque_outputs()
-            st.error(f'Não foi possível gerar o estoque da origem {index}: {file_name(file)}.')
+            render_flow_blocker(
+                f'Não foi possível gerar o estoque da origem {index}: {file_name(file)}.',
+                title='Estoque bloqueado',
+                action_label='Gerar estoque',
+            )
             st.caption(str(exc) or exc.__class__.__name__)
             return
         df_final = _final_preview_df(df_final, model)
@@ -124,7 +141,11 @@ def build_stock_outputs(upload, df_modelo: pd.DataFrame | None, deposito: str) -
 def render_stock_preview() -> None:
     results = _stock_results()
     if not results:
-        st.warning('Nenhum preview de estoque foi gerado ainda.')
+        render_flow_blocker(
+            'Nenhum preview de estoque foi gerado ainda. Volte ao mapeamento e gere a saída antes de conferir.',
+            title='Preview de estoque bloqueado',
+            action_label='Continuar',
+        )
         return
     st.markdown('#### Conferência final do estoque')
     st.caption('Confira o arquivo final antes do download. Esta tela já reflete as configurações do arquivo final.')
@@ -143,7 +164,11 @@ def render_stock_preview() -> None:
                 preview_results.append({**result, 'df_final': df_preview})
                 preview_df('Arquivo final de estoque', df_preview)
             else:
-                st.warning('Não foi possível montar o preview desta origem.')
+                render_flow_blocker(
+                    'Não foi possível montar o preview desta origem.',
+                    title='Preview de estoque bloqueado',
+                    action_label='Continuar',
+                )
     if preview_results:
         st.session_state['estoque_multi_outputs_preview_rules_applied'] = preview_results
 
@@ -151,7 +176,11 @@ def render_stock_preview() -> None:
 def render_stock_downloads() -> None:
     results = _stock_results()
     if not results:
-        st.warning('Nenhuma planilha de estoque foi gerada ainda.')
+        render_flow_blocker(
+            'Nenhuma planilha de estoque foi gerada ainda. Volte ao mapeamento e gere a saída antes de baixar.',
+            title='Download de estoque bloqueado',
+            action_label='Baixar estoque',
+        )
         return
     st.caption('Baixe somente a planilha final de atualização de estoque. Cada origem válida gera um arquivo separado.')
     _show_model_contract_notice()
@@ -161,7 +190,11 @@ def render_stock_downloads() -> None:
         df_final = result.get('df_final')
         df_modelo = result.get('df_modelo')
         if not isinstance(df_final, pd.DataFrame):
-            st.warning(f'Não foi possível baixar a origem {index}: {name}.')
+            render_flow_blocker(
+                f'Não foi possível baixar a origem {index}: {name}.',
+                title='Download de estoque bloqueado',
+                action_label='Baixar estoque',
+            )
             continue
         df_safe = _final_preview_df(df_final, df_modelo if isinstance(df_modelo, pd.DataFrame) else None)
         st.markdown(f'**Origem {index}**')
