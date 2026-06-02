@@ -47,3 +47,13 @@ def test_stock_site_panel_uses_standard_blockers() -> None:
     assert 'Informe pelo menos um link' in source
     assert 'unsafe_allow_html=True' in source  # card visual da tela ainda usa layout HTML controlado
     assert '<div style=' not in source
+
+
+def test_stock_outputs_use_flow_blockers_for_missing_results() -> None:
+    source = Path('bling_app_zero/ui/estoque_outputs.py').read_text(encoding='utf-8')
+
+    assert 'from bling_app_zero.ui.flow_guard import render_flow_blocker' in source
+    assert 'Nenhuma origem válida de estoque foi encontrada' in source
+    assert 'Preview de estoque bloqueado' in source
+    assert 'Download de estoque bloqueado' in source
+    assert 'Nenhuma planilha de estoque foi gerada ainda' in source
