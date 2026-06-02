@@ -15,7 +15,7 @@ from bling_app_zero.core.bling_direct_sender import (
     send_dataframe_to_bling as _raw_send_dataframe_to_bling,
 )
 from bling_app_zero.core.bling_token_store import load_token
-from bling_app_zero.core.operation_contract import OP_ESTOQUE, normalize_operation
+from bling_app_zero.core.operation_contract import OP_CADASTRO, OP_ESTOQUE, normalize_operation
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_direct_sender_safe.py'
 DEFAULT_API_BASE_URL = 'https://www.bling.com.br/Api/v3'
@@ -30,7 +30,13 @@ SEND_TIMEOUT = 30
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     'id': ('id produto bling', 'id_produto_bling', 'id bling', 'id_bling', 'id produto bling api', 'id produto'),
     'codigo': ('código', 'codigo', 'sku', 'ref', 'referencia', 'referência', 'codigo produto', 'código produto', 'cod produto', 'cod'),
+    'nome': ('nome', 'produto', 'título', 'titulo', 'nome produto', 'nome do produto', 'descrição produto', 'descricao produto'),
+    'descricao': ('descrição', 'descricao', 'descrição curta', 'descricao curta', 'descrição do produto', 'descricao do produto', 'detalhes'),
+    'preco': ('preço', 'preco', 'preço unitário', 'preco unitario', 'preço unitário (obrigatório)', 'preco unitario (obrigatorio)', 'valor', 'valor venda', 'preço de venda', 'preco de venda'),
     'gtin': ('gtin', 'ean', 'codigo de barras', 'código de barras', 'gtin/ean'),
+    'marca': ('marca', 'fabricante'),
+    'unidade': ('unidade', 'un'),
+    'ncm': ('ncm',),
     'quantidade': ('quantidade', 'saldo', 'estoque', 'balanço', 'balanco', 'qtd', 'qtde'),
     'deposito': ('depósito', 'deposito', 'nome depósito', 'nome deposito', 'depósito padrão', 'deposito padrao'),
 }
@@ -113,6 +119,22 @@ def _api_number(value: float) -> int | float:
         return value
 
 
+def _digits_only(value: object) -> str:
+    return re.sub(r'\D+', '', str(value or ''))
+
+
+def _is_ean_like(value: object) -> bool:
+    digits = _digits_only(value)
+    return len(digits) in {8, 12, 13, 14}
+
+
+def _clean_text(value: object, *, limit: int = 120) -> str:
+    text = str(value or '').strip()
+    text = text.replace('\u200b', '').replace('\ufeff', '')
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text[:limit]
+
+
 def _unique_non_empty(values: Iterable[object]) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
@@ -123,6 +145,20 @@ def _unique_non_empty(values: Iterable[object]) -> list[str]:
             out.append(text)
             seen.add(key)
     return out
+
+
+def _clean_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    clean: dict[str, Any] = {}
+    for key, value in payload.items():
+        if value in ('', None, {}):
+            continue
+        if isinstance(value, dict):
+            nested = {k: v for k, v in value.items() if v not in ('', None, {})}
+            if nested:
+                clean[key] = nested
+            continue
+        clean[key] = value
+    return clean
 
 
 def _extract_items(payload: Any) -> list[dict[str, Any]]:
@@ -309,6 +345,49 @@ def _emit_progress(callback: Callable[[dict[str, Any]], None] | None, payload: d
         pass
 
 
+def _cadastro_payload(row: pd.Series, mapping: dict[str, str]) -> dict[str, Any] | None:
+    codigo = _clean_text(_value(row, mapping, 'codigo') or _value(row, mapping, 'gtin'), limit=80)
+    nome_raw = _clean_text(_value(row, mapping, 'nome'), limit=120)
+    descricao = _clean_text(_value(row, mapping, 'descricao'), limit=1000)
+    nome = descricao[:120] if (_is_ean_like(nome_raw) and descricao) else nome_raw
+    nome = nome or codigo or 'Produto sem nome'
+    if len(nome) < 2:
+        return None
+
+    payload: dict[str, Any] = {
+        'nome': nome,
+        'codigo': codigo or nome[:80],
+        'tipo': 'P',
+        'situacao': 'A',
+        'unidade': _clean_text(_value(row, mapping, 'unidade') or 'UN', limit=6) or 'UN',
+    }
+    if descricao and descricao.lower() != nome.lower():
+        payload['descricaoCurta'] = descricao
+    preco = _number_value(_value(row, mapping, 'preco'))
+    if preco is not None and preco >= 0:
+        payload['preco'] = preco
+    marca = _clean_text(_value(row, mapping, 'marca'), limit=60)
+    if marca and not marca.lower().startswith(('mega center', 'stoqui')):
+        payload['marca'] = marca
+    ncm = _digits_only(_value(row, mapping, 'ncm'))
+    if len(ncm) == 8:
+        payload['tributacao'] = {'ncm': ncm}
+
+    # Não enviar categoria por descrição nem imagens externas no cadastro direto.
+    # Esses campos causavam VALIDATION_ERROR 400 em lote. Depois podem ser tratados
+    # em etapa própria quando houver ID de categoria/formato de mídia confirmado.
+    return _clean_payload(payload)
+
+
+def _cadastro_preview_payloads(df: pd.DataFrame, *, limit: int = 5) -> list[dict[str, Any]]:
+    mapping = _column_map(df.columns)
+    previews: list[dict[str, Any]] = []
+    for _index, row in df.fillna('').head(limit).iterrows():
+        payload = _cadastro_payload(row, mapping)
+        previews.append({'payload': payload or {}, 'status': 'OK' if payload else 'IGNORADO', 'motivo': '' if payload else 'Nome/código insuficiente para cadastro.'})
+    return previews
+
+
 def _stock_preview_payloads(df: pd.DataFrame, *, limit: int = 5) -> list[dict[str, Any]]:
     token, _meta = load_token()
     mapping = _column_map(df.columns)
@@ -336,9 +415,53 @@ def _stock_preview_payloads(df: pd.DataFrame, *, limit: int = 5) -> list[dict[st
 
 def preview_payloads(df: pd.DataFrame, operation: str, *, limit: int = 5) -> list[dict[str, Any]]:
     normalized = normalize_operation(operation)
+    if normalized == OP_CADASTRO:
+        return _cadastro_preview_payloads(df, limit=limit)
     if normalized == OP_ESTOQUE:
         return _stock_preview_payloads(df, limit=limit)
     return _raw_preview_payloads(df, operation, limit=limit)
+
+
+def _send_cadastro_dataframe_to_bling(df: pd.DataFrame, *, limit: int | None = None, progress_callback: Callable[[dict[str, Any]], None] | None = None) -> DirectSendResult:
+    token, _meta = load_token()
+    if not isinstance(token, dict) or not token.get('access_token'):
+        return DirectSendResult(0, 0, 0, len(df) if isinstance(df, pd.DataFrame) else 0, ('Bling não conectado. Conecte o app antes de enviar direto.',))
+    rows = df.fillna('').head(limit) if limit else df.fillna('')
+    mapping = _column_map(rows.columns)
+    total = len(rows)
+    sent = failed = skipped = 0
+    errors: list[str] = []
+    create_path = _secret('product_create_path', '/produtos') or '/produtos'
+    _emit_progress(progress_callback, {'stage': 'Iniciando cadastro', 'processed': 0, 'total': total, 'sent': 0, 'failed': 0, 'skipped': 0, 'progress': 0.0})
+
+    for position, (index, row) in enumerate(rows.iterrows(), start=1):
+        line = int(index) + 1 if isinstance(index, int) else position
+        payload = _cadastro_payload(row, mapping)
+        if not payload:
+            skipped += 1
+            if len(errors) < 8:
+                errors.append(f'Linha {line}: nome/código insuficiente para cadastro.')
+            _emit_progress(progress_callback, {'stage': 'Cadastrando no Bling', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
+            continue
+        try:
+            response = requests.post(_url(create_path), headers=_headers(token), json=payload, timeout=SEND_TIMEOUT)
+            if response.status_code >= 400:
+                failed += 1
+                if len(errors) < 8:
+                    errors.append(f'Linha {line}: Bling recusou cadastro ({response.status_code}). {str(response.text or "")[:500]}')
+                add_audit_event('bling_safe_cadastro_payload_failed', area='BLING_ENVIO', status='AVISO', details={'line': line, 'status': int(response.status_code), 'payload': payload, 'response_preview': str(response.text or '')[:500], 'responsible_file': RESPONSIBLE_FILE})
+            else:
+                sent += 1
+        except Exception as exc:
+            failed += 1
+            if len(errors) < 8:
+                errors.append(f'Linha {line}: falha técnica no cadastro: {exc}')
+        _emit_progress(progress_callback, {'stage': 'Cadastrando no Bling', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
+
+    result = DirectSendResult(total, sent, failed, skipped, tuple(errors), tuple())
+    _emit_progress(progress_callback, {'stage': 'Cadastro concluído', 'processed': total, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': 1.0})
+    add_audit_event('bling_safe_cadastro_send_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'attempted': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'payload_mode': 'minimal_safe_no_category_no_images', 'responsible_file': RESPONSIBLE_FILE})
+    return result
 
 
 def _send_stock_dataframe_to_bling(df: pd.DataFrame, *, limit: int | None = None, progress_callback: Callable[[dict[str, Any]], None] | None = None) -> DirectSendResult:
@@ -426,6 +549,8 @@ def send_dataframe_to_bling(
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> DirectSendResult:
     normalized = normalize_operation(operation)
+    if normalized == OP_CADASTRO:
+        return _send_cadastro_dataframe_to_bling(df, limit=limit, progress_callback=progress_callback)
     if normalized == OP_ESTOQUE:
         return _send_stock_dataframe_to_bling(df, limit=limit, progress_callback=progress_callback)
     return _raw_send_dataframe_to_bling(df, operation, limit=limit, progress_callback=progress_callback)
