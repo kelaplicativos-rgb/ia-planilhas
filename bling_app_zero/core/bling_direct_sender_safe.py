@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 import pandas as pd
 import requests
@@ -11,7 +11,7 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_direct_sender import (
     DirectSendResult,
     is_direct_send_available,
-    preview_payloads,
+    preview_payloads as _raw_preview_payloads,
     send_dataframe_to_bling as _send_dataframe_to_bling,
 )
 from bling_app_zero.core.bling_token_store import load_token
@@ -22,6 +22,14 @@ DEFAULT_API_BASE_URL = 'https://www.bling.com.br/Api/v3'
 API_STOCK_DEPOSIT_KEY = 'bling_api_stock_deposit_name'
 API_STOCK_DEPOSIT_ID_KEY = 'bling_api_stock_deposit_id'
 API_STOCK_DEPOSIT_OPTIONS_KEY = 'bling_api_stock_deposit_options'
+PRODUCT_ID_COLUMN = 'id produto bling'
+PRODUCT_RESOLUTION_CACHE_KEY = 'bling_safe_product_resolution_cache_v2'
+
+COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
+    'id': ('id produto bling', 'id_produto_bling', 'id bling', 'id_bling', 'codigo bling', 'código bling', 'id produto', 'id_produto', 'idproduto', 'id'),
+    'codigo': ('código', 'codigo', 'sku', 'ref', 'referencia', 'referência', 'codigo produto', 'código produto', 'cod produto', 'cod'),
+    'gtin': ('gtin', 'ean', 'codigo de barras', 'código de barras', 'gtin/ean'),
+}
 
 
 def _secret(name: str, default: str = '') -> str:
@@ -41,6 +49,59 @@ def _url(path: str) -> str:
     if path.startswith('http://') or path.startswith('https://'):
         return path
     return _api_base_url() + '/' + path.lstrip('/')
+
+
+def _normalize_column_name(value: object) -> str:
+    text = str(value or '').strip().lower()
+    text = text.replace('ã', 'a').replace('á', 'a').replace('à', 'a').replace('â', 'a')
+    text = text.replace('é', 'e').replace('ê', 'e')
+    text = text.replace('í', 'i')
+    text = text.replace('ó', 'o').replace('ô', 'o').replace('õ', 'o')
+    text = text.replace('ú', 'u').replace('ç', 'c')
+    text = re.sub(r'[^a-z0-9]+', ' ', text)
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def _column_map(columns: Iterable[object]) -> dict[str, str]:
+    normalized = {_normalize_column_name(column): str(column) for column in columns}
+    out: dict[str, str] = {}
+    for field, aliases in COLUMN_ALIASES.items():
+        for alias in aliases:
+            column = normalized.get(_normalize_column_name(alias))
+            if column:
+                out[field] = column
+                break
+    return out
+
+
+def _value(row: pd.Series, mapping: dict[str, str], field: str) -> str:
+    column = mapping.get(field)
+    if not column:
+        return ''
+    value = row.get(column, '')
+    if pd.isna(value):
+        return ''
+    return str(value or '').strip()
+
+
+def _unique_non_empty(values: Iterable[object]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value or '').strip()
+        key = text.lower()
+        if text and key not in seen:
+            out.append(text)
+            seen.add(key)
+    return out
+
+
+def _headers(token: dict[str, Any]) -> dict[str, str]:
+    return {'Accept': 'application/json', 'Content-Type': 'application/json', 'Authorization': f"Bearer {token.get('access_token')}"}
+
+
+def _lookup_path() -> str:
+    return _secret('product_lookup_path', '/produtos') or '/produtos'
 
 
 def _deposit_paths() -> list[str]:
@@ -69,6 +130,115 @@ def _extract_items(payload: Any) -> list[dict[str, Any]]:
             if nested:
                 return nested
     return []
+
+
+def _item_identifiers(item: dict[str, Any]) -> list[str]:
+    tributacao = item.get('tributacao') if isinstance(item.get('tributacao'), dict) else {}
+    return _unique_non_empty([
+        item.get('codigo'),
+        item.get('sku'),
+        item.get('codigoProduto'),
+        item.get('gtin'),
+        item.get('ean'),
+        item.get('codigoBarras'),
+        tributacao.get('gtin'),
+        tributacao.get('ean'),
+        tributacao.get('codigoBarras'),
+    ])
+
+
+def _resolution_cache() -> dict[str, str]:
+    cache = st.session_state.get(PRODUCT_RESOLUTION_CACHE_KEY)
+    if not isinstance(cache, dict):
+        cache = {}
+        st.session_state[PRODUCT_RESOLUTION_CACHE_KEY] = cache
+    return cache
+
+
+def _resolve_product_by_candidate(token: dict[str, Any], candidate: str) -> str:
+    candidate = str(candidate or '').strip()
+    if not candidate:
+        return ''
+    cache = _resolution_cache()
+    key = candidate.lower()
+    if key in cache:
+        return str(cache.get(key) or '')
+
+    params_list = ({'codigo': candidate}, {'criterio': candidate}, {'pesquisa': candidate})
+    for params in params_list:
+        try:
+            response = requests.get(_url(_lookup_path()), headers=_headers(token), params=params, timeout=20)
+            if response.status_code >= 400:
+                continue
+            items = _extract_items(response.json())
+            exact_matches: list[tuple[str, dict[str, Any]]] = []
+            loose_matches: list[tuple[str, dict[str, Any]]] = []
+            for item in items:
+                item_id = str(item.get('id') or item.get('idProduto') or '').strip()
+                if not item_id:
+                    continue
+                identifiers = _item_identifiers(item)
+                if any(identifier.lower() == key for identifier in identifiers):
+                    exact_matches.append((item_id, item))
+                elif len(items) == 1:
+                    loose_matches.append((item_id, item))
+            match = exact_matches[0] if exact_matches else (loose_matches[0] if loose_matches else None)
+            if match:
+                item_id, item = match
+                cache[key] = item_id
+                add_audit_event(
+                    'bling_safe_product_resolved_before_send',
+                    area='BLING_ENVIO',
+                    status='OK',
+                    details={'candidate': candidate, 'product_id': item_id, 'params': params, 'identifiers': _item_identifiers(item), 'responsible_file': RESPONSIBLE_FILE},
+                )
+                return item_id
+        except Exception as exc:
+            add_audit_event('bling_safe_product_lookup_exception', area='BLING_ENVIO', status='AVISO', details={'candidate': candidate, 'error': str(exc), 'responsible_file': RESPONSIBLE_FILE})
+            break
+    cache[key] = ''
+    return ''
+
+
+def _row_candidates(row: pd.Series, mapping: dict[str, str]) -> list[str]:
+    return _unique_non_empty([_value(row, mapping, 'codigo'), _value(row, mapping, 'gtin'), _value(row, mapping, 'id')])
+
+
+def _prepare_stock_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return df
+    token, _meta = load_token()
+    if not isinstance(token, dict) or not token.get('access_token'):
+        return df
+
+    out = df.copy().fillna('')
+    mapping = _column_map(out.columns)
+    if PRODUCT_ID_COLUMN not in out.columns:
+        out.insert(0, PRODUCT_ID_COLUMN, '')
+
+    resolved = unresolved = 0
+    for index, row in out.iterrows():
+        existing = str(row.get(PRODUCT_ID_COLUMN) or '').strip()
+        if existing:
+            resolved += 1
+            continue
+        product_id = ''
+        for candidate in _row_candidates(row, mapping):
+            product_id = _resolve_product_by_candidate(token, candidate)
+            if product_id:
+                break
+        if product_id:
+            out.at[index, PRODUCT_ID_COLUMN] = product_id
+            resolved += 1
+        else:
+            unresolved += 1
+    add_audit_event(
+        'bling_safe_stock_dataframe_prepared',
+        area='BLING_ENVIO',
+        status='OK' if unresolved == 0 else 'PARCIAL',
+        details={'rows': int(len(out)), 'resolved': int(resolved), 'unresolved': int(unresolved), 'responsible_file': RESPONSIBLE_FILE},
+    )
+    return out
 
 
 def _normalize_deposit(item: dict[str, Any]) -> dict[str, str] | None:
@@ -185,6 +355,12 @@ def _only_product_not_found_indices(result: DirectSendResult) -> tuple[int, ...]
     return tuple(fixed)
 
 
+def preview_payloads(df: pd.DataFrame, operation: str, *, limit: int = 5) -> list[dict[str, Any]]:
+    normalized = normalize_operation(operation)
+    prepared = _prepare_stock_dataframe(df) if normalized == OP_ESTOQUE else df
+    return _raw_preview_payloads(prepared, operation, limit=limit)
+
+
 def send_dataframe_to_bling(
     df: pd.DataFrame,
     operation: str,
@@ -193,10 +369,12 @@ def send_dataframe_to_bling(
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> DirectSendResult:
     normalized = normalize_operation(operation)
+    prepared = df
     if normalized == OP_ESTOQUE:
         _ensure_stock_deposit_ready()
+        prepared = _prepare_stock_dataframe(df)
 
-    result = _send_dataframe_to_bling(df, operation, limit=limit, progress_callback=progress_callback)
+    result = _send_dataframe_to_bling(prepared, operation, limit=limit, progress_callback=progress_callback)
     if normalized != OP_ESTOQUE or not result.not_found_indices:
         return result
 
