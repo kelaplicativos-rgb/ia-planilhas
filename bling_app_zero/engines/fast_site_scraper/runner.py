@@ -31,6 +31,12 @@ def _normalize_operation(operation: str) -> str:
     return 'estoque' if str(operation).strip().lower() == 'estoque' else 'cadastro'
 
 
+def _limit_mode(normalized_operation: str, stop_early: bool) -> str:
+    if normalized_operation == 'estoque' and not stop_early:
+        return 'stock_balance_flow'
+    return 'safe' if stop_early else 'deep'
+
+
 def _prepare_contract(requested_columns: Iterable[str] | None, normalized_operation: str):
     columns = [str(column).strip() for column in (requested_columns or []) if str(column).strip()]
     if not columns:
@@ -208,10 +214,12 @@ def run_fast_site_scraper(
     limits = normalize_capture_limits(
         max_pages=max_pages,
         max_products=max_products,
-        mode='safe' if stop_early else 'deep',
+        mode=_limit_mode(normalized_operation, stop_early),
     )
-    max_pages = limits['max_pages']
-    max_products = limits['max_products']
+    max_pages = int(limits['max_pages'])
+    max_products = int(limits['max_products'])
+    safe_limited = bool(limits.get('safe_limited'))
+    flow_mode = bool(limits.get('flow_mode'))
 
     _audit_contract(normalized_operation, columns, needed)
     add_audit_event(
@@ -223,19 +231,22 @@ def run_fast_site_scraper(
             'max_pages': int(max_pages),
             'max_products': int(max_products),
             'stop_early': bool(stop_early),
-            'safe_limited': True,
+            'safe_limited': safe_limited,
+            'flow_mode': flow_mode,
+            'limit_mode': _limit_mode(normalized_operation, stop_early),
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
 
     emit(progress_callback, {
-        'stage': 'Procurando links',
-        'message': f'Procurando produtos nos links informados com limite de {max_pages} página(s) e {max_products} produto(s)...',
+        'stage': 'Procurando links em fluxo contínuo' if flow_mode else 'Procurando links',
+        'message': f'Procurando produtos nos links informados com limite técnico de {max_pages} página(s) e {max_products} produto(s)...',
         'progress': 0.08,
         'columns': len(columns),
         'max_pages': max_pages,
         'max_products': max_products,
-        'safe_limited': True,
+        'safe_limited': safe_limited,
+        'flow_mode': flow_mode,
     })
     discovery_started = time.perf_counter()
     urls = discover_product_urls(raw_urls, max_pages=max_pages, max_products=max_products)
@@ -251,7 +262,8 @@ def run_fast_site_scraper(
         'urls_found': len(urls),
         'discovery_seconds': round(discovery_seconds, 2),
         'max_products': max_products,
-        'safe_limited': True,
+        'safe_limited': safe_limited,
+        'flow_mode': flow_mode,
     })
     if not urls:
         emit(progress_callback, {'stage': 'Nada encontrado', 'message': 'Não encontrei produtos nos links informados. Confira se o link abre produtos ou categorias.', 'progress': 1.0, 'urls_found': 0})
@@ -266,6 +278,8 @@ def run_fast_site_scraper(
             'processed': len(rows),
             'urls_found': len(urls),
             'total_seconds': round(time.perf_counter() - total_started, 2),
+            'safe_limited': safe_limited,
+            'flow_mode': flow_mode,
         })
         return ensure_columns(pd.DataFrame(rows).fillna(''), columns)
 
@@ -310,7 +324,8 @@ def run_fast_site_scraper(
         'dynamic_render_fallback_enabled': True,
         'max_pages': max_pages,
         'max_products': max_products,
-        'safe_limited': True,
+        'safe_limited': safe_limited,
+        'flow_mode': flow_mode,
     })
     return ensure_columns(pd.DataFrame(rows).fillna(''), columns)
 
