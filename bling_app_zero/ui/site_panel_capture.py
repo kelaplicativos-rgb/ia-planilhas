@@ -54,6 +54,24 @@ def finish_progress(progress, status_box=None, text: str = 'Captura encerrada.')
             pass
 
 
+def _safe_progress(progress, value: int, text: str) -> None:
+    if progress is None:
+        return
+    try:
+        progress.progress(max(0, min(100, int(value))), text=text)
+    except Exception:
+        pass
+
+
+def _safe_status(status_box, text: str) -> None:
+    if status_box is None:
+        return
+    try:
+        status_box.caption(text)
+    except Exception:
+        pass
+
+
 def _is_stock_balance_only(operation: str, deep_options: dict[str, int | bool] | None) -> bool:
     contract = active_contract()
     options = deep_options or {}
@@ -100,10 +118,8 @@ def _store_smartscan_notice(operation: str, report, *, rows: int) -> None:
 
 
 def _progress_callback_for_capture(*, operation: str, options: dict[str, int | bool], progress_bar, status_box):
-    # BLINGFIX mobile:
-    # No modo Estoque API a sessão do Streamlit no celular cai quando recebe muitas
-    # mensagens de progresso durante crawler + leitura de produto. Nesse modo, a
-    # captura roda em tela silenciosa e salva o resultado ao final.
+    # No modo Estoque API, não usamos callback por produto/página para não derrubar o WebSocket no celular.
+    # A barra leve é atualizada somente em marcos principais dentro de run_site_capture.
     if _is_stock_balance_only(operation, options):
         return None
     return make_site_progress_callback(progress_bar, status_box)
@@ -151,7 +167,7 @@ def prepare_raw_urls_for_capture(
         'deep_capture_max_depth': result.max_depth,
         'deep_capture_stopped_by_budget': result.stopped_by_budget,
         'deep_capture_stop_reason': result.stop_reason,
-        'progress_mode': 'silent_mobile_safe' if _is_stock_balance_only(operation, options) else 'live',
+        'progress_mode': 'lightweight_mobile_safe' if _is_stock_balance_only(operation, options) else 'live',
     }
 
     if not result.product_urls:
@@ -257,16 +273,17 @@ def run_site_capture(
             'max_pages': int(max_pages),
             'max_products': int(max_products),
             'scan_goal': 'blingsmartscan_saldo_estoque' if stock_balance_only else 'blingsmartscan_cadastro',
-            'progress_mode': 'silent_mobile_safe' if stock_balance_only else 'live',
+            'progress_mode': 'lightweight_mobile_safe' if stock_balance_only else 'live',
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
     reset_site_progress()
 
     if stock_balance_only:
-        progress_bar = None
-        status_box = None
-        st.info('Busca de saldos em modo seguro. O sistema processa sem atualizações pesadas de tela e salva o resultado ao final.')
+        progress_bar = st.progress(3, text='Preparando busca segura de saldos...')
+        status_box = st.empty()
+        _safe_status(status_box, 'Modo seguro: a barra atualiza por etapas para não travar o celular.')
+        st.info('Busca de saldos em modo seguro. A barra acompanha etapas principais e o resultado é salvo ao final.')
     else:
         progress_bar = st.progress(0, text='BLINGSMARTSCAN buscando produtos com IA...')
         status_box = st.empty()
@@ -274,6 +291,8 @@ def run_site_capture(
     deep_details: dict[str, object] = {}
     smart_report = None
     try:
+        _safe_progress(progress_bar, 12 if stock_balance_only else 0, 'Localizando produtos no site...')
+        _safe_status(status_box, 'Etapa 1 de 3: localizando links/produtos.')
         prepared_urls, deep_details = prepare_raw_urls_for_capture(
             operation=operation,
             raw_urls=raw_urls,
@@ -281,6 +300,11 @@ def run_site_capture(
             progress_bar=progress_bar,
             status_box=status_box,
         )
+        found = int(deep_details.get('deep_capture_found_products') or 0) if isinstance(deep_details, dict) else 0
+        if stock_balance_only:
+            found_text = f' · {found} produto(s) localizado(s)' if found else ''
+            _safe_progress(progress_bar, 45, f'Produtos localizados. Extraindo saldos{found_text}...')
+            _safe_status(status_box, f'Etapa 2 de 3: extraindo dados de estoque{found_text}.')
         capture_callback = _progress_callback_for_capture(operation=operation, options=options, progress_bar=progress_bar, status_box=status_box)
         df_site, smart_report = run_bling_smartscan(
             operation=operation,
@@ -292,12 +316,15 @@ def run_site_capture(
             max_products=max_products,
             progress_callback=capture_callback,
         )
+        if stock_balance_only:
+            _safe_progress(progress_bar, 82, 'Validando e salvando resultado da busca...')
+            _safe_status(status_box, 'Etapa 3 de 3: validando e salvando resultado.')
     except Exception as exc:
         message = str(exc) or exc.__class__.__name__
         clear_site_df(operation, 'blingsmartscan_exception')
         set_capture_state(operation=operation, running=False, finished=False, error=message)
         finish_progress(progress_bar, status_box, text='BLINGSMARTSCAN encerrado com erro.')
-        add_audit_event('blingsmartscan_ui_failed', area='SITE', step='entrada', status='ERRO', details={'operation': operation, 'stock_balance_only': stock_balance_only, 'stock_full_site_scan': stock_full_site_scan, 'error': message, 'error_type': exc.__class__.__name__, 'elapsed_seconds': round(time.time() - started_at, 2), 'progress_mode': 'silent_mobile_safe' if stock_balance_only else 'live', 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('blingsmartscan_ui_failed', area='SITE', step='entrada', status='ERRO', details={'operation': operation, 'stock_balance_only': stock_balance_only, 'stock_full_site_scan': stock_full_site_scan, 'error': message, 'error_type': exc.__class__.__name__, 'elapsed_seconds': round(time.time() - started_at, 2), 'progress_mode': 'lightweight_mobile_safe' if stock_balance_only else 'live', 'responsible_file': RESPONSIBLE_FILE})
         _orange_notice('O BLINGSMARTSCAN foi interrompido antes de finalizar. O sistema evitou queda total; baixe o log debug para diagnóstico.')
         return
 
@@ -308,7 +335,7 @@ def run_site_capture(
         empty_message = 'O BLINGSMARTSCAN não encontrou dados válidos nesse lote.'
         set_capture_state(operation=operation, running=False, finished=False, error=empty_message, rows=0, columns=0)
         finish_progress(progress_bar, status_box, text='BLINGSMARTSCAN encerrado sem dados encontrados.')
-        add_audit_event('blingsmartscan_ui_empty', area='SITE', step='entrada', status='AVISO', details={'operation': operation, 'stock_balance_only': stock_balance_only, 'stock_full_site_scan': stock_full_site_scan, 'rows': rows, 'columns': columns, 'elapsed_seconds': round(time.time() - started_at, 2), 'progress_mode': 'silent_mobile_safe' if stock_balance_only else 'live', 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('blingsmartscan_ui_empty', area='SITE', step='entrada', status='AVISO', details={'operation': operation, 'stock_balance_only': stock_balance_only, 'stock_full_site_scan': stock_full_site_scan, 'rows': rows, 'columns': columns, 'elapsed_seconds': round(time.time() - started_at, 2), 'progress_mode': 'lightweight_mobile_safe' if stock_balance_only else 'live', 'responsible_file': RESPONSIBLE_FILE})
         _orange_notice('Nenhum dado válido foi encontrado nesse lote inteligente. Confira o link inicial ou cole links diretos de produtos.')
         return
 
@@ -337,7 +364,7 @@ def run_site_capture(
         'stock_balance_only': stock_balance_only,
         'stock_full_site_scan': stock_full_site_scan,
         'scan_goal': 'blingsmartscan_saldo_estoque' if stock_balance_only else 'blingsmartscan_cadastro',
-        'progress_mode': 'silent_mobile_safe' if stock_balance_only else 'live',
+        'progress_mode': 'lightweight_mobile_safe' if stock_balance_only else 'live',
         'responsible_file': RESPONSIBLE_FILE,
         'manual_continue_required': True,
         'manual_continue_target_step': target_step,
