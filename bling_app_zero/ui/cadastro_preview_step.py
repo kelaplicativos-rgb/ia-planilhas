@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.agents.blingsmartcore import apply_blingsmartcore
 from bling_app_zero.core.exporter import sanitize_for_bling
 from bling_app_zero.ui.cadastro_wizard_state import (
     enforce_cadastro_model_columns,
@@ -26,6 +27,7 @@ CONTEXT_FINAL_KEYS = {
     CONTEXT_BLING_CSV: 'df_final_bling_csv',
     CONTEXT_UNIVERSAL: 'df_final_universal',
 }
+SMARTCORE_PREVIEW_KEY = 'blingsmartcore_preview_report'
 
 
 def _entry_context() -> str:
@@ -112,10 +114,36 @@ def _store_context_preview(df_preview: pd.DataFrame, operation: str) -> None:
     st.session_state['df_final_preview_operation'] = operation
 
 
+def _store_smartcore_report(result) -> None:
+    try:
+        st.session_state[SMARTCORE_PREVIEW_KEY] = {
+            'origin': result.origin,
+            'operation': result.operation,
+            'score': int(result.quality.score),
+            'rows': int(result.quality.rows),
+            'warnings': list(result.quality.warnings),
+        }
+    except Exception:
+        st.session_state[SMARTCORE_PREVIEW_KEY] = {}
+
+
+def _render_smartcore_report() -> None:
+    report = st.session_state.get(SMARTCORE_PREVIEW_KEY) or {}
+    if not report:
+        return
+    with st.expander('BLINGSMARTCORE · validação inteligente da prévia', expanded=False):
+        st.caption(f"Origem: {report.get('origin', '')} · Operação: {report.get('operation', '')} · Linhas: {report.get('rows', 0)}")
+        st.metric('Qualidade da prévia', f"{report.get('score', 0)}/100")
+        for warning in list(report.get('warnings') or [])[:8]:
+            st.warning(str(warning))
+
+
 def _final_preview_df(df_final: pd.DataFrame, operation: str) -> pd.DataFrame:
     """Aplica na prévia final a blindagem correta para cada caminho."""
     safe_operation = operation if operation in VALID_OPERATIONS else 'universal'
     safe = sanitize_for_bling(df_final.copy().fillna(''), operation=safe_operation)
+    safe, smartcore_result = apply_blingsmartcore(safe, origin='preview_final', operation=safe_operation)
+    _store_smartcore_report(smartcore_result)
     if _entry_context() == CONTEXT_BLING_API:
         return safe
     fixed = enforce_cadastro_model_columns(safe)
@@ -139,6 +167,7 @@ def render_cadastro_preview_step() -> None:
     if _entry_context() != CONTEXT_BLING_API and render_row_count_blocker(df_preview):
         return
 
+    _render_smartcore_report()
     preview_df('Resultado final preenchido', df_preview)
 
 
