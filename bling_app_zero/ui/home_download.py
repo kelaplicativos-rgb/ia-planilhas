@@ -6,6 +6,7 @@ import streamlit as st
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_direct_sender_safe import is_direct_send_available, preview_payloads, send_dataframe_to_bling
 from bling_app_zero.core.bling_oauth import connection_status
+from bling_app_zero.core.blingsmartcore_autocadastro import render_autocadastro_panel
 from bling_app_zero.core.exporter import filename_for_operation, to_bling_csv_bytes
 from bling_app_zero.core.operation_contract import (
     OP_ATUALIZACAO_PRECO,
@@ -317,6 +318,7 @@ def _render_persisted_direct_send_result(download_df: pd.DataFrame, operation: s
     for error in errors[:8]:
         st.error(error)
     _render_not_found_download(download_df, not_found_indices, key, signature, rules_sig)
+    render_autocadastro_panel(download_df, data, key=f'{key}_{signature}_{rules_sig}')
 
     add_audit_event(
         'bling_direct_send_result_visible_persisted',
