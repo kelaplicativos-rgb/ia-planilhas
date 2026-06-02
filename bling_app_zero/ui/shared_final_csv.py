@@ -5,6 +5,7 @@ import re
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.agents.blingsmartcore import apply_blingsmartcore
 from bling_app_zero.ai.ai_text_rules import clean_title_to_limit, is_description_column, is_title_column
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.final_csv_exporter import (
@@ -17,6 +18,15 @@ from bling_app_zero.universal.output_builder import build_universal_output, empt
 from bling_app_zero.universal.universal_contract import build_universal_contract, validate_universal_output
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/shared_final_csv.py'
+
+
+def _render_smartcore_box(result) -> None:
+    quality = result.quality
+    with st.expander('BLINGSMARTCORE · validação inteligente da saída final', expanded=False):
+        st.caption(f'Origem: {result.origin} · Operação: {result.operation}')
+        st.metric('Qualidade da saída', f'{quality.score}/100')
+        for item in quality.warnings[:8]:
+            st.warning(item)
 
 
 def apply_shared_text_rules(output: pd.DataFrame) -> pd.DataFrame:
@@ -34,7 +44,9 @@ def build_shared_final_dataframe(source: pd.DataFrame, contract: pd.DataFrame, m
         output = empty_universal_output(contract, rows=0)
     else:
         output = build_universal_output(source, contract, mapping)
-    return apply_shared_text_rules(output)
+    output = apply_shared_text_rules(output)
+    output, _ = apply_blingsmartcore(output, origin='preview_final', operation='universal')
+    return output
 
 
 def render_shared_final_csv(
@@ -63,6 +75,7 @@ def render_shared_final_csv(
         contract_columns=contract_columns,
         run_download_features=True,
     )
+    output, smartcore_result = apply_blingsmartcore(output, origin='preview_final', operation='universal')
 
     identity_errors = validate_contract_identity(output, contract_columns)
     if identity_errors:
@@ -78,6 +91,7 @@ def render_shared_final_csv(
     )
 
     st.success('Planilha final fiel ao modelo anexado: mesmas colunas, mesma ordem e sem extras.')
+    _render_smartcore_box(smartcore_result)
     st.dataframe(output.head(80).astype(str), use_container_width=True, height=360)
     st.caption(f'Preview: {len(output)} linha(s) x {len(output.columns)} coluna(s).')
 
@@ -104,6 +118,7 @@ def render_shared_final_csv(
             'columns': int(len(output.columns)),
             'contract_columns': contract_columns,
             'contract_identity': True,
+            'blingsmartcore_score': int(smartcore_result.quality.score),
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
