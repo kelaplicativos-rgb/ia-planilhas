@@ -13,6 +13,7 @@ from bling_app_zero.ui.estoque_wizard_state import (
     set_stock_output,
     stock_final_df,
 )
+from bling_app_zero.ui.flow_guard import render_flow_blocker
 from bling_app_zero.ui.home_autofluxo import pause_home_autofluxo_for_manual_review
 from bling_app_zero.ui.home_shared import df_signature, download_final, preview_df
 from bling_app_zero.ui.layout import inject_mapping_css
@@ -112,7 +113,11 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
 
     duplicated = _duplicated_source_columns(edited_mapping)
     if duplicated:
-        st.warning('A mesma coluna da origem foi usada mais de uma vez no estoque: ' + ', '.join(duplicated))
+        render_flow_blocker(
+            'A mesma coluna da origem foi usada mais de uma vez no estoque: ' + ', '.join(duplicated),
+            title='Mapeamento de estoque bloqueado',
+            action_label='Continuar',
+        )
 
     col_a, col_b = st.columns(2)
     with col_a:
@@ -127,7 +132,11 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
 def render_dual_stock_output(df_source: pd.DataFrame, df_modelo_estoque: pd.DataFrame | None) -> None:
     st.markdown('#### Estoque')
     if not isinstance(df_modelo_estoque, pd.DataFrame) or not len(df_modelo_estoque.columns):
-        st.info('Envie o modelo de estoque no passo inicial para gerar também a planilha de estoque.')
+        render_flow_blocker(
+            'Envie o modelo de estoque no passo inicial para gerar também a planilha de estoque.',
+            title='Estoque bloqueado',
+            action_label='Gerar estoque',
+        )
         return
 
     render_manual_stock_mapping(df_source, df_modelo_estoque, '')
