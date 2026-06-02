@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.ui.flow_guard import render_flow_blocker
 from bling_app_zero.ui.home_models_state import (
     WIZARD_STEP_KEY,
     clear_default_home_models,
@@ -63,11 +64,23 @@ def _render_loaded_summary() -> None:
     df = _model_summary_df()
     if not isinstance(df, pd.DataFrame):
         if _is_universal_entry():
-            st.warning('Envie o modelo de destino para continuar. Use uma planilha com as colunas finais que o sistema deverá preencher.')
+            render_flow_blocker(
+                'Envie o modelo de destino para continuar. Use uma planilha com as colunas finais que o sistema deverá preencher.',
+                title='Modelo bloqueado',
+                action_label='Continuar',
+            )
         elif _is_bling_csv_entry():
-            st.warning('Envie um modelo oficial do Bling para continuar: Cadastro, Estoque ou Atualização de Preços.')
+            render_flow_blocker(
+                'Envie um modelo oficial do Bling para continuar: Cadastro, Estoque ou Atualização de Preços.',
+                title='Modelo bloqueado',
+                action_label='Continuar',
+            )
         else:
-            st.warning('Envie o modelo de destino para continuar.')
+            render_flow_blocker(
+                'Envie o modelo de destino para continuar.',
+                title='Modelo bloqueado',
+                action_label='Continuar',
+            )
         return
     contract_type = str(st.session_state.get(MODEL_CONTRACT_TYPE_KEY) or 'universal')
     label = 'Modelo de destino' if _is_universal_entry() else CONTRACT_LABELS.get(contract_type, 'Modelo de destino')
@@ -111,7 +124,11 @@ def _split_models_by_contract(upload) -> tuple[pd.DataFrame | None, pd.DataFrame
     contract_type = str(getattr(upload, 'contract_type', '') or st.session_state.get(MODEL_CONTRACT_TYPE_KEY) or '').strip()
     if _is_bling_csv_entry() and contract_type not in BLING_CONTRACTS:
         if isinstance(df, pd.DataFrame):
-            st.warning('Este caminho é Bling CSV. Envie um modelo oficial do Bling: Cadastro, Estoque ou Atualização de Preços.')
+            render_flow_blocker(
+                'Este caminho é Bling CSV. Envie um modelo oficial do Bling: Cadastro, Estoque ou Atualização de Preços.',
+                title='Modelo incompatível',
+                action_label='Continuar',
+            )
         return None, None, None, None
 
     cadastro = df if contract_type == 'cadastro' else None
