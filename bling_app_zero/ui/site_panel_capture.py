@@ -20,7 +20,7 @@ from bling_app_zero.engines.fast_site_scraper.deep_site_capture import discover_
 from bling_app_zero.features_runtime.router import active_contract, feature_needs_model
 from bling_app_zero.flows.site_operation_router import run_site_engine
 from bling_app_zero.ui.home_shared import load_site_pipeline
-from bling_app_zero.ui.home_wizard_constants import STEP_MAPEAMENTO
+from bling_app_zero.ui.home_wizard_constants import STEP_DOWNLOAD, STEP_MAPEAMENTO
 from bling_app_zero.ui.site_outputs import save_site_source
 from bling_app_zero.ui.site_panel_state import (
     UNIVERSAL_OPERATION,
@@ -65,15 +65,16 @@ def _is_stock_full_site_scan(operation: str, deep_options: dict[str, int | bool]
     return bool(_is_stock_balance_only(operation, options) and options.get('stock_full_site_scan', True))
 
 
+def _next_step_after_capture() -> str:
+    return STEP_DOWNLOAD if active_contract().is_api else STEP_MAPEAMENTO
+
+
+def _next_step_label_after_capture() -> str:
+    return 'Enviar para o Bling' if active_contract().is_api else 'Mapeamento'
+
+
 def _orange_notice(message: str) -> None:
-    st.markdown(
-        f'''
-        <div style="background:#fff3cd;border:1px solid #ffecb5;border-radius:12px;padding:12px 14px;color:#664d03;margin:8px 0;">
-            {message}
-        </div>
-        ''',
-        unsafe_allow_html=True,
-    )
+    st.warning(message)
 
 
 def _smartscan_notice_payload(report, *, rows: int) -> dict[str, object]:
@@ -194,7 +195,7 @@ def _run_current_site_engine(**kwargs) -> pd.DataFrame:
 def _mark_manual_continue(operation: str, rows: int, columns: int) -> None:
     st.session_state['blingsmartscan_manual_continue_required'] = True
     st.session_state['blingsmartscan_ready_to_continue'] = True
-    st.session_state['blingsmartscan_continue_target_step'] = STEP_MAPEAMENTO
+    st.session_state['blingsmartscan_continue_target_step'] = _next_step_after_capture()
     st.session_state['blingsmartscan_finished_operation'] = operation
     st.session_state['blingsmartscan_finished_rows'] = int(rows)
     st.session_state['blingsmartscan_finished_columns'] = int(columns)
@@ -302,6 +303,8 @@ def run_site_capture(
             st.session_state[f'blingsmartscan_report_{operation}'] = {'message': getattr(smart_report, 'message', '')}
         _store_smartscan_notice(operation, smart_report, rows=rows)
 
+    target_step = _next_step_after_capture()
+    target_label = _next_step_label_after_capture()
     details = {
         'operation': operation,
         'feature_contract': active_contract().key,
@@ -316,6 +319,7 @@ def run_site_capture(
         'scan_goal': 'blingsmartscan_saldo_estoque' if stock_balance_only else 'blingsmartscan_cadastro',
         'responsible_file': RESPONSIBLE_FILE,
         'manual_continue_required': True,
+        'manual_continue_target_step': target_step,
     }
     details.update(deep_details)
     if smart_report is not None:
@@ -326,7 +330,7 @@ def run_site_capture(
         st.session_state['blingsmartscan_budget_notice'] = f'O BLINGSMARTSCAN encontrou {rows} produto(s) neste lote e parou para evitar queda do sistema. Você pode rodar outro lote depois.'
     _mark_manual_continue(operation, rows, columns)
     finish_progress(progress_bar, status_box, text='BLINGSMARTSCAN concluído. Resultado salvo.')
-    st.success(f'BLINGSMARTSCAN concluiu e salvou {rows} produto(s). Toque em Continuar para ir ao mapeamento.')
+    st.success(f'BLINGSMARTSCAN concluiu e salvou {rows} produto(s). Toque em Continuar para ir para {target_label}.')
 
 
 __all__ = ['capture_limits_for_operation', 'run_site_capture']
