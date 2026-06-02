@@ -71,7 +71,7 @@ def scrape_one(url: str, needed: set[str]) -> tuple[str, FastProductData, float,
     if needed <= {'url'}:
         return url, url_only_row(url), time.perf_counter() - started, False
 
-    html = fetch_live(url, timeout=8)
+    html = fetch_live(url, timeout=4)
     if not html:
         return url, FastProductData(url=url), time.perf_counter() - started, True
 
