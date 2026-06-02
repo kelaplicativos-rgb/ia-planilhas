@@ -12,7 +12,8 @@ from bling_app_zero.engines.fast_site_scraper.http_client import fetch_live
 from bling_app_zero.engines.fast_site_scraper.url_discovery import norm_url, split_urls
 
 RESPONSIBLE_FILE = 'bling_app_zero/agents/api_finder.py'
-API_HINT_RE = re.compile(r'''(?P<url>(?:https?:)?//[^"'\s<>]+|/[^"'\s<>]*(?:api|produto|product|catalog|estoque|stock)[^"'\s<>]*)''', re.I)
+API_HINT_RE = re.compile(r'''(?P<url>(?:https?:)?//[^"'\s<>]+|/[^"'\s<>]*(?:api|produto|product|catalog|estoque|stock|json)[^"'\s<>]*)''', re.I)
+JSON_KEYS = ('products', 'produtos', 'items', 'data', 'results', 'rows', 'records')
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,7 @@ class ApiCandidate:
     score: int
     reason: str
     content_type: str = ''
+    json_confirmed: bool = False
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,8 @@ def _score_url(url: str, platform: str) -> tuple[int, str]:
     reasons: list[str] = []
     for token, points in (
         ('api', 35),
+        ('products.json', 34),
+        ('produtos.json', 34),
         ('products', 25),
         ('produtos', 25),
         ('product', 22),
@@ -51,12 +55,15 @@ def _score_url(url: str, platform: str) -> tuple[int, str]:
         ('catalogo', 18),
         ('estoque', 16),
         ('stock', 16),
-        ('json', 14),
+        ('.json', 16),
         ('graphql', 14),
     ):
         if token in low:
             score += points
             reasons.append(token)
+    if low.endswith('.xml') or 'sitemap' in low:
+        score -= 30
+        reasons.append('xml_penalty')
     if platform in {'stoqui', 'mega_center'} and any(token in low for token in ('stoqui', 'product', 'produto', 'api')):
         score += 20
         reasons.append('platform_hint')
@@ -78,8 +85,10 @@ def _candidate_urls(start_url: str, html: str, platform: str) -> list[ApiCandida
         '/produtos.json',
         '/catalog/products.json',
         '/catalogo/produtos.json',
-        '/sitemap-products.xml',
-        '/sitemap.xml',
+        '/api/v1/products',
+        '/api/v1/produtos',
+        '/api/v2/products',
+        '/api/v2/produtos',
     ]
     for seed in seeds:
         absolute = norm_url(urljoin(root + '/', seed.lstrip('/')))
@@ -100,7 +109,55 @@ def _candidate_urls(start_url: str, html: str, platform: str) -> list[ApiCandida
         candidate = ApiCandidate(absolute, score, f'descoberto no HTML/JS: {reason}')
         if current is None or candidate.score > current.score:
             found[absolute] = candidate
-    return sorted(found.values(), key=lambda item: item.score, reverse=True)[:20]
+    return sorted(found.values(), key=lambda item: item.score, reverse=True)[:25]
+
+
+def _json_payload(raw: str) -> object | None:
+    text = str(raw or '').strip()
+    if not text:
+        return None
+    if not (text.startswith('{') or text.startswith('[')):
+        return None
+    try:
+        return json.loads(text)
+    except Exception:
+        return None
+
+
+def _extract_rows_from_payload(payload: object, max_items: int = 500) -> list[dict[str, object]]:
+    data = payload
+    for key in JSON_KEYS:
+        if isinstance(data, dict) and isinstance(data.get(key), list):
+            data = data[key]
+            break
+    if isinstance(data, dict):
+        nested_lists = [value for value in data.values() if isinstance(value, list)]
+        if nested_lists:
+            data = max(nested_lists, key=len)
+    if not isinstance(data, list):
+        return []
+    rows: list[dict[str, object]] = []
+    for item in data[:max_items]:
+        if isinstance(item, dict):
+            rows.append(item)
+    return rows
+
+
+def _confirm_json_candidate(candidate: ApiCandidate, max_items: int = 3) -> ApiCandidate:
+    raw = fetch_live(candidate.url, timeout=4)
+    payload = _json_payload(raw)
+    if payload is None:
+        return candidate
+    rows = _extract_rows_from_payload(payload, max_items=max_items)
+    bonus = 80 if rows else 35
+    reason = f'{candidate.reason}; JSON confirmado' + (f' com {len(rows)} registro(s) de amostra' if rows else '')
+    return ApiCandidate(
+        url=candidate.url,
+        score=candidate.score + bonus,
+        reason=reason,
+        content_type='json',
+        json_confirmed=True,
+    )
 
 
 def find_site_api(raw_urls: str, platform: str = 'generico') -> ApiFinderResult:
@@ -116,14 +173,21 @@ def find_site_api(raw_urls: str, platform: str = 'generico') -> ApiFinderResult:
             if current is None or candidate.score > current.score:
                 all_candidates[candidate.url] = candidate
 
-    candidates = sorted(all_candidates.values(), key=lambda item: item.score, reverse=True)[:20]
-    best = candidates[0].url if candidates and candidates[0].score >= 35 else ''
+    raw_candidates = sorted(all_candidates.values(), key=lambda item: item.score, reverse=True)[:12]
+    confirmed: list[ApiCandidate] = []
+    for candidate in raw_candidates:
+        checked = _confirm_json_candidate(candidate)
+        confirmed.append(checked)
+
+    candidates = sorted(confirmed, key=lambda item: (item.json_confirmed, item.score), reverse=True)[:20]
+    best_candidate = candidates[0] if candidates and candidates[0].json_confirmed and candidates[0].score >= 70 else None
+    best = best_candidate.url if best_candidate else ''
     result = ApiFinderResult(
         found=bool(best),
         platform=platform,
         candidates=candidates,
         best_url=best,
-        message='API interna provável encontrada.' if best else 'Nenhuma API interna confiável encontrada; usar scraper seguro.',
+        message='API JSON interna confirmada.' if best else 'Nenhuma API JSON confiável encontrada; usar scraper seguro.',
     )
     add_audit_event(
         'api_finder_finished',
@@ -145,25 +209,10 @@ def try_read_api_table(result: ApiFinderResult, max_items: int = 500) -> pd.Data
     if not result.found or not result.best_url:
         return pd.DataFrame()
     raw = fetch_live(result.best_url, timeout=5)
-    if not raw:
+    payload = _json_payload(raw)
+    if payload is None:
         return pd.DataFrame()
-    try:
-        payload = json.loads(raw)
-    except Exception:
-        return pd.DataFrame()
-
-    data = payload
-    for key in ('products', 'produtos', 'items', 'data', 'results'):
-        if isinstance(data, dict) and isinstance(data.get(key), list):
-            data = data[key]
-            break
-    if not isinstance(data, list) or not data:
-        return pd.DataFrame()
-
-    rows: list[dict[str, object]] = []
-    for item in data[:max_items]:
-        if isinstance(item, dict):
-            rows.append(item)
+    rows = _extract_rows_from_payload(payload, max_items=max_items)
     return pd.DataFrame(rows).fillna('') if rows else pd.DataFrame()
 
 
