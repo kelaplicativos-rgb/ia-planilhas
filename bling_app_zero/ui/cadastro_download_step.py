@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.agents.blingsmartcore import apply_blingsmartcore
 from bling_app_zero.core.exporter import sanitize_for_bling
 from bling_app_zero.ui.cadastro_wizard_state import (
     enforce_cadastro_model_columns,
@@ -26,6 +27,7 @@ PREVIEW_SAFE_KEY = 'df_final_cadastro_preview_rules_applied'
 PREVIEW_OPERATION_KEY = 'df_final_preview_operation'
 PREVIEW_SIGNATURE_KEY = 'df_final_preview_signature'
 DOWNLOAD_SIGNATURE_KEY = 'df_final_download_signature'
+SMARTCORE_DOWNLOAD_KEY = 'blingsmartcore_download_report'
 
 
 def _entry_context() -> str:
@@ -93,10 +95,36 @@ def _safe_operation(operation: str) -> str:
     return operation if operation in VALID_OPERATIONS else 'universal'
 
 
-def _preview_safe_df() -> pd.DataFrame | None:
+def _store_smartcore_download_report(result) -> None:
+    try:
+        st.session_state[SMARTCORE_DOWNLOAD_KEY] = {
+            'origin': result.origin,
+            'operation': result.operation,
+            'score': int(result.quality.score),
+            'rows': int(result.quality.rows),
+            'warnings': list(result.quality.warnings),
+        }
+    except Exception:
+        st.session_state[SMARTCORE_DOWNLOAD_KEY] = {}
+
+
+def _render_smartcore_download_report() -> None:
+    report = st.session_state.get(SMARTCORE_DOWNLOAD_KEY) or {}
+    if not report:
+        return
+    with st.expander('BLINGSMARTCORE · validação antes da saída final', expanded=False):
+        st.caption(f"Origem: {report.get('origin', '')} · Operação: {report.get('operation', '')} · Linhas: {report.get('rows', 0)}")
+        st.metric('Qualidade da saída', f"{report.get('score', 0)}/100")
+        for warning in list(report.get('warnings') or [])[:8]:
+            st.warning(str(warning))
+
+
+def _preview_safe_df(operation: str) -> pd.DataFrame | None:
     df_preview = st.session_state.get(PREVIEW_SAFE_KEY)
     if valid_df(df_preview):
-        return df_preview.copy().fillna('')
+        safe, report = apply_blingsmartcore(df_preview.copy().fillna(''), origin='preview_final', operation=_safe_operation(operation))
+        _store_smartcore_download_report(report)
+        return safe
     return None
 
 
@@ -105,13 +133,15 @@ def _build_safe_download_df(operation: str) -> pd.DataFrame | None:
     if not valid_df(df_final):
         return None
     safe = sanitize_for_bling(df_final.copy().fillna(''), operation=_safe_operation(operation))
+    safe, report = apply_blingsmartcore(safe, origin='preview_final', operation=_safe_operation(operation))
+    _store_smartcore_download_report(report)
     if not _is_api_context():
         safe = enforce_cadastro_model_columns(safe)
     return safe.copy().fillna('') if valid_df(safe) else None
 
 
 def _final_df_for_context(operation: str) -> pd.DataFrame | None:
-    preview_df = _preview_safe_df()
+    preview_df = _preview_safe_df(operation)
     if preview_df is not None:
         return preview_df
     return _build_safe_download_df(operation)
@@ -146,6 +176,7 @@ def render_cadastro_download_step() -> None:
         return
 
     _store_output_consistency(df_final, operation)
+    _render_smartcore_download_report()
 
     if _is_api_context():
         st.success('Base revisada pronta para envio direto ao Bling.')
