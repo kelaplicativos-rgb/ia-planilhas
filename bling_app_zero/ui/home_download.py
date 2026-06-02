@@ -40,6 +40,7 @@ FINAL_DOWNLOAD_SIGNATURE_KEY = 'final_download_signature'
 FINAL_DOWNLOAD_RULES_SIGNATURE_KEY = 'final_download_rules_signature'
 FINAL_DOWNLOAD_OPERATION_KEY = 'final_download_operation'
 FINAL_DOWNLOAD_WIDGET_KEY = 'final_download_widget_key'
+DIRECT_SEND_RESULT_STATE_KEY = 'bling_direct_send_last_result_v3'
 PRESERVED_DOWNLOAD_OPERATIONS = {OP_CADASTRO, OP_ESTOQUE, OP_UNIVERSAL, OP_ATUALIZACAO_PRECO}
 
 DIRECT_SEND_TEXT = {
@@ -266,6 +267,72 @@ def _render_send_progress(payload: dict, progress_bar, status_box) -> None:
         pass
 
 
+def _result_identity(operation: str, key: str, signature: str, rules_sig: str) -> str:
+    return f'{normalize_operation(operation)}::{key}::{signature}::{rules_sig}'
+
+
+def _store_direct_send_result(result, operation: str, key: str, signature: str, rules_sig: str) -> None:
+    st.session_state[DIRECT_SEND_RESULT_STATE_KEY] = {
+        'identity': _result_identity(operation, key, signature, rules_sig),
+        'operation': normalize_operation(operation),
+        'attempted': int(result.attempted),
+        'sent': int(result.sent),
+        'failed': int(result.failed),
+        'skipped': int(result.skipped),
+        'errors': list(result.errors or ()),
+        'not_found_indices': list(result.not_found_indices or ()),
+    }
+
+
+def _render_persisted_direct_send_result(download_df: pd.DataFrame, operation: str, key: str, signature: str, rules_sig: str) -> None:
+    data = st.session_state.get(DIRECT_SEND_RESULT_STATE_KEY)
+    if not isinstance(data, dict):
+        return
+    if data.get('identity') != _result_identity(operation, key, signature, rules_sig):
+        return
+
+    attempted = int(data.get('attempted') or 0)
+    sent = int(data.get('sent') or 0)
+    failed = int(data.get('failed') or 0)
+    skipped = int(data.get('skipped') or 0)
+    errors = [str(error) for error in list(data.get('errors') or [])]
+    not_found_indices = tuple(int(item) for item in list(data.get('not_found_indices') or []) if str(item).lstrip('-').isdigit())
+
+    st.markdown('### Resultado do envio ao Bling')
+    if attempted == 0:
+        st.error('Envio não iniciado: nenhum produto foi processado.')
+    elif failed == 0 and skipped == 0:
+        st.success(f'Envio concluído com sucesso: {sent}/{attempted} produto(s) enviado(s) ao Bling.')
+    elif sent > 0:
+        st.warning(f'Envio parcialmente concluído: {sent}/{attempted} enviado(s), {failed} falha(s), {skipped} ignorado(s).')
+    else:
+        st.error(f'Envio não concluído: 0/{attempted} enviado(s), {failed} falha(s), {skipped} ignorado(s).')
+
+    cols = st.columns(4)
+    cols[0].metric('Processados', attempted)
+    cols[1].metric('Enviados', sent)
+    cols[2].metric('Falhas', failed)
+    cols[3].metric('Ignorados', skipped)
+
+    for error in errors[:8]:
+        st.error(error)
+    _render_not_found_download(download_df, not_found_indices, key, signature, rules_sig)
+
+    add_audit_event(
+        'bling_direct_send_result_visible_persisted',
+        area='BLING_ENVIO',
+        status='OK' if failed == 0 and skipped == 0 else 'PARCIAL',
+        details={
+            'operation': operation,
+            'attempted': attempted,
+            'sent': sent,
+            'failed': failed,
+            'skipped': skipped,
+            'responsible_file': 'bling_app_zero/ui/home_download.py',
+        },
+    )
+
+
 def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: str, signature: str, rules_sig: str) -> None:
     operation = normalize_operation(operation)
     if not _is_api_context():
@@ -279,24 +346,20 @@ def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: st
         st.warning('Token do Bling indisponível. Reconecte o Bling e tente novamente.')
         return
     _render_payload_preview(download_df, operation)
+    _render_persisted_direct_send_result(download_df, operation, key, signature, rules_sig)
     button_text = DIRECT_SEND_TEXT.get(operation, 'Enviar ao Bling')
     if st.button(button_text, use_container_width=True, key=f'direct_send_bling_{key}_{signature}_{rules_sig}'):
         add_audit_event('bling_direct_send_clicked', area='BLING_ENVIO', status='INICIADO', details={'operation': operation, 'rows': len(download_df), 'responsible_file': 'bling_app_zero/ui/home_download.py'})
         progress_bar = st.progress(0, text='Enviando ao Bling...')
         status_box = st.empty()
         result = send_dataframe_to_bling(download_df, operation, progress_callback=lambda payload: _render_send_progress(payload, progress_bar, status_box))
+        _store_direct_send_result(result, operation, key, signature, rules_sig)
         try:
             progress_bar.empty()
             status_box.empty()
         except Exception:
             pass
-        if result.failed == 0 and result.skipped == 0:
-            st.success(f'Envio concluído: {result.sent} produto(s) enviado(s) ao Bling.')
-        else:
-            st.warning(f'Envio finalizado com atenção: enviados {result.sent}, falhas {result.failed}, ignorados {result.skipped}.')
-            for error in result.errors[:8]:
-                st.error(error)
-            _render_not_found_download(download_df, result.not_found_indices, key, signature, rules_sig)
+        _render_persisted_direct_send_result(download_df, operation, key, signature, rules_sig)
         add_audit_event('bling_direct_send_result_rendered', area='BLING_ENVIO', status='OK' if result.failed == 0 else 'PARCIAL', details={'operation': operation, 'attempted': result.attempted, 'sent': result.sent, 'failed': result.failed, 'skipped': result.skipped, 'not_found_count': len(result.not_found_indices), 'responsible_file': 'bling_app_zero/ui/home_download.py'})
 
 
