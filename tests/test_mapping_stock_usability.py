@@ -12,6 +12,23 @@ def test_mapping_confirmation_uses_flow_blocker_for_invalid_mapping() -> None:
     assert 'Colunas de origem repetidas' in source
 
 
+def test_cadastro_manual_mapping_blocks_duplicate_source_columns() -> None:
+    source = Path('bling_app_zero/ui/mapping_cadastro_flow.py').read_text(encoding='utf-8')
+
+    assert 'from bling_app_zero.ui.flow_guard import render_flow_blocker' in source
+    assert 'Coluna repetida:' in source
+    assert 'Confirmar mapeamento' in source
+
+
+def test_stock_manual_mapping_blocks_duplicate_source_columns_and_missing_model() -> None:
+    source = Path('bling_app_zero/ui/mapping_estoque_flow.py').read_text(encoding='utf-8')
+
+    assert 'from bling_app_zero.ui.flow_guard import render_flow_blocker' in source
+    assert 'A mesma coluna da origem foi usada mais de uma vez no estoque' in source
+    assert 'Estoque bloqueado' in source
+    assert 'Envie o modelo de estoque no passo inicial' in source
+
+
 def test_stock_mapping_step_uses_flow_blocker_for_missing_source_or_model() -> None:
     source = Path('bling_app_zero/ui/estoque_mapping_step.py').read_text(encoding='utf-8')
 
