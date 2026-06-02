@@ -22,12 +22,14 @@ RESPONSIBLE_FILE = 'bling_app_zero/core/bling_direct_sender.py'
 DEFAULT_API_BASE_URL = 'https://www.bling.com.br/Api/v3'
 API_STOCK_DEPOSIT_KEY = 'bling_api_stock_deposit_name'
 API_STOCK_DEPOSIT_ID_KEY = 'bling_api_stock_deposit_id'
+API_STOCK_DEPOSIT_OPTIONS_KEY = 'bling_api_stock_deposit_options'
 PRODUCT_LOOKUP_CACHE_KEY = 'bling_product_lookup_cache_by_code_v1'
+DEPOSIT_LOOKUP_CACHE_KEY = 'bling_deposit_lookup_cache_v1'
 
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
-    # Não usar coluna genérica "id" como ID Bling. Em origem site, "id" costuma ser ID do fornecedor/site.
-    'id': ('id produto bling', 'id_produto_bling', 'id bling', 'id_bling', 'codigo bling', 'código bling'),
-    'codigo': ('código', 'codigo', 'sku', 'ref', 'referencia', 'referência', 'codigo produto', 'código produto'),
+    # ID produto genérico entra como referência. Só vira ID interno quando o nome da coluna deixar claro que é Bling.
+    'id': ('id produto bling', 'id_produto_bling', 'id bling', 'id_bling', 'codigo bling', 'código bling', 'id produto', 'id_produto', 'idproduto', 'id'),
+    'codigo': ('código', 'codigo', 'sku', 'ref', 'referencia', 'referência', 'codigo produto', 'código produto', 'cod produto', 'cod'),
     'nome': ('nome', 'produto', 'título', 'titulo', 'nome produto', 'nome do produto', 'descrição produto', 'descricao produto'),
     'descricao': ('descrição', 'descricao', 'descrição curta', 'descricao curta', 'descrição do produto', 'descricao do produto', 'descricao complementar', 'descrição complementar', 'detalhes', 'observação', 'observacao'),
     'preco': ('preço', 'preco', 'preço unitário', 'preco unitario', 'preço unitário (obrigatório)', 'preco unitario (obrigatorio)', 'valor', 'valor venda', 'preço de venda', 'preco de venda'),
@@ -127,6 +129,15 @@ def _column_map(columns: Iterable[object]) -> dict[str, str]:
     return out
 
 
+def _mapped_column(mapping: dict[str, str], field: str) -> str:
+    return str(mapping.get(field) or '').strip()
+
+
+def _id_column_is_explicit_bling(mapping: dict[str, str]) -> bool:
+    column = _normalize_column_name(_mapped_column(mapping, 'id'))
+    return bool(column and ('bling' in column or 'id produto bling' in column or 'codigo bling' in column))
+
+
 def _value(row: pd.Series, mapping: dict[str, str], field: str, default: str = '') -> str:
     column = mapping.get(field)
     if not column:
@@ -175,24 +186,25 @@ def _looks_like_bling_internal_id(value: object) -> bool:
     return 1 <= len(digits) <= 11
 
 
-def _stock_product_reference(row: pd.Series, mapping: dict[str, str]) -> dict[str, str]:
-    """Escolhe a referência correta para atualizar estoque.
+def _unique_non_empty(values: Iterable[object]) -> list[str]:
+    out: list[str] = []
+    for value in values:
+        text = str(value or '').strip()
+        if text and text.lower() not in {item.lower() for item in out}:
+            out.append(text)
+    return out
 
-    Para origem site, a coluna "id" normalmente é ID do fornecedor/site, não ID interno do Bling.
-    Por isso estoque deve priorizar código/SKU e GTIN para resolver o produto no Bling.
-    """
+
+def _stock_product_reference(row: pd.Series, mapping: dict[str, str]) -> dict[str, object]:
     codigo = _value(row, mapping, 'codigo')
     gtin = _value(row, mapping, 'gtin')
     produto_id = _value(row, mapping, 'id')
+    candidates = _unique_non_empty([codigo, gtin, produto_id])
 
-    if codigo:
-        return {'codigo': codigo}
-    if gtin:
-        return {'codigo': gtin}
-    if _looks_like_bling_internal_id(produto_id):
-        return {'id': produto_id}
-    if produto_id:
-        return {'codigo': produto_id}
+    if produto_id and _id_column_is_explicit_bling(mapping) and _looks_like_bling_internal_id(produto_id):
+        return {'id': produto_id, '_candidatos': candidates}
+    if candidates:
+        return {'codigo': candidates[0], '_candidatos': candidates}
     return {}
 
 
@@ -235,10 +247,12 @@ def _url(path: str) -> str:
 def _clean_payload(payload: dict[str, Any]) -> dict[str, Any]:
     clean: dict[str, Any] = {}
     for key, value in payload.items():
+        if str(key).startswith('_'):
+            continue
         if value in ('', None, {}):
             continue
         if isinstance(value, dict):
-            nested = {nested_key: nested_value for nested_key, nested_value in value.items() if nested_value not in ('', None, {})}
+            nested = {nested_key: nested_value for nested_key, nested_value in value.items() if nested_value not in ('', None, {}) and not str(nested_key).startswith('_')}
             if nested:
                 clean[key] = nested
             continue
@@ -270,6 +284,14 @@ def _lookup_cache() -> dict[str, str]:
     return cache
 
 
+def _deposit_cache() -> dict[str, str]:
+    cache = st.session_state.get(DEPOSIT_LOOKUP_CACHE_KEY)
+    if not isinstance(cache, dict):
+        cache = {}
+        st.session_state[DEPOSIT_LOOKUP_CACHE_KEY] = cache
+    return cache
+
+
 def _resolve_product_id_by_code(token: dict[str, Any], code: str) -> str:
     code = str(code or '').strip()
     if not code:
@@ -291,9 +313,11 @@ def _resolve_product_id_by_code(token: dict[str, Any], code: str) -> str:
             for item in _extract_items(response.json()):
                 item_id = str(item.get('id') or item.get('idProduto') or '').strip()
                 item_code = str(item.get('codigo') or item.get('sku') or item.get('codigoProduto') or '').strip()
-                if item_id and (not item_code or item_code.lower() == code.lower() or params != {'codigo': code}):
+                item_gtin = str(item.get('gtin') or item.get('ean') or item.get('codigoBarras') or '').strip()
+                exact = item_code.lower() == code.lower() or item_gtin.lower() == code.lower()
+                if item_id and (exact or params != {'codigo': code}):
                     cache[cache_key] = item_id
-                    add_audit_event('bling_product_lookup_resolved', area='BLING_ENVIO', status='OK', details={'code': code, 'product_id': item_id, 'params': params, 'responsible_file': RESPONSIBLE_FILE})
+                    add_audit_event('bling_product_lookup_resolved', area='BLING_ENVIO', status='OK', details={'code': code, 'product_id': item_id, 'params': params, 'matched_code': item_code, 'matched_gtin': item_gtin, 'responsible_file': RESPONSIBLE_FILE})
                     return item_id
         except Exception as exc:
             add_audit_event('bling_product_lookup_failed', area='BLING_ENVIO', status='AVISO', details={'code': code, 'error': str(exc), 'responsible_file': RESPONSIBLE_FILE})
@@ -310,13 +334,108 @@ def _resolve_stock_payload_product(token: dict[str, Any], payload: dict[str, Any
     if produto_id and _looks_like_bling_internal_id(produto_id):
         payload['produto'] = {'id': produto_id}
         return payload, ''
-    code = str(produto.get('codigo') or produto.get('gtin') or produto_id or '').strip()
-    resolved_id = _resolve_product_id_by_code(token, code)
-    if resolved_id:
-        payload['produto'] = {'id': resolved_id}
-        payload['_produto_resolvido_por_codigo'] = code
+    candidates = produto.get('_candidatos') if isinstance(produto.get('_candidatos'), list) else []
+    codes = _unique_non_empty([produto.get('codigo'), produto.get('gtin'), produto_id, *candidates])
+    for code in codes:
+        resolved_id = _resolve_product_id_by_code(token, code)
+        if resolved_id:
+            payload['produto'] = {'id': resolved_id}
+            payload['_produto_resolvido_por_codigo'] = code
+            return payload, ''
+    return None, f'Produto não encontrado no Bling por Código/SKU/GTIN/ID referência: {", ".join(codes) or "vazio"}. O produto precisa existir no Bling com um desses identificadores.'
+
+
+def _deposit_paths() -> list[str]:
+    configured = _secret('stock_deposits_path', '')
+    paths = [configured] if configured else []
+    paths.extend(['/estoques/depositos', '/depositos', '/estoque/depositos'])
+    out: list[str] = []
+    for path in paths:
+        value = str(path or '').strip()
+        if value and value not in out:
+            out.append(value)
+    return out
+
+
+def _normalize_deposit(item: dict[str, Any]) -> dict[str, str] | None:
+    deposit_id = str(item.get('id') or item.get('idDeposito') or item.get('id_deposito') or item.get('codigo') or '').strip()
+    name = str(item.get('descricao') or item.get('nome') or item.get('name') or item.get('description') or '').strip()
+    nested = item.get('deposito')
+    if isinstance(nested, dict):
+        deposit_id = deposit_id or str(nested.get('id') or nested.get('idDeposito') or '').strip()
+        name = name or str(nested.get('descricao') or nested.get('nome') or '').strip()
+    if not deposit_id and not name:
+        return None
+    return {'id': deposit_id, 'nome': name}
+
+
+def _fetch_stock_deposits(token: dict[str, Any]) -> list[dict[str, str]]:
+    cached = st.session_state.get(API_STOCK_DEPOSIT_OPTIONS_KEY)
+    if isinstance(cached, list) and cached:
+        return [item for item in cached if isinstance(item, dict)]
+    headers = {'Accept': 'application/json', 'Authorization': f"Bearer {token.get('access_token')}"}
+    errors: list[str] = []
+    for path in _deposit_paths():
+        try:
+            response = requests.get(_url(path), headers=headers, timeout=20)
+            if response.status_code >= 400:
+                errors.append(f'{path}: HTTP {response.status_code}')
+                continue
+            deposits: list[dict[str, str]] = []
+            seen: set[tuple[str, str]] = set()
+            for item in _extract_items(response.json()):
+                deposit = _normalize_deposit(item)
+                if not deposit:
+                    continue
+                key = (deposit.get('id', ''), deposit.get('nome', ''))
+                if key in seen:
+                    continue
+                seen.add(key)
+                deposits.append(deposit)
+            if deposits:
+                st.session_state[API_STOCK_DEPOSIT_OPTIONS_KEY] = deposits
+                add_audit_event('bling_direct_stock_deposits_loaded', area='BLING_ENVIO', status='OK', details={'path': path, 'count': len(deposits), 'responsible_file': RESPONSIBLE_FILE})
+                return deposits
+        except Exception as exc:
+            errors.append(f'{path}: {exc}')
+    add_audit_event('bling_direct_stock_deposits_load_failed', area='BLING_ENVIO', status='AVISO', details={'errors': errors[:4], 'responsible_file': RESPONSIBLE_FILE})
+    return []
+
+
+def _resolve_stock_payload_deposit(token: dict[str, Any], payload: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+    deposito = payload.get('deposito') if isinstance(payload.get('deposito'), dict) else {}
+    deposito_id = str(deposito.get('id') or '').strip()
+    deposito_nome = str(deposito.get('nome') or _stock_deposit_name() or '').strip()
+    if deposito_id:
+        payload['deposito'] = {'id': deposito_id}
         return payload, ''
-    return None, f'Produto não encontrado no Bling pelo código/SKU/GTIN: {code or "vazio"}. Cadastre o produto antes de atualizar saldo.'
+
+    cache = _deposit_cache()
+    if deposito_nome and deposito_nome.lower() in cache:
+        payload['deposito'] = {'id': cache[deposito_nome.lower()]}
+        return payload, ''
+
+    deposits = _fetch_stock_deposits(token)
+    if deposito_nome:
+        wanted = deposito_nome.lower()
+        for item in deposits:
+            if wanted == str(item.get('nome') or '').strip().lower() or wanted == str(item.get('id') or '').strip().lower():
+                found_id = str(item.get('id') or '').strip()
+                if found_id:
+                    cache[wanted] = found_id
+                    st.session_state[API_STOCK_DEPOSIT_ID_KEY] = found_id
+                    st.session_state[API_STOCK_DEPOSIT_KEY] = str(item.get('nome') or deposito_nome).strip()
+                    payload['deposito'] = {'id': found_id}
+                    return payload, ''
+
+    if len(deposits) == 1 and str(deposits[0].get('id') or '').strip():
+        found_id = str(deposits[0].get('id') or '').strip()
+        st.session_state[API_STOCK_DEPOSIT_ID_KEY] = found_id
+        st.session_state[API_STOCK_DEPOSIT_KEY] = str(deposits[0].get('nome') or '').strip()
+        payload['deposito'] = {'id': found_id}
+        return payload, ''
+
+    return None, f'Depósito do Bling não resolvido automaticamente. Valor informado: {deposito_nome or "vazio"}. Depósitos encontrados: {len(deposits)}.'
 
 
 def _api_error_message(index: object, response: requests.Response, *, operation: str = '', product_resolved: bool = False) -> str:
@@ -326,7 +445,7 @@ def _api_error_message(index: object, response: requests.Response, *, operation:
     if status in {401, 403}:
         return f'Linha {line}: Bling recusou a autorização ({status}). O token pode ter expirado ou o app não tem permissão para esta operação. Desconecte o Bling, conecte novamente e tente enviar de novo.'
     if status == 404 and operation == OP_ESTOQUE and product_resolved:
-        return f'Linha {line}: produto foi encontrado no Bling, mas o endpoint/payload de estoque retornou 404. Revise rota/permissão de estoque no app Bling. {preview}'
+        return f'Linha {line}: produto foi encontrado no Bling, mas endpoint/payload de estoque retornou 404. {preview}'
     if status == 404:
         return f'Linha {line}: produto ou endpoint não encontrado no Bling (404). {preview}'
     if status == 422:
@@ -374,7 +493,7 @@ def _payload_estoque(row: pd.Series, mapping: dict[str, str]) -> dict[str, Any] 
         payload['deposito'] = {'id': deposito_id}
     elif deposito_nome:
         payload['deposito'] = {'nome': deposito_nome}
-    return _clean_payload(payload)
+    return payload
 
 
 def _payload_for(operation: str, row: pd.Series, mapping: dict[str, str]) -> tuple[dict[str, Any] | None, str]:
@@ -392,9 +511,9 @@ def _payload_for(operation: str, row: pd.Series, mapping: dict[str, str]) -> tup
         if payload is None:
             return None, 'Quantidade/saldo ausente ou inválido.'
         if not payload.get('produto'):
-            return None, 'Estoque exige ID real do produto no Bling, código/SKU ou GTIN/EAN.'
+            return None, 'Estoque exige código/SKU, GTIN/EAN ou ID de referência do produto.'
         if not payload.get('deposito'):
-            return None, 'Busque e selecione o depósito do Bling antes de atualizar estoque.'
+            return None, 'Depósito ausente. O sistema tentará resolver automaticamente se houver depósito padrão no Bling.'
         return payload, ''
     return None, f'Operação sem envio direto configurado: {operation_label(operation)}.'
 
@@ -407,7 +526,7 @@ def preview_payloads(df: pd.DataFrame, operation: str, *, limit: int = 5) -> lis
     previews: list[dict[str, Any]] = []
     for _index, row in df.fillna('').head(limit).iterrows():
         payload, reason = _payload_for(operation, row, mapping)
-        previews.append({'payload': payload or {}, 'status': 'OK' if payload else 'IGNORADO', 'motivo': reason})
+        previews.append({'payload': _clean_payload(payload or {}), 'status': 'OK' if payload else 'IGNORADO', 'motivo': reason})
     return previews
 
 
@@ -521,7 +640,7 @@ def send_dataframe_to_bling(
 
     for position, (index, row) in enumerate(rows.iterrows(), start=1):
         row_id = _value(row, mapping, 'id')
-        if operation == OP_ESTOQUE and not _looks_like_bling_internal_id(row_id):
+        if operation == OP_ESTOQUE and (not _id_column_is_explicit_bling(mapping) or not _looks_like_bling_internal_id(row_id)):
             row_id = ''
         payload, skip_reason = _payload_for(operation, row, mapping)
         if payload is None:
@@ -534,6 +653,10 @@ def send_dataframe_to_bling(
         product_resolved = False
         if operation == OP_ESTOQUE:
             payload, resolve_reason = _resolve_stock_payload_product(token, payload)
+            if payload is not None:
+                payload, deposit_reason = _resolve_stock_payload_deposit(token, payload)
+                if payload is None:
+                    resolve_reason = deposit_reason
             if payload is None:
                 failed += 1
                 try:
