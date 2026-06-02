@@ -12,6 +12,7 @@ from bling_app_zero.ui.cadastro_wizard_state import (
     set_context_final_df,
     valid_df,
 )
+from bling_app_zero.ui.flow_guard import render_flow_blocker
 from bling_app_zero.ui.home_download import _render_api_final
 from bling_app_zero.ui.home_shared import df_signature, download_final
 from bling_app_zero.universal.model_contract_detector import MODEL_CONTRACT_TYPE_KEY, normalize_contract_operation
@@ -186,7 +187,11 @@ def render_cadastro_download_step() -> None:
 
     df_final = _final_df_for_context(operation)
     if not valid_df(df_final):
-        st.warning('O resultado final ainda não foi gerado. Volte para a prévia final.')
+        render_flow_blocker(
+            'O resultado final ainda não foi gerado. Volte para a prévia final e conclua a revisão antes de baixar ou enviar.',
+            title='Download bloqueado',
+            action_label=_title(),
+        )
         return
 
     if not _is_api_context() and render_row_count_blocker(df_final):
