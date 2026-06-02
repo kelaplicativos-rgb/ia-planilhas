@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.ui.cadastro_wizard_state import LEGACY_CADASTRO_FINAL_KEY, UNIVERSAL_FINAL_KEY, set_universal_final_df
+from bling_app_zero.ui.flow_guard import render_flow_blocker
 from bling_app_zero.ui.home_autofluxo import pause_home_autofluxo_for_manual_review
 from bling_app_zero.ui.home_shared import df_signature, preview_df
 from bling_app_zero.ui.layout import inject_mapping_css
@@ -192,7 +193,11 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
 
     duplicated = _duplicated_source_columns(edited_mapping)
     if duplicated:
-        st.warning('Coluna repetida: ' + ', '.join(duplicated))
+        render_flow_blocker(
+            'Coluna repetida: ' + ', '.join(duplicated),
+            title='Mapeamento bloqueado',
+            action_label='Confirmar mapeamento',
+        )
 
     render_confirm_mapping_button(edited_mapping, df_preview_manual, mapping_key, target_columns)
     _render_cadastro_actions(mapping_key, order_key, df_source, model, source_columns)
