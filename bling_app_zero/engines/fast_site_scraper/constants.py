@@ -1,28 +1,32 @@
 from __future__ import annotations
 
-MAX_WORKERS = 8
+MAX_WORKERS = 6
 SLOW_LINK_SECONDS = 6.0
 SMART_COMPLETE_TARGET = 180
 SMART_STOP_MIN_PROCESSED = 120
 SMART_STOP_COMPLETE_RATIO = 0.72
 SMART_STOP_NO_GAIN_WINDOW = 80
 SMART_STOP_MIN_FOUND = 60
-DEVTOOLS_FALLBACK_MAX_PER_RUN = 12
+DEVTOOLS_FALLBACK_MAX_PER_RUN = 8
 
-SAFE_CAPTURE_MAX_PAGES = 250
-SAFE_CAPTURE_MAX_PRODUCTS = 1200
+SAFE_CAPTURE_MAX_PAGES = 120
+SAFE_CAPTURE_MAX_PRODUCTS = 500
 SAFE_CAPTURE_MAX_DEPTH = 2
-SAFE_CAPTURE_TIMEOUT_SECONDS = 120
+SAFE_CAPTURE_TIMEOUT_SECONDS = 75
 
-DEEP_CAPTURE_MAX_PAGES = 3000
-DEEP_CAPTURE_MAX_PRODUCTS = 20000
-DEEP_CAPTURE_MAX_DEPTH = 6
-DEEP_CAPTURE_TIMEOUT_SECONDS = 420
+DEEP_CAPTURE_MAX_PAGES = 450
+DEEP_CAPTURE_MAX_PRODUCTS = 1200
+DEEP_CAPTURE_MAX_DEPTH = 3
+DEEP_CAPTURE_TIMEOUT_SECONDS = 110
 
-FLOW_CAPTURE_MAX_PAGES = 10000
-FLOW_CAPTURE_MAX_PRODUCTS = 100000
-FLOW_CAPTURE_MAX_DEPTH = 8
-FLOW_CAPTURE_TIMEOUT_SECONDS = 900
+FLOW_CAPTURE_MAX_PAGES = 650
+FLOW_CAPTURE_MAX_PRODUCTS = 1500
+FLOW_CAPTURE_MAX_DEPTH = 3
+FLOW_CAPTURE_TIMEOUT_SECONDS = 85
+
+STREAMLIT_HARD_BUDGET_SECONDS = 85
+DISCOVERY_BUDGET_SECONDS = 28
+PRODUCT_READ_BUDGET_SECONDS = 48
 
 RICH_DESCRIPTION_KINDS = {'descricao_complementar', 'ficha_tecnica', 'caracteristicas'}
 DESCRIPTION_TRIGGER_KINDS = {'descricao', 'descricao_curta', 'nome_apoio', *RICH_DESCRIPTION_KINDS}
@@ -47,9 +51,10 @@ def normalize_capture_limits(
 ) -> dict[str, int | bool]:
     """Normaliza limites de captura por site.
 
-    safe  = captura controlada.
-    deep  = busca completa padrão.
-    flow  = fluxo contínuo para estoque/API sem parada por quantidade segura.
+    Regra BLINGFIX:
+    - nenhum modo pode entregar números gigantes ao Streamlit;
+    - estoque/site completo roda em lotes seguros;
+    - o sistema deve retornar parcial em vez de cair por timeout.
     """
     normalized_mode = str(mode or 'safe').strip().lower()
     if normalized_mode in {'flow', 'continuous', 'stock_flow', 'estoque_flow', 'stock_balance_flow'}:
@@ -58,7 +63,7 @@ def normalize_capture_limits(
             'max_products': _clamp_int(max_products, FLOW_CAPTURE_MAX_PRODUCTS, 1, FLOW_CAPTURE_MAX_PRODUCTS),
             'max_depth': _clamp_int(max_depth, FLOW_CAPTURE_MAX_DEPTH, 0, FLOW_CAPTURE_MAX_DEPTH),
             'timeout_seconds': FLOW_CAPTURE_TIMEOUT_SECONDS,
-            'safe_limited': False,
+            'safe_limited': True,
             'flow_mode': True,
         }
 
@@ -68,7 +73,7 @@ def normalize_capture_limits(
             'max_products': _clamp_int(max_products, DEEP_CAPTURE_MAX_PRODUCTS, 1, DEEP_CAPTURE_MAX_PRODUCTS),
             'max_depth': _clamp_int(max_depth, DEEP_CAPTURE_MAX_DEPTH, 0, DEEP_CAPTURE_MAX_DEPTH),
             'timeout_seconds': DEEP_CAPTURE_TIMEOUT_SECONDS,
-            'safe_limited': False,
+            'safe_limited': True,
             'flow_mode': False,
         }
 
@@ -89,11 +94,13 @@ __all__ = [
     'DEEP_CAPTURE_TIMEOUT_SECONDS',
     'DESCRIPTION_TRIGGER_KINDS',
     'DEVTOOLS_FALLBACK_MAX_PER_RUN',
+    'DISCOVERY_BUDGET_SECONDS',
     'FLOW_CAPTURE_MAX_DEPTH',
     'FLOW_CAPTURE_MAX_PAGES',
     'FLOW_CAPTURE_MAX_PRODUCTS',
     'FLOW_CAPTURE_TIMEOUT_SECONDS',
     'MAX_WORKERS',
+    'PRODUCT_READ_BUDGET_SECONDS',
     'RESPONSIBLE_FILE',
     'RICH_DESCRIPTION_KINDS',
     'SAFE_CAPTURE_MAX_DEPTH',
@@ -106,5 +113,6 @@ __all__ = [
     'SMART_STOP_MIN_FOUND',
     'SMART_STOP_MIN_PROCESSED',
     'SMART_STOP_NO_GAIN_WINDOW',
+    'STREAMLIT_HARD_BUDGET_SECONDS',
     'normalize_capture_limits',
 ]
