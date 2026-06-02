@@ -15,6 +15,8 @@ AUTOCADASTRO_SIGNATURE_KEY = 'blingsmartcore_autocadastro_signature'
 AUTOCADASTRO_REASON_KEY = 'blingsmartcore_autocadastro_reason'
 CADASTRO_ORIGEM_KEY = 'cadastro_wizard_df_origem'
 CADASTRO_ORIGEM_PRICED_KEY = 'cadastro_wizard_df_para_mapear'
+WIZARD_STEP_KEY = 'bling_wizard_step'
+STEP_MAPEAMENTO = 'mapeamento'
 
 
 def _line_indices_from_errors(errors: list[str] | tuple[str, ...]) -> set[int]:
@@ -87,6 +89,23 @@ def build_not_sent_dataframe(download_df: pd.DataFrame, result_payload: dict[str
     return out
 
 
+def _force_autocadastro_navigation() -> None:
+    st.session_state[WIZARD_STEP_KEY] = STEP_MAPEAMENTO
+    st.session_state['home_active_operation_v2'] = 'wizard_cadastro_estoque'
+    st.session_state['home_single_page_flow_active'] = True
+    st.session_state['home_wizard_scroll_target_step'] = STEP_MAPEAMENTO
+    st.session_state['cadastro_mapping_confirmed'] = False
+    st.session_state.pop('df_final_download_operation', None)
+    st.session_state.pop('final_download_operation', None)
+    st.session_state.pop('df_final_preview_operation', None)
+    try:
+        st.query_params['operation_v2'] = 'wizard_cadastro_estoque'
+        st.query_params['step'] = STEP_MAPEAMENTO
+        st.query_params['operation'] = OP_CADASTRO
+    except Exception:
+        pass
+
+
 def save_autocadastro_source(df: pd.DataFrame, *, reason: str = 'produtos_nao_enviados') -> None:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return
@@ -103,11 +122,12 @@ def save_autocadastro_source(df: pd.DataFrame, *, reason: str = 'produtos_nao_en
     st.session_state['tipo_operacao_final'] = OP_CADASTRO
     st.session_state['home_detected_operation'] = OP_CADASTRO
     st.session_state['df_origem_cadastro_precificada'] = eligible
+    _force_autocadastro_navigation()
     add_audit_event(
         'blingsmartcore_autocadastro_source_saved',
         area='AUTOCADASTRO',
         status='OK',
-        details={'rows': len(eligible), 'reason': reason, 'responsible_file': RESPONSIBLE_FILE},
+        details={'rows': len(eligible), 'reason': reason, 'target_step': STEP_MAPEAMENTO, 'responsible_file': RESPONSIBLE_FILE},
     )
 
 
@@ -134,7 +154,8 @@ def render_autocadastro_panel(download_df: pd.DataFrame, result_payload: dict[st
     if eligible_count > 0:
         if st.button('Usar produtos não encontrados como origem de cadastro', use_container_width=True, key=f'autocadastro_use_as_origin_{key}_{eligible_count}'):
             save_autocadastro_source(df_not_sent, reason='produto_nao_encontrado_no_bling')
-            st.success('Produtos não encontrados foram preparados como origem de cadastro. Siga para o mapeamento/cadastro.')
+            st.success('Produtos não encontrados foram preparados como origem de cadastro. Abrindo mapeamento...')
+            st.rerun()
 
 
 __all__ = ['build_not_sent_dataframe', 'render_autocadastro_panel', 'save_autocadastro_source']
