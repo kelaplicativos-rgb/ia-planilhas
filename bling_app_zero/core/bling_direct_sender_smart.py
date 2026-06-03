@@ -29,7 +29,9 @@ PRODUCT_CACHE_KEY = 'bling_smart_sender_product_cache_v2'
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     'codigo': ('código', 'codigo', 'sku', 'ref', 'referencia', 'referência', 'codigo produto', 'código produto', 'cod produto', 'cod'),
     'nome': ('nome', 'produto', 'título', 'titulo', 'nome produto', 'nome do produto', 'descrição produto', 'descricao produto'),
-    'descricao': ('descrição', 'descricao', 'descrição curta', 'descricao curta', 'descrição do produto', 'descricao do produto', 'detalhes', 'descricao complementar', 'descrição complementar'),
+    'descricao': ('descrição', 'descricao', 'descrição do produto', 'descricao do produto', 'detalhes'),
+    'descricao_curta': ('descrição curta', 'descricao curta', 'descrição resumida', 'descricao resumida', 'resumo', 'sinopse'),
+    'descricao_complementar': ('descricao complementar', 'descrição complementar', 'complementar', 'descrição detalhada', 'descricao detalhada', 'ficha tecnica', 'ficha técnica', 'caracteristicas', 'características'),
     'preco': ('preço', 'preco', 'preço unitário', 'preco unitario', 'preço unitário (obrigatório)', 'preco unitario (obrigatorio)', 'valor', 'valor venda', 'preço de venda', 'preco de venda'),
     'gtin': ('gtin', 'ean', 'codigo de barras', 'código de barras', 'gtin/ean'),
     'marca': ('marca', 'fabricante'),
@@ -303,12 +305,17 @@ def _resolve_or_create_category(token: dict[str, Any], category_name: str) -> st
 
 
 def _base_payload(row: pd.Series, mapping: dict[str, str]) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    raw_code = _value(row, mapping, 'codigo') or _value(row, mapping, 'gtin')
+    raw_code = _value(row, mapping, 'codigo')
     gtin = _digits_only(_value(row, mapping, 'gtin'))
     code = _sanitize_code(raw_code or gtin)
+    raw_description = _value(row, mapping, 'descricao')
+    raw_short = _value(row, mapping, 'descricao_curta') or raw_description
+    raw_complement = _value(row, mapping, 'descricao_complementar')
     enrichment = enrich_product_payload_fields(
         name=_value(row, mapping, 'nome'),
-        description=_value(row, mapping, 'descricao'),
+        description=raw_description,
+        description_short=raw_short,
+        description_complementary=raw_complement,
         code=code,
         gtin=gtin,
         category=_value(row, mapping, 'categoria'),
@@ -323,8 +330,10 @@ def _base_payload(row: pd.Series, mapping: dict[str, str]) -> tuple[dict[str, An
     unit = _clean_text(_value(row, mapping, 'unidade') or 'UN', 6).upper()
     if re.fullmatch(r'[A-Z0-9]{1,6}', unit):
         payload['unidade'] = unit
-    if enrichment.description and enrichment.description.lower() != name.lower():
-        payload['descricaoCurta'] = enrichment.description
+    if enrichment.description_short and enrichment.description_short.lower() != name.lower():
+        payload['descricaoCurta'] = enrichment.description_short
+    if enrichment.description_complementary:
+        payload['descricaoComplementar'] = enrichment.description_complementary
     price = _number_value(_value(row, mapping, 'preco'))
     if price is not None and price >= 0:
         payload['preco'] = price
@@ -334,7 +343,17 @@ def _base_payload(row: pd.Series, mapping: dict[str, str]) -> tuple[dict[str, An
     ncm = _digits_only(_value(row, mapping, 'ncm'))
     if len(ncm) == 8:
         payload['tributacao'] = {'ncm': ncm}
-    meta = {'category': enrichment.category, 'images': list(enrichment.image_urls), 'confidence': enrichment.confidence, 'warnings': list(enrichment.warnings), 'code': code, 'gtin': gtin, 'raw_code': str(raw_code or '')}
+    meta = {
+        'category': enrichment.category,
+        'images': list(enrichment.image_urls),
+        'confidence': enrichment.confidence,
+        'warnings': list(enrichment.warnings),
+        'code': code,
+        'gtin': gtin,
+        'raw_code': str(raw_code or ''),
+        'description_short_len': len(enrichment.description_short or ''),
+        'description_complementary_len': len(enrichment.description_complementary or ''),
+    }
     return _clean_payload(payload), meta
 
 
@@ -357,16 +376,16 @@ def _payload_variants(token: dict[str, Any], row: pd.Series, mapping: dict[str, 
         with_category['categoria'] = {'id': category_id}
     elif category:
         with_category['categoria'] = {'descricao': category}
-    no_format_risk = {k: v for k, v in base.items() if k not in {'unidade', 'marca', 'preco', 'tributacao', 'descricaoCurta'}}
+    no_format_risk = {k: v for k, v in base.items() if k not in {'unidade', 'marca', 'preco', 'tributacao', 'descricaoCurta', 'descricaoComplementar'}}
     name_only = {'nome': base.get('nome', 'Produto sem nome'), 'tipo': 'P', 'situacao': 'A'}
     if base.get('codigo'):
         name_only['codigo'] = base['codigo']
     variants: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
     seen: set[str] = set()
     for label, payload in (
-        ('smart_completo_categoria_imagem', full),
-        ('smart_categoria_sem_imagem', with_category),
-        ('smart_minimo_sem_categoria_imagem', base),
+        ('smart_completo_categoria_imagem_descricao', full),
+        ('smart_categoria_descricao_sem_imagem', with_category),
+        ('smart_minimo_com_descricao', base),
         ('smart_sem_campos_de_formato_risco', no_format_risk),
         ('smart_nome_codigo_minimo', name_only),
     ):
@@ -391,7 +410,7 @@ def _smart_preview_payloads(df: pd.DataFrame, *, limit: int = 5) -> list[dict[st
         variants = _payload_variants(token, row, mapping)
         if variants:
             label, payload, meta = variants[0]
-            out.append({'payload': payload, 'status': 'OK', 'motivo': f'BLINGSMARTCORE {label} · confiança {meta.get("confidence", 0)}/100'})
+            out.append({'payload': payload, 'status': 'OK', 'motivo': f'BLINGSMARTCORE {label} · confiança {meta.get("confidence", 0)}/100 · desc curta {meta.get("description_short_len", 0)} · desc compl {meta.get("description_complementary_len", 0)}'})
         else:
             out.append({'payload': {}, 'status': 'IGNORADO', 'motivo': 'Nome/código insuficiente para cadastro.'})
     return out
@@ -416,7 +435,6 @@ def _update_existing_product(token: dict[str, Any], product_id: str, variants: l
     attempts: list[dict[str, Any]] = []
     for strategy, payload, meta in variants:
         update_payload = dict(payload)
-        # Em atualização, evitar trocar código se ele foi justamente o motivo da colisão.
         for method in ('PUT', 'PATCH'):
             try:
                 response = requests.request(method, _url(f'/produtos/{product_id}'), headers=_headers(token), json=update_payload, timeout=SEND_TIMEOUT)
@@ -468,7 +486,7 @@ def _send_cadastro_smart(df: pd.DataFrame, *, limit: int | None = None, progress
                 response = requests.post(_url(create_path), headers=_headers(token), json=payload, timeout=SEND_TIMEOUT)
                 last_response = response
                 response_text = str(response.text or '')
-                attempts.append({'mode': 'create', 'strategy': strategy, 'status': int(response.status_code), 'confidence': meta.get('confidence'), 'category': meta.get('category'), 'category_id': meta.get('category_id'), 'warnings': meta.get('warnings'), 'payload_keys': sorted(payload.keys()), 'response_preview': response_text[:500]})
+                attempts.append({'mode': 'create', 'strategy': strategy, 'status': int(response.status_code), 'confidence': meta.get('confidence'), 'category': meta.get('category'), 'category_id': meta.get('category_id'), 'warnings': meta.get('warnings'), 'description_short_len': meta.get('description_short_len'), 'description_complementary_len': meta.get('description_complementary_len'), 'payload_keys': sorted(payload.keys()), 'response_preview': response_text[:500]})
                 if response.status_code < 400:
                     ok = True
                     add_audit_event('bling_smart_cadastro_strategy_succeeded', area='BLING_ENVIO', status='OK', details={'line': line, 'strategy': strategy, 'meta': meta, 'responsible_file': RESPONSIBLE_FILE})
@@ -498,7 +516,7 @@ def _send_cadastro_smart(df: pd.DataFrame, *, limit: int | None = None, progress
             add_audit_event('bling_smart_cadastro_failed', area='BLING_ENVIO', status='AVISO', details={'line': line, 'status': status, 'attempts': attempts[-8:], 'responsible_file': RESPONSIBLE_FILE})
         _emit_progress(progress_callback, {'stage': 'Cadastrando no Bling', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
     _emit_progress(progress_callback, {'stage': 'Cadastro inteligente concluído', 'processed': total, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': 1.0})
-    add_audit_event('bling_smart_cadastro_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'attempted': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'mode': 'upsert_heuristic_category_image_fallback', 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('bling_smart_cadastro_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'attempted': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'mode': 'upsert_heuristic_category_image_description_fallback', 'responsible_file': RESPONSIBLE_FILE})
     return DirectSendResult(total, sent, failed, skipped, tuple(errors), tuple())
 
 
