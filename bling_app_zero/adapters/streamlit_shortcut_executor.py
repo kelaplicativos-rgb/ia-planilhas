@@ -5,7 +5,21 @@ from typing import Callable
 
 import streamlit as st
 
+from bling_app_zero.adapters.streamlit_state_bridge import (
+    app_state_from_streamlit,
+    navigation_state_from_streamlit,
+    sync_app_state_to_streamlit,
+    sync_navigation_to_streamlit,
+)
 from bling_app_zero.core.app_shortcuts import AppShortcut, CONTEXT_API, CONTEXT_AUTO, CONTEXT_CSV
+from bling_app_zero.core.workflow_engine import (
+    CONTEXT_API as WORKFLOW_CONTEXT_API,
+    CONTEXT_UNIVERSAL as WORKFLOW_CONTEXT_UNIVERSAL,
+    current_context_is_api,
+    current_operation,
+    go_home as workflow_go_home,
+    set_wizard,
+)
 from bling_app_zero.ui.flow_context import CONTEXT_BLING_API, CONTEXT_UNIVERSAL, activate_api_finish_mode, activate_csv_finish_mode, set_entry_context
 from bling_app_zero.ui.home_wizard_rerun import set_step_without_rerun
 from bling_app_zero.ui.scroll_position import request_scroll_top
@@ -25,92 +39,96 @@ class ShortcutExecutionResult:
     message: str = ''
 
 
-def clear_navigation_params() -> None:
-    try:
-        for key in ('operation_v2', 'step', 'flow', 'origem', 'operacao', 'operation'):
-            st.query_params.pop(key, None)
-    except Exception:
-        pass
-
-
-def go_home() -> ShortcutExecutionResult:
+def _apply_legacy_streamlit_side_effects(*, context: str = '', step: str = '', api_mode: bool = False) -> None:
     request_scroll_top()
-    st.session_state[ACTIVE_FLOW_KEY] = FLOW_HOME
-    st.session_state[HOME_ALLOW_FLOW_KEY] = False
-    st.session_state['home_single_page_flow_active'] = False
-    clear_navigation_params()
-    return ShortcutExecutionResult(True, True, 'Voltando para o início.')
-
-
-def current_operation(default: str = 'cadastro') -> str:
-    return str(st.session_state.get('direct_bling_operation_choice') or st.session_state.get('home_slim_flow_operation') or default)
-
-
-def current_context_is_api() -> bool:
-    return str(st.session_state.get('bling_finish_mode') or '') == 'api_direct'
-
-
-def set_wizard_base(*, context: str, step: str, operation: str | None = None, origin: str | None = None, api_mode: bool = False) -> None:
-    request_scroll_top()
-    st.session_state[ACTIVE_FLOW_KEY] = FLOW_WIZARD
-    st.session_state[HOME_ALLOW_FLOW_KEY] = True
-    st.session_state['home_single_page_flow_active'] = True
-    set_entry_context(context)
+    if context:
+        set_entry_context(CONTEXT_BLING_API if context == WORKFLOW_CONTEXT_API else CONTEXT_UNIVERSAL)
     if api_mode:
         activate_api_finish_mode()
     else:
         activate_csv_finish_mode()
-    if operation:
-        st.session_state['direct_bling_operation_choice'] = operation
-        st.session_state['home_slim_flow_operation'] = operation
-        st.session_state['home_detected_operation'] = operation
-        st.session_state['operacao_final'] = operation
-        st.session_state['tipo_operacao_final'] = operation
-        st.session_state['model_contract_type'] = operation
-    if origin:
-        st.session_state['home_slim_flow_origin'] = origin
-        st.session_state['origem_final'] = origin
-    set_step_without_rerun(step)
-    try:
-        st.query_params['operation_v2'] = FLOW_WIZARD
-        st.query_params['step'] = step
-        if operation:
-            st.query_params['operation'] = operation
-    except Exception:
-        pass
+    if step:
+        set_step_without_rerun(step)
 
 
-def execute_shortcut(shortcut: AppShortcut, *, home_callback: Callable[[], None] | None = None) -> ShortcutExecutionResult:
+def clear_navigation_params() -> None:
+    nav = navigation_state_from_streamlit()
+    for key in ('operation_v2', 'step', 'flow', 'origem', 'origin', 'operacao', 'operation', 'context'):
+        nav.pop(key)
+    sync_navigation_to_streamlit(nav)
+
+
+def go_home() -> ShortcutExecutionResult:
+    state = app_state_from_streamlit()
+    nav = navigation_state_from_streamlit()
+    result = workflow_go_home(state, nav)
+    sync_app_state_to_streamlit(result.state)
+    sync_navigation_to_streamlit(result.navigation)
+    request_scroll_top()
+    return ShortcutExecutionResult(result.needs_rerun, result.needs_rerun, result.message)
+
+
+def current_operation_adapter(default: str = 'cadastro') -> str:
+    return current_operation(app_state_from_streamlit(), default)
+
+
+def current_context_is_api_adapter() -> bool:
+    return current_context_is_api(app_state_from_streamlit())
+
+
+def set_wizard_base(*, context: str, step: str, operation: str | None = None, origin: str | None = None, api_mode: bool = False) -> None:
+    state = app_state_from_streamlit()
+    nav = navigation_state_from_streamlit()
+    workflow_context = WORKFLOW_CONTEXT_API if context == CONTEXT_BLING_API else WORKFLOW_CONTEXT_UNIVERSAL
+    result = set_wizard(
+        state,
+        nav,
+        context=workflow_context,
+        step=step,
+        operation=operation or '',
+        origin=origin or '',
+        api_mode=api_mode,
+    )
+    sync_app_state_to_streamlit(result.state)
+    sync_navigation_to_streamlit(result.navigation)
+    _apply_legacy_streamlit_side_effects(context=workflow_context, step=step, api_mode=api_mode)
+
+
+def execute_shortcut(shortcut: AppShortcut, *, home_callback: Callable[[], ShortcutExecutionResult] | None = None) -> ShortcutExecutionResult:
     if shortcut.context == 'home':
         if home_callback:
-            home_callback()
-            return ShortcutExecutionResult(True, True, 'Voltando para o início.')
+            return home_callback()
         return go_home()
 
-    context = CONTEXT_UNIVERSAL
+    state = app_state_from_streamlit()
+    context = WORKFLOW_CONTEXT_UNIVERSAL
     api_mode = False
-    operation = shortcut.operation or current_operation()
-    origin = shortcut.origin or None
+    operation = shortcut.operation or current_operation(state)
+    origin = shortcut.origin or ''
 
     if shortcut.context == CONTEXT_API:
-        context = CONTEXT_BLING_API
+        context = WORKFLOW_CONTEXT_API
         api_mode = True
     elif shortcut.context == CONTEXT_CSV:
-        context = CONTEXT_UNIVERSAL
+        context = WORKFLOW_CONTEXT_UNIVERSAL
         api_mode = False
     elif shortcut.context == CONTEXT_AUTO:
-        context = CONTEXT_BLING_API if current_context_is_api() else CONTEXT_UNIVERSAL
-        api_mode = context == CONTEXT_BLING_API
+        context = WORKFLOW_CONTEXT_API if current_context_is_api(state) else WORKFLOW_CONTEXT_UNIVERSAL
+        api_mode = context == WORKFLOW_CONTEXT_API
 
-    set_wizard_base(context=context, step=shortcut.step, operation=operation, origin=origin, api_mode=api_mode)
-    return ShortcutExecutionResult(True, True, f'Atalho executado: {shortcut.title}')
+    nav = navigation_state_from_streamlit()
+    result = set_wizard(state, nav, context=context, step=shortcut.step, operation=operation, origin=origin, api_mode=api_mode)
+    sync_app_state_to_streamlit(result.state)
+    sync_navigation_to_streamlit(result.navigation)
+    _apply_legacy_streamlit_side_effects(context=context, step=shortcut.step, api_mode=api_mode)
+    return ShortcutExecutionResult(True, result.needs_rerun, f'Atalho executado: {shortcut.title}')
 
 
 __all__ = [
     'ShortcutExecutionResult',
     'clear_navigation_params',
-    'current_context_is_api',
-    'current_operation',
+    'current_context_is_api_adapter',
+    'current_operation_adapter',
     'execute_shortcut',
     'go_home',
     'set_wizard_base',
