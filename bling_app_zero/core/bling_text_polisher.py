@@ -25,7 +25,7 @@ COMMON_FIXES: tuple[tuple[str, str], ...] = (
     (r'\bmultimidia\b', 'multimídia'),
     (r'\bteclado numerico\b', 'teclado numérico'),
     (r'\bsem fio\b', 'sem fio'),
-    (r'\bplug and play\b', 'plug-and-play'),
+    (r'\bplug\s*-?\s*and\s*-?\s*play\b', 'plug-and-play'),
     (r'\bhome office\b', 'home office'),
     (r'\bescritorio\b', 'escritório'),
     (r'\bqualidade\b', 'qualidade'),
@@ -75,7 +75,10 @@ def _normalize_spaces(text: str) -> str:
     out = re.sub(r'\s+', ' ', out)
     out = re.sub(r'\s+([,.;:!?])', r'\1', out)
     out = re.sub(r'([,.;:!?])(?=[^\s\n])', r'\1 ', out)
-    out = re.sub(r'\s*[-|•·]+\s*', ' - ', out)
+    # BLINGFIX: não transformar hífen simples em separador visual.
+    # Isso preserva modelos e padrões técnicos como AL-507, USB-C, X-100 e Tipo-C.
+    out = re.sub(r'\s*[|•·]+\s*', ' - ', out)
+    out = re.sub(r'\s+-\s+', ' - ', out)
     return re.sub(r'\s+', ' ', out).strip(' -|•·\t\n\r')
 
 
