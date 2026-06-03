@@ -1,27 +1,16 @@
 from __future__ import annotations
 
-import time
 from collections.abc import Callable, MutableMapping
 from dataclasses import dataclass
 from typing import Any
 
 import streamlit as st
 
-from bling_app_zero.core.app_actions import (
-    ACTION_CLEAR,
-    ACTION_DIAGNOSTIC,
-    ACTION_REFRESH,
-    ACTION_SHORTCUTS,
-    SAFE_CLEAR_KEYS,
-    SAFE_CLEAR_PREFIXES,
-    TECHNICAL_KEEP_PREFIXES,
-    is_known_action,
-)
+from bling_app_zero.adapters.streamlit_state_bridge import app_state_from_streamlit, sync_app_state_to_streamlit
+from bling_app_zero.core.app_action_engine import FLOW_MENU_KEY, LOG_MENU_KEY, execute_action_on_state
+from bling_app_zero.core.app_actions import TECHNICAL_KEEP_PREFIXES
 
 RESPONSIBLE_FILE = 'bling_app_zero/adapters/streamlit_action_executor.py'
-
-FLOW_MENU_KEY = 'bottom_nav_fluxos_open'
-LOG_MENU_KEY = 'bottom_nav_logs_open'
 
 
 @dataclass(frozen=True)
@@ -43,14 +32,11 @@ def clear_streamlit_cache() -> None:
 
 
 def safe_clear_stuck_state(state: MutableMapping[str, Any] | None = None) -> None:
-    session = state if state is not None else st.session_state
-    for key in SAFE_CLEAR_KEYS:
-        session.pop(key, None)
-    for key in list(session.keys()):
-        if str(key).startswith(SAFE_CLEAR_PREFIXES):
-            session.pop(key, None)
-    clear_streamlit_cache()
-    session['bottom_nav_last_safe_clear_at'] = time.time()
+    app_state = app_state_from_streamlit()
+    result = execute_action_on_state(app_state, 'clear')
+    sync_app_state_to_streamlit(app_state)
+    if result.clear_cache:
+        clear_streamlit_cache()
 
 
 def preserve_technical_state(state: MutableMapping[str, Any] | None = None) -> dict[str, Any]:
@@ -73,29 +59,12 @@ def hard_reset_session(*, after_reset: Callable[[], None] | None = None) -> None
 
 
 def execute_app_action(action: object) -> ActionExecutionResult:
-    action_key = str(action or '').strip()
-    if not action_key or not is_known_action(action_key):
-        return ActionExecutionResult(False, False, 'Ação ignorada ou desconhecida.')
-
-    if action_key == ACTION_REFRESH:
-        st.session_state['bottom_nav_last_refresh_at'] = time.time()
-        return ActionExecutionResult(True, True, 'Tela atualizada.')
-
-    if action_key == ACTION_CLEAR:
-        safe_clear_stuck_state(st.session_state)
-        return ActionExecutionResult(True, True, 'Travamentos e caches seguros foram limpos.')
-
-    if action_key == ACTION_SHORTCUTS:
-        st.session_state[FLOW_MENU_KEY] = not bool(st.session_state.get(FLOW_MENU_KEY))
-        st.session_state[LOG_MENU_KEY] = False
-        return ActionExecutionResult(True, False, 'Atalhos alternados.')
-
-    if action_key == ACTION_DIAGNOSTIC:
-        st.session_state[LOG_MENU_KEY] = not bool(st.session_state.get(LOG_MENU_KEY))
-        st.session_state[FLOW_MENU_KEY] = False
-        return ActionExecutionResult(True, False, 'Diagnóstico alternado.')
-
-    return ActionExecutionResult(False, False, 'Ação não executada.')
+    app_state = app_state_from_streamlit()
+    result = execute_action_on_state(app_state, action)
+    sync_app_state_to_streamlit(app_state)
+    if result.clear_cache:
+        clear_streamlit_cache()
+    return ActionExecutionResult(result.handled, result.needs_rerun, result.message)
 
 
 __all__ = [
