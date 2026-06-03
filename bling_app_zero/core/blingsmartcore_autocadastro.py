@@ -38,7 +38,7 @@ def _reason_for_index(index: int, errors: list[str] | tuple[str, ...], not_found
     if index in not_found_indices:
         return (
             'PRODUTO_NAO_ENCONTRADO_NO_BLING',
-            'Produto não encontrado no Bling por código, SKU, GTIN ou ID de referência.',
+            'Produto nao encontrado no Bling por codigo, SKU, GTIN ou ID de referencia.',
             'Cadastrar produto no Bling e depois atualizar estoque automaticamente.',
         )
     line = index + 1
@@ -48,10 +48,10 @@ def _reason_for_index(index: int, errors: list[str] | tuple[str, ...], not_found
             low = text.lower()
             if 'quantidade' in low or 'saldo' in low:
                 return ('ESTOQUE_INVALIDO', text, 'Corrigir quantidade/saldo antes de reenviar estoque.')
-            if 'depósito' in low or 'deposito' in low:
-                return ('DEPOSITO_NAO_RESOLVIDO', text, 'Corrigir depósito antes de reenviar estoque.')
+            if 'deposito' in low or 'depósito' in low:
+                return ('DEPOSITO_NAO_RESOLVIDO', text, 'Corrigir deposito antes de reenviar estoque.')
             return ('FALHA_API_BLING', text, 'Revisar retorno da API e tentar reenviar estoque.')
-    return ('FALHA_NAO_CLASSIFICADA', 'Produto não confirmado como enviado.', 'Revisar antes de reenviar ou cadastrar.')
+    return ('FALHA_NAO_CLASSIFICADA', 'Produto nao confirmado como enviado.', 'Revisar antes de reenviar ou cadastrar.')
 
 
 def build_not_sent_dataframe(download_df: pd.DataFrame, result_payload: dict[str, Any]) -> pd.DataFrame:
@@ -87,6 +87,19 @@ def build_not_sent_dataframe(download_df: pd.DataFrame, result_payload: dict[str
     out.insert(2, 'motivo_bling', reasons)
     out.insert(3, 'acao_recomendada', actions)
     return out
+
+
+def build_stock_pending_dataframe(download_df: pd.DataFrame, result_payload: dict[str, Any]) -> pd.DataFrame:
+    df_pending = build_not_sent_dataframe(download_df, result_payload)
+    if df_pending.empty:
+        return df_pending
+
+    fixed = df_pending.copy().fillna('')
+    fixed['autocadastro_elegivel'] = 'NAO'
+    if 'status_envio_bling' in fixed.columns and 'acao_recomendada' in fixed.columns:
+        mask = fixed['status_envio_bling'].astype(str).eq('PRODUTO_NAO_ENCONTRADO_NO_BLING')
+        fixed.loc[mask, 'acao_recomendada'] = 'Produto nao localizado no Bling. Corrigir codigo/SKU/GTIN/ID ou cadastrar manualmente com dados completos antes de reenviar estoque.'
+    return fixed
 
 
 def _force_autocadastro_navigation() -> None:
@@ -131,6 +144,33 @@ def save_autocadastro_source(df: pd.DataFrame, *, reason: str = 'produtos_nao_en
     )
 
 
+def render_stock_pending_panel(download_df: pd.DataFrame, result_payload: dict[str, Any], *, key: str) -> None:
+    df_pending = build_stock_pending_dataframe(download_df, result_payload)
+    if df_pending.empty:
+        return
+
+    csv_bytes = df_pending.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+    st.markdown('### Pendencias da atualizacao de estoque')
+    st.warning(
+        f'{len(df_pending)} produto(s) nao foram atualizados porque nao foram confirmados no Bling. Neste fluxo, eles ficam como pendencia; o sistema nao oferece AutoCadastro por falta de dados completos de produto.'
+    )
+    st.download_button(
+        'Baixar relatorio de pendencias de estoque',
+        data=csv_bytes,
+        file_name='pendencias_estoque_bling.csv',
+        mime='text/csv; charset=utf-8',
+        use_container_width=True,
+        key=f'estoque_download_pendencias_{key}_{len(df_pending)}',
+    )
+    st.dataframe(df_pending.head(100), use_container_width=True)
+    add_audit_event(
+        'blingsmartcore_stock_pending_panel_rendered',
+        area='ESTOQUE',
+        status='AVISO',
+        details={'rows': len(df_pending), 'responsible_file': RESPONSIBLE_FILE},
+    )
+
+
 def render_autocadastro_panel(download_df: pd.DataFrame, result_payload: dict[str, Any], *, key: str) -> None:
     df_not_sent = build_not_sent_dataframe(download_df, result_payload)
     if df_not_sent.empty:
@@ -140,9 +180,9 @@ def render_autocadastro_panel(download_df: pd.DataFrame, result_payload: dict[st
     csv_bytes = df_not_sent.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
 
     st.markdown('### BLINGSMARTCORE AutoCadastro')
-    st.warning(f'{len(df_not_sent)} produto(s) não foram confirmados no envio. {eligible_count} elegível(is) para cadastro automático por “produto não encontrado”.')
+    st.warning(f'{len(df_not_sent)} produto(s) nao foram confirmados no envio. {eligible_count} elegivel(is) para cadastro automatico por produto nao encontrado.')
     st.download_button(
-        '⬇️ Baixar planilha dos produtos não enviados',
+        'Baixar planilha dos produtos nao enviados',
         data=csv_bytes,
         file_name='produtos_nao_enviados_bling_autocadastro.csv',
         mime='text/csv; charset=utf-8',
@@ -152,10 +192,16 @@ def render_autocadastro_panel(download_df: pd.DataFrame, result_payload: dict[st
     st.dataframe(df_not_sent.head(100), use_container_width=True)
 
     if eligible_count > 0:
-        if st.button('Usar produtos não encontrados como origem de cadastro', use_container_width=True, key=f'autocadastro_use_as_origin_{key}_{eligible_count}'):
+        if st.button('Usar produtos nao encontrados como origem de cadastro', use_container_width=True, key=f'autocadastro_use_as_origin_{key}_{eligible_count}'):
             save_autocadastro_source(df_not_sent, reason='produto_nao_encontrado_no_bling')
-            st.success('Produtos não encontrados foram preparados como origem de cadastro. Abrindo mapeamento...')
+            st.success('Produtos nao encontrados foram preparados como origem de cadastro. Abrindo mapeamento...')
             st.rerun()
 
 
-__all__ = ['build_not_sent_dataframe', 'render_autocadastro_panel', 'save_autocadastro_source']
+__all__ = [
+    'build_not_sent_dataframe',
+    'build_stock_pending_dataframe',
+    'render_autocadastro_panel',
+    'render_stock_pending_panel',
+    'save_autocadastro_source',
+]
