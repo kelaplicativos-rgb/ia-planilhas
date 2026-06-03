@@ -46,6 +46,7 @@ SCAN_TOTAL_MAX_DEPTH = SAFE_CAPTURE_MAX_DEPTH
 STOCK_BALANCE_MAX_PAGES = FLOW_CAPTURE_MAX_PAGES
 STOCK_BALANCE_MAX_PRODUCTS = FLOW_CAPTURE_MAX_PRODUCTS
 STOCK_BALANCE_MAX_DEPTH = FLOW_CAPTURE_MAX_DEPTH
+SITE_PANEL_DISCOVERY_BUDGET_SECONDS = 55
 SUPPORTED_SITE_OPERATIONS = {'cadastro', 'estoque', 'atualizacao_preco', UNIVERSAL_OPERATION}
 
 
@@ -136,7 +137,7 @@ def _scan_total_options(operation: str) -> dict[str, int | bool]:
             'scan_total_ui': True,
             'stock_balance_only': True,
             'stock_full_site_scan': True,
-            'budget_seconds': 24,
+            'budget_seconds': SITE_PANEL_DISCOVERY_BUDGET_SECONDS,
         }
     return {
         'enabled': True,
@@ -146,26 +147,16 @@ def _scan_total_options(operation: str) -> dict[str, int | bool]:
         'scan_total_ui': True,
         'stock_balance_only': False,
         'stock_full_site_scan': False,
-        'budget_seconds': 24,
+        'budget_seconds': SITE_PANEL_DISCOVERY_BUDGET_SECONDS,
     }
 
 
 def _render_scan_total_notice(operation: str) -> None:
     if _is_stock_api_balance_mode(operation):
-        st.markdown(
-            '<div style="background:#fff3e0;border:1px solid #ffcc80;border-left:6px solid #fb8c00;color:#5d3200;border-radius:12px;padding:12px 14px;margin:8px 0;font-size:0.95rem;">'
-            '📦 <b>Modo saldo de estoque completo:</b> o sistema varre os produtos encontrados em lote seguro, prepara ID/código/GTIN, quantidade/saldo e depósito, e evita processamento gigante em uma única sessão do celular.'
-            '</div>',
-            unsafe_allow_html=True,
-        )
+        st.warning('Modo saldo de estoque completo: o sistema varre os produtos encontrados em lote seguro e evita processamento gigante em uma única sessão do celular.')
         return
 
-    st.markdown(
-        '<div style="background:#fff3e0;border:1px solid #ffcc80;border-left:6px solid #fb8c00;color:#5d3200;border-radius:12px;padding:12px 14px;margin:8px 0;font-size:0.95rem;">'
-        '🚀 <b>Busca completa ativa:</b> ao clicar no botão, o sistema procura produtos no site e prepara os dados importados conforme o contrato ativo.'
-        '</div>',
-        unsafe_allow_html=True,
-    )
+    st.warning('Busca completa ativa: ao clicar no botão, o sistema procura produtos no site e prepara os dados importados conforme o contrato ativo.')
 
 
 def _render_running_state(operation: str) -> None:
@@ -178,7 +169,7 @@ def _render_running_state(operation: str) -> None:
     st.info('A tela está em modo seguro: campos, botões e módulos pesados ficam ocultos enquanto a busca roda.')
     with st.expander('Busca parece travada?', expanded=False):
         st.caption('Use esta opção apenas se a busca parou por muito tempo ou se a conexão caiu.')
-        if st.button('🧹 Limpar busca travada e tentar novamente', use_container_width=True, key=f'limpar_captura_travada_{operation}'):
+        if st.button('Limpar busca travada e tentar novamente', use_container_width=True, key=f'limpar_captura_travada_{operation}'):
             clear_stuck_capture(operation)
             safe_rerun('site_capture_stuck_cleared', target_step=STEP_ENTRADA)
     add_audit_event('site_panel_running_guard_rendered', area='SITE', step='entrada', status='INFO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
@@ -241,7 +232,7 @@ def _render_universal_fallback(
     df_modelo: pd.DataFrame | None,
 ) -> None:
     expanded = bool(st.session_state.get('site_capture_error'))
-    with st.expander('🔐 Site protegido ou com login', expanded=expanded):
+    with st.expander('Site protegido ou com login', expanded=expanded):
         if _is_stock_api_balance_mode(operation):
             orange_warning('Use se os saldos estiverem em tela protegida. Cole HTML, tabela, CSV ou XLSX contendo produto e saldo.')
         else:
@@ -285,10 +276,7 @@ def render_site_panel() -> None:
 
     title = 'Buscar saldos de todos os produtos' if stock_balance_only else 'Buscar produtos no site'
     kicker = 'Estoque API' if stock_balance_only else 'Entrada por site'
-    st.markdown(
-        f'<section class="bling-flow-card bling-inline-card"><div class="bling-flow-card-kicker">{kicker}</div><h2 class="bling-flow-card-title">{title}</h2></section>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(f'<section class="bling-flow-card bling-inline-card"><div class="bling-flow-card-kicker">{kicker}</div><h2 class="bling-flow-card-title">{title}</h2></section>', unsafe_allow_html=True)
 
     _, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns = _render_site_models_inline(operation)
     raw_urls = _render_urls_input(operation)
@@ -298,7 +286,7 @@ def render_site_panel() -> None:
     error = str(st.session_state.get('site_capture_error') or '').strip()
     _render_last_error(error, operation)
 
-    button_label = '🔎 Buscar saldos em modo seguro' if stock_balance_only else '🚀 Buscar produtos agora'
+    button_label = 'Buscar saldos em modo seguro' if stock_balance_only else 'Buscar produtos agora'
     needs_model = feature_needs_model()
     has_urls_value = has_urls(raw_urls)
     button_disabled = not has_urls_value or (needs_model and operation in {UNIVERSAL_OPERATION} and not has_columns(requested_columns))
@@ -314,18 +302,24 @@ def render_site_panel() -> None:
             'site_capture_main_button_clicked',
             area='SITE',
             step='entrada',
+            status='OK',
             details={
                 'operation': operation,
-                'feature_contract': active_contract().key,
-                'capture_mode': 'stock_balance_safe_site_search' if stock_balance_only else 'full_site_search',
-                'max_pages': int(deep_options.get('max_pages') or SCAN_TOTAL_MAX_PAGES),
-                'max_products': int(deep_options.get('max_products') or SCAN_TOTAL_MAX_PRODUCTS),
-                'max_depth': int(deep_options.get('max_depth') or 0),
                 'stock_balance_only': stock_balance_only,
+                'deep_options': deep_options,
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
-        run_site_capture(operation, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, deep_options=deep_options)
+        run_site_capture(
+            operation=operation,
+            raw_urls=raw_urls,
+            requested_columns=requested_columns,
+            df_modelo_cadastro=df_modelo_cadastro,
+            df_modelo_estoque=df_modelo_estoque,
+            df_modelo=df_modelo,
+            deep_options=deep_options,
+        )
+        safe_rerun('site_capture_finished_or_started', target_step=STEP_ENTRADA)
 
     _render_universal_fallback(
         operation=operation,
