@@ -1,23 +1,12 @@
 from __future__ import annotations
 
-import time
 from urllib.parse import urlencode
 
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.core.app_actions import (
-    ACTION_CLEAR,
-    ACTION_DIAGNOSTIC,
-    ACTION_PARAM,
-    ACTION_REFRESH,
-    ACTION_SHORTCUTS,
-    BOTTOM_BAR_ACTIONS,
-    SAFE_CLEAR_KEYS,
-    SAFE_CLEAR_PREFIXES,
-    TECHNICAL_KEEP_PREFIXES,
-    is_known_action,
-)
+from bling_app_zero.adapters.streamlit_action_executor import FLOW_MENU_KEY, LOG_MENU_KEY, execute_app_action, hard_reset_session
+from bling_app_zero.core.app_actions import ACTION_PARAM, BOTTOM_BAR_ACTIONS
 from bling_app_zero.ui.flow_context import CONTEXT_BLING_API, CONTEXT_UNIVERSAL, activate_api_finish_mode, activate_csv_finish_mode, set_entry_context
 from bling_app_zero.ui.home_wizard_rerun import set_step_without_rerun
 from bling_app_zero.ui.scroll_position import request_scroll_top
@@ -36,9 +25,6 @@ STEP_PRECIFICACAO = 'precificacao'
 STEP_MAPEAMENTO = 'mapeamento'
 STEP_REGRAS = 'regras'
 STEP_DOWNLOAD = 'download'
-
-FLOW_MENU_KEY = 'bottom_nav_fluxos_open'
-LOG_MENU_KEY = 'bottom_nav_logs_open'
 
 
 def _clear_navigation_params() -> None:
@@ -99,44 +85,6 @@ def _go_universal(*, origin: str | None = None, step: str = STEP_MODELO) -> None
     _set_wizard_base(context=CONTEXT_UNIVERSAL, step=step, operation='universal', origin=origin, api_mode=False)
 
 
-def _refresh_screen() -> None:
-    st.session_state['bottom_nav_last_refresh_at'] = time.time()
-    st.rerun()
-
-
-def _clear_streamlit_cache() -> None:
-    try:
-        st.cache_data.clear()
-    except Exception:
-        pass
-    try:
-        st.cache_resource.clear()
-    except Exception:
-        pass
-
-
-def _safe_clear_stuck_state() -> None:
-    for key in SAFE_CLEAR_KEYS:
-        st.session_state.pop(key, None)
-    for key in list(st.session_state.keys()):
-        if key.startswith(SAFE_CLEAR_PREFIXES):
-            st.session_state.pop(key, None)
-    _clear_streamlit_cache()
-    st.session_state['bottom_nav_last_safe_clear_at'] = time.time()
-
-
-def _hard_reset_session() -> None:
-    kept = {}
-    for key, value in list(st.session_state.items()):
-        if any(str(key).startswith(prefix) for prefix in TECHNICAL_KEEP_PREFIXES):
-            kept[key] = value
-    st.session_state.clear()
-    for key, value in kept.items():
-        st.session_state[key] = value
-    _clear_streamlit_cache()
-    _go_home()
-
-
 def _dataframe_info(value: object) -> str:
     if isinstance(value, pd.DataFrame):
         return f'{len(value)}x{len(value.columns)}'
@@ -178,21 +126,9 @@ def _handle_bottom_action() -> None:
     if not action:
         return
     _remove_action_param()
-    if not is_known_action(action):
-        return
-    if action == ACTION_REFRESH:
-        _refresh_screen()
-    if action == ACTION_CLEAR:
-        _safe_clear_stuck_state()
+    result = execute_app_action(action)
+    if result.needs_rerun:
         st.rerun()
-    if action == ACTION_SHORTCUTS:
-        st.session_state[FLOW_MENU_KEY] = not bool(st.session_state.get(FLOW_MENU_KEY))
-        st.session_state[LOG_MENU_KEY] = False
-        return
-    if action == ACTION_DIAGNOSTIC:
-        st.session_state[LOG_MENU_KEY] = not bool(st.session_state.get(LOG_MENU_KEY))
-        st.session_state[FLOW_MENU_KEY] = False
-        return
 
 
 def _render_fixed_css() -> None:
@@ -374,7 +310,7 @@ def _render_logs_menu() -> None:
         else:
             st.caption('Nenhum dado principal carregado nesta sessão.')
         if st.button('🧹 Limpeza total da sessão', use_container_width=True, key='bottom_hard_reset_confirm'):
-            _hard_reset_session()
+            hard_reset_session(after_reset=_go_home)
             st.rerun()
 
 
