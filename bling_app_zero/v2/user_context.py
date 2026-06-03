@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+import importlib
+from collections.abc import MutableMapping
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
+from typing import Any
 from uuid import uuid4
 
-import streamlit as st
-
 USER_CONTEXT_KEY = 'v2_user_context'
+_FALLBACK_STATE: dict[str, Any] = {}
 
 
 @dataclass(frozen=True)
@@ -30,6 +32,25 @@ class UserContext:
         return asdict(self)
 
 
+def _streamlit_module() -> Any | None:
+    try:
+        return importlib.import_module('streamlit')
+    except Exception:
+        return None
+
+
+def state_store(state: MutableMapping[str, Any] | None = None) -> MutableMapping[str, Any]:
+    if state is not None:
+        return state
+    st = _streamlit_module()
+    if st is not None:
+        try:
+            return st.session_state
+        except Exception:
+            pass
+    return _FALLBACK_STATE
+
+
 def _new_context() -> UserContext:
     now = datetime.now(timezone.utc).isoformat()
     session_id = uuid4().hex
@@ -41,8 +62,9 @@ def _new_context() -> UserContext:
     )
 
 
-def get_user_context() -> UserContext:
-    current = st.session_state.get(USER_CONTEXT_KEY)
+def get_user_context(*, state: MutableMapping[str, Any] | None = None) -> UserContext:
+    store = state_store(state)
+    current = store.get(USER_CONTEXT_KEY)
     if isinstance(current, dict) and current.get('session_id'):
         return UserContext(
             session_id=str(current.get('session_id', '')),
@@ -51,24 +73,25 @@ def get_user_context() -> UserContext:
             created_at=str(current.get('created_at', '')),
         )
     context = _new_context()
-    st.session_state[USER_CONTEXT_KEY] = context.to_dict()
+    store[USER_CONTEXT_KEY] = context.to_dict()
     return context
 
 
-def scoped_key(name: str) -> str:
-    return get_user_context().key(name)
+def scoped_key(name: str, *, state: MutableMapping[str, Any] | None = None) -> str:
+    return get_user_context(state=state).key(name)
 
 
-def set_workspace(workspace_id: str, user_label: str = '') -> UserContext:
-    current = get_user_context()
+def set_workspace(workspace_id: str, user_label: str = '', *, state: MutableMapping[str, Any] | None = None) -> UserContext:
+    store = state_store(state)
+    current = get_user_context(state=store)
     updated = UserContext(
         session_id=current.session_id,
         workspace_id=str(workspace_id or current.workspace_id).strip() or current.workspace_id,
         user_label=str(user_label or current.user_label or 'anonymous').strip() or 'anonymous',
         created_at=current.created_at,
     )
-    st.session_state[USER_CONTEXT_KEY] = updated.to_dict()
+    store[USER_CONTEXT_KEY] = updated.to_dict()
     return updated
 
 
-__all__ = ['USER_CONTEXT_KEY', 'UserContext', 'get_user_context', 'scoped_key', 'set_workspace']
+__all__ = ['USER_CONTEXT_KEY', 'UserContext', 'get_user_context', 'scoped_key', 'set_workspace', 'state_store']
