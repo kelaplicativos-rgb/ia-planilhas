@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import importlib
+from collections.abc import MutableMapping
 from typing import Any
-
-import streamlit as st
 
 AUDIT_STATE_SNAPSHOT_KEY = 'audit_state_snapshot'
 MAPPING_WIDGET_MARKERS = ('cad_map_', 'stk_map_')
@@ -11,6 +11,26 @@ MAPPING_VALUE_SUFFIXES = (
     '__manual_resolved',
     '__empty_resolved',
 )
+_FALLBACK_STATE: dict[str, Any] = {}
+
+
+def _streamlit_module() -> Any | None:
+    try:
+        return importlib.import_module('streamlit')
+    except Exception:
+        return None
+
+
+def state_store(state: MutableMapping[str, Any] | None = None) -> MutableMapping[str, Any]:
+    if state is not None:
+        return state
+    st = _streamlit_module()
+    if st is not None:
+        try:
+            return st.session_state
+        except Exception:
+            pass
+    return _FALLBACK_STATE
 
 
 def _is_mapping_widget_state_key(key: Any) -> bool:
@@ -24,15 +44,10 @@ def _value_from_snapshot_item(item: Any) -> Any:
     return item.get('value')
 
 
-def restore_mapping_widget_state_from_snapshot() -> None:
-    """Restaura valores manuais de mapeamento que saem da tela por paginação.
-
-    O Streamlit remove do session_state os widgets que deixam de ser renderizados.
-    No mapeamento em blocos, isso pode apagar valores de "escrever valor fixo"
-    quando o usuário navega para outro bloco. Esta proteção restaura apenas chaves
-    internas de mapeamento manual a partir do último snapshot do audit trail.
-    """
-    snapshot = st.session_state.get(AUDIT_STATE_SNAPSHOT_KEY)
+def restore_mapping_widget_state_from_snapshot(state: MutableMapping[str, Any] | None = None) -> None:
+    """Restaura valores manuais de mapeamento que saem da tela por paginação."""
+    store = state_store(state)
+    snapshot = store.get(AUDIT_STATE_SNAPSHOT_KEY)
     if not isinstance(snapshot, dict):
         return
 
@@ -40,16 +55,16 @@ def restore_mapping_widget_state_from_snapshot() -> None:
     for key, item in snapshot.items():
         if not _is_mapping_widget_state_key(key):
             continue
-        if key in st.session_state:
+        if key in store:
             continue
         value = _value_from_snapshot_item(item)
         if value is None:
             continue
-        st.session_state[key] = value
+        store[key] = value
         restored.append(str(key))
 
     if restored:
-        st.session_state['mapping_widget_state_restored_keys'] = restored[-80:]
+        store['mapping_widget_state_restored_keys'] = restored[-80:]
 
 
-__all__ = ['restore_mapping_widget_state_from_snapshot']
+__all__ = ['restore_mapping_widget_state_from_snapshot', 'state_store']
