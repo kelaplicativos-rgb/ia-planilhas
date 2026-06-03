@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 import pandas as pd
 
-from bling_app_zero.core.ai_mapping_assistant import apply_ai_mapping_assist, merge_ai_suggestions
+from bling_app_zero.core.ai_mapping_assistant import apply_ai_mapping_assist
 from bling_app_zero.core.ai_mapping_availability import ai_mapping_availability
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/ai_mapping_runner.py'
@@ -44,10 +43,10 @@ def run_ai_mapping(
 
 
 def merge_ai_run_suggestions(current_mapping: dict[str, str], run_result: AIMappingRunResult) -> dict[str, str]:
-    class _CompatResult:
-        suggestions = run_result.suggestions
-
-    return merge_ai_suggestions(current_mapping, _CompatResult())
+    merged = dict(current_mapping or {})
+    for target, source in dict(run_result.suggestions or {}).items():
+        merged[str(target)] = str(source or '')
+    return merged
 
 
 __all__ = [
