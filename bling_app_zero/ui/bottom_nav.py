@@ -6,6 +6,18 @@ from urllib.parse import urlencode
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.app_actions import (
+    ACTION_CLEAR,
+    ACTION_DIAGNOSTIC,
+    ACTION_PARAM,
+    ACTION_REFRESH,
+    ACTION_SHORTCUTS,
+    BOTTOM_BAR_ACTIONS,
+    SAFE_CLEAR_KEYS,
+    SAFE_CLEAR_PREFIXES,
+    TECHNICAL_KEEP_PREFIXES,
+    is_known_action,
+)
 from bling_app_zero.ui.flow_context import CONTEXT_BLING_API, CONTEXT_UNIVERSAL, activate_api_finish_mode, activate_csv_finish_mode, set_entry_context
 from bling_app_zero.ui.home_wizard_rerun import set_step_without_rerun
 from bling_app_zero.ui.scroll_position import request_scroll_top
@@ -27,38 +39,6 @@ STEP_DOWNLOAD = 'download'
 
 FLOW_MENU_KEY = 'bottom_nav_fluxos_open'
 LOG_MENU_KEY = 'bottom_nav_logs_open'
-ACTION_PARAM = 'bottom_nav_action'
-
-TECHNICAL_KEEP_PREFIXES = ('bling_token', 'bling_oauth', 'oauth')
-
-SAFE_CLEAR_KEYS = (
-    'site_capture_running',
-    'site_capture_finished',
-    'site_capture_error',
-    'site_capture_started_at',
-    'site_progress_log',
-    'site_progress_last',
-    'blingsmartscan_manual_continue_required',
-    'blingsmartscan_ready_to_continue',
-    'blingsmartscan_continue_target_step',
-    'blingsmartscan_finished_operation',
-    'blingsmartscan_finished_rows',
-    'blingsmartscan_finished_columns',
-    'blingsmartscan_budget_notice',
-    'bling_api_batch_send_state_v2',
-    'cadastro_entry_autoscroll_signature',
-    'home_wizard_scroll_target_step',
-    'wizard_bottom_nav_rendered_current_cycle',
-)
-
-SAFE_CLEAR_PREFIXES = (
-    'site_deep_capture_',
-    'site_capture_',
-    'blingsmartscan_notice_',
-    'blingsmartscan_report_',
-    'bling_smart_sender_category_cache',
-    'bling_smart_sender_product_cache',
-)
 
 
 def _clear_navigation_params() -> None:
@@ -198,16 +178,18 @@ def _handle_bottom_action() -> None:
     if not action:
         return
     _remove_action_param()
-    if action == 'refresh':
+    if not is_known_action(action):
+        return
+    if action == ACTION_REFRESH:
         _refresh_screen()
-    if action == 'clear':
+    if action == ACTION_CLEAR:
         _safe_clear_stuck_state()
         st.rerun()
-    if action == 'shortcuts':
+    if action == ACTION_SHORTCUTS:
         st.session_state[FLOW_MENU_KEY] = not bool(st.session_state.get(FLOW_MENU_KEY))
         st.session_state[LOG_MENU_KEY] = False
         return
-    if action == 'diagnostic':
+    if action == ACTION_DIAGNOSTIC:
         st.session_state[LOG_MENU_KEY] = not bool(st.session_state.get(LOG_MENU_KEY))
         st.session_state[FLOW_MENU_KEY] = False
         return
@@ -397,15 +379,16 @@ def _render_logs_menu() -> None:
 
 
 def _render_html_bottom_bar() -> None:
+    links = '\n'.join(
+        f'    <a href="{_href_for_action(action.key)}">{action.title}</a>'
+        for action in BOTTOM_BAR_ACTIONS
+    )
     st.markdown(
         f'''
 <div class="bling-bottom-fixed">
   <div class="bling-bottom-fixed-label">Ações rápidas · atualizar · limpar · diagnosticar</div>
   <div class="bling-bottom-fixed-grid">
-    <a href="{_href_for_action('refresh')}">🔄 Atualizar</a>
-    <a href="{_href_for_action('clear')}">🧹 Limpar</a>
-    <a href="{_href_for_action('shortcuts')}">⚡ Atalhos</a>
-    <a href="{_href_for_action('diagnostic')}">🧪 Diagnóstico</a>
+{links}
   </div>
 </div>
 ''',
