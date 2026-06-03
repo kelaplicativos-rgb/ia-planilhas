@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+from bling_app_zero.core.bling_text_polisher import polish_product_description, title_case_product_name
+
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_smart_enrichment.py'
 
 GENERIC_CATEGORY_TERMS = {
@@ -109,7 +111,8 @@ def choose_product_name(*, name: object = '', description: object = '', code: ob
     candidates = [_clean_text(name, 120), _clean_text(description, 120), _clean_text(code, 80), _clean_text(gtin, 80)]
     for candidate in candidates[:2]:
         if candidate and not looks_like_code(candidate) and len(candidate) >= 3:
-            return candidate
+            polished = title_case_product_name(candidate, limit=120)
+            return polished or candidate
     for candidate in candidates:
         if candidate:
             return candidate
@@ -155,44 +158,25 @@ def _split_sentences(text: str) -> list[str]:
 
 
 def build_product_descriptions(*, name: object = '', short_description: object = '', complementary_description: object = '') -> tuple[str, str]:
-    final_name = _clean_text(name, 140)
+    final_name = title_case_product_name(name, limit=140) or _clean_text(name, 140)
     raw_short = _strip_noise(str(short_description or ''))
     raw_complement = _strip_noise(str(complementary_description or ''))
     combined = ' '.join(part for part in (raw_short, raw_complement) if part).strip()
     if not combined or looks_like_code(combined):
         return '', ''
 
-    sentences = _split_sentences(combined)
-    name_norm = _norm(final_name)
-    filtered: list[str] = []
-    for sentence in sentences:
-        sentence_norm = _norm(sentence)
-        if name_norm and sentence_norm == name_norm:
-            continue
-        if sentence_norm in {'descricao', 'descricao do produto', 'produto'}:
-            continue
-        filtered.append(sentence)
-
-    if not filtered:
+    polished_full = polish_product_description(combined, title=final_name, limit=3500)
+    if not polished_full:
         return '', ''
 
-    short = filtered[0]
-    if len(short) > 240:
-        short = short[:237].rstrip(' ,;:.') + '...'
-    complement_items = filtered[1:8]
-    if not complement_items and len(filtered[0]) <= 240:
-        complement = ''
-    else:
-        complement_source = filtered if len(filtered[0]) > 240 else complement_items
-        complement = '\n'.join(f'- {item}' for item in complement_source if item)
-    if len(complement) > 1800:
-        complement = complement[:1797].rstrip() + '...'
-    return short, complement
+    # Regra Bling do usuário: toda a descrição tratada deve seguir para descricaoCurta.
+    # A descrição complementar do Bling deve permanecer vazia.
+    return polished_full, ''
 
 
 def clean_description(description: object, *, fallback_name: object = '') -> str:
     desc = _clean_text(description, 1000)
-    name = _clean_text(fallback_name, 120)
+    name = title_case_product_name(fallback_name, limit=120) or _clean_text(fallback_name, 120)
     if not desc or looks_like_code(desc):
         return ''
     if name and _norm(desc) == _norm(name):
@@ -272,13 +256,14 @@ def enrich_product_payload_fields(
     category: object = '',
     images: object = '',
 ) -> EnrichmentResult:
-    final_name = choose_product_name(name=name, description=description or description_short or description_complementary, code=code, gtin=gtin)
+    raw_name = choose_product_name(name=name, description=description or description_short or description_complementary, code=code, gtin=gtin)
+    final_name = title_case_product_name(raw_name, limit=120) or raw_name
     short, complement = build_product_descriptions(
         name=final_name,
         short_description=description_short or description,
         complementary_description=description_complementary,
     )
-    final_category = clean_category(category, title=final_name, description=' '.join([short, complement]))
+    final_category = clean_category(category, title=final_name, description=short)
     final_images = choose_image_urls(images, title=final_name, category=final_category)
     confidence = 40
     warnings: list[str] = []
@@ -295,11 +280,10 @@ def enrich_product_payload_fields(
     else:
         warnings.append('imagem_nao_confiavel')
     if short:
-        confidence += 5
+        confidence += 10
     else:
         warnings.append('descricao_curta_nao_confiavel')
-    if complement:
-        confidence += 5
+    warnings.append('texto_polido_sem_alterar_dados_tecnicos')
     return EnrichmentResult(final_name, short, final_category, final_images, min(100, confidence), tuple(warnings), short, complement)
 
 
