@@ -4,6 +4,7 @@ import json
 import re
 from typing import Any
 
+from bling_app_zero.core.ai_runtime_context import get_secret_value
 from bling_app_zero.core.ncm.ncm_catalog import NCM_CATALOG_RULES, NcmCatalogRule
 from bling_app_zero.core.ncm.ncm_types import EMPTY_NCM_SUGGESTION, NcmSuggestion
 from bling_app_zero.core.text import normalize_key
@@ -63,12 +64,7 @@ def _catalog_suggestion(row: dict[str, Any]) -> NcmSuggestion:
 
 
 def _openai_api_key() -> str:
-    try:
-        import streamlit as st
-
-        return str(st.secrets.get('OPENAI_API_KEY') or st.secrets.get('openai_api_key') or '').strip()
-    except Exception:
-        return ''
+    return get_secret_value('OPENAI_API_KEY') or get_secret_value('openai_api_key')
 
 
 def _ai_suggestion(row: dict[str, Any]) -> NcmSuggestion:
@@ -84,11 +80,11 @@ def _ai_suggestion(row: dict[str, Any]) -> NcmSuggestion:
             'Você é um assistente fiscal para sugestão preliminar de NCM no Brasil. '
             'Responda somente JSON válido com as chaves ncm, confidence, score e reason. '
             'Use confidence alta, media ou baixa. Nunca invente se não houver segurança. '
-            'NCM precisa ter 8 dígitos. Produto: '\
+            'NCM precisa ter 8 dígitos. Produto: '
             f'{product_text}'
         )
         response = client.chat.completions.create(
-            model='gpt-4o-mini',
+            model=get_secret_value('OPENAI_MODEL') or 'gpt-4o-mini',
             temperature=0,
             messages=[
                 {'role': 'system', 'content': 'Sugira NCM apenas como apoio revisável, nunca como certeza fiscal.'},
