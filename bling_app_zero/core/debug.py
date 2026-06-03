@@ -1,15 +1,33 @@
 from __future__ import annotations
 
+import importlib
 import json
+from collections.abc import MutableMapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import streamlit as st
-
 LOG_SESSION_KEY = 'logs'
 MAX_LOG_ITEMS = 120
 DEBUG_HOME_OPEN_KEY = 'debug_home_area_open'
+_FALLBACK_STATE: dict[str, Any] = {}
+
+
+def _streamlit_module() -> Any | None:
+    try:
+        return importlib.import_module('streamlit')
+    except Exception:
+        return None
+
+
+def _state_store() -> MutableMapping[str, Any]:
+    st = _streamlit_module()
+    if st is not None:
+        try:
+            return st.session_state
+        except Exception:
+            pass
+    return _FALLBACK_STATE
 
 
 def _log_key() -> str:
@@ -64,16 +82,17 @@ def _summarize_value(value: Any) -> str:
     return type(value).__name__
 
 
-def _collect_state_context(keys: list[str] | tuple[str, ...] | set[str] | None) -> dict[str, str]:
+def _collect_state_context(keys: list[str] | tuple[str, ...] | set[str] | None, *, state: MutableMapping[str, Any] | None = None) -> dict[str, str]:
     if not keys:
         return {}
+    store = state if state is not None else _state_store()
     context: dict[str, str] = {}
     for key in list(keys)[:20]:
         text_key = str(key or '').strip()
-        if not text_key or text_key not in st.session_state:
+        if not text_key or text_key not in store:
             continue
         try:
-            context[text_key] = _summarize_value(st.session_state.get(text_key))
+            context[text_key] = _summarize_value(store.get(text_key))
         except Exception:
             context[text_key] = '[erro ao resumir]'
     return context
@@ -87,9 +106,11 @@ def add_debug(
     file_name: str | None = None,
     state_keys: list[str] | tuple[str, ...] | set[str] | None = None,
     details: dict[str, Any] | None = None,
+    state: MutableMapping[str, Any] | None = None,
 ) -> None:
+    store = state if state is not None else _state_store()
     key = _log_key()
-    logs = st.session_state.get(key, [])
+    logs = store.get(key, [])
     if not isinstance(logs, list):
         logs = []
     logs.append(
@@ -100,14 +121,29 @@ def add_debug(
             'arquivo': _short_path(file_name),
             'funcao': '',
             'linha': '',
-            'estado': _collect_state_context(state_keys),
+            'estado': _collect_state_context(state_keys, state=store),
             'detalhes': details or {},
             'mensagem': _safe_text(message or ''),
         }
     )
     if len(logs) > MAX_LOG_ITEMS:
         del logs[:-MAX_LOG_ITEMS]
-    st.session_state[key] = logs
+    store[key] = logs
+
+
+def get_debug_logs(state: MutableMapping[str, Any] | None = None) -> list[dict[str, Any]]:
+    store = state if state is not None else _state_store()
+    logs = store.get(_log_key(), [])
+    return list(logs) if isinstance(logs, list) else []
+
+
+def clear_debug_logs(state: MutableMapping[str, Any] | None = None) -> None:
+    store = state if state is not None else _state_store()
+    store[_log_key()] = []
+
+
+def logs_to_text(logs: list[dict[str, Any]]) -> str:
+    return _logs_to_text(logs)
 
 
 def _format_context(context: dict[str, Any]) -> str:
@@ -137,9 +173,11 @@ def _logs_to_text(logs: list[dict[str, Any]]) -> str:
 
 
 def _render_debug_actions(logs: list[dict[str, Any]], prefix: str = 'debug') -> None:
-    key = _log_key()
+    st = _streamlit_module()
+    if st is None:
+        return
     if st.button('Limpar logs', use_container_width=True, key=f'{prefix}_clear_logs'):
-        st.session_state[key] = []
+        clear_debug_logs()
         st.success('Logs limpos.')
         st.rerun()
 
@@ -163,6 +201,9 @@ def _render_debug_actions(logs: list[dict[str, Any]], prefix: str = 'debug') -> 
 
 
 def _render_recent_logs(logs: list[dict[str, Any]], prefix: str = 'debug') -> None:
+    st = _streamlit_module()
+    if st is None:
+        return
     show_logs = st.toggle('Ver eventos', value=False, key=f'{prefix}_show_recent_logs')
     if not show_logs:
         return
@@ -181,7 +222,10 @@ def _render_recent_logs(logs: list[dict[str, Any]], prefix: str = 'debug') -> No
 
 
 def _render_debug_content(prefix: str = 'debug') -> None:
-    logs = list(st.session_state.get(_log_key(), []))
+    st = _streamlit_module()
+    if st is None:
+        return
+    logs = get_debug_logs()
     _render_debug_actions(logs, prefix=prefix)
     if not logs:
         st.caption('Nenhum evento registrado ainda.')
@@ -191,13 +235,21 @@ def _render_debug_content(prefix: str = 'debug') -> None:
 
 
 def render_debug_compact_button() -> None:
+    st = _streamlit_module()
+    if st is None:
+        return
+    store = _state_store()
     key = _debug_open_key()
     if st.button('⚙️', key='open_debug_home_area', help='Logs técnicos'):
-        st.session_state[key] = not bool(st.session_state.get(key, False))
+        store[key] = not bool(store.get(key, False))
 
 
 def render_debug_home_area() -> None:
-    if not st.session_state.get(_debug_open_key(), False):
+    st = _streamlit_module()
+    if st is None:
+        return
+    store = _state_store()
+    if not store.get(_debug_open_key(), False):
         return
     with st.container(border=True):
         st.markdown('##### Logs técnicos')
@@ -210,6 +262,9 @@ def render_debug_home_button() -> None:
 
 
 def render_debug_panel() -> None:
+    st = _streamlit_module()
+    if st is None:
+        return
     with st.sidebar:
         _render_debug_content(prefix='debug_sidebar')
 
@@ -218,8 +273,9 @@ __all__ = [
     'LOG_SESSION_KEY',
     'MAX_LOG_ITEMS',
     'add_debug',
-    'render_debug_compact_button',
-    'render_debug_home_area',
+    'clear_debug_logs',
+    'get_debug_logs',
+    'logs_to_text',
     'render_debug_home_button',
     'render_debug_panel',
 ]
