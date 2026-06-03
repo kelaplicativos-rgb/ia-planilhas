@@ -5,6 +5,7 @@ import hashlib
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.adapters.streamlit_mapping_bridge import build_and_sync_mapping
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.files import read_uploaded_file
 from bling_app_zero.features_runtime.router import active_contract
@@ -94,11 +95,13 @@ def _reset_universal_state_if_changed(model: pd.DataFrame, source: pd.DataFrame)
         st.session_state.pop(UNIVERSAL_MAPPING_KEY, None)
         st.session_state.pop(UNIVERSAL_OUTPUT_KEY, None)
         st.session_state.pop(UNIVERSAL_ENGINE_KEY, None)
+        st.session_state.pop('neutral_mapping_state_v1', None)
+        st.session_state.pop('neutral_mapping_report_v1', None)
         clear_shared_mapping_widgets('mapeiaai_universal')
         add_audit_event(
             'universal_flow_state_reset_by_signature_change',
             area='UNIVERSAL',
-            details={'previous': previous, 'current': signature, 'responsible_file': RESPONSIBLE_FILE},
+            details={'previous': previous, 'current': signature, 'neutral_mapping_reset': True, 'responsible_file': RESPONSIBLE_FILE},
         )
     st.session_state[UNIVERSAL_SIGNATURE_KEY] = signature
     return signature
@@ -255,6 +258,16 @@ def render_universal_flow() -> None:
         mapping_state_key=UNIVERSAL_MAPPING_KEY,
         engine_state_key=UNIVERSAL_ENGINE_KEY,
         key_prefix='mapeiaai_universal',
+    )
+    mapping, _mapping_rows = build_and_sync_mapping(
+        source_with_price,
+        model,
+        mapping,
+        operation='universal',
+        signature=signature,
+        engine=str(st.session_state.get(UNIVERSAL_ENGINE_KEY) or 'local'),
+        mapping_state_key=UNIVERSAL_MAPPING_KEY,
+        engine_state_key=UNIVERSAL_ENGINE_KEY,
     )
     output = render_shared_final_csv(
         source_with_price,
