@@ -8,7 +8,7 @@ import streamlit as st
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_direct_sender_smart import is_direct_send_available, preview_payloads, send_dataframe_to_bling
 from bling_app_zero.core.bling_oauth import connection_status
-from bling_app_zero.core.blingsmartcore_autocadastro import render_autocadastro_panel
+from bling_app_zero.core.blingsmartcore_autocadastro import render_autocadastro_panel, render_stock_pending_panel
 from bling_app_zero.core.operation_contract import OP_CADASTRO, OP_ESTOQUE, normalize_operation
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/bling_api_batch_panel.py'
@@ -52,12 +52,13 @@ def _render_payload_preview(download_df: pd.DataFrame, operation: str) -> None:
         return
     ok_count = sum(1 for item in payload_preview if item.get('status') == 'OK')
     ignored_count = len(payload_preview) - ok_count
+    total_rows = len(download_df) if isinstance(download_df, pd.DataFrame) else 0
     if ok_count:
-        st.success(f'Payload inteligente pronto para prévia: {ok_count} linha(s) válida(s).')
+        st.success(f'Prévia do payload: {ok_count} linha(s) válida(s) entre as {len(payload_preview)} exibidas. Total preparado: {total_rows} linha(s).')
     if ignored_count:
-        st.warning(f'{ignored_count} linha(s) da prévia seriam ignoradas por falta de campo obrigatório.')
+        st.warning(f'{ignored_count} linha(s) da prévia seriam ignoradas por falta de campo obrigatório. Isso vale apenas para a prévia exibida.')
     with st.expander('Prévia curta do payload inteligente', expanded=False):
-        st.caption('Prévia limitada a 5 linhas. O envio real usa BLINGSMARTCORE com categoria, imagem e fallback automático.')
+        st.caption('Prévia limitada a 5 linhas. O envio real usa todas as linhas preparadas pelo BLINGSMARTCORE.')
         for index, item in enumerate(payload_preview, start=1):
             st.markdown(f'**Linha {index} · {item.get("status", "")}**')
             motivo = str(item.get('motivo') or '').strip()
@@ -105,6 +106,7 @@ def _result_payload_from_state(state: dict[str, Any]) -> dict[str, Any]:
 
 def _render_final_result(download_df: pd.DataFrame, state: dict[str, Any], key: str) -> None:
     payload = _result_payload_from_state(state)
+    operation = normalize_operation(str(state.get('operation') or ''))
     attempted = payload['attempted']
     sent = payload['sent']
     failed = payload['failed']
@@ -114,13 +116,18 @@ def _render_final_result(download_df: pd.DataFrame, state: dict[str, Any], key: 
         st.error('Envio não iniciado: nenhum produto foi processado.')
     elif failed == 0 and skipped == 0:
         st.success(f'Envio concluído com sucesso: {sent}/{attempted} produto(s) enviado(s) ao Bling.')
+    elif operation == OP_ESTOQUE and sent > 0:
+        st.warning(f'Atualização de estoque concluída parcialmente: {sent}/{attempted} saldo(s) enviado(s), {failed} falha(s), {skipped} ignorado(s). Os itens não encontrados ficam como pendência.')
     elif sent > 0:
         st.warning(f'Envio parcialmente concluído: {sent}/{attempted} enviado(s), {failed} falha(s), {skipped} ignorado(s).')
     else:
         st.error(f'Envio não concluído: 0/{attempted} enviado(s), {failed} falha(s), {skipped} ignorado(s).')
     for error in payload['errors'][:8]:
         st.error(str(error))
-    render_autocadastro_panel(download_df, payload, key=key)
+    if operation == OP_ESTOQUE:
+        render_stock_pending_panel(download_df, payload, key=key)
+    else:
+        render_autocadastro_panel(download_df, payload, key=key)
 
 
 def _send_one_batch(download_df: pd.DataFrame, operation: str, state: dict[str, Any]) -> dict[str, Any]:
