@@ -6,6 +6,7 @@ from dataclasses import asdict
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.adapters.streamlit_site_capture_adapter import fail_site_capture, finish_site_capture, start_site_capture
 from bling_app_zero.agents.site_capture_agent import run_bling_smartscan
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.engines.fast_site_scraper.constants import (
@@ -131,7 +132,6 @@ def _store_smartscan_notice(operation: str, report, *, rows: int) -> None:
 
 
 def _progress_callback_for_capture(*, operation: str, options: dict[str, int | bool], progress_bar, status_box):
-    # No modo Estoque API, usamos eventos leves manuais para não derrubar o WebSocket no celular.
     if _is_stock_balance_only(operation, options):
         return None
     return make_site_progress_callback(progress_bar, status_box)
@@ -268,6 +268,18 @@ def _mark_manual_continue(operation: str, rows: int, columns: int) -> None:
     st.session_state['blingsmartscan_finished_columns'] = int(columns)
 
 
+def _capture_context(raw_urls: str, operation: str, max_pages: int = 0, max_products: int = 0, *, api_mode: bool | None = None) -> dict[str, object]:
+    return {
+        'url': raw_urls,
+        'operation': operation,
+        'mode': operation,
+        'max_pages': int(max_pages or 0),
+        'max_products': int(max_products or 0),
+        'api_mode': active_contract().is_api if api_mode is None else bool(api_mode),
+        'send_to_bling': active_contract().is_api if api_mode is None else bool(api_mode),
+    }
+
+
 def run_site_capture(
     operation: str,
     raw_urls: str,
@@ -280,11 +292,13 @@ def run_site_capture(
     raw_urls = str(raw_urls or '').strip()
     if not raw_urls:
         clear_site_df(operation, 'busca_publica_sem_links')
+        fail_site_capture('Cole pelo menos um link para buscar.', _capture_context(raw_urls, operation))
         st.warning('Cole pelo menos um link para buscar.')
         add_audit_event('site_capture_blocked_missing_urls', area='SITE', step='entrada', status='BLOQUEADO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
         return
     if _missing_model_blocked(operation, requested_columns):
         clear_site_df(operation, 'busca_sem_modelo_destino')
+        fail_site_capture('Busca bloqueada: modelo de destino ausente.', _capture_context(raw_urls, operation))
         st.error('Busca bloqueada: modelo de destino ausente.')
         add_audit_event('site_capture_blocked_missing_model', area='SITE', step='entrada', status='BLOQUEADO', details={'operation': operation, 'feature_contract': active_contract().key, 'responsible_file': RESPONSIBLE_FILE})
         return
@@ -296,6 +310,7 @@ def run_site_capture(
     st.session_state['site_capture_started_at'] = started_at
     set_capture_state(operation=operation, running=True, finished=False)
     max_pages, max_products, all_products = capture_limits_for_operation(operation, options)
+    start_site_capture(_capture_context(raw_urls, operation, max_pages, max_products))
     add_audit_event(
         'blingsmartscan_ui_started',
         area='SITE',
@@ -314,6 +329,7 @@ def run_site_capture(
             'max_products': int(max_products),
             'scan_goal': 'blingsmartscan_saldo_estoque' if stock_balance_only else 'blingsmartscan_cadastro',
             'progress_mode': 'lightweight_mobile_safe' if stock_balance_only else 'live',
+            'neutral_capture_state': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -393,8 +409,9 @@ def run_site_capture(
         _emit_capture_progress('Erro na captura', message, progress=0.0, errors=1, elapsed_seconds=round(time.time() - started_at, 2))
         clear_site_df(operation, 'blingsmartscan_exception')
         set_capture_state(operation=operation, running=False, finished=False, error=message)
+        fail_site_capture(message, _capture_context(raw_urls, operation, max_pages, max_products))
         finish_progress(progress_bar, status_box, text='BLINGSMARTSCAN encerrado com erro.')
-        add_audit_event('blingsmartscan_ui_failed', area='SITE', step='entrada', status='ERRO', details={'operation': operation, 'stock_balance_only': stock_balance_only, 'stock_full_site_scan': stock_full_site_scan, 'error': message, 'error_type': exc.__class__.__name__, 'elapsed_seconds': round(time.time() - started_at, 2), 'progress_mode': 'lightweight_mobile_safe' if stock_balance_only else 'live', 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('blingsmartscan_ui_failed', area='SITE', step='entrada', status='ERRO', details={'operation': operation, 'stock_balance_only': stock_balance_only, 'stock_full_site_scan': stock_full_site_scan, 'error': message, 'error_type': exc.__class__.__name__, 'elapsed_seconds': round(time.time() - started_at, 2), 'progress_mode': 'lightweight_mobile_safe' if stock_balance_only else 'live', 'neutral_capture_state': True, 'responsible_file': RESPONSIBLE_FILE})
         _orange_notice('O BLINGSMARTSCAN foi interrompido antes de finalizar. O sistema evitou queda total; baixe o log debug para diagnóstico.')
         return
 
@@ -405,13 +422,20 @@ def run_site_capture(
         clear_site_df(operation, 'blingsmartscan_vazio')
         empty_message = 'O BLINGSMARTSCAN não encontrou dados válidos nesse lote.'
         set_capture_state(operation=operation, running=False, finished=False, error=empty_message, rows=0, columns=0)
+        fail_site_capture(empty_message, _capture_context(raw_urls, operation, max_pages, max_products))
         finish_progress(progress_bar, status_box, text='BLINGSMARTSCAN encerrado sem dados encontrados.')
-        add_audit_event('blingsmartscan_ui_empty', area='SITE', step='entrada', status='AVISO', details={'operation': operation, 'stock_balance_only': stock_balance_only, 'stock_full_site_scan': stock_full_site_scan, 'rows': rows, 'columns': columns, 'elapsed_seconds': round(time.time() - started_at, 2), 'progress_mode': 'lightweight_mobile_safe' if stock_balance_only else 'live', 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('blingsmartscan_ui_empty', area='SITE', step='entrada', status='AVISO', details={'operation': operation, 'stock_balance_only': stock_balance_only, 'stock_full_site_scan': stock_full_site_scan, 'rows': rows, 'columns': columns, 'elapsed_seconds': round(time.time() - started_at, 2), 'progress_mode': 'lightweight_mobile_safe' if stock_balance_only else 'live', 'neutral_capture_state': True, 'responsible_file': RESPONSIBLE_FILE})
         _orange_notice('Nenhum dado válido foi encontrado nesse lote inteligente. Confira o link inicial ou cole links diretos de produtos.')
         return
 
     save_site_source(df_site, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, operation)
     store_site_df(operation, df_site)
+    finish_site_capture(
+        df_site,
+        _capture_context(raw_urls, operation, max_pages, max_products),
+        report_key=f'blingsmartscan_report_{operation}',
+        message=f'BLINGSMARTSCAN concluiu e salvou {rows} produto(s).',
+    )
     _persist_operation_state(operation)
     set_capture_state(operation=operation, running=False, finished=True, rows=rows, columns=columns)
     if smart_report is not None:
@@ -436,6 +460,7 @@ def run_site_capture(
         'stock_full_site_scan': stock_full_site_scan,
         'scan_goal': 'blingsmartscan_saldo_estoque' if stock_balance_only else 'blingsmartscan_cadastro',
         'progress_mode': 'lightweight_mobile_safe' if stock_balance_only else 'live',
+        'neutral_capture_state': True,
         'responsible_file': RESPONSIBLE_FILE,
         'manual_continue_required': True,
         'manual_continue_target_step': target_step,
