@@ -29,7 +29,7 @@ from bling_app_zero.ui.site_panel_state import (
     set_capture_state,
     store_site_df,
 )
-from bling_app_zero.ui.site_progress import make_site_progress_callback, reset_site_progress
+from bling_app_zero.ui.site_progress import append_site_progress, make_site_progress_callback, reset_site_progress
 
 ALL_PAGES_LIMIT = SAFE_CAPTURE_MAX_PAGES
 ALL_PRODUCTS_LIMIT = SAFE_CAPTURE_MAX_PRODUCTS
@@ -68,6 +68,19 @@ def _safe_status(status_box, text: str) -> None:
         return
     try:
         status_box.caption(text)
+    except Exception:
+        pass
+
+
+def _emit_capture_progress(stage: str, message: str, *, progress: float | None = None, **details) -> None:
+    payload = {
+        'stage': stage,
+        'message': message,
+        'progress': progress if progress is not None else details.pop('progress_value', 0.0),
+    }
+    payload.update(details)
+    try:
+        append_site_progress(payload)
     except Exception:
         pass
 
@@ -118,8 +131,7 @@ def _store_smartscan_notice(operation: str, report, *, rows: int) -> None:
 
 
 def _progress_callback_for_capture(*, operation: str, options: dict[str, int | bool], progress_bar, status_box):
-    # No modo Estoque API, não usamos callback por produto/página para não derrubar o WebSocket no celular.
-    # A barra leve é atualizada somente em marcos principais dentro de run_site_capture.
+    # No modo Estoque API, usamos eventos leves manuais para não derrubar o WebSocket no celular.
     if _is_stock_balance_only(operation, options):
         return None
     return make_site_progress_callback(progress_bar, status_box)
@@ -135,6 +147,12 @@ def prepare_raw_urls_for_capture(
 ) -> tuple[str, dict[str, object]]:
     options = deep_options or {}
     if _is_stock_balance_only(operation, options) and not _is_stock_full_site_scan(operation, options):
+        _emit_capture_progress(
+            'Entrada validada',
+            'Usando somente os links informados, sem varredura profunda.',
+            progress=0.08,
+            stock_balance_only=True,
+        )
         return raw_urls, {
             'deep_capture_enabled': False,
             'stock_balance_only': True,
@@ -144,9 +162,19 @@ def prepare_raw_urls_for_capture(
         }
 
     if not bool(options.get('enabled')):
+        _emit_capture_progress('Entrada validada', 'Varredura profunda desativada. Enviando links informados para leitura.', progress=0.08)
         return raw_urls, {'deep_capture_enabled': False, 'scan_mode': 'full_public_scan'}
 
     callback = _progress_callback_for_capture(operation=operation, options=options, progress_bar=progress_bar, status_box=status_box)
+    _emit_capture_progress(
+        'Descoberta de produtos',
+        'Abrindo o link inicial e procurando páginas reais de produto.',
+        progress=0.14,
+        max_pages=int(options.get('max_pages') or STOCK_BALANCE_PAGES_LIMIT),
+        max_products=int(options.get('max_products') or STOCK_BALANCE_PRODUCTS_LIMIT),
+        max_depth=int(options.get('max_depth') or STOCK_BALANCE_DEPTH_LIMIT),
+        budget_seconds=int(options.get('budget_seconds') or DISCOVERY_BUDGET_SECONDS),
+    )
     result = discover_deep_product_urls(
         raw_urls,
         max_pages=int(options.get('max_pages') or STOCK_BALANCE_PAGES_LIMIT),
@@ -169,6 +197,18 @@ def prepare_raw_urls_for_capture(
         'deep_capture_stop_reason': result.stop_reason,
         'progress_mode': 'lightweight_mobile_safe' if _is_stock_balance_only(operation, options) else 'live',
     }
+    _emit_capture_progress(
+        'Produtos localizados',
+        f'Foram localizados {len(result.product_urls)} link(s) de produto. Agora o sistema vai extrair os saldos.',
+        progress=0.42,
+        urls_found=len(result.product_urls),
+        visited_pages=result.visited_pages,
+        scanned_pages=result.scanned_pages,
+        deep_capture_found_products=len(result.product_urls),
+        deep_capture_visited_pages=result.visited_pages,
+        deep_capture_scanned_pages=result.scanned_pages,
+        deep_capture_stopped_by_budget=result.stopped_by_budget,
+    )
 
     if not result.product_urls:
         base_details['scan_mode'] = 'stock_balance_full_deep_scan_no_links_found' if _is_stock_balance_only(operation, options) else 'full_deep_scan_no_links_found'
@@ -278,6 +318,15 @@ def run_site_capture(
         },
     )
     reset_site_progress()
+    _emit_capture_progress(
+        'Início da busca',
+        'Captura iniciada. Validando operação, contrato ativo, depósito e limites seguros.',
+        progress=0.03,
+        max_pages=int(max_pages),
+        max_products=int(max_products),
+        stock_balance_only=stock_balance_only,
+        stock_full_site_scan=stock_full_site_scan,
+    )
 
     if stock_balance_only:
         progress_bar = st.progress(3, text='Preparando busca segura de saldos...')
@@ -293,6 +342,7 @@ def run_site_capture(
     try:
         _safe_progress(progress_bar, 12 if stock_balance_only else 0, 'Localizando produtos no site...')
         _safe_status(status_box, 'Etapa 1 de 3: localizando links/produtos.')
+        _emit_capture_progress('Etapa 1 de 3', 'Localizando links/produtos no site.', progress=0.12)
         prepared_urls, deep_details = prepare_raw_urls_for_capture(
             operation=operation,
             raw_urls=raw_urls,
@@ -305,6 +355,15 @@ def run_site_capture(
             found_text = f' · {found} produto(s) localizado(s)' if found else ''
             _safe_progress(progress_bar, 45, f'Produtos localizados. Extraindo saldos{found_text}...')
             _safe_status(status_box, f'Etapa 2 de 3: extraindo dados de estoque{found_text}.')
+        _emit_capture_progress(
+            'Etapa 2 de 3',
+            f'Extraindo dados de estoque dos produtos localizados ({found} encontrado(s)).',
+            progress=0.48,
+            urls_found=found,
+            deep_capture_found_products=found,
+            deep_capture_visited_pages=deep_details.get('deep_capture_visited_pages', ''),
+            deep_capture_scanned_pages=deep_details.get('deep_capture_scanned_pages', ''),
+        )
         capture_callback = _progress_callback_for_capture(operation=operation, options=options, progress_bar=progress_bar, status_box=status_box)
         df_site, smart_report = run_bling_smartscan(
             operation=operation,
@@ -316,11 +375,22 @@ def run_site_capture(
             max_products=max_products,
             progress_callback=capture_callback,
         )
+        rows_now = len(df_site) if isinstance(df_site, pd.DataFrame) else 0
+        _emit_capture_progress(
+            'Extração concluída',
+            f'Leitura encerrada. Foram gerada(s) {rows_now} linha(s) para validação.',
+            progress=0.78,
+            rows=rows_now,
+            found=rows_now,
+            elapsed_seconds=round(time.time() - started_at, 2),
+        )
         if stock_balance_only:
             _safe_progress(progress_bar, 82, 'Validando e salvando resultado da busca...')
             _safe_status(status_box, 'Etapa 3 de 3: validando e salvando resultado.')
+        _emit_capture_progress('Etapa 3 de 3', 'Validando colunas, depósito, saldos e salvando resultado final.', progress=0.86, rows=rows_now)
     except Exception as exc:
         message = str(exc) or exc.__class__.__name__
+        _emit_capture_progress('Erro na captura', message, progress=0.0, errors=1, elapsed_seconds=round(time.time() - started_at, 2))
         clear_site_df(operation, 'blingsmartscan_exception')
         set_capture_state(operation=operation, running=False, finished=False, error=message)
         finish_progress(progress_bar, status_box, text='BLINGSMARTSCAN encerrado com erro.')
@@ -331,6 +401,7 @@ def run_site_capture(
     rows = len(df_site) if isinstance(df_site, pd.DataFrame) else 0
     columns = len(df_site.columns) if isinstance(df_site, pd.DataFrame) else 0
     if not isinstance(df_site, pd.DataFrame) or df_site.empty:
+        _emit_capture_progress('Sem dados válidos', 'Nenhuma linha válida foi gerada para este lote.', progress=0.0, rows=0, columns=0)
         clear_site_df(operation, 'blingsmartscan_vazio')
         empty_message = 'O BLINGSMARTSCAN não encontrou dados válidos nesse lote.'
         set_capture_state(operation=operation, running=False, finished=False, error=empty_message, rows=0, columns=0)
@@ -376,6 +447,7 @@ def run_site_capture(
 
     if deep_details.get('deep_capture_stopped_by_budget'):
         st.session_state['blingsmartscan_budget_notice'] = f'O BLINGSMARTSCAN encontrou {rows} produto(s) neste lote e parou para evitar queda do sistema. Você pode rodar outro lote depois.'
+    _emit_capture_progress('Resultado salvo', f'Busca concluída. {rows} linha(s) e {columns} coluna(s) salvas para o próximo passo.', progress=1.0, rows=rows, columns=columns, elapsed_seconds=round(time.time() - started_at, 2))
     _mark_manual_continue(operation, rows, columns)
     finish_progress(progress_bar, status_box, text='BLINGSMARTSCAN concluído. Resultado salvo.')
     st.success(f'BLINGSMARTSCAN concluiu e salvou {rows} produto(s). Toque em Continuar para ir para {target_label}.')
