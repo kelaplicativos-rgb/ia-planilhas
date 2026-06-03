@@ -153,10 +153,14 @@ def _scan_total_options(operation: str) -> dict[str, int | bool]:
 
 def _render_scan_total_notice(operation: str) -> None:
     if _is_stock_api_balance_mode(operation):
-        st.warning('Modo saldo de estoque completo: o sistema varre os produtos encontrados em lote seguro e evita processamento gigante em uma única sessão do celular.')
+        orange_warning(
+            '📦 Modo saldo de estoque completo: o sistema varre os produtos encontrados em lote seguro, prepara ID/código/GTIN, quantidade/saldo e depósito, e evita processamento gigante em uma única sessão do celular.'
+        )
         return
 
-    st.warning('Busca completa ativa: ao clicar no botão, o sistema procura produtos no site e prepara os dados importados conforme o contrato ativo.')
+    orange_warning(
+        '🚀 Busca completa ativa: ao clicar no botão, o sistema procura produtos no site e prepara os dados importados conforme o contrato ativo.'
+    )
 
 
 def _render_running_state(operation: str) -> None:
@@ -169,7 +173,7 @@ def _render_running_state(operation: str) -> None:
     st.info('A tela está em modo seguro: campos, botões e módulos pesados ficam ocultos enquanto a busca roda.')
     with st.expander('Busca parece travada?', expanded=False):
         st.caption('Use esta opção apenas se a busca parou por muito tempo ou se a conexão caiu.')
-        if st.button('Limpar busca travada e tentar novamente', use_container_width=True, key=f'limpar_captura_travada_{operation}'):
+        if st.button('🧹 Limpar busca travada e tentar novamente', use_container_width=True, key=f'limpar_captura_travada_{operation}'):
             clear_stuck_capture(operation)
             safe_rerun('site_capture_stuck_cleared', target_step=STEP_ENTRADA)
     add_audit_event('site_panel_running_guard_rendered', area='SITE', step='entrada', status='INFO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
@@ -232,7 +236,7 @@ def _render_universal_fallback(
     df_modelo: pd.DataFrame | None,
 ) -> None:
     expanded = bool(st.session_state.get('site_capture_error'))
-    with st.expander('Site protegido ou com login', expanded=expanded):
+    with st.expander('🔐 Site protegido ou com login', expanded=expanded):
         if _is_stock_api_balance_mode(operation):
             orange_warning('Use se os saldos estiverem em tela protegida. Cole HTML, tabela, CSV ou XLSX contendo produto e saldo.')
         else:
@@ -276,7 +280,10 @@ def render_site_panel() -> None:
 
     title = 'Buscar saldos de todos os produtos' if stock_balance_only else 'Buscar produtos no site'
     kicker = 'Estoque API' if stock_balance_only else 'Entrada por site'
-    st.markdown(f'<section class="bling-flow-card bling-inline-card"><div class="bling-flow-card-kicker">{kicker}</div><h2 class="bling-flow-card-title">{title}</h2></section>', unsafe_allow_html=True)
+    st.markdown(
+        f'<section class="bling-flow-card bling-inline-card"><div class="bling-flow-card-kicker">{kicker}</div><h2 class="bling-flow-card-title">{title}</h2></section>',
+        unsafe_allow_html=True,
+    )
 
     _, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns = _render_site_models_inline(operation)
     raw_urls = _render_urls_input(operation)
@@ -286,7 +293,7 @@ def render_site_panel() -> None:
     error = str(st.session_state.get('site_capture_error') or '').strip()
     _render_last_error(error, operation)
 
-    button_label = 'Buscar saldos em modo seguro' if stock_balance_only else 'Buscar produtos agora'
+    button_label = '🔎 Buscar saldos em modo seguro' if stock_balance_only else '🚀 Buscar produtos agora'
     needs_model = feature_needs_model()
     has_urls_value = has_urls(raw_urls)
     button_disabled = not has_urls_value or (needs_model and operation in {UNIVERSAL_OPERATION} and not has_columns(requested_columns))
