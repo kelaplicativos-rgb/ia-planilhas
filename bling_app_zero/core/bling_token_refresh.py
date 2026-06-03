@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import base64
+import importlib
+import os
 from datetime import datetime
 from typing import Any
 
 import requests
-import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_token_store import load_token, save_token
@@ -14,14 +15,64 @@ RESPONSIBLE_FILE = 'bling_app_zero/core/bling_token_refresh.py'
 TOKEN_URL_DEFAULT = 'https://www.bling.com.br/Api/v3/oauth/token'
 EXPIRY_FORMAT = '%Y-%m-%d %H:%M:%S'
 
+SECRET_ALIASES: dict[str, tuple[str, ...]] = {
+    'client_id': ('client_id', 'clientId', 'clientID', 'CLIENT_ID', 'bling_client_id', 'BLING_CLIENT_ID', 'oauth_client_id', 'BLING_OAUTH_CLIENT_ID'),
+    'client_secret': ('client_secret', 'clientSecret', 'CLIENT_SECRET', 'bling_client_secret', 'BLING_CLIENT_SECRET', 'oauth_client_secret', 'BLING_OAUTH_CLIENT_SECRET'),
+    'token_url': ('token_url', 'BLING_TOKEN_URL', 'bling_token_url'),
+}
+
+
+def _streamlit_module() -> Any | None:
+    try:
+        return importlib.import_module('streamlit')
+    except Exception:
+        return None
+
+
+def _secrets_store() -> Any:
+    st = _streamlit_module()
+    if st is not None:
+        try:
+            return st.secrets
+        except Exception:
+            return {}
+    return {}
+
+
+def _read_from_mapping(mapping: Any, names: tuple[str, ...]) -> str:
+    if not hasattr(mapping, 'get'):
+        return ''
+    for name in names:
+        try:
+            value = mapping.get(name)
+        except Exception:
+            value = None
+        if value not in (None, ''):
+            return str(value).strip()
+    return ''
+
 
 def _secret(name: str, default: str = '') -> str:
+    aliases = SECRET_ALIASES.get(name, (name,))
+    secrets_store = _secrets_store()
     try:
-        bling = st.secrets.get('bling', {})
-        value = bling.get(name, default) if hasattr(bling, 'get') else default
-        return str(value or default).strip()
+        bling = secrets_store.get('bling', {})
+        value = _read_from_mapping(bling, aliases)
+        if value:
+            return value
     except Exception:
-        return default
+        pass
+    try:
+        value = _read_from_mapping(secrets_store, aliases)
+        if value:
+            return value
+    except Exception:
+        pass
+    for alias in aliases:
+        value = os.environ.get(alias) or os.environ.get(str(alias).upper())
+        if value:
+            return str(value).strip()
+    return str(default or '').strip()
 
 
 def _token_url() -> str:
