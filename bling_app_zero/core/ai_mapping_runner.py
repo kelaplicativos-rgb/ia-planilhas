@@ -4,8 +4,8 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from bling_app_zero.core.ai_mapping_assistant import apply_ai_mapping_assist
 from bling_app_zero.core.ai_mapping_availability import ai_mapping_availability
+from bling_app_zero.core.ai_mapping_executor import execute_ai_mapping
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/ai_mapping_runner.py'
 
@@ -32,7 +32,7 @@ def run_ai_mapping(
     if availability.remaining_calls <= 0:
         return AIMappingRunResult(True, 0, {}, availability.reason or 'limite de IA da sessão atingido', 'limit')
 
-    result = apply_ai_mapping_assist(df_source, target_columns, current_mapping, only_uncertain=only_uncertain)
+    result = execute_ai_mapping(df_source, target_columns, current_mapping, only_uncertain=only_uncertain)
     if not getattr(result, 'enabled', False):
         return AIMappingRunResult(False, 0, {}, str(getattr(result, 'reason', '') or 'IA indisponível'), 'inactive')
     applied = int(getattr(result, 'applied', 0) or 0)
