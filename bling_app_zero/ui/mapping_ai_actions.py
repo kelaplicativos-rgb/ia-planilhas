@@ -3,12 +3,8 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.core.ai_mapping_assistant import (
-    ai_mapping_enabled,
-    ai_mapping_remaining_session_calls,
-    apply_ai_mapping_assist,
-    merge_ai_suggestions,
-)
+from bling_app_zero.core.ai_mapping_assistant import apply_ai_mapping_assist, merge_ai_suggestions
+from bling_app_zero.core.ai_mapping_availability import ai_mapping_availability, ai_mapping_enabled, ai_mapping_remaining_session_calls
 from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 from bling_app_zero.ui.mapping_constants import CADASTRO_MAPPING_CONFIRMED_KEY, CADASTRO_MAPPING_SIGNATURE_KEY
 from bling_app_zero.ui.mapping_widget_state import clear_mapping_widgets
@@ -50,12 +46,13 @@ def apply_ai_to_session_mapping(
     ligações aceitas pela validação local e sempre exige conferência do usuário.
     """
     status_key = _status_key(mapping_key)
+    availability = ai_mapping_availability()
 
-    if not ai_mapping_enabled():
+    if not availability.enabled:
         st.session_state[status_key] = 'inactive'
         return
 
-    if ai_mapping_remaining_session_calls() <= 0:
+    if availability.remaining_calls <= 0:
         st.session_state[status_key] = 'limit'
         return
 
@@ -94,13 +91,11 @@ def render_ai_button(
         if not ai_mapping_enabled():
             st.warning('IA Real não configurada. O mapeamento manual continua disponível.')
             return
-
         remaining = ai_mapping_remaining_session_calls()
         st.caption(f'Usos restantes nesta sessão: {remaining}')
         if remaining <= 0:
             st.warning('Limite de uso da IA Real atingido nesta sessão.')
             return
-
         if st.button(label, use_container_width=True, key=f'{mapping_key}_ai'):
             apply_ai_to_session_mapping(df_source, target_columns, current_mapping, mapping_key)
 
