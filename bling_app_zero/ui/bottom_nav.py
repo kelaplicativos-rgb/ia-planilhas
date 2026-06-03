@@ -22,17 +22,12 @@ STEP_ENTRADA = 'entrada'
 STEP_PRECIFICACAO = 'precificacao'
 STEP_MAPEAMENTO = 'mapeamento'
 STEP_REGRAS = 'regras'
-STEP_PREVIEW = 'preview'
 STEP_DOWNLOAD = 'download'
 
 FLOW_MENU_KEY = 'bottom_nav_fluxos_open'
 LOG_MENU_KEY = 'bottom_nav_logs_open'
 
-TECHNICAL_KEEP_PREFIXES = (
-    'bling_token',
-    'bling_oauth',
-    'oauth',
-)
+TECHNICAL_KEEP_PREFIXES = ('bling_token', 'bling_oauth', 'oauth')
 
 SAFE_CLEAR_KEYS = (
     'site_capture_running',
@@ -170,8 +165,8 @@ def _render_fixed_css() -> None:
     st.markdown(
         '''
 <style>
-.bling-bottom-fixed-spacer{height:96px;}
-.bling-bottom-fixed{
+.bling-bottom-fixed-spacer{height:104px;}
+div[data-testid="stVerticalBlock"]:has(> div .bling-bottom-nav-anchor){
     position:fixed;
     left:0;
     right:0;
@@ -183,30 +178,34 @@ def _render_fixed_css() -> None:
     box-shadow:0 -10px 30px rgba(15,23,42,.10);
     backdrop-filter:blur(12px);
 }
-.bling-bottom-fixed-inner{
+div[data-testid="stVerticalBlock"]:has(> div .bling-bottom-nav-anchor) [data-testid="stHorizontalBlock"]{
     max-width:860px;
     margin:0 auto;
-    display:grid;
-    grid-template-columns:repeat(4,minmax(0,1fr));
-    gap:6px;
 }
-.bling-bottom-fixed-label{
-    max-width:860px;
-    margin:0 auto 5px auto;
+.bling-bottom-nav-anchor{
     color:#475569;
     font-size:.72rem;
     font-weight:700;
     text-align:center;
+    margin-bottom:5px;
 }
 @media (max-width:520px){
-    .bling-bottom-fixed{padding-left:7px;padding-right:7px;}
-    .bling-bottom-fixed-inner{gap:4px;}
+    div[data-testid="stVerticalBlock"]:has(> div .bling-bottom-nav-anchor){padding-left:7px;padding-right:7px;}
+    div[data-testid="stVerticalBlock"]:has(> div .bling-bottom-nav-anchor) button{font-size:.78rem;padding-left:.25rem;padding-right:.25rem;}
 }
 </style>
 <div class="bling-bottom-fixed-spacer"></div>
 ''',
         unsafe_allow_html=True,
     )
+
+
+def _context_is_api() -> bool:
+    return str(st.session_state.get('bling_finish_mode') or '') == 'api_direct'
+
+
+def _current_operation(default: str = 'cadastro') -> str:
+    return str(st.session_state.get('direct_bling_operation_choice') or st.session_state.get('home_slim_flow_operation') or default)
 
 
 def _render_fluxos_menu() -> None:
@@ -233,15 +232,13 @@ def _render_fluxos_menu() -> None:
         c4, c5 = st.columns(2)
         with c4:
             if st.button('🌐 Buscar em site', use_container_width=True, key='bottom_flow_site'):
-                current_operation = str(st.session_state.get('direct_bling_operation_choice') or st.session_state.get('home_slim_flow_operation') or 'cadastro')
-                context = CONTEXT_BLING_API if str(st.session_state.get('bling_finish_mode') or '') == 'api_direct' else CONTEXT_UNIVERSAL
-                _set_wizard_base(context=context, step=STEP_ENTRADA, operation=current_operation, origin='site', api_mode=context == CONTEXT_BLING_API)
+                context = CONTEXT_BLING_API if _context_is_api() else CONTEXT_UNIVERSAL
+                _set_wizard_base(context=context, step=STEP_ENTRADA, operation=_current_operation(), origin='site', api_mode=context == CONTEXT_BLING_API)
                 st.rerun()
         with c5:
             if st.button('📎 Importar arquivo', use_container_width=True, key='bottom_flow_file'):
-                current_operation = str(st.session_state.get('direct_bling_operation_choice') or st.session_state.get('home_slim_flow_operation') or 'cadastro')
-                context = CONTEXT_BLING_API if str(st.session_state.get('bling_finish_mode') or '') == 'api_direct' else CONTEXT_UNIVERSAL
-                _set_wizard_base(context=context, step=STEP_ENTRADA, operation=current_operation, origin='arquivo', api_mode=context == CONTEXT_BLING_API)
+                context = CONTEXT_BLING_API if _context_is_api() else CONTEXT_UNIVERSAL
+                _set_wizard_base(context=context, step=STEP_ENTRADA, operation=_current_operation(), origin='arquivo', api_mode=context == CONTEXT_BLING_API)
                 st.rerun()
 
         st.markdown('##### CSV / planilha')
@@ -270,16 +267,15 @@ def _render_fluxos_menu() -> None:
                 _go_universal(step=STEP_MAPEAMENTO)
                 st.rerun()
         with c11:
-            if st.button('✅ Regras/Preview', use_container_width=True, key='bottom_flow_rules_preview'):
+            if st.button('✅ Regras', use_container_width=True, key='bottom_flow_rules'):
                 _go_universal(step=STEP_REGRAS)
                 st.rerun()
 
         c12, c13, c14 = st.columns(3)
         with c12:
             if st.button('⬇️ Download/Enviar', use_container_width=True, key='bottom_flow_download'):
-                current_operation = str(st.session_state.get('direct_bling_operation_choice') or st.session_state.get('home_slim_flow_operation') or 'cadastro')
-                context = CONTEXT_BLING_API if str(st.session_state.get('bling_finish_mode') or '') == 'api_direct' else CONTEXT_UNIVERSAL
-                _set_wizard_base(context=context, step=STEP_DOWNLOAD, operation=current_operation, api_mode=context == CONTEXT_BLING_API)
+                context = CONTEXT_BLING_API if _context_is_api() else CONTEXT_UNIVERSAL
+                _set_wizard_base(context=context, step=STEP_DOWNLOAD, operation=_current_operation(), api_mode=context == CONTEXT_BLING_API)
                 st.rerun()
         with c13:
             if st.button('📁 Modelos', use_container_width=True, key='bottom_flow_models'):
@@ -328,26 +324,26 @@ def render_bottom_nav() -> None:
     _render_fluxos_menu()
     _render_logs_menu()
 
-    st.markdown('<div class="bling-bottom-fixed"><div class="bling-bottom-fixed-label">Atalhos rápidos · refresh · limpeza · fluxos</div><div class="bling-bottom-fixed-inner">', unsafe_allow_html=True)
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        if st.button('🔄 Refresh', key='bottom_nav_refresh', use_container_width=True):
-            _refresh_screen()
-    with col2:
-        if st.button('🧹 Limpar', key='bottom_nav_safe_clear', use_container_width=True):
-            _safe_clear_stuck_state()
-            st.rerun()
-    with col3:
-        if st.button('⚡ Fluxos', key='bottom_nav_fluxos', use_container_width=True):
-            st.session_state[FLOW_MENU_KEY] = not bool(st.session_state.get(FLOW_MENU_KEY))
-            st.session_state[LOG_MENU_KEY] = False
-            st.rerun()
-    with col4:
-        if st.button('🧪 Logs', key='bottom_nav_logs', use_container_width=True):
-            st.session_state[LOG_MENU_KEY] = not bool(st.session_state.get(LOG_MENU_KEY))
-            st.session_state[FLOW_MENU_KEY] = False
-            st.rerun()
-    st.markdown('</div></div>', unsafe_allow_html=True)
+    with st.container():
+        st.markdown('<div class="bling-bottom-nav-anchor">Atalhos rápidos · refresh · limpeza · fluxos</div>', unsafe_allow_html=True)
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            if st.button('🔄 Refresh', key='bottom_nav_refresh', use_container_width=True):
+                _refresh_screen()
+        with col2:
+            if st.button('🧹 Limpar', key='bottom_nav_safe_clear', use_container_width=True):
+                _safe_clear_stuck_state()
+                st.rerun()
+        with col3:
+            if st.button('⚡ Fluxos', key='bottom_nav_fluxos', use_container_width=True):
+                st.session_state[FLOW_MENU_KEY] = not bool(st.session_state.get(FLOW_MENU_KEY))
+                st.session_state[LOG_MENU_KEY] = False
+                st.rerun()
+        with col4:
+            if st.button('🧪 Logs', key='bottom_nav_logs', use_container_width=True):
+                st.session_state[LOG_MENU_KEY] = not bool(st.session_state.get(LOG_MENU_KEY))
+                st.session_state[FLOW_MENU_KEY] = False
+                st.rerun()
 
 
 __all__ = ['render_bottom_nav']
