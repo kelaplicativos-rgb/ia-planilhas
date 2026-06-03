@@ -211,37 +211,37 @@ def _current_operation(default: str = 'cadastro') -> str:
 def _render_fluxos_menu() -> None:
     if not bool(st.session_state.get(FLOW_MENU_KEY)):
         return
-    with st.expander('⚡ Fluxos rápidos do sistema', expanded=True):
-        st.caption('Atalhos diretos para os recursos principais detectados no BLINGSCAN.')
-        st.markdown('##### API Bling')
+    with st.expander('⚡ Atalhos rápidos', expanded=True):
+        st.caption('Acesse rapidamente as principais ações do sistema.')
+        st.markdown('##### Enviar direto ao Bling')
         c1, c2, c3 = st.columns(3)
         with c1:
-            if st.button('🛒 Cadastro API', use_container_width=True, key='bottom_flow_cadastro_api'):
+            if st.button('🛒 Cadastrar produtos', use_container_width=True, key='bottom_flow_cadastro_api'):
                 _go_api('cadastro', step=STEP_ORIGEM)
                 st.rerun()
         with c2:
-            if st.button('📦 Estoque API', use_container_width=True, key='bottom_flow_estoque_api'):
+            if st.button('📦 Atualizar estoque', use_container_width=True, key='bottom_flow_estoque_api'):
                 _go_api('estoque', step=STEP_ORIGEM)
                 st.rerun()
         with c3:
-            if st.button('💲 Preços API', use_container_width=True, key='bottom_flow_precos_api'):
+            if st.button('💲 Atualizar preços', use_container_width=True, key='bottom_flow_precos_api'):
                 _go_api('atualizacao_preco', step=STEP_ORIGEM)
                 st.rerun()
 
-        st.markdown('##### Origens rápidas')
+        st.markdown('##### Entrada de dados')
         c4, c5 = st.columns(2)
         with c4:
-            if st.button('🌐 Buscar em site', use_container_width=True, key='bottom_flow_site'):
+            if st.button('🌐 Buscar no site', use_container_width=True, key='bottom_flow_site'):
                 context = CONTEXT_BLING_API if _context_is_api() else CONTEXT_UNIVERSAL
                 _set_wizard_base(context=context, step=STEP_ENTRADA, operation=_current_operation(), origin='site', api_mode=context == CONTEXT_BLING_API)
                 st.rerun()
         with c5:
-            if st.button('📎 Importar arquivo', use_container_width=True, key='bottom_flow_file'):
+            if st.button('📎 Importar planilha', use_container_width=True, key='bottom_flow_file'):
                 context = CONTEXT_BLING_API if _context_is_api() else CONTEXT_UNIVERSAL
                 _set_wizard_base(context=context, step=STEP_ENTRADA, operation=_current_operation(), origin='arquivo', api_mode=context == CONTEXT_BLING_API)
                 st.rerun()
 
-        st.markdown('##### CSV / planilha')
+        st.markdown('##### Gerar arquivo')
         c6, c7, c8 = st.columns(3)
         with c6:
             if st.button('📄 Cadastro CSV', use_container_width=True, key='bottom_flow_cadastro_csv'):
@@ -256,24 +256,24 @@ def _render_fluxos_menu() -> None:
                 _go_csv('atualizacao_preco')
                 st.rerun()
 
-        st.markdown('##### Etapas internas')
+        st.markdown('##### Ferramentas')
         c9, c10, c11 = st.columns(3)
         with c9:
-            if st.button('💰 Precificação', use_container_width=True, key='bottom_flow_pricing'):
+            if st.button('💰 Precificar', use_container_width=True, key='bottom_flow_pricing'):
                 _go_universal(step=STEP_PRECIFICACAO)
                 st.rerun()
         with c10:
-            if st.button('🗺️ Mapeamento', use_container_width=True, key='bottom_flow_mapping'):
+            if st.button('🗺️ Mapear campos', use_container_width=True, key='bottom_flow_mapping'):
                 _go_universal(step=STEP_MAPEAMENTO)
                 st.rerun()
         with c11:
-            if st.button('✅ Regras', use_container_width=True, key='bottom_flow_rules'):
+            if st.button('✅ Revisar regras', use_container_width=True, key='bottom_flow_rules'):
                 _go_universal(step=STEP_REGRAS)
                 st.rerun()
 
         c12, c13, c14 = st.columns(3)
         with c12:
-            if st.button('⬇️ Download/Enviar', use_container_width=True, key='bottom_flow_download'):
+            if st.button('⬇️ Enviar/Baixar', use_container_width=True, key='bottom_flow_download'):
                 context = CONTEXT_BLING_API if _context_is_api() else CONTEXT_UNIVERSAL
                 _set_wizard_base(context=context, step=STEP_DOWNLOAD, operation=_current_operation(), api_mode=context == CONTEXT_BLING_API)
                 st.rerun()
@@ -295,7 +295,7 @@ def _render_logs_menu() -> None:
         step = str(st.session_state.get(WIZARD_STEP_KEY) or '').strip() or '-'
         operation = str(st.session_state.get('direct_bling_operation_choice') or st.session_state.get('home_slim_flow_operation') or st.session_state.get('operacao_final') or '-').strip()
         origin = str(st.session_state.get('home_slim_flow_origin') or st.session_state.get('origem_final') or '-').strip()
-        st.caption(f'Fluxo: {active_flow} · Etapa: {step} · Operação: {operation} · Origem: {origin}')
+        st.caption(f'Caminho atual: {active_flow} · Etapa: {step} · Operação: {operation} · Origem: {origin}')
         data_keys = [
             'df_site_bruto_cadastro',
             'df_site_bruto_estoque',
@@ -309,11 +309,11 @@ def _render_logs_menu() -> None:
         for key in data_keys:
             info = _dataframe_info(st.session_state.get(key))
             if info:
-                rows.append({'chave': key, 'tamanho': info})
+                rows.append({'dado': key, 'tamanho': info})
         if rows:
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
         else:
-            st.caption('Nenhum DataFrame principal carregado nesta sessão.')
+            st.caption('Nenhum dado principal carregado nesta sessão.')
         if st.button('🧹 Limpeza total da sessão', use_container_width=True, key='bottom_hard_reset_confirm'):
             _hard_reset_session()
             st.rerun()
@@ -325,22 +325,22 @@ def render_bottom_nav() -> None:
     _render_logs_menu()
 
     with st.container():
-        st.markdown('<div class="bling-bottom-nav-anchor">Atalhos rápidos · refresh · limpeza · fluxos</div>', unsafe_allow_html=True)
+        st.markdown('<div class="bling-bottom-nav-anchor">Ações rápidas · atualizar · limpar · diagnosticar</div>', unsafe_allow_html=True)
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            if st.button('🔄 Refresh', key='bottom_nav_refresh', use_container_width=True):
+            if st.button('🔄 Atualizar', key='bottom_nav_refresh', use_container_width=True):
                 _refresh_screen()
         with col2:
             if st.button('🧹 Limpar', key='bottom_nav_safe_clear', use_container_width=True):
                 _safe_clear_stuck_state()
                 st.rerun()
         with col3:
-            if st.button('⚡ Fluxos', key='bottom_nav_fluxos', use_container_width=True):
+            if st.button('⚡ Atalhos', key='bottom_nav_fluxos', use_container_width=True):
                 st.session_state[FLOW_MENU_KEY] = not bool(st.session_state.get(FLOW_MENU_KEY))
                 st.session_state[LOG_MENU_KEY] = False
                 st.rerun()
         with col4:
-            if st.button('🧪 Logs', key='bottom_nav_logs', use_container_width=True):
+            if st.button('🧪 Diagnóstico', key='bottom_nav_logs', use_container_width=True):
                 st.session_state[LOG_MENU_KEY] = not bool(st.session_state.get(LOG_MENU_KEY))
                 st.session_state[FLOW_MENU_KEY] = False
                 st.rerun()
