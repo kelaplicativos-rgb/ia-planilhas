@@ -38,6 +38,33 @@ GOOD_IMAGE_HINTS = (
     'produto', 'product', 'produtos', 'images', 'image', 'foto', 'fotos', 'uploads', 'catalog', 'catalogo'
 )
 
+NOISE_PATTERNS = (
+    r'ainda\s+n[aã]o\s+h[aá]\s+para\s+este\s+produto',
+    r'descri[cç][aã]o\s+do\s+produto',
+    r'descri[cç][aã]o\s*:',
+    r'caracter[ií]sticas\s*:',
+    r'ficha\s+t[eé]cnica\s*:',
+    r'clique\s+aqui',
+    r'comprar\s+agora',
+    r'adicionar\s+ao\s+carrinho',
+    r'produto\s+indispon[ií]vel',
+)
+
+TEXT_FIXES: tuple[tuple[str, str], ...] = (
+    (r'\bconexao\b', 'conexão'),
+    (r'\bcompativel\b', 'compatível'),
+    (r'\bpratico\b', 'prático'),
+    (r'\bresistente\b', 'resistente'),
+    (r'\bduravel\b', 'durável'),
+    (r'\binstalacao\b', 'instalação'),
+    (r'\butilizacao\b', 'utilização'),
+    (r'\bqualidade\b', 'qualidade'),
+    (r'\bmultimidia\b', 'multimídia'),
+    (r'\bportatil\b', 'portátil'),
+    (r'\botimo\b', 'ótimo'),
+    (r'\bexcelente\b', 'excelente'),
+)
+
 
 @dataclass(frozen=True)
 class EnrichmentResult:
@@ -47,6 +74,8 @@ class EnrichmentResult:
     image_urls: tuple[str, ...]
     confidence: int
     warnings: tuple[str, ...]
+    description_short: str = ''
+    description_complementary: str = ''
 
 
 def _norm(value: object) -> str:
@@ -87,14 +116,89 @@ def choose_product_name(*, name: object = '', description: object = '', code: ob
     return 'Produto sem nome'
 
 
+def _strip_noise(text: str) -> str:
+    out = str(text or '')
+    for pattern in NOISE_PATTERNS:
+        out = re.sub(pattern, ' ', out, flags=re.IGNORECASE)
+    out = re.sub(r'\s+', ' ', out)
+    out = re.sub(r'\s+([,.;:])', r'\1', out)
+    return out.strip(' -|•·;:,.')
+
+
+def _fix_text(text: str) -> str:
+    out = str(text or '').strip()
+    out = out.replace(' plug-and-play ', ' plug-and-play ')
+    for pattern, replacement in TEXT_FIXES:
+        out = re.sub(pattern, replacement, out, flags=re.IGNORECASE)
+    out = re.sub(r'\s+', ' ', out).strip()
+    if out and not out.endswith(('.', '!', '?')):
+        out += '.'
+    if out:
+        out = out[0].upper() + out[1:]
+    return out
+
+
+def _split_sentences(text: str) -> list[str]:
+    raw = str(text or '')
+    raw = re.sub(r'\s*(?:\||•|·|;|\n|\r)\s*', '. ', raw)
+    pieces = [piece.strip(' -.,;:') for piece in re.split(r'(?<=[.!?])\s+|\.\s+', raw) if piece.strip(' -.,;:')]
+    out: list[str] = []
+    seen: set[str] = set()
+    for piece in pieces:
+        fixed = _fix_text(_strip_noise(piece))
+        marker = _norm(fixed)
+        if len(marker) < 4 or marker in seen:
+            continue
+        seen.add(marker)
+        out.append(fixed)
+    return out
+
+
+def build_product_descriptions(*, name: object = '', short_description: object = '', complementary_description: object = '') -> tuple[str, str]:
+    final_name = _clean_text(name, 140)
+    raw_short = _strip_noise(str(short_description or ''))
+    raw_complement = _strip_noise(str(complementary_description or ''))
+    combined = ' '.join(part for part in (raw_short, raw_complement) if part).strip()
+    if not combined or looks_like_code(combined):
+        return '', ''
+
+    sentences = _split_sentences(combined)
+    name_norm = _norm(final_name)
+    filtered: list[str] = []
+    for sentence in sentences:
+        sentence_norm = _norm(sentence)
+        if name_norm and sentence_norm == name_norm:
+            continue
+        if sentence_norm in {'descricao', 'descricao do produto', 'produto'}:
+            continue
+        filtered.append(sentence)
+
+    if not filtered:
+        return '', ''
+
+    short = filtered[0]
+    if len(short) > 240:
+        short = short[:237].rstrip(' ,;:.') + '...'
+    complement_items = filtered[1:8]
+    if not complement_items and len(filtered[0]) <= 240:
+        complement = ''
+    else:
+        complement_source = filtered if len(filtered[0]) > 240 else complement_items
+        complement = '\n'.join(f'- {item}' for item in complement_source if item)
+    if len(complement) > 1800:
+        complement = complement[:1797].rstrip() + '...'
+    return short, complement
+
+
 def clean_description(description: object, *, fallback_name: object = '') -> str:
     desc = _clean_text(description, 1000)
     name = _clean_text(fallback_name, 120)
     if not desc or looks_like_code(desc):
-        return name
-    if name and desc.lower() == name.lower():
         return ''
-    return desc
+    if name and _norm(desc) == _norm(name):
+        return ''
+    short, _complement = build_product_descriptions(name=name, short_description=desc)
+    return short
 
 
 def _split_category(raw: object) -> list[str]:
@@ -157,10 +261,24 @@ def choose_image_urls(raw_images: object, *, title: object = '', category: objec
     return tuple(selected[:limit])
 
 
-def enrich_product_payload_fields(*, name: object = '', description: object = '', code: object = '', gtin: object = '', category: object = '', images: object = '') -> EnrichmentResult:
-    final_name = choose_product_name(name=name, description=description, code=code, gtin=gtin)
-    final_desc = clean_description(description, fallback_name=final_name)
-    final_category = clean_category(category, title=final_name, description=final_desc)
+def enrich_product_payload_fields(
+    *,
+    name: object = '',
+    description: object = '',
+    description_short: object = '',
+    description_complementary: object = '',
+    code: object = '',
+    gtin: object = '',
+    category: object = '',
+    images: object = '',
+) -> EnrichmentResult:
+    final_name = choose_product_name(name=name, description=description or description_short or description_complementary, code=code, gtin=gtin)
+    short, complement = build_product_descriptions(
+        name=final_name,
+        short_description=description_short or description,
+        complementary_description=description_complementary,
+    )
+    final_category = clean_category(category, title=final_name, description=' '.join([short, complement]))
     final_images = choose_image_urls(images, title=final_name, category=final_category)
     confidence = 40
     warnings: list[str] = []
@@ -176,13 +294,18 @@ def enrich_product_payload_fields(*, name: object = '', description: object = ''
         confidence += 15
     else:
         warnings.append('imagem_nao_confiavel')
-    if final_desc:
+    if short:
         confidence += 5
-    return EnrichmentResult(final_name, final_desc, final_category, final_images, min(100, confidence), tuple(warnings))
+    else:
+        warnings.append('descricao_curta_nao_confiavel')
+    if complement:
+        confidence += 5
+    return EnrichmentResult(final_name, short, final_category, final_images, min(100, confidence), tuple(warnings), short, complement)
 
 
 __all__ = [
     'EnrichmentResult',
+    'build_product_descriptions',
     'choose_image_urls',
     'choose_product_name',
     'clean_category',
