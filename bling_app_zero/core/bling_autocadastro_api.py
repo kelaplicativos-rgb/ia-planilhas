@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import importlib
 import re
+from collections.abc import MutableMapping
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
 import pandas as pd
 import requests
-import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_token_store import load_token
@@ -16,6 +17,7 @@ DEFAULT_API_BASE_URL = 'https://www.bling.com.br/Api/v3'
 API_STOCK_DEPOSIT_ID_KEY = 'bling_api_stock_deposit_id'
 API_STOCK_DEPOSIT_KEY = 'bling_api_stock_deposit_name'
 SEND_TIMEOUT = 30
+_FALLBACK_STATE: dict[str, Any] = {}
 
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     'codigo': ('código', 'codigo', 'sku', 'ref', 'referencia', 'referência', 'cod produto', 'cod'),
@@ -44,13 +46,33 @@ class AutoCadastroApiResult:
     failed_indices: tuple[int, ...] = ()
 
 
-def _secret(name: str, default: str = '') -> str:
+def _streamlit_module() -> Any | None:
     try:
-        bling = st.secrets.get('bling', {})
-        value = bling.get(name, default) if hasattr(bling, 'get') else default
-        return str(value or default).strip()
+        return importlib.import_module('streamlit')
     except Exception:
-        return default
+        return None
+
+
+def _state_store() -> MutableMapping[str, Any]:
+    st = _streamlit_module()
+    if st is not None:
+        try:
+            return st.session_state
+        except Exception:
+            pass
+    return _FALLBACK_STATE
+
+
+def _secret(name: str, default: str = '') -> str:
+    st = _streamlit_module()
+    if st is not None:
+        try:
+            bling = st.secrets.get('bling', {})
+            value = bling.get(name, default) if hasattr(bling, 'get') else default
+            return str(value or default).strip()
+        except Exception:
+            pass
+    return default
 
 
 def _url(path: str) -> str:
@@ -190,10 +212,11 @@ def _product_payload(row: pd.Series, mapping: dict[str, str]) -> tuple[dict[str,
 
 
 def _deposit_id(token: dict[str, Any], row: pd.Series, mapping: dict[str, str]) -> str:
-    current = str(st.session_state.get(API_STOCK_DEPOSIT_ID_KEY) or _secret('stock_deposit_id', '') or '').strip()
+    store = _state_store()
+    current = str(store.get(API_STOCK_DEPOSIT_ID_KEY) or _secret('stock_deposit_id', '') or '').strip()
     if current:
         return current
-    wanted = str(_value(row, mapping, 'deposito') or st.session_state.get(API_STOCK_DEPOSIT_KEY) or _secret('stock_deposit_name', _secret('default_stock_deposit_name', '')) or '').strip().lower()
+    wanted = str(_value(row, mapping, 'deposito') or store.get(API_STOCK_DEPOSIT_KEY) or _secret('stock_deposit_name', _secret('default_stock_deposit_name', '')) or '').strip().lower()
     for path in ('/estoques/depositos', '/depositos', '/estoque/depositos'):
         try:
             response = requests.get(_url(path), headers={'Accept': 'application/json', 'Authorization': f"Bearer {token.get('access_token')}"}, timeout=20)
@@ -208,7 +231,7 @@ def _deposit_id(token: dict[str, Any], row: pd.Series, mapping: dict[str, str]) 
                 item_id = str(item.get('id') or item.get('idDeposito') or nested.get('id') or '').strip()
                 name = str(item.get('descricao') or item.get('nome') or nested.get('descricao') or nested.get('nome') or '').strip()
                 if item_id and (not wanted or wanted == item_id.lower() or wanted == name.lower()):
-                    st.session_state[API_STOCK_DEPOSIT_ID_KEY] = item_id
+                    store[API_STOCK_DEPOSIT_ID_KEY] = item_id
                     return item_id
         except Exception:
             continue
