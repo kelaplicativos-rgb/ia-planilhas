@@ -13,10 +13,18 @@ LAST_RERUN_TARGET_KEY = 'home_wizard_last_rerun_target'
 
 
 def _current_api_mode() -> bool:
+    # BLINGSCAN: o modo atual da sessão precisa ter prioridade sobre o snapshot neutro antigo.
+    # Sem isso, sair de API para CSV poderia manter api_mode=True e normalizar etapas como modelo -> origem.
+    finish_mode = str(st.session_state.get('bling_finish_mode') or '').strip()
+    if finish_mode:
+        return finish_mode == 'api_direct'
+    entry_context = str(st.session_state.get('entry_context') or '').strip()
+    if entry_context:
+        return entry_context == 'api_direct'
     state = st.session_state.get(NEUTRAL_WIZARD_STATE_KEY)
     if isinstance(state, dict):
         return bool(state.get('api_mode')) or str(state.get('context') or '') == 'api_direct'
-    return str(st.session_state.get('bling_finish_mode') or '') == 'api_direct'
+    return False
 
 
 def sync_neutral_wizard_step(step: str) -> None:
@@ -25,6 +33,8 @@ def sync_neutral_wizard_step(step: str) -> None:
     values = dict(current) if isinstance(current, dict) else {}
     values.update(dict(st.session_state))
     values['step'] = step
+    values['api_mode'] = _current_api_mode()
+    values['context'] = 'api_direct' if values['api_mode'] else str(values.get('entry_context') or values.get('context') or 'csv_download')
     wizard = WizardState.from_mapping(values)
     st.session_state[NEUTRAL_WIZARD_STATE_KEY] = wizard.to_dict()
 
@@ -74,6 +84,7 @@ def safe_rerun(reason: str, *, target_step: str = '') -> None:
             'reason': normalized_reason,
             'changed_step': changed,
             'neutral_wizard_synced': True,
+            'api_mode_current_priority': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
