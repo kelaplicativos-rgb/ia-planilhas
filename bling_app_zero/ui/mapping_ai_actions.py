@@ -3,8 +3,8 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.core.ai_mapping_assistant import apply_ai_mapping_assist, merge_ai_suggestions
-from bling_app_zero.core.ai_mapping_availability import ai_mapping_availability, ai_mapping_enabled, ai_mapping_remaining_session_calls
+from bling_app_zero.core.ai_mapping_availability import ai_mapping_enabled, ai_mapping_remaining_session_calls
+from bling_app_zero.core.ai_mapping_runner import merge_ai_run_suggestions, run_ai_mapping
 from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 from bling_app_zero.ui.mapping_constants import CADASTRO_MAPPING_CONFIRMED_KEY, CADASTRO_MAPPING_SIGNATURE_KEY
 from bling_app_zero.ui.mapping_widget_state import clear_mapping_widgets
@@ -46,33 +46,24 @@ def apply_ai_to_session_mapping(
     ligações aceitas pela validação local e sempre exige conferência do usuário.
     """
     status_key = _status_key(mapping_key)
-    availability = ai_mapping_availability()
-
-    if not availability.enabled:
-        st.session_state[status_key] = 'inactive'
-        return
-
-    if availability.remaining_calls <= 0:
-        st.session_state[status_key] = 'limit'
-        return
 
     with st.spinner('IA Real lendo os produtos e sugerindo colunas...'):
-        result = apply_ai_mapping_assist(df_source, target_columns, current_mapping, only_uncertain=False)
+        result = run_ai_mapping(df_source, target_columns, current_mapping, only_uncertain=False)
 
-    if not result.enabled:
-        st.session_state[status_key] = 'inactive'
+    if result.status in {'inactive', 'limit', 'no_safe_changes'}:
+        st.session_state[status_key] = result.status
         return
 
     if result.applied <= 0:
         st.session_state[status_key] = 'no_safe_changes'
         return
 
-    st.session_state[mapping_key] = merge_ai_suggestions(current_mapping, result)
+    st.session_state[mapping_key] = merge_ai_run_suggestions(current_mapping, result)
     st.session_state.pop(CADASTRO_MAPPING_CONFIRMED_KEY, None)
     st.session_state.pop(CADASTRO_MAPPING_SIGNATURE_KEY, None)
     clear_mapping_widgets(mapping_key)
     st.session_state.pop(f'{mapping_key}_order', None)
-    st.session_state[status_key] = f'applied:{result.applied}'
+    st.session_state[status_key] = result.status
     safe_rerun('ai_mapping_actions_applied')
 
 
