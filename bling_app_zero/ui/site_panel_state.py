@@ -10,7 +10,7 @@ from bling_app_zero.core.audit import add_audit_event
 RESPONSIBLE_FILE = 'bling_app_zero/ui/site_panel_state.py'
 UNIVERSAL_OPERATION = 'universal'
 UNIVERSAL_ALIASES = {'universal', 'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}
-SITE_CAPTURE_STALE_SECONDS = 90
+SITE_CAPTURE_STALE_SECONDS = 150
 LEGACY_AUTH_KEYS = (
     'guided_login_confirmed_logged_in',
     'guided_login_capture_config',
