@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from urllib.parse import urlencode
 
 import pandas as pd
 import streamlit as st
@@ -26,6 +27,7 @@ STEP_DOWNLOAD = 'download'
 
 FLOW_MENU_KEY = 'bottom_nav_fluxos_open'
 LOG_MENU_KEY = 'bottom_nav_logs_open'
+ACTION_PARAM = 'bottom_nav_action'
 
 TECHNICAL_KEEP_PREFIXES = ('bling_token', 'bling_oauth', 'oauth')
 
@@ -161,37 +163,112 @@ def _dataframe_info(value: object) -> str:
     return ''
 
 
+def _query_value(name: str) -> str:
+    try:
+        value = st.query_params.get(name, '')
+        if isinstance(value, list):
+            return str(value[0] if value else '').strip()
+        return str(value or '').strip()
+    except Exception:
+        return ''
+
+
+def _remove_action_param() -> None:
+    try:
+        st.query_params.pop(ACTION_PARAM, None)
+    except Exception:
+        pass
+
+
+def _href_for_action(action: str) -> str:
+    params: dict[str, object] = {}
+    try:
+        for key, value in dict(st.query_params).items():
+            if key == ACTION_PARAM:
+                continue
+            params[str(key)] = value
+    except Exception:
+        params = {}
+    params[ACTION_PARAM] = action
+    return '?' + urlencode(params, doseq=True)
+
+
+def _handle_bottom_action() -> None:
+    action = _query_value(ACTION_PARAM)
+    if not action:
+        return
+    _remove_action_param()
+    if action == 'refresh':
+        _refresh_screen()
+    if action == 'clear':
+        _safe_clear_stuck_state()
+        st.rerun()
+    if action == 'shortcuts':
+        st.session_state[FLOW_MENU_KEY] = not bool(st.session_state.get(FLOW_MENU_KEY))
+        st.session_state[LOG_MENU_KEY] = False
+        return
+    if action == 'diagnostic':
+        st.session_state[LOG_MENU_KEY] = not bool(st.session_state.get(LOG_MENU_KEY))
+        st.session_state[FLOW_MENU_KEY] = False
+        return
+
+
 def _render_fixed_css() -> None:
     st.markdown(
         '''
 <style>
-.bling-bottom-fixed-spacer{height:104px;}
-div[data-testid="stVerticalBlock"]:has(> div .bling-bottom-nav-anchor){
+.bling-bottom-fixed-spacer{height:110px;}
+.bling-bottom-fixed{
     position:fixed;
     left:0;
     right:0;
     bottom:0;
-    z-index:9999;
+    z-index:2147483000;
     padding:8px 10px calc(8px + env(safe-area-inset-bottom));
-    background:rgba(255,255,255,.96);
-    border-top:1px solid rgba(15,23,42,.10);
-    box-shadow:0 -10px 30px rgba(15,23,42,.10);
+    background:rgba(255,255,255,.97);
+    border-top:1px solid rgba(15,23,42,.12);
+    box-shadow:0 -10px 30px rgba(15,23,42,.12);
     backdrop-filter:blur(12px);
+    -webkit-backdrop-filter:blur(12px);
 }
-div[data-testid="stVerticalBlock"]:has(> div .bling-bottom-nav-anchor) [data-testid="stHorizontalBlock"]{
+.bling-bottom-fixed-label{
     max-width:860px;
-    margin:0 auto;
-}
-.bling-bottom-nav-anchor{
+    margin:0 auto 5px auto;
     color:#475569;
     font-size:.72rem;
     font-weight:700;
     text-align:center;
-    margin-bottom:5px;
+    line-height:1.1;
 }
+.bling-bottom-fixed-grid{
+    max-width:860px;
+    margin:0 auto;
+    display:grid;
+    grid-template-columns:repeat(4,minmax(0,1fr));
+    gap:6px;
+}
+.bling-bottom-fixed-grid a{
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    min-height:38px;
+    padding:7px 5px;
+    border-radius:12px;
+    border:1px solid rgba(15,23,42,.16);
+    background:#fff;
+    color:#0f172a!important;
+    text-decoration:none!important;
+    font-weight:800;
+    font-size:.84rem;
+    box-shadow:0 1px 4px rgba(15,23,42,.08);
+    white-space:nowrap;
+}
+.bling-bottom-fixed-grid a:active{transform:translateY(1px);}
 @media (max-width:520px){
-    div[data-testid="stVerticalBlock"]:has(> div .bling-bottom-nav-anchor){padding-left:7px;padding-right:7px;}
-    div[data-testid="stVerticalBlock"]:has(> div .bling-bottom-nav-anchor) button{font-size:.78rem;padding-left:.25rem;padding-right:.25rem;}
+    .bling-bottom-fixed{padding-left:7px;padding-right:7px;}
+    .bling-bottom-fixed-grid{gap:4px;}
+    .bling-bottom-fixed-grid a{font-size:.74rem;min-height:36px;padding-left:3px;padding-right:3px;border-radius:10px;}
+    .bling-bottom-fixed-label{font-size:.68rem;}
 }
 </style>
 <div class="bling-bottom-fixed-spacer"></div>
@@ -319,31 +396,29 @@ def _render_logs_menu() -> None:
             st.rerun()
 
 
+def _render_html_bottom_bar() -> None:
+    st.markdown(
+        f'''
+<div class="bling-bottom-fixed">
+  <div class="bling-bottom-fixed-label">Ações rápidas · atualizar · limpar · diagnosticar</div>
+  <div class="bling-bottom-fixed-grid">
+    <a href="{_href_for_action('refresh')}">🔄 Atualizar</a>
+    <a href="{_href_for_action('clear')}">🧹 Limpar</a>
+    <a href="{_href_for_action('shortcuts')}">⚡ Atalhos</a>
+    <a href="{_href_for_action('diagnostic')}">🧪 Diagnóstico</a>
+  </div>
+</div>
+''',
+        unsafe_allow_html=True,
+    )
+
+
 def render_bottom_nav() -> None:
+    _handle_bottom_action()
     _render_fixed_css()
     _render_fluxos_menu()
     _render_logs_menu()
-
-    with st.container():
-        st.markdown('<div class="bling-bottom-nav-anchor">Ações rápidas · atualizar · limpar · diagnosticar</div>', unsafe_allow_html=True)
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            if st.button('🔄 Atualizar', key='bottom_nav_refresh', use_container_width=True):
-                _refresh_screen()
-        with col2:
-            if st.button('🧹 Limpar', key='bottom_nav_safe_clear', use_container_width=True):
-                _safe_clear_stuck_state()
-                st.rerun()
-        with col3:
-            if st.button('⚡ Atalhos', key='bottom_nav_fluxos', use_container_width=True):
-                st.session_state[FLOW_MENU_KEY] = not bool(st.session_state.get(FLOW_MENU_KEY))
-                st.session_state[LOG_MENU_KEY] = False
-                st.rerun()
-        with col4:
-            if st.button('🧪 Diagnóstico', key='bottom_nav_logs', use_container_width=True):
-                st.session_state[LOG_MENU_KEY] = not bool(st.session_state.get(LOG_MENU_KEY))
-                st.session_state[FLOW_MENU_KEY] = False
-                st.rerun()
+    _render_html_bottom_bar()
 
 
 __all__ = ['render_bottom_nav']
