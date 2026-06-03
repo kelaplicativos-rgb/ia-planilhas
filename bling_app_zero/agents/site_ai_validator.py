@@ -48,6 +48,27 @@ def _looks_empty(value: object) -> bool:
     return not _clean_text(value)
 
 
+def _is_stock_operation(operation: str) -> bool:
+    text = str(operation or '').strip().lower()
+    return text in {'estoque', 'atualizacao_estoque', 'atualização_estoque', 'stock', 'stock_balance'}
+
+
+def _find_identity_column(columns: Iterable[str]) -> str | None:
+    return _find_column(
+        columns,
+        'produto.id',
+        'id produto',
+        'id_produto',
+        'codigo',
+        'código',
+        'sku',
+        'gtin',
+        'ean',
+        'referencia',
+        'referência',
+    )
+
+
 def normalize_site_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame() if not isinstance(df, pd.DataFrame) else df.copy()
@@ -85,47 +106,57 @@ def evaluate_site_dataframe(df: pd.DataFrame, operation: str = 'cadastro') -> Sm
     if not isinstance(df, pd.DataFrame) or df.empty:
         return SmartScanQuality(0, 0, 0, 0, 0, 0, 0, 0, ['Nenhum produto válido foi capturado.'])
 
+    is_stock = _is_stock_operation(operation)
     desc_col = _find_column(df.columns, 'descrição', 'descricao', 'nome', 'produto')
     price_col = _find_column(df.columns, 'preço', 'preco', 'valor')
     stock_col = _find_column(df.columns, 'estoque', 'quantidade', 'saldo', 'balanço', 'balanco')
     brand_col = _find_column(df.columns, 'marca')
+    identity_col = _find_identity_column(df.columns)
 
     rows = len(df)
-    missing_description = int(df[desc_col].map(_looks_empty).sum()) if desc_col else rows
-    missing_price = int(df[price_col].map(_looks_empty).sum()) if price_col else (0 if operation == 'estoque' else rows)
-    missing_stock = int(df[stock_col].map(_looks_empty).sum()) if stock_col else (rows if operation == 'estoque' else 0)
+    # BLINGFIX: estoque não deve ser penalizado por falta de descrição/título.
+    # Atualização de estoque precisa de identificador + saldo/quantidade + depósito.
+    missing_description = 0 if is_stock else (int(df[desc_col].map(_looks_empty).sum()) if desc_col else rows)
+    missing_price = int(df[price_col].map(_looks_empty).sum()) if price_col else (0 if is_stock else rows)
+    missing_stock = int(df[stock_col].map(_looks_empty).sum()) if stock_col else (rows if is_stock else 0)
+    missing_identity = int(df[identity_col].map(_looks_empty).sum()) if identity_col else (rows if is_stock else 0)
     invalid_brand = 0
-    if brand_col:
+    if brand_col and not is_stock:
         invalid_brand = int(df[brand_col].astype(str).str.lower().str.contains('mega center|stoqui|loja', regex=True, na=False).sum())
 
     good_rows = rows
-    if desc_col:
+    if not is_stock and desc_col:
         good_rows = min(good_rows, rows - missing_description)
-    if operation != 'estoque' and price_col:
+    if not is_stock and price_col:
         good_rows = min(good_rows, rows - missing_price)
-    if operation == 'estoque' and stock_col:
+    if is_stock and stock_col:
         good_rows = min(good_rows, rows - missing_stock)
+    if is_stock and identity_col:
+        good_rows = min(good_rows, rows - missing_identity)
 
     penalties = 0
-    penalties += int((missing_description / max(rows, 1)) * 35)
-    penalties += int((missing_price / max(rows, 1)) * 25) if operation != 'estoque' else 0
-    penalties += int((missing_stock / max(rows, 1)) * 25) if operation == 'estoque' else 0
+    penalties += int((missing_description / max(rows, 1)) * 35) if not is_stock else 0
+    penalties += int((missing_price / max(rows, 1)) * 25) if not is_stock else 0
+    penalties += int((missing_stock / max(rows, 1)) * 35) if is_stock else 0
+    penalties += int((missing_identity / max(rows, 1)) * 35) if is_stock else 0
     penalties += int((invalid_brand / max(rows, 1)) * 10)
     score = max(0, min(100, 100 - penalties))
 
     warnings: list[str] = []
-    if missing_description:
+    if not is_stock and missing_description:
         warnings.append(f'{missing_description} produto(s) sem descrição/título.')
-    if operation != 'estoque' and missing_price:
+    if not is_stock and missing_price:
         warnings.append(f'{missing_price} produto(s) sem preço.')
-    if operation == 'estoque' and missing_stock:
+    if is_stock and missing_identity:
+        warnings.append(f'{missing_identity} produto(s) sem código/SKU/GTIN/ID para localizar no Bling.')
+    if is_stock and missing_stock:
         warnings.append(f'{missing_stock} produto(s) sem estoque/saldo.')
     if invalid_brand:
         warnings.append(f'{invalid_brand} marca(s) pareciam nome da loja e foram sinalizadas.')
     if score >= 85:
-        warnings.append('Qualidade boa para seguir ao mapeamento.')
+        warnings.append('Qualidade boa para seguir.')
     elif score >= 60:
-        warnings.append('Qualidade mediana: revisar campos faltantes antes do download.')
+        warnings.append('Qualidade mediana: revisar campos faltantes antes de continuar.')
     else:
         warnings.append('Qualidade baixa: recomenda-se nova captura ou links mais específicos.')
 
