@@ -1,15 +1,13 @@
 from __future__ import annotations
 
+import importlib
+from collections.abc import MutableMapping
 from typing import Any
 
 import pandas as pd
 
-try:
-    import streamlit as st
-except Exception:  # pragma: no cover
-    st = None
-
 POST_MAPPING_DEFAULTS_SESSION_KEY = 'bling_post_mapping_defaults'
+_FALLBACK_STATE: dict[str, Any] = {}
 
 # Compatibilidade com telas antigas de mapeamento/sidebar.
 # BLINGREFORM: os defaults pós-mapeamento foram desplugados do download final,
@@ -28,15 +26,33 @@ DEFAULT_POST_MAPPING_CONFIG: dict[str, Any] = {
 }
 
 
-def get_post_mapping_defaults_config() -> dict[str, Any]:
+def _streamlit_module() -> Any | None:
+    try:
+        return importlib.import_module('streamlit')
+    except Exception:
+        return None
+
+
+def state_store(state: MutableMapping[str, Any] | None = None) -> MutableMapping[str, Any]:
+    if state is not None:
+        return state
+    st = _streamlit_module()
+    if st is not None:
+        try:
+            return st.session_state
+        except Exception:
+            pass
+    return _FALLBACK_STATE
+
+
+def get_post_mapping_defaults_config(state: MutableMapping[str, Any] | None = None) -> dict[str, Any]:
     config = dict(DEFAULT_POST_MAPPING_CONFIG)
-    if st is None:
-        return config
-    raw = st.session_state.get(POST_MAPPING_DEFAULTS_SESSION_KEY)
+    store = state_store(state)
+    raw = store.get(POST_MAPPING_DEFAULTS_SESSION_KEY)
     if isinstance(raw, dict):
         config.update(raw)
     config['enabled'] = False
-    st.session_state[POST_MAPPING_DEFAULTS_SESSION_KEY] = config
+    store[POST_MAPPING_DEFAULTS_SESSION_KEY] = config
     return config
 
 
@@ -59,4 +75,5 @@ __all__ = [
     'POST_MAPPING_DEFAULTS_SESSION_KEY',
     'apply_post_mapping_defaults',
     'get_post_mapping_defaults_config',
+    'state_store',
 ]
