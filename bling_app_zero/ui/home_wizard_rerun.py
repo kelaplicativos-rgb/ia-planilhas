@@ -3,19 +3,39 @@ from __future__ import annotations
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.wizard_state import WizardState, normalize_step
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_wizard_rerun.py'
 WIZARD_STEP_KEY = 'bling_wizard_step'
+NEUTRAL_WIZARD_STATE_KEY = 'neutral_wizard_state_v1'
 LAST_RERUN_REASON_KEY = 'home_wizard_last_rerun_reason'
 LAST_RERUN_TARGET_KEY = 'home_wizard_last_rerun_target'
 
 
+def _current_api_mode() -> bool:
+    state = st.session_state.get(NEUTRAL_WIZARD_STATE_KEY)
+    if isinstance(state, dict):
+        return bool(state.get('api_mode')) or str(state.get('context') or '') == 'api_direct'
+    return str(st.session_state.get('bling_finish_mode') or '') == 'api_direct'
+
+
+def sync_neutral_wizard_step(step: str) -> None:
+    """Mantém o estado neutro do Wizard sincronizado com os caminhos legados."""
+    current = st.session_state.get(NEUTRAL_WIZARD_STATE_KEY)
+    values = dict(current) if isinstance(current, dict) else {}
+    values.update(dict(st.session_state))
+    values['step'] = step
+    wizard = WizardState.from_mapping(values)
+    st.session_state[NEUTRAL_WIZARD_STATE_KEY] = wizard.to_dict()
+
+
 def set_step_without_rerun(step: str) -> bool:
-    """Atualiza a etapa do wizard somente quando houver mudança real."""
-    normalized = str(step or '').strip().lower()
+    """Atualiza a etapa do wizard somente quando houver mudança real e espelha no Wizard neutro."""
+    normalized = normalize_step(step, api_mode=_current_api_mode())
     if not normalized:
         return False
     previous = str(st.session_state.get(WIZARD_STEP_KEY) or '').strip().lower()
+    sync_neutral_wizard_step(normalized)
     if previous == normalized:
         return False
     st.session_state[WIZARD_STEP_KEY] = normalized
@@ -28,13 +48,15 @@ def set_step_without_rerun(step: str) -> bool:
 
 def safe_rerun(reason: str, *, target_step: str = '') -> None:
     """Executa rerun só quando necessário e deixa trilha de auditoria."""
-    normalized_target = str(target_step or st.session_state.get(WIZARD_STEP_KEY) or '').strip().lower()
+    normalized_target = normalize_step(target_step or st.session_state.get(WIZARD_STEP_KEY) or '', api_mode=_current_api_mode())
     normalized_reason = str(reason or 'wizard_state_changed').strip() or 'wizard_state_changed'
 
     if target_step:
         changed = set_step_without_rerun(target_step)
     else:
         changed = True
+        if normalized_target:
+            sync_neutral_wizard_step(normalized_target)
 
     last_reason = str(st.session_state.get(LAST_RERUN_REASON_KEY) or '')
     last_target = str(st.session_state.get(LAST_RERUN_TARGET_KEY) or '')
@@ -51,10 +73,11 @@ def safe_rerun(reason: str, *, target_step: str = '') -> None:
         details={
             'reason': normalized_reason,
             'changed_step': changed,
+            'neutral_wizard_synced': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
     st.rerun()
 
 
-__all__ = ['set_step_without_rerun', 'safe_rerun']
+__all__ = ['set_step_without_rerun', 'safe_rerun', 'sync_neutral_wizard_step']
