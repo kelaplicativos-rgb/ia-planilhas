@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import importlib
 import re
+from collections.abc import MutableMapping
+from typing import Any
 
 import pandas as pd
 
@@ -10,6 +13,26 @@ HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
 CONTEXT_BLING_API = 'bling_api'
 CONTEXT_BLING_CSV = 'bling_csv'
 CONTEXT_UNIVERSAL = 'universal'
+_FALLBACK_STATE: dict[str, Any] = {}
+
+
+def _streamlit_module() -> Any | None:
+    try:
+        return importlib.import_module('streamlit')
+    except Exception:
+        return None
+
+
+def state_store(state: MutableMapping[str, Any] | None = None) -> MutableMapping[str, Any]:
+    if state is not None:
+        return state
+    st = _streamlit_module()
+    if st is not None:
+        try:
+            return st.session_state
+        except Exception:
+            pass
+    return _FALLBACK_STATE
 
 
 def _normalize_column_name(value: object) -> str:
@@ -71,20 +94,18 @@ def adapt_dataframe_to_model_contract(df: pd.DataFrame, df_model: pd.DataFrame |
     return adapted.reset_index(drop=True)
 
 
-def _first_valid_model_from_session(candidate_keys: list[str]) -> pd.DataFrame | None:
-    import streamlit as st
-
+def _first_valid_model_from_session(candidate_keys: list[str], *, state: MutableMapping[str, Any] | None = None) -> pd.DataFrame | None:
+    store = state_store(state)
     for key in candidate_keys:
-        value = st.session_state.get(key)
+        value = store.get(key)
         if isinstance(value, pd.DataFrame) and len(value.columns):
             return value.copy().fillna('')
     return None
 
 
-def _entry_context() -> str:
-    import streamlit as st
-
-    value = str(st.session_state.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower()
+def _entry_context(*, state: MutableMapping[str, Any] | None = None) -> str:
+    store = state_store(state)
+    value = str(store.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower()
     if value == 'bling':
         return CONTEXT_BLING_API
     if value in {CONTEXT_BLING_API, CONTEXT_BLING_CSV, CONTEXT_UNIVERSAL}:
@@ -92,13 +113,12 @@ def _entry_context() -> str:
     return ''
 
 
-def _resolved_operation(operation: str) -> str:
-    import streamlit as st
-
+def _resolved_operation(operation: str, *, state: MutableMapping[str, Any] | None = None) -> str:
+    store = state_store(state)
     op = normalize_contract_operation(operation)
     if op:
         return op
-    detected = normalize_contract_operation(st.session_state.get(MODEL_CONTRACT_TYPE_KEY))
+    detected = normalize_contract_operation(store.get(MODEL_CONTRACT_TYPE_KEY))
     return detected or 'universal'
 
 
@@ -150,23 +170,23 @@ def _bling_model_keys_for_operation(op: str) -> list[str]:
     return _bling_cadastro_model_keys() + _bling_estoque_model_keys() + _bling_preco_model_keys()
 
 
-def model_for_operation(operation: str) -> pd.DataFrame | None:
+def model_for_operation(operation: str, *, state: MutableMapping[str, Any] | None = None) -> pd.DataFrame | None:
     """Busca modelo salvo na sessão respeitando o caminho da Home."""
-    context = _entry_context()
-    op = _resolved_operation(operation)
+    context = _entry_context(state=state)
+    op = _resolved_operation(operation, state=state)
 
     if context == CONTEXT_BLING_API:
         return None
 
     if context == CONTEXT_UNIVERSAL:
-        return _first_valid_model_from_session(_universal_model_keys())
+        return _first_valid_model_from_session(_universal_model_keys(), state=state)
 
     if context == CONTEXT_BLING_CSV:
-        return _first_valid_model_from_session(_bling_model_keys_for_operation(op))
+        return _first_valid_model_from_session(_bling_model_keys_for_operation(op), state=state)
 
     if op == 'universal':
-        return _first_valid_model_from_session(_universal_model_keys())
-    return _first_valid_model_from_session(_bling_model_keys_for_operation(op))
+        return _first_valid_model_from_session(_universal_model_keys(), state=state)
+    return _first_valid_model_from_session(_bling_model_keys_for_operation(op), state=state)
 
 
-__all__ = ['adapt_dataframe_to_model_contract', 'model_for_operation']
+__all__ = ['adapt_dataframe_to_model_contract', 'model_for_operation', 'state_store']
