@@ -334,7 +334,6 @@ def _brand_from_title(title: object) -> str:
         normalized_brand = brand.lower().replace('-', ' ').replace('_', ' ')
         if re.search(rf'(?<![a-z0-9]){re.escape(normalized_brand)}(?![a-z0-9])', normalized_text, flags=re.IGNORECASE):
             return _valid_brand(brand)
-    # Fallback conservador: última palavra em caixa alta no título, sem aceitar loja/código puro.
     for token in re.findall(r'\b[A-Z][A-Z0-9&.-]{1,14}\b', str(title or '')):
         if not _digits_only(token) and not token.upper().startswith(('USB', 'LED', 'HDMI', 'TYPE', 'TIPO')):
             candidate = _valid_brand(token)
@@ -344,8 +343,6 @@ def _brand_from_title(title: object) -> str:
 
 
 def _resolve_brand(title: object, fallback_brand: object = '') -> str:
-    # Regra do usuário: primeiro procurar marca no título do produto;
-    # só se não encontrar, usar marca/fabricante capturada em outros locais.
     from_title = _brand_from_title(title)
     if from_title:
         return from_title
@@ -384,22 +381,18 @@ def _base_payload(row: pd.Series, mapping: dict[str, str]) -> tuple[dict[str, An
     name = _clean_text(enrichment.name, 120)
     if len(name) < 2:
         return None, {'reason': 'nome_insuficiente', 'enrichment': enrichment}
-    payload: dict[str, Any] = {'nome': name, 'tipo': 'P', 'situacao': 'A'}
+    payload: dict[str, Any] = {'nome': name, 'tipo': 'P', 'situacao': 'A', 'formato': 'S'}
     if code:
         payload['codigo'] = code
     unit = _clean_text(_value(row, mapping, 'unidade') or 'UN', 6).upper()
     if re.fullmatch(r'[A-Z0-9]{1,6}', unit):
         payload['unidade'] = unit
-
-    # Regra do usuário: no Bling, toda descrição completa deve ir em descricaoCurta.
-    # Nunca preencher descricaoComplementar pelo fluxo de cadastro API/site.
     full_description = _join_full_description_for_bling(
         short=enrichment.description_short,
         complement=enrichment.description_complementary,
     )
     if full_description and full_description.lower() != name.lower():
         payload['descricaoCurta'] = full_description
-
     price = _number_value(_value(row, mapping, 'preco'))
     if price is not None and price >= 0:
         payload['preco'] = price
@@ -422,6 +415,7 @@ def _base_payload(row: pd.Series, mapping: dict[str, str]) -> tuple[dict[str, An
         'description_short_len': len(full_description or ''),
         'description_complementary_len': 0,
         'description_rule': 'descricao_completa_em_descricaoCurta_sem_descricaoComplementar',
+        'formato': 'S',
     }
     return _clean_payload(payload), meta
 
@@ -446,17 +440,17 @@ def _payload_variants(token: dict[str, Any], row: pd.Series, mapping: dict[str, 
     elif category:
         with_category['categoria'] = {'descricao': category}
     no_format_risk = {k: v for k, v in base.items() if k not in {'unidade', 'marca', 'preco', 'tributacao', 'descricaoCurta', 'descricaoComplementar'}}
-    name_only = {'nome': base.get('nome', 'Produto sem nome'), 'tipo': 'P', 'situacao': 'A'}
+    name_only = {'nome': base.get('nome', 'Produto sem nome'), 'tipo': 'P', 'situacao': 'A', 'formato': 'S'}
     if base.get('codigo'):
         name_only['codigo'] = base['codigo']
     variants: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
     seen: set[str] = set()
     for label, payload in (
-        ('smart_completo_categoria_imagem_descricao_curta', full),
-        ('smart_categoria_descricao_curta_sem_imagem', with_category),
-        ('smart_minimo_com_descricao_curta', base),
+        ('smart_completo_categoria_imagem_descricao_curta_formato', full),
+        ('smart_categoria_descricao_curta_sem_imagem_formato', with_category),
+        ('smart_minimo_com_descricao_curta_formato', base),
         ('smart_sem_campos_de_formato_risco', no_format_risk),
-        ('smart_nome_codigo_minimo', name_only),
+        ('smart_nome_codigo_minimo_formato', name_only),
     ):
         cleaned = _clean_payload(payload)
         marker = repr(sorted(cleaned.items()))
@@ -479,7 +473,7 @@ def _smart_preview_payloads(df: pd.DataFrame, *, limit: int = 5) -> list[dict[st
         variants = _payload_variants(token, row, mapping)
         if variants:
             label, payload, meta = variants[0]
-            out.append({'payload': payload, 'status': 'OK', 'motivo': f'BLINGSMARTCORE {label} · confiança {meta.get("confidence", 0)}/100 · descrição curta {meta.get("description_short_len", 0)} · marca {meta.get("brand", "") or "não definida"} ({meta.get("brand_source", "") or "sem fonte"})'})
+            out.append({'payload': payload, 'status': 'OK', 'motivo': f'BLINGSMARTCORE {label} · confiança {meta.get("confidence", 0)}/100 · formato {meta.get("formato", "S")} · descrição curta {meta.get("description_short_len", 0)} · marca {meta.get("brand", "") or "não definida"} ({meta.get("brand_source", "") or "sem fonte"})'})
         else:
             out.append({'payload': {}, 'status': 'IGNORADO', 'motivo': 'Nome/código insuficiente para cadastro.'})
     return out
@@ -555,7 +549,7 @@ def _send_cadastro_smart(df: pd.DataFrame, *, limit: int | None = None, progress
                 response = requests.post(_url(create_path), headers=_headers(token), json=payload, timeout=SEND_TIMEOUT)
                 last_response = response
                 response_text = str(response.text or '')
-                attempts.append({'mode': 'create', 'strategy': strategy, 'status': int(response.status_code), 'confidence': meta.get('confidence'), 'category': meta.get('category'), 'category_id': meta.get('category_id'), 'brand': meta.get('brand'), 'brand_source': meta.get('brand_source'), 'description_short_len': meta.get('description_short_len'), 'description_complementary_len': 0, 'payload_keys': sorted(payload.keys()), 'response_preview': response_text[:500]})
+                attempts.append({'mode': 'create', 'strategy': strategy, 'status': int(response.status_code), 'confidence': meta.get('confidence'), 'category': meta.get('category'), 'category_id': meta.get('category_id'), 'brand': meta.get('brand'), 'brand_source': meta.get('brand_source'), 'formato': meta.get('formato', 'S'), 'description_short_len': meta.get('description_short_len'), 'description_complementary_len': 0, 'payload_keys': sorted(payload.keys()), 'response_preview': response_text[:500]})
                 if response.status_code < 400:
                     ok = True
                     add_audit_event('bling_smart_cadastro_strategy_succeeded', area='BLING_ENVIO', status='OK', details={'line': line, 'strategy': strategy, 'meta': meta, 'responsible_file': RESPONSIBLE_FILE})
@@ -585,7 +579,7 @@ def _send_cadastro_smart(df: pd.DataFrame, *, limit: int | None = None, progress
             add_audit_event('bling_smart_cadastro_failed', area='BLING_ENVIO', status='AVISO', details={'line': line, 'status': status, 'attempts': attempts[-8:], 'responsible_file': RESPONSIBLE_FILE})
         _emit_progress(progress_callback, {'stage': 'Cadastrando no Bling', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
     _emit_progress(progress_callback, {'stage': 'Cadastro inteligente concluído', 'processed': total, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': 1.0})
-    add_audit_event('bling_smart_cadastro_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'attempted': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'mode': 'upsert_heuristic_categoria_imagem_descricao_curta_marca_titulo', 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('bling_smart_cadastro_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'attempted': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'mode': 'upsert_heuristic_categoria_imagem_descricao_curta_marca_titulo_formato_s', 'responsible_file': RESPONSIBLE_FILE})
     return DirectSendResult(total, sent, failed, skipped, tuple(errors), tuple())
 
 
