@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import importlib
 import re
+from collections.abc import MutableMapping
 from typing import Any
 
 import pandas as pd
@@ -10,6 +12,7 @@ from bling_app_zero.core.text import clean_cell, normalize_key
 NORMALIZE_MEASURES_RESOURCE_KEY = 'resource_normalize_measures_to_meters'
 CENTRAL_RULES_SESSION_KEY = 'bling_user_rules'
 CENTRAL_NORMALIZE_MEASURES_KEY = 'normalize_measures_to_meters'
+_FALLBACK_STATE: dict[str, Any] = {}
 
 _MEASURE_TERMS = {
     'altura',
@@ -34,19 +37,37 @@ _NEGATIVE_TERMS = {
 }
 
 
-def normalize_measures_resource_enabled(default: bool = False) -> bool:
+def _streamlit_module() -> Any | None:
+    try:
+        return importlib.import_module('streamlit')
+    except Exception:
+        return None
+
+
+def state_store(state: MutableMapping[str, Any] | None = None) -> MutableMapping[str, Any]:
+    if state is not None:
+        return state
+    st = _streamlit_module()
+    if st is not None:
+        try:
+            return st.session_state
+        except Exception:
+            pass
+    return _FALLBACK_STATE
+
+
+def normalize_measures_resource_enabled(default: bool = False, *, state: MutableMapping[str, Any] | None = None) -> bool:
     """Lê o recurso pela mesma chave central que o exportador usa.
 
     Mantém compatibilidade com a chave antiga da UI para sessões abertas antes
     deste BLINGSCAN, mas a fonte principal passa a ser bling_user_rules.
     """
+    store = state_store(state)
     try:
-        import streamlit as st
-
-        rules = st.session_state.get(CENTRAL_RULES_SESSION_KEY)
+        rules = store.get(CENTRAL_RULES_SESSION_KEY)
         if isinstance(rules, dict) and CENTRAL_NORMALIZE_MEASURES_KEY in rules:
             return bool(rules.get(CENTRAL_NORMALIZE_MEASURES_KEY, default))
-        return bool(st.session_state.get(NORMALIZE_MEASURES_RESOURCE_KEY, default))
+        return bool(store.get(NORMALIZE_MEASURES_RESOURCE_KEY, default))
     except Exception:
         return bool(default)
 
@@ -133,9 +154,12 @@ def normalize_measure_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 __all__ = [
+    'CENTRAL_NORMALIZE_MEASURES_KEY',
+    'CENTRAL_RULES_SESSION_KEY',
     'NORMALIZE_MEASURES_RESOURCE_KEY',
     'looks_like_dimension_column',
     'normalize_measure_columns',
     'normalize_measure_value_to_meters',
     'normalize_measures_resource_enabled',
+    'state_store',
 ]
