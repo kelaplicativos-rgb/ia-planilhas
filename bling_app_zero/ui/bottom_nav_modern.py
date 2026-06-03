@@ -9,10 +9,9 @@ from bling_app_zero.adapters.streamlit_action_executor import FLOW_MENU_KEY, LOG
 from bling_app_zero.adapters.streamlit_shortcut_executor import execute_shortcut, go_home
 from bling_app_zero.core.app_actions import ACTION_PARAM, BOTTOM_BAR_ACTIONS
 from bling_app_zero.core.app_shortcuts import grouped_shortcuts
+from bling_app_zero.core.diagnostics_model import build_diagnostic_snapshot
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/bottom_nav_modern.py'
-ACTIVE_FLOW_KEY = 'home_active_operation_v2'
-WIZARD_STEP_KEY = 'bling_wizard_step'
 
 
 def _query_value(name: str) -> str:
@@ -89,35 +88,16 @@ def _render_shortcuts_menu() -> None:
                             st.rerun()
 
 
-def _dataframe_info(value: object) -> str:
-    if isinstance(value, pd.DataFrame):
-        return f'{len(value)}x{len(value.columns)}'
-    return ''
-
-
 def _render_diagnostic_menu() -> None:
     if not bool(st.session_state.get(LOG_MENU_KEY)):
         return
     with st.expander('🧪 Diagnóstico rápido', expanded=True):
-        active_flow = str(st.session_state.get(ACTIVE_FLOW_KEY) or '').strip() or 'home'
-        step = str(st.session_state.get(WIZARD_STEP_KEY) or '').strip() or '-'
-        operation = str(st.session_state.get('direct_bling_operation_choice') or st.session_state.get('home_slim_flow_operation') or st.session_state.get('operacao_final') or '-').strip()
-        origin = str(st.session_state.get('home_slim_flow_origin') or st.session_state.get('origem_final') or '-').strip()
-        st.caption(f'Caminho atual: {active_flow} · Etapa: {step} · Operação: {operation} · Origem: {origin}')
-        data_keys = [
-            'df_site_bruto_cadastro',
-            'df_site_bruto_estoque',
-            'df_origem_site_como_planilha_cadastro',
-            'df_origem_site_como_planilha_estoque',
-            'cadastro_wizard_df_origem',
-            'cadastro_wizard_df_para_mapear',
-            'df_final_download',
-        ]
-        rows = []
-        for key in data_keys:
-            info = _dataframe_info(st.session_state.get(key))
-            if info:
-                rows.append({'dado': key, 'tamanho': info})
+        snapshot = build_diagnostic_snapshot(dict(st.session_state))
+        st.caption(
+            f'Caminho atual: {snapshot.active_flow} · Etapa: {snapshot.step} · '
+            f'Operação: {snapshot.operation} · Origem: {snapshot.origin}'
+        )
+        rows = [{'dado': item.label, 'tamanho': item.value} for item in snapshot.data_items]
         if rows:
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
         else:
