@@ -5,42 +5,34 @@ import time
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.site_progress_model import SiteProgressMetrics, SiteProgressState, safe_int, safe_text
+
 PROGRESS_LOG_KEY = 'site_progress_log'
 PROGRESS_LAST_KEY = 'site_progress_last'
+NEUTRAL_PROGRESS_STATE_KEY = 'neutral_site_progress_state_v1'
+
+
+def _progress_state_from_streamlit() -> SiteProgressState:
+    stored = st.session_state.get(NEUTRAL_PROGRESS_STATE_KEY)
+    if isinstance(stored, dict) and isinstance(stored.get('events'), list):
+        return SiteProgressState.from_log(stored.get('events'))
+    return SiteProgressState.from_log(st.session_state.get(PROGRESS_LOG_KEY) or [])
+
+
+def _sync_progress_state(state: SiteProgressState) -> None:
+    data = state.to_dict()
+    st.session_state[NEUTRAL_PROGRESS_STATE_KEY] = data
+    st.session_state[PROGRESS_LOG_KEY] = data.get('events', [])
+    st.session_state[PROGRESS_LAST_KEY] = data.get('last', {})
 
 
 def reset_site_progress() -> None:
-    st.session_state[PROGRESS_LOG_KEY] = []
-    st.session_state[PROGRESS_LAST_KEY] = {}
+    _sync_progress_state(SiteProgressState())
 
 
 def append_site_progress(payload: dict) -> None:
-    log = list(st.session_state.get(PROGRESS_LOG_KEY, []))
-    item = dict(payload or {})
-    item['time'] = time.strftime('%H:%M:%S')
-    log.append(item)
-    st.session_state[PROGRESS_LOG_KEY] = log[-120:]
-    st.session_state[PROGRESS_LAST_KEY] = item
-
-
-def _safe_cell(value: object) -> str:
-    if value is None:
-        return ''
-    try:
-        if pd.isna(value):
-            return ''
-    except Exception:
-        pass
-    return str(value)
-
-
-def _safe_int(value: object) -> int:
-    try:
-        if value is None or value == '':
-            return 0
-        return int(float(value))
-    except Exception:
-        return 0
+    state = _progress_state_from_streamlit().append(payload or {})
+    _sync_progress_state(state)
 
 
 def _elapsed_seconds() -> int:
@@ -58,35 +50,23 @@ def _safe_progress_dataframe(rows: list[dict]) -> pd.DataFrame:
     if df.empty:
         return df
     for column in df.columns:
-        df[column] = df[column].map(_safe_cell).astype(str)
+        df[column] = df[column].map(safe_text).astype(str)
     return df
 
 
 def progress_rows(log: list[dict]) -> list[dict]:
-    return [
-        {
-            'Hora': _safe_cell(item.get('time', '')),
-            'Etapa': _safe_cell(item.get('stage', '')),
-            'Mensagem': _safe_cell(item.get('message', '')),
-            'Links': _safe_cell(item.get('urls_found', item.get('total', item.get('deep_capture_found_products', '')))),
-            'Visitadas': _safe_cell(item.get('visited_pages', item.get('deep_capture_visited_pages', ''))),
-            'Lidas': _safe_cell(item.get('processed', item.get('scanned_pages', item.get('deep_capture_scanned_pages', '')))),
-            'Produtos': _safe_cell(item.get('found', item.get('rows', ''))),
-            'Falhas': _safe_cell(item.get('errors', '')),
-            'Tempo': _safe_cell(item.get('total_seconds', item.get('discovery_seconds', item.get('elapsed_seconds', '')))),
-        }
-        for item in log
-    ]
+    return SiteProgressState.from_log(log).rows()
 
 
 def _render_progress_metrics(payload: dict) -> None:
-    st.caption(str(payload.get('stage') or 'Buscando'))
+    metrics = SiteProgressMetrics.from_event(SiteProgressState.from_log([payload] if payload else []).last, elapsed_seconds=_elapsed_seconds())
+    st.caption(metrics.stage)
     col_a, col_b = st.columns(2)
-    col_a.metric('Links/produtos localizados', _safe_int(payload.get('urls_found') or payload.get('total') or payload.get('deep_capture_found_products') or 0))
-    col_b.metric('Páginas visitadas', _safe_int(payload.get('visited_pages') or payload.get('deep_capture_visited_pages') or 0))
+    col_a.metric('Links/produtos localizados', safe_int(metrics.urls_found))
+    col_b.metric('Páginas visitadas', safe_int(metrics.visited_pages))
     col_c, col_d = st.columns(2)
-    col_c.metric('Itens processados', _safe_int(payload.get('processed') or payload.get('scanned_pages') or payload.get('deep_capture_scanned_pages') or 0))
-    col_d.metric('Tempo decorrido', f'{_elapsed_seconds()}s')
+    col_c.metric('Itens processados', safe_int(metrics.processed))
+    col_d.metric('Tempo decorrido', f'{metrics.elapsed_seconds}s')
 
 
 def _render_progress_table(log: list[dict], height: int) -> None:
@@ -119,9 +99,9 @@ def render_sidebar_progress_details(payload: dict) -> None:
 def make_site_progress_callback(progress_bar, status_box):
     def callback(payload: dict) -> None:
         append_site_progress(payload)
-        progress = max(0.0, min(1.0, float(payload.get('progress') or 0.0)))
-        stage = str(payload.get('stage') or 'Buscando')
-        message = str(payload.get('message') or '')
+        progress = max(0.0, min(1.0, float((payload or {}).get('progress') or 0.0)))
+        stage = str((payload or {}).get('stage') or 'Buscando')
+        message = str((payload or {}).get('message') or '')
         progress_bar.progress(progress, text=f'{stage} · {int(progress * 100)}%')
         status_box.info(message or stage)
         render_sidebar_progress_details(payload)
@@ -130,13 +110,16 @@ def make_site_progress_callback(progress_bar, status_box):
 
 
 def render_site_progress_history() -> None:
-    log = st.session_state.get(PROGRESS_LOG_KEY) or []
-    last = st.session_state.get(PROGRESS_LAST_KEY) or {}
+    state = _progress_state_from_streamlit()
+    data = state.to_dict()
+    log = data.get('events', []) or []
+    last = data.get('last', {}) or {}
 
     st.markdown('### Detalhes da busca')
     elapsed = _elapsed_seconds()
     if isinstance(last, dict) and last:
-        message = str(last.get('message') or last.get('stage') or 'Busca em andamento.')
+        metrics = SiteProgressMetrics.from_event(state.last, elapsed_seconds=elapsed)
+        message = metrics.message or 'Busca em andamento.'
         st.info(f'Última atividade registrada: {message}')
         _render_progress_metrics(last)
     else:
