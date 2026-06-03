@@ -22,11 +22,15 @@ DEEP_CAPTURE_TIMEOUT_SECONDS = 110
 FLOW_CAPTURE_MAX_PAGES = 650
 FLOW_CAPTURE_MAX_PRODUCTS = 1500
 FLOW_CAPTURE_MAX_DEPTH = 3
-FLOW_CAPTURE_TIMEOUT_SECONDS = 85
+FLOW_CAPTURE_TIMEOUT_SECONDS = 95
 
-STREAMLIT_HARD_BUDGET_SECONDS = 85
-DISCOVERY_BUDGET_SECONDS = 28
-PRODUCT_READ_BUDGET_SECONDS = 48
+STREAMLIT_HARD_BUDGET_SECONDS = 95
+
+# BLINGFIX 2026-06-03:
+# O diagnóstico mostrou pausa técnica com 250 links encontrados e 0 linhas salvas.
+# 28s/24s era pouco para Mega Center: descobria URLs, mas não dava tempo de preparar linhas.
+DISCOVERY_BUDGET_SECONDS = 55
+PRODUCT_READ_BUDGET_SECONDS = 58
 
 RICH_DESCRIPTION_KINDS = {'descricao_complementar', 'ficha_tecnica', 'caracteristicas'}
 DESCRIPTION_TRIGGER_KINDS = {'descricao', 'descricao_curta', 'nome_apoio', *RICH_DESCRIPTION_KINDS}
