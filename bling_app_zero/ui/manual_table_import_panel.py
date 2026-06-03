@@ -7,7 +7,9 @@ import pandas as pd
 import streamlit as st
 from bs4 import BeautifulSoup
 
+from bling_app_zero.adapters.streamlit_manual_import_adapter import finish_manual_import_for_streamlit
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.manual_import_state import SOURCE_FILE, SOURCE_PASTED
 from bling_app_zero.core.origin_recovery import recover_from_file, recover_from_plain_text
 from bling_app_zero.ui.html_capture_helper import render_html_capture_helper
 from bling_app_zero.ui.site_outputs import render_site_source_summary, save_site_source
@@ -246,6 +248,15 @@ def _read_uploaded_files(uploaded_files: list[object], requested_columns: list[s
     return _combine_frames(frames), 'tabela_fornecedor:' + ','.join(labels), recovery_messages
 
 
+def _manual_import_context(operation: str, raw_label: str, requested_columns: list[str] | None, source_type: str) -> dict[str, object]:
+    return {
+        'operation': _normalize_operation(operation),
+        'raw_label': raw_label,
+        'requested_columns': requested_columns or [],
+        'source_type': source_type,
+    }
+
+
 def _store_manual_source(
     df: pd.DataFrame,
     *,
@@ -255,11 +266,18 @@ def _store_manual_source(
     df_modelo_cadastro: pd.DataFrame | None,
     df_modelo_estoque: pd.DataFrame | None,
     df_modelo: pd.DataFrame | None,
+    source_type: str = SOURCE_FILE,
+    recovery_messages: list[str] | None = None,
 ) -> None:
     operation = _normalize_operation(operation)
     clean_df = df.copy().fillna('').astype(str) if isinstance(df, pd.DataFrame) else pd.DataFrame()
-    if clean_df.empty:
-        st.warning('Não encontrei uma tabela ou blocos de produtos no conteúdo enviado.')
+    import_result = finish_manual_import_for_streamlit(
+        clean_df,
+        _manual_import_context(operation, raw_label, requested_columns, source_type),
+        recovery_messages=tuple(recovery_messages or []),
+    )
+    if clean_df.empty or not import_result.ok:
+        st.warning(import_result.message or 'Não encontrei uma tabela ou blocos de produtos no conteúdo enviado.')
         return
 
     st.session_state[f'df_site_bruto_{operation}'] = clean_df
@@ -287,10 +305,12 @@ def _store_manual_source(
             'rows': len(clean_df),
             'columns': len(clean_df.columns),
             'raw_label': raw_label,
+            'source_type': source_type,
+            'neutral_manual_import_state': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
-    st.success(f'Origem universal criada com {len(clean_df)} linha(s) e {len(clean_df.columns)} coluna(s).')
+    st.success(import_result.message or f'Origem universal criada com {len(clean_df)} linha(s) e {len(clean_df.columns)} coluna(s).')
 
 
 def _render_html_capture_toggle(operation: str) -> None:
@@ -337,11 +357,14 @@ def render_manual_table_import_panel(
 
     if st.button('📥 Importar origem difícil para o fluxo', use_container_width=True, key=f'manual_supplier_table_import_{operation}'):
         recovery_messages: list[str] = []
+        source_type = SOURCE_FILE
         if uploaded_files:
             df, raw_label, recovery_messages = _read_uploaded_files(list(uploaded_files), requested_columns=requested_columns)
+            source_type = SOURCE_FILE
         elif pasted.strip():
             df = _html_to_table(pasted)
             raw_label = 'origem_dificil:conteudo_colado'
+            source_type = SOURCE_PASTED
             if df.empty:
                 recovered_df = recover_from_plain_text(pasted, requested_columns=requested_columns)
                 df = recovered_df
@@ -361,6 +384,8 @@ def render_manual_table_import_panel(
             df_modelo_cadastro=df_modelo_cadastro,
             df_modelo_estoque=df_modelo_estoque,
             df_modelo=df_modelo,
+            source_type=source_type,
+            recovery_messages=recovery_messages,
         )
 
     df_current = st.session_state.get(f'df_site_bruto_{operation}')
