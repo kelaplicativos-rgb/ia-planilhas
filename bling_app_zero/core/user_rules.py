@@ -1,17 +1,32 @@
 from __future__ import annotations
 
+import importlib
+from collections.abc import MutableMapping
 from dataclasses import dataclass
 from typing import Any
-
-try:
-    import streamlit as st
-except Exception:  # pragma: no cover
-    st = None
 
 RULES_SESSION_KEY = 'bling_user_rules'
 RULES_SCHEMA_VERSION = 9
 REMOVED_SYSTEM_RULE_COLUMNS = {'nome fornecedor', 'nome do fornecedor', 'unidade de medida', 'unidade medida'}
 REMOVED_SYSTEM_RULE_PAIRS = {('fornecedor', 'não definido')}
+_FALLBACK_STATE: dict[str, Any] = {}
+
+
+def _streamlit_module() -> Any | None:
+    try:
+        return importlib.import_module('streamlit')
+    except Exception:
+        return None
+
+
+def _state_store() -> MutableMapping[str, Any]:
+    st = _streamlit_module()
+    if st is not None:
+        try:
+            return st.session_state
+        except Exception:
+            pass
+    return _FALLBACK_STATE
 
 
 def _make_rule_id(source: str, target_column: str) -> str:
@@ -239,18 +254,17 @@ def normalize_rules(raw: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def get_user_rules() -> dict[str, Any]:
-    if st is None:
-        return default_rules()
-    current = st.session_state.get(RULES_SESSION_KEY)
+    store = _state_store()
+    current = store.get(RULES_SESSION_KEY)
     rules = normalize_rules(current if isinstance(current, dict) else None)
-    st.session_state[RULES_SESSION_KEY] = rules
+    store[RULES_SESSION_KEY] = rules
     return rules
 
 
 def set_user_rules(rules: dict[str, Any]) -> dict[str, Any]:
+    store = _state_store()
     normalized = normalize_rules(rules)
-    if st is not None:
-        st.session_state[RULES_SESSION_KEY] = normalized
+    store[RULES_SESSION_KEY] = normalized
     return normalized
 
 
