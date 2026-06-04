@@ -309,18 +309,25 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
 
 
 def inject_streamlit_toolbar_fix() -> None:
-    """Ajuste leve para reduzir ruído visual padrão do Streamlit."""
+    """Ajuste leve preservando o menu nativo do Streamlit."""
     st.markdown(
         f'''
 <style id="{TOOLBAR_STYLE_ID}">
 [data-testid="stToolbar"] {{
     right: 0.75rem;
+    display: flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
 }}
 [data-testid="stDecoration"] {{
     display: none;
 }}
 #MainMenu {{
-    visibility: hidden;
+    visibility: visible !important;
+    display: block !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
 }}
 footer {{
     visibility: hidden;
@@ -363,4 +370,4 @@ def render_compact_hero() -> None:
     )
 
 
-__all__ = ['inject_streamlit_toolbar_fix', 'inject_app_layout', 'render_compact_hero']
+__all__ = ['inject_app_layout', 'inject_streamlit_toolbar_fix', 'render_compact_hero']
