@@ -44,7 +44,7 @@ def _href_for_action(action: str) -> str:
     return '?' + urlencode(params, doseq=True)
 
 
-def _handle_bottom_action() -> None:
+def _handle_sidebar_action() -> None:
     action = _query_value(ACTION_PARAM)
     if not action:
         return
@@ -54,19 +54,28 @@ def _handle_bottom_action() -> None:
         st.rerun()
 
 
-def _render_fixed_css() -> None:
+def _render_sidebar_css() -> None:
     st.markdown(
         '''
 <style>
-.bling-bottom-fixed-spacer{height:110px;}
-.bling-bottom-fixed{position:fixed;left:0;right:0;bottom:0;z-index:2147483000;padding:8px 10px calc(8px + env(safe-area-inset-bottom));background:rgba(255,255,255,.97);border-top:1px solid rgba(15,23,42,.12);box-shadow:0 -10px 30px rgba(15,23,42,.12);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);}
-.bling-bottom-fixed-label{max-width:860px;margin:0 auto 5px auto;color:#475569;font-size:.72rem;font-weight:700;text-align:center;line-height:1.1;}
-.bling-bottom-fixed-grid{max-width:860px;margin:0 auto;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;}
-.bling-bottom-fixed-grid a{display:flex;align-items:center;justify-content:center;min-height:38px;padding:7px 5px;border-radius:12px;border:1px solid rgba(15,23,42,.16);background:#fff;color:#0f172a!important;text-decoration:none!important;font-weight:800;font-size:.84rem;box-shadow:0 1px 4px rgba(15,23,42,.08);white-space:nowrap;}
-.bling-bottom-fixed-grid a:active{transform:translateY(1px);}
-@media (max-width:520px){.bling-bottom-fixed{padding-left:7px;padding-right:7px;}.bling-bottom-fixed-grid{gap:4px;}.bling-bottom-fixed-grid a{font-size:.74rem;min-height:36px;padding-left:3px;padding-right:3px;border-radius:10px;}.bling-bottom-fixed-label{font-size:.68rem;}}
+.bling-sidebar-actions-note{font-size:.78rem;color:#64748b;line-height:1.25;margin:.15rem 0 .55rem 0;}
+.bling-sidebar-action-grid{display:grid;grid-template-columns:1fr;gap:.42rem;margin:.4rem 0 .2rem 0;}
+.bling-sidebar-action-grid a{display:flex;align-items:center;justify-content:center;min-height:2.45rem;padding:.56rem .7rem;border-radius:12px;border:1px solid rgba(15,23,42,.16);background:#fff;color:#0f172a!important;text-decoration:none!important;font-weight:850;font-size:.9rem;box-shadow:0 1px 4px rgba(15,23,42,.06);}
+.bling-sidebar-action-grid a:active{transform:translateY(1px);}
 </style>
-<div class="bling-bottom-fixed-spacer"></div>
+''',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_sidebar_action_links() -> None:
+    links = '\n'.join(f'    <a href="{_href_for_action(action.key)}">{action.title}</a>' for action in BOTTOM_BAR_ACTIONS)
+    st.markdown(
+        f'''
+<div class="bling-sidebar-actions-note">Ações do sistema sem ocupar a tela principal.</div>
+<div class="bling-sidebar-action-grid">
+{links}
+</div>
 ''',
         unsafe_allow_html=True,
     )
@@ -79,10 +88,10 @@ def _render_shortcuts_menu() -> None:
         st.caption('Acesse rapidamente as principais ações do sistema.')
         for group, shortcuts in grouped_shortcuts():
             st.markdown(f'##### {group}')
-            columns = st.columns(min(3, max(1, len(shortcuts))))
+            columns = st.columns(min(2, max(1, len(shortcuts))))
             for index, shortcut in enumerate(shortcuts):
                 with columns[index % len(columns)]:
-                    if st.button(shortcut.title, use_container_width=True, key=f'bottom_shortcut_{shortcut.key}'):
+                    if st.button(shortcut.title, use_container_width=True, key=f'sidebar_shortcut_{shortcut.key}'):
                         result = execute_shortcut(shortcut, home_callback=go_home)
                         if result.needs_rerun:
                             st.rerun()
@@ -102,32 +111,25 @@ def _render_diagnostic_menu() -> None:
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
         else:
             st.caption('Nenhum dado principal carregado nesta sessão.')
-        if st.button('🧹 Limpeza total da sessão', use_container_width=True, key='bottom_hard_reset_confirm'):
+        if st.button('🧹 Limpeza total da sessão', use_container_width=True, key='sidebar_hard_reset_confirm'):
             hard_reset_session(after_reset=go_home)
             st.rerun()
 
 
-def _render_html_bottom_bar() -> None:
-    links = '\n'.join(f'    <a href="{_href_for_action(action.key)}">{action.title}</a>' for action in BOTTOM_BAR_ACTIONS)
-    st.markdown(
-        f'''
-<div class="bling-bottom-fixed">
-  <div class="bling-bottom-fixed-label">Ações rápidas · atualizar · limpar · diagnosticar</div>
-  <div class="bling-bottom-fixed-grid">
-{links}
-  </div>
-</div>
-''',
-        unsafe_allow_html=True,
-    )
-
-
 def render_bottom_nav() -> None:
-    _handle_bottom_action()
-    _render_fixed_css()
-    _render_shortcuts_menu()
-    _render_diagnostic_menu()
-    _render_html_bottom_bar()
+    """Renderiza ações rápidas no sidebar.
+
+    O nome público foi mantido para compatibilidade com imports antigos, mas a
+    barra inferior fixa foi removida para evitar conflito no mobile, menu nativo
+    do Streamlit e navegador do celular.
+    """
+    _handle_sidebar_action()
+    with st.sidebar:
+        _render_sidebar_css()
+        st.markdown('### Sistema')
+        _render_sidebar_action_links()
+        _render_shortcuts_menu()
+        _render_diagnostic_menu()
 
 
 __all__ = ['render_bottom_nav']
