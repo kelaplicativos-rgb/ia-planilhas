@@ -31,13 +31,23 @@ def _is_widget_action_key(key: object) -> bool:
     return text.endswith(WIDGET_ACTION_KEY_SUFFIXES)
 
 
-def _safe_set_session_value(key: str, value: Any) -> None:
-    """Atualiza session_state sem sobrescrever widgets já instanciados.
+def _filtered_streamlit_state() -> dict[str, Any]:
+    """Retorna session_state sem chaves de widgets/ações.
 
-    O Streamlit bloqueia alteração de st.session_state[key] depois que um
-    widget com a mesma key foi criado na renderização atual. O AppState neutro
-    não deve forçar esses valores de botão/ação de volta para a sessão visual.
+    Keys de widgets pertencem ao Streamlit. Elas não devem entrar no AppState
+    neutro, porque depois o sync tentaria escrever nelas novamente e o
+    Streamlit bloqueia quando o widget já foi instanciado.
     """
+    data: dict[str, Any] = {}
+    for key, value in dict(st.session_state).items():
+        if _is_widget_action_key(key):
+            continue
+        data[str(key)] = value
+    return data
+
+
+def _safe_set_session_value(key: str, value: Any) -> None:
+    """Atualiza session_state sem sobrescrever widgets já instanciados."""
     if _is_widget_action_key(key):
         return
     try:
@@ -48,20 +58,20 @@ def _safe_set_session_value(key: str, value: Any) -> None:
     try:
         st.session_state[key] = value
     except StreamlitAPIException:
-        # Proteção final para qualquer chave de widget não catalogada.
         return
     except Exception:
         return
 
 
 def app_state_from_streamlit() -> AppState:
-    return AppState.from_mapping(dict(st.session_state))
+    return AppState.from_mapping(_filtered_streamlit_state())
 
 
 def sync_app_state_to_streamlit(state: AppState) -> None:
     current_keys = set(str(key) for key in st.session_state.keys())
-    next_values = state.snapshot()
-    next_keys = set(str(key) for key in next_values.keys())
+    raw_next_values = state.snapshot()
+    next_values = {str(key): value for key, value in raw_next_values.items() if not _is_widget_action_key(key)}
+    next_keys = set(next_values.keys())
 
     for key in current_keys - next_keys:
         if _is_widget_action_key(key):
@@ -71,7 +81,7 @@ def sync_app_state_to_streamlit(state: AppState) -> None:
         except Exception:
             pass
     for key, value in next_values.items():
-        _safe_set_session_value(str(key), value)
+        _safe_set_session_value(key, value)
 
 
 def navigation_state_from_streamlit() -> NavigationState:
@@ -103,7 +113,7 @@ def sync_navigation_to_streamlit(navigation: NavigationState) -> None:
 
 
 def streamlit_state_mapping() -> dict[str, Any]:
-    return dict(st.session_state)
+    return _filtered_streamlit_state()
 
 
 __all__ = [
