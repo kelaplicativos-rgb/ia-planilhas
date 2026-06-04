@@ -7,6 +7,7 @@ import os
 import secrets
 from collections.abc import MutableMapping
 from datetime import datetime
+from html import escape
 from typing import Any
 from urllib.parse import urlencode
 
@@ -47,13 +48,6 @@ SECRET_ALIASES: dict[str, tuple[str, ...]] = {
 def _streamlit_module() -> Any | None:
     try:
         return importlib.import_module('streamlit')
-    except Exception:
-        return None
-
-
-def _components_module() -> Any | None:
-    try:
-        return importlib.import_module('streamlit.components.v1')
     except Exception:
         return None
 
@@ -442,30 +436,6 @@ def _restore_oauth_return_context(state_payload: dict[str, Any]) -> None:
     _force_start_query_params()
 
 
-def _try_close_oauth_popup_after_success() -> None:
-    components = _components_module()
-    if components is None:
-        return
-    components.html(
-        '''
-<script>
-(function () {
-    try {
-        if (window.opener && !window.opener.closed) {
-            const nextUrl = window.location.origin + window.location.pathname + '?operation_v2=wizard_cadastro_estoque';
-            window.opener.location.href = nextUrl;
-            setTimeout(function () { window.close(); }, 700);
-        }
-    } catch (err) {
-        console.log('OAuth popup close skipped:', err);
-    }
-})();
-</script>
-''',
-        height=0,
-    )
-
-
 def handle_oauth_callback() -> None:
     st = _streamlit_module()
     store = _state_store()
@@ -503,7 +473,6 @@ def handle_oauth_callback() -> None:
             query.pop('state', None)
         except Exception:
             pass
-        _try_close_oauth_popup_after_success()
         if st is not None:
             st.rerun()
     else:
@@ -522,6 +491,25 @@ def disconnect() -> None:
     store.pop(LAST_ERROR_KEY, None)
     store.pop(CALLBACK_DONE_KEY, None)
     add_audit_event('bling_oauth_disconnected', area='BLING_OAUTH', status='OK', details={'responsible_file': RESPONSIBLE_FILE})
+
+
+def _same_tab_link(label: str, url: str) -> None:
+    st = _streamlit_module()
+    if st is None:
+        return
+    raw_url = str(url or '').strip()
+    if not raw_url:
+        return
+    safe_url = escape(raw_url, quote=True)
+    safe_label = escape(label, quote=False)
+    st.markdown(
+        f'''
+<a href="{safe_url}" target="_self" style="display:block;text-align:center;text-decoration:none;border:1px solid #d0d5dd;border-radius:14px;padding:0.85rem 1rem;font-weight:800;color:#5f6b7a;background:#ffffff;">
+  {safe_label}
+</a>
+''',
+        unsafe_allow_html=True,
+    )
 
 
 def render_connection_panel() -> None:
@@ -543,9 +531,9 @@ def render_connection_panel() -> None:
     if not config.get('has_client_secret'):
         st.warning('Client Secret do Bling ainda não está configurado. A autorização pode abrir, mas o token não será concluído sem ele.')
     st.caption(f"Callback URL exigido no Bling: {required_redirect_uri()}")
-    auth_url = build_authorization_url({'return_to': 'download', 'source_step': 'connection_panel'})
+    auth_url = build_authorization_url({'return_to': 'download', 'source_step': 'connection_panel_same_tab'})
     if auth_url:
-        st.link_button('Conectar com Bling', auth_url, use_container_width=True)
+        _same_tab_link('Conectar com Bling', auth_url)
     else:
         st.info('Configure as credenciais do Bling para liberar o botão de conexão.')
 
