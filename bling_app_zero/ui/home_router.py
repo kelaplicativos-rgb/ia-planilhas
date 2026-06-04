@@ -160,9 +160,23 @@ def _requested_flow() -> str:
 
 
 def _clean_oauth_url(url: str) -> str:
-    # Nunca envie URL escapada para st.link_button. Se o & virar &amp;,
-    # o Bling recebe amp;client_id e acusa client_id não informado.
     return unescape(str(url or '').strip()).replace('&amp;', '&')
+
+
+def _same_tab_link(label: str, url: str) -> None:
+    raw_url = _clean_oauth_url(url)
+    if not raw_url:
+        return
+    safe_url = escape(raw_url, quote=True)
+    safe_label = escape(label, quote=False)
+    st.markdown(
+        f'''
+<a href="{safe_url}" target="_self" style="display:block;text-align:center;text-decoration:none;border:1px solid #d0d5dd;border-radius:14px;padding:0.85rem 1rem;font-weight:800;color:#5f6b7a;background:#ffffff;">
+  {safe_label}
+</a>
+''',
+        unsafe_allow_html=True,
+    )
 
 
 def _request_bling_link(auth_url: str) -> None:
@@ -171,7 +185,7 @@ def _request_bling_link(auth_url: str) -> None:
         'home_router_bling_auth_link_requested',
         area='HOME',
         status='OK',
-        details={'responsible_file': RESPONSIBLE_FILE, 'connection_mode': 'button_then_native_link_button_raw_url'},
+        details={'responsible_file': RESPONSIBLE_FILE, 'connection_mode': 'same_tab_html_link'},
     )
     st.rerun()
 
@@ -180,15 +194,8 @@ def _render_open_bling_link(url: str) -> None:
     raw_url = _clean_oauth_url(url)
     if not raw_url:
         return
-    safe_url = escape(raw_url, quote=True)
-    st.success('Link oficial do Bling pronto. Toque abaixo para abrir a autorização.')
-    try:
-        st.link_button('Abrir tela oficial do Bling', raw_url, use_container_width=True)
-    except Exception:
-        st.markdown(
-            f'<a href="{safe_url}" target="_blank" rel="noopener noreferrer" style="display:block;text-align:center;text-decoration:none;border:1px solid #d0d5dd;border-radius:14px;padding:0.85rem 1rem;font-weight:700;color:#5f6b7a;background:#ffffff;">Abrir tela oficial do Bling</a>',
-            unsafe_allow_html=True,
-        )
+    st.success('Link oficial do Bling pronto. Toque abaixo para abrir a autorização na mesma aba.')
+    _same_tab_link('Abrir tela oficial do Bling', raw_url)
 
 
 def _render_bling_connection(auth_url: str) -> None:
@@ -205,7 +212,7 @@ def _render_bling_connection(auth_url: str) -> None:
             _request_bling_link(url)
 
     with st.expander('Problemas para abrir?', expanded=False):
-        st.caption('Use apenas se o botão “Abrir tela oficial do Bling” não abrir no seu navegador.')
+        st.caption('Copie o link apenas se o botão não abrir no seu navegador.')
         st.text_area('Link alternativo de autenticação', value=ready_url or url, height=100, key='bling_auth_url_fallback_hidden')
 
     if st.button('Já autorizei no Bling / verificar conexão', use_container_width=True, key='home_bling_verify_connection'):
@@ -220,7 +227,7 @@ def _render_bling_connection(auth_url: str) -> None:
         'home_router_bling_connection_visible',
         area='HOME',
         status='OK',
-        details={'responsible_file': RESPONSIBLE_FILE, 'connection_mode': 'native_link_raw_url_no_iframe_hidden_fallback'},
+        details={'responsible_file': RESPONSIBLE_FILE, 'connection_mode': 'same_tab_html_link_no_popup'},
     )
 
 
@@ -241,9 +248,9 @@ def _render_light_entry_home() -> None:
                 _start_wizard_context(CONTEXT_BLING_API)
                 safe_rerun('home_light_continue_connected_bling')
         else:
-            st.caption('Você será levado para a tela oficial do Bling para autorizar o acesso.')
+            st.caption('Você será levado para a tela oficial do Bling nesta mesma aba para autorizar o acesso.')
             try:
-                auth_url = build_authorization_url({'return_to': 'start', 'source_step': 'home_native_link_connection'})
+                auth_url = build_authorization_url({'return_to': 'start', 'source_step': 'home_same_tab_connection'})
             except Exception as exc:
                 auth_url = ''
                 add_audit_event(
@@ -271,7 +278,7 @@ def _render_light_entry_home() -> None:
         details={
             'responsible_file': RESPONSIBLE_FILE,
             'connected': connected,
-            'home_order': 'native_link_bling_or_continue_without_raw_url',
+            'home_order': 'same_tab_bling_or_continue_without',
             'lazy_flow_entry': True,
         },
     )
@@ -284,9 +291,9 @@ def render_professional_home() -> None:
         status='OK',
         details={
             'responsible_file': RESPONSIBLE_FILE,
-            'home_order': 'native_link_bling_or_continue_without_raw_url',
+            'home_order': 'same_tab_bling_or_continue_without',
             'style': 'clean_connection_entry_no_iframe',
-            'bling_oauth_target': 'native_link_button_raw_url_hidden_fallback',
+            'bling_oauth_target': 'same_tab_html_link',
             'legacy_routes_removed': True,
             'lazy_flow_entry': True,
         },
