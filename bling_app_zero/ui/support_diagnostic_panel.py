@@ -37,30 +37,35 @@ def _prepare_diagnostic_zip() -> None:
     )
 
 
+def render_support_diagnostic_panel_content() -> None:
+    """Conteúdo reutilizável do diagnóstico, sem abrir outro bloco de sidebar."""
+    if st.button(
+        '⬇️ Gerar diagnóstico para correção',
+        use_container_width=True,
+        key='support_diagnostic_generate_button',
+    ):
+        _prepare_diagnostic_zip()
+        safe_rerun('support_diagnostic_zip_generated')
+
+    if not st.session_state.get(DIAGNOSTIC_READY_KEY):
+        return
+
+    generated_at = st.session_state.get(DIAGNOSTIC_TIME_KEY, 'agora')
+    st.caption(f'Diagnóstico pronto: {generated_at}')
+    st.download_button(
+        'Baixar arquivo gerado',
+        data=st.session_state.get(DIAGNOSTIC_BYTES_KEY, b''),
+        file_name=LOG_BUNDLE_FILENAME,
+        mime='application/zip',
+        use_container_width=True,
+        key='support_diagnostic_download_ready_button',
+    )
+
+
 def render_support_diagnostic_panel() -> None:
-    """Sidebar leve: o ZIP só é montado depois do clique do usuário."""
+    """Compatibilidade: mantém o render antigo quando chamado isoladamente."""
     with st.sidebar:
-        if st.button(
-            '⬇️ Gerar diagnóstico para correção',
-            use_container_width=True,
-            key='support_diagnostic_generate_button',
-        ):
-            _prepare_diagnostic_zip()
-            safe_rerun('support_diagnostic_zip_generated')
-
-        if not st.session_state.get(DIAGNOSTIC_READY_KEY):
-            return
-
-        generated_at = st.session_state.get(DIAGNOSTIC_TIME_KEY, 'agora')
-        st.caption(f'Diagnóstico pronto: {generated_at}')
-        st.download_button(
-            'Baixar arquivo gerado',
-            data=st.session_state.get(DIAGNOSTIC_BYTES_KEY, b''),
-            file_name=LOG_BUNDLE_FILENAME,
-            mime='application/zip',
-            use_container_width=True,
-            key='support_diagnostic_download_ready_button',
-        )
+        render_support_diagnostic_panel_content()
 
 
-__all__ = ['render_support_diagnostic_panel']
+__all__ = ['render_support_diagnostic_panel', 'render_support_diagnostic_panel_content']
