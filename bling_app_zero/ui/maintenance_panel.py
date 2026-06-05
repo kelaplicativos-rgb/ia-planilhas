@@ -10,6 +10,7 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event, audit_download_payload, get_audit_events, get_audit_session_id
 from bling_app_zero.core.debug import LOG_SESSION_KEY
+from bling_app_zero.core.system_inventory import inventory_markdown, inventory_payload, inventory_summary
 
 LOG_BUNDLE_FILENAME = 'bling_diagnostico_completo.zip'
 SENSITIVE_KEYWORDS = (
@@ -151,6 +152,7 @@ def _build_log_bundle_zip() -> bytes:
     audit_events = get_audit_events()
     compact_events = _compact_audit_events(audit_events)
     generated_at = datetime.now().isoformat(timespec='seconds')
+    inventory = inventory_payload()
 
     manifest = {
         'generated_at': generated_at,
@@ -161,6 +163,8 @@ def _build_log_bundle_zip() -> bytes:
             'bling_audit_trail.jsonl',
             'bling_audit_trail_compacto.jsonl',
             'bling_session_state_summary.json',
+            'bling_system_inventory.json',
+            'bling_system_inventory.md',
             'manifest.json',
         ],
         'counts': {
@@ -168,7 +172,11 @@ def _build_log_bundle_zip() -> bytes:
             'audit_events_raw': len(audit_events),
             'audit_events_compact': len(compact_events),
             'session_state_keys': len(st.session_state.keys()),
+            'system_inventory_total': int(inventory.get('summary', {}).get('total_subsystems') or 0),
+            'system_inventory_active': int(inventory.get('summary', {}).get('active_subsystems') or 0),
+            'system_inventory_risk': int(inventory.get('summary', {}).get('risk_subsystems') or 0),
         },
+        'system_inventory_summary': inventory_summary(),
         'observacao': 'Pacote seguro para enviar no BLINGFIX. Chaves sensíveis são mascaradas no resumo do estado.',
         'responsible_file': 'bling_app_zero/ui/maintenance_panel.py',
     }
@@ -180,6 +188,8 @@ def _build_log_bundle_zip() -> bytes:
         zip_file.writestr('bling_audit_trail.jsonl', audit_download_payload())
         zip_file.writestr('bling_audit_trail_compacto.jsonl', _jsonl_bytes(compact_events))
         zip_file.writestr('bling_session_state_summary.json', _json_bytes(_session_state_summary()))
+        zip_file.writestr('bling_system_inventory.json', _json_bytes(inventory))
+        zip_file.writestr('bling_system_inventory.md', inventory_markdown().encode('utf-8'))
         zip_file.writestr('manifest.json', _json_bytes(manifest))
     return buffer.getvalue()
 
@@ -210,6 +220,7 @@ def render_maintenance_panel() -> None:
                     'technical_logs': len(logs),
                     'audit_events': len(audit_events),
                     'session_state_keys': len(st.session_state.keys()),
+                    'system_inventory': inventory_summary(),
                     'responsible_file': 'bling_app_zero/ui/maintenance_panel.py',
                 },
             )
