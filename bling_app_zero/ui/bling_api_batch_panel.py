@@ -22,8 +22,9 @@ from bling_app_zero.core.bling_send_engine import (
 )
 from bling_app_zero.core.bling_send_state import batch_size_for_operation
 from bling_app_zero.core.blingsmartcore_autocadastro import render_autocadastro_panel, render_stock_pending_panel
+from bling_app_zero.core.flow_spine_output import output_diagnostics, output_operation
 from bling_app_zero.core.intelligent_flow_decision import decide_before_api_send
-from bling_app_zero.core.operation_contract import OP_CADASTRO, OP_ESTOQUE, normalize_operation
+from bling_app_zero.core.operation_contract import OP_ATUALIZACAO_PRECO, OP_CADASTRO, OP_ESTOQUE, normalize_operation
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/bling_api_batch_panel.py'
 BATCH_STATE_KEY = 'bling_api_batch_send_state_v2'
@@ -37,7 +38,22 @@ MAX_AUTO_BATCH_SECONDS = 22.0
 DIRECT_SEND_TEXT = {
     OP_CADASTRO: 'Cadastrar produtos no Bling',
     OP_ESTOQUE: 'Atualizar estoque no Bling',
+    OP_ATUALIZACAO_PRECO: 'Atualizar preços no Bling',
 }
+
+
+def _spine_operation_or(operation: str) -> str:
+    try:
+        spine_operation = normalize_operation(output_operation())
+        if spine_operation:
+            return spine_operation
+    except Exception:
+        pass
+    return normalize_operation(operation)
+
+
+def _operation_action_label(operation: str) -> str:
+    return DIRECT_SEND_TEXT.get(normalize_operation(operation), 'Enviar ao Bling')
 
 
 def _batch_size_for_operation(operation: str) -> int:
@@ -70,6 +86,8 @@ def _sync_state(state_obj) -> dict[str, Any]:
     st.session_state[BATCH_STATE_KEY] = legacy
     st.session_state[NEUTRAL_BLING_SEND_STATE_KEY] = data
     st.session_state[NEUTRAL_BLING_SEND_REPORT_KEY] = result_payload(state_obj)
+    st.session_state['flow_spine_api_batch_operation'] = legacy['operation']
+    st.session_state['flow_spine_api_batch_diagnostics'] = output_diagnostics()
     return legacy
 
 
@@ -134,7 +152,7 @@ def _render_flow_decision(report: dict[str, Any], operation: str) -> dict[str, A
         'bling_api_intelligent_flow_decision',
         area='BLING_ENVIO',
         status=decision.status,
-        details={'operation': operation, 'decision': decision.to_dict(), 'responsible_file': RESPONSIBLE_FILE},
+        details={'operation': operation, 'decision': decision.to_dict(), 'flow_spine': output_diagnostics(), 'responsible_file': RESPONSIBLE_FILE},
     )
     return decision.to_dict()
 
@@ -176,7 +194,7 @@ def _render_payload_preview(download_df: pd.DataFrame, operation: str, identity:
     if blocked_items:
         reason = str(blocked_items[0].get('motivo') or 'Envio bloqueado por segurança.').strip()
         st.error(reason)
-        add_audit_event('bling_api_batch_preview_blocked', area='BLING_ENVIO', status='BLOQUEADO', details={'operation': operation, 'reason': reason, 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('bling_api_batch_preview_blocked', area='BLING_ENVIO', status='BLOQUEADO', details={'operation': operation, 'reason': reason, 'flow_spine': output_diagnostics(), 'responsible_file': RESPONSIBLE_FILE})
         return reason
 
     ok_count = sum(1 for item in payload_preview if item.get('status') == 'OK')
@@ -237,9 +255,14 @@ def _render_final_result(download_df: pd.DataFrame, state: dict[str, Any], key: 
     if attempted == 0:
         st.error('Envio não iniciado: nenhum produto foi processado.')
     elif failed == 0 and skipped == 0:
-        st.success(f'Envio concluído com sucesso: {sent}/{attempted} produto(s) enviado(s) ao Bling.')
+        if operation == OP_ATUALIZACAO_PRECO:
+            st.success(f'Atualização de preços concluída com sucesso: {sent}/{attempted} preço(s) enviado(s) ao Bling.')
+        else:
+            st.success(f'Envio concluído com sucesso: {sent}/{attempted} produto(s) enviado(s) ao Bling.')
     elif operation == OP_ESTOQUE and sent > 0:
         st.warning(f'Atualização de estoque concluída parcialmente: {sent}/{attempted} saldo(s) enviado(s), {failed} falha(s), {skipped} ignorado(s). Os itens não encontrados ficam como pendência.')
+    elif operation == OP_ATUALIZACAO_PRECO and sent > 0:
+        st.warning(f'Atualização de preços concluída parcialmente: {sent}/{attempted} preço(s) enviado(s), {failed} falha(s), {skipped} ignorado(s).')
     elif sent > 0:
         st.warning(f'Envio parcialmente concluído: {sent}/{attempted} enviado(s), {failed} falha(s), {skipped} ignorado(s).')
     else:
@@ -248,6 +271,8 @@ def _render_final_result(download_df: pd.DataFrame, state: dict[str, Any], key: 
         st.error(str(error))
     if operation == OP_ESTOQUE:
         render_stock_pending_panel(download_df, payload, key=key)
+    elif operation == OP_ATUALIZACAO_PRECO:
+        st.caption('Pendências de preço aparecem na pré-varredura. Confira ID/SKU/GTIN e preço nas linhas bloqueadas.')
     else:
         render_autocadastro_panel(download_df, payload, key=key)
 
@@ -258,7 +283,7 @@ def _pause_after_slow_batch(state: dict[str, Any], elapsed: float) -> dict[str, 
     result = pause_send(_state_obj_from_legacy(state))
     paused = _sync_state(result.state)
     st.warning('Envio automático pausado por segurança: o último lote demorou demais. O checkpoint foi salvo; toque em continuar para processar o próximo lote.')
-    add_audit_event('bling_api_batch_auto_paused_slow_batch', area='BLING_ENVIO', status='PAUSADO', details={'elapsed_seconds': round(float(elapsed), 2), 'limit_seconds': MAX_AUTO_BATCH_SECONDS, 'operation': state.get('operation'), 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('bling_api_batch_auto_paused_slow_batch', area='BLING_ENVIO', status='PAUSADO', details={'elapsed_seconds': round(float(elapsed), 2), 'limit_seconds': MAX_AUTO_BATCH_SECONDS, 'operation': state.get('operation'), 'flow_spine': output_diagnostics(), 'responsible_file': RESPONSIBLE_FILE})
     return paused
 
 
@@ -292,7 +317,7 @@ def _send_one_batch(download_df: pd.DataFrame, operation: str, state: dict[str, 
     state = _sync_state(merged)
     state = _pause_after_slow_batch(state, elapsed)
 
-    add_audit_event('bling_api_batch_sent', area='BLING_ENVIO', status='OK' if int(result.failed) == 0 else 'PARCIAL', details={'operation': operation, 'batch_start': batch_start, 'batch_end': batch_end, 'batch_size': batch_size, 'total': total, 'sent': int(result.sent), 'failed': int(result.failed), 'skipped': int(result.skipped), 'elapsed_seconds': round(float(elapsed), 2), 'auto_running': bool(state.get('auto_running')), 'smart_sender_diff': True, 'intelligent_update_sender': True, 'neutral_bling_send_state': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('bling_api_batch_sent', area='BLING_ENVIO', status='OK' if int(result.failed) == 0 else 'PARCIAL', details={'operation': operation, 'batch_start': batch_start, 'batch_end': batch_end, 'batch_size': batch_size, 'total': total, 'sent': int(result.sent), 'failed': int(result.failed), 'skipped': int(result.skipped), 'elapsed_seconds': round(float(elapsed), 2), 'auto_running': bool(state.get('auto_running')), 'smart_sender_diff': True, 'intelligent_update_sender': True, 'neutral_bling_send_state': True, 'flow_spine': output_diagnostics(), 'responsible_file': RESPONSIBLE_FILE})
     try:
         progress_bar.empty()
         status_box.empty()
@@ -302,8 +327,9 @@ def _send_one_batch(download_df: pd.DataFrame, operation: str, state: dict[str, 
 
 
 def render_bling_api_batch_panel(download_df: pd.DataFrame, operation: str, key: str, signature: str, rules_sig: str) -> None:
-    operation = normalize_operation(operation)
+    operation = _spine_operation_or(operation)
     st.markdown('### Envio direto ao Bling')
+    st.caption(f'{_operation_action_label(operation)} · operação: {operation}')
 
     status = connection_status()
     if not status.get('connected'):
@@ -323,8 +349,11 @@ def render_bling_api_batch_panel(download_df: pd.DataFrame, operation: str, key:
 
     if bool(flow_decision.get('should_block')) or not isinstance(send_df, pd.DataFrame) or send_df.empty:
         st.error('Envio bloqueado: nenhuma linha apta para a API do Bling após a pré-varredura.')
-        st.warning('Revise SKU/código/GTIN e quantidade no estoque, ou nome/código no cadastro, antes de enviar.')
-        add_audit_event('bling_api_batch_blocked_no_sendable_rows', area='BLING_ENVIO', status='BLOQUEADO', details={'operation': operation, 'rows': len(download_df) if isinstance(download_df, pd.DataFrame) else 0, 'responsible_file': RESPONSIBLE_FILE})
+        if operation == OP_ATUALIZACAO_PRECO:
+            st.warning('Revise ID Bling/SKU/código/GTIN e preço antes de enviar.')
+        else:
+            st.warning('Revise SKU/código/GTIN e quantidade no estoque, ou nome/código no cadastro, antes de enviar.')
+        add_audit_event('bling_api_batch_blocked_no_sendable_rows', area='BLING_ENVIO', status='BLOQUEADO', details={'operation': operation, 'rows': len(download_df) if isinstance(download_df, pd.DataFrame) else 0, 'flow_spine': output_diagnostics(), 'responsible_file': RESPONSIBLE_FILE})
         return
 
     if blocked_rows:
