@@ -21,6 +21,7 @@ from bling_app_zero.core.template_download_exporter import (
     mime_for_template_output,
     output_name_for_template,
 )
+from bling_app_zero.core.text import normalize_key
 from bling_app_zero.core.validators import validate_final_df
 from bling_app_zero.ui.bling_api_batch_panel import render_bling_api_batch_panel
 from bling_app_zero.ui.flow_context import (
@@ -41,6 +42,14 @@ FINAL_DOWNLOAD_RULES_SIGNATURE_KEY = 'final_download_rules_signature'
 FINAL_DOWNLOAD_OPERATION_KEY = 'final_download_operation'
 FINAL_DOWNLOAD_WIDGET_KEY = 'final_download_widget_key'
 PRESERVED_DOWNLOAD_OPERATIONS = {OP_CADASTRO, OP_ESTOQUE, OP_UNIVERSAL, OP_ATUALIZACAO_PRECO}
+RESPONSIBLE_FILE = 'bling_app_zero/ui/home_download.py'
+
+CADASTRO_NAME_TERMS = ('nome', 'descricao', 'descrição', 'produto', 'titulo', 'título')
+CADASTRO_PRICE_TERMS = ('preco', 'preço', 'valor', 'unitario', 'unitário', 'venda')
+ESTOQUE_QTY_TERMS = ('quantidade', 'qtd', 'saldo', 'estoque', 'balanco', 'balanço')
+ESTOQUE_DEPOSIT_TERMS = ('deposito', 'depósito')
+ESTOQUE_CODE_TERMS = ('codigo', 'código', 'sku', 'referencia', 'referência', 'id')
+STOCK_ONLY_STRICT_COLUMNS = {'quantidade', 'id', 'codigo', 'gtin', 'deposito'}
 
 
 def df_signature(df: pd.DataFrame) -> str:
@@ -54,6 +63,81 @@ def df_signature(df: pd.DataFrame) -> str:
 
 def download_label() -> str:
     return '⬇️ Baixar CSV pronto'
+
+
+def _normalized_columns(df: pd.DataFrame) -> list[str]:
+    if not isinstance(df, pd.DataFrame):
+        return []
+    return [normalize_key(column) for column in df.columns]
+
+
+def _has_term(columns: list[str], terms: tuple[str, ...]) -> bool:
+    normalized_terms = [normalize_key(term) for term in terms]
+    return any(any(term in column for term in normalized_terms) for column in columns)
+
+
+def _looks_like_stock_contract(df: pd.DataFrame) -> bool:
+    columns = set(_normalized_columns(df))
+    if not columns:
+        return False
+    strict_stock = columns.issubset(STOCK_ONLY_STRICT_COLUMNS) and bool(columns.intersection({'quantidade', 'saldo', 'estoque', 'deposito'}))
+    stock_terms = _has_term(list(columns), ESTOQUE_QTY_TERMS) and (_has_term(list(columns), ESTOQUE_DEPOSIT_TERMS) or _has_term(list(columns), ESTOQUE_CODE_TERMS))
+    cadastro_terms = _has_term(list(columns), CADASTRO_NAME_TERMS) or _has_term(list(columns), CADASTRO_PRICE_TERMS)
+    return bool(strict_stock or (stock_terms and not cadastro_terms))
+
+
+def _looks_like_cadastro_contract(df: pd.DataFrame) -> bool:
+    columns = _normalized_columns(df)
+    return _has_term(columns, CADASTRO_NAME_TERMS) and _has_term(columns, CADASTRO_PRICE_TERMS)
+
+
+def _operation_contract_mismatch_error(raw_df: pd.DataFrame, download_df: pd.DataFrame, operation: str) -> str:
+    op = normalize_operation(operation)
+    raw_columns = list(map(str, raw_df.columns)) if isinstance(raw_df, pd.DataFrame) else []
+    download_columns = list(map(str, download_df.columns)) if isinstance(download_df, pd.DataFrame) else []
+
+    if op == OP_CADASTRO:
+        if _looks_like_stock_contract(raw_df) or _looks_like_stock_contract(download_df) or not _looks_like_cadastro_contract(download_df):
+            add_audit_event(
+                'final_download_contract_mismatch_blocked',
+                area='DOWNLOAD',
+                status='BLOQUEADO',
+                details={
+                    'operation': op,
+                    'raw_columns': raw_columns,
+                    'download_columns': download_columns,
+                    'raw_looks_stock': _looks_like_stock_contract(raw_df),
+                    'download_looks_stock': _looks_like_stock_contract(download_df),
+                    'download_looks_cadastro': _looks_like_cadastro_contract(download_df),
+                    'responsible_file': RESPONSIBLE_FILE,
+                },
+            )
+            return (
+                'Operação bloqueada por segurança: você está em Cadastro de produtos, mas a tabela final parece estoque '
+                'ou não contém campos reais de cadastro como Nome/Descrição e Preço. Volte ao preview final e gere novamente o arquivo de Cadastro.'
+            )
+
+    if op == OP_ESTOQUE:
+        if _looks_like_cadastro_contract(download_df) and not _looks_like_stock_contract(download_df):
+            add_audit_event(
+                'final_download_contract_mismatch_blocked',
+                area='DOWNLOAD',
+                status='BLOQUEADO',
+                details={
+                    'operation': op,
+                    'raw_columns': raw_columns,
+                    'download_columns': download_columns,
+                    'download_looks_cadastro': _looks_like_cadastro_contract(download_df),
+                    'download_looks_stock': _looks_like_stock_contract(download_df),
+                    'responsible_file': RESPONSIBLE_FILE,
+                },
+            )
+            return (
+                'Operação bloqueada por segurança: você está em Atualização de estoque, mas a tabela final parece Cadastro. '
+                'Volte e selecione a operação correta antes de baixar/enviar.'
+            )
+
+    return ''
 
 
 def preserve_flow_after_download(operation: str) -> None:
@@ -193,15 +277,25 @@ def render_download(df_final: pd.DataFrame, operation: str, key: str = 'final') 
     if not isinstance(df_final, pd.DataFrame) or df_final.empty:
         st.warning('Nada para baixar/enviar ainda.')
         return
-    download_df, contract_applied, model_columns = download_dataframe_for_contract(df_final.copy().fillna(''), operation)
+
+    raw_df = df_final.copy().fillna('')
+    download_df, contract_applied, model_columns = download_dataframe_for_contract(raw_df.copy(), operation)
     if not isinstance(download_df, pd.DataFrame) or download_df.empty:
         st.warning('Nada para baixar/enviar após aplicar o contrato da operação.')
         return
+
+    mismatch_error = _operation_contract_mismatch_error(raw_df, download_df, operation)
+    if mismatch_error:
+        st.error(mismatch_error)
+        st.warning('Envio e download foram bloqueados para evitar cadastro incorreto no Bling.')
+        return
+
     errors = validate_final_df(download_df, operation)
     if errors:
         for error in errors:
             st.error(error)
         return
+
     signature = df_signature(download_df)
     rules_sig = rules_signature()
     csv_bytes = to_bling_csv_bytes(download_df, operation)
