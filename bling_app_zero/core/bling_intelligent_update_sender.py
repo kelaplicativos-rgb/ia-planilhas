@@ -21,6 +21,34 @@ def _emit(progress_callback: Callable[[dict[str, Any]], None] | None, payload: d
         pass
 
 
+def _safe_int_attr(obj: object, *names: str, default: int = 0) -> int:
+    for name in names:
+        try:
+            value = getattr(obj, name)
+        except Exception:
+            continue
+        try:
+            return int(value or 0)
+        except Exception:
+            continue
+    return int(default or 0)
+
+
+def _safe_tuple_attr(obj: object, name: str) -> tuple[Any, ...]:
+    try:
+        value = getattr(obj, name)
+    except Exception:
+        return tuple()
+
+    if value is None:
+        return tuple()
+    if isinstance(value, tuple):
+        return value
+    if isinstance(value, list):
+        return tuple(value)
+    return (value,)
+
+
 def split_intelligent_update_rows(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame(), []
@@ -99,24 +127,39 @@ def send_dataframe_to_bling_intelligent(
         limit=limit,
         progress_callback=progress_callback,
     )
-    total = int(result.total) + skipped_before_api
-    skipped = int(result.skipped) + skipped_before_api
-    errors = tuple(list(result.errors or ()) + [f'{skipped_before_api} linha(s) ficaram como pendência inteligente antes da API.'] if skipped_before_api else list(result.errors or ()))
+
+    attempted_after_api = _safe_int_attr(result, 'attempted', 'total', default=len(allowed_df))
+    sent = _safe_int_attr(result, 'sent', default=0)
+    failed = _safe_int_attr(result, 'failed', default=0)
+    skipped_after_api = _safe_int_attr(result, 'skipped', default=0)
+
+    attempted_total = attempted_after_api + skipped_before_api
+    skipped_total = skipped_after_api + skipped_before_api
+
+    errors = list(_safe_tuple_attr(result, 'errors'))
+    if skipped_before_api:
+        errors.append(f'{skipped_before_api} linha(s) ficaram como pendência inteligente antes da API.')
+
+    not_found_indices = _safe_tuple_attr(result, 'not_found_indices')
+
     add_audit_event(
         'bling_intelligent_update_sender_finished',
         area='BLING_ENVIO',
-        status='OK' if int(result.failed) == 0 else 'PARCIAL',
+        status='OK' if failed == 0 else 'PARCIAL',
         details={
             'total_input': len(df),
+            'attempted_after_api': attempted_after_api,
+            'attempted_total': attempted_total,
             'allowed_rows': len(allowed_df),
             'pending_before_api': skipped_before_api,
-            'sent': int(result.sent),
-            'failed': int(result.failed),
-            'skipped_total': skipped,
+            'sent': sent,
+            'failed': failed,
+            'skipped_after_api': skipped_after_api,
+            'skipped_total': skipped_total,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
-    return DirectSendResult(total, int(result.sent), int(result.failed), skipped, errors, result.not_found_indices)
+    return DirectSendResult(attempted_total, sent, failed, skipped_total, tuple(errors), not_found_indices)
 
 
 __all__ = ['send_dataframe_to_bling_intelligent', 'split_intelligent_update_rows']
