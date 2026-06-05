@@ -28,6 +28,7 @@ PREVIEW_OPERATION_KEY = 'df_final_preview_operation'
 PREVIEW_SIGNATURE_KEY = 'df_final_preview_signature'
 DOWNLOAD_SIGNATURE_KEY = 'df_final_download_signature'
 SMARTCORE_DOWNLOAD_KEY = 'blingsmartcore_download_report'
+SMARTCORE_DOWNLOAD_SIGNATURE_KEY = 'blingsmartcore_download_signature'
 
 
 def _entry_context() -> str:
@@ -108,6 +109,35 @@ def _store_smartcore_download_report(result) -> None:
         st.session_state[SMARTCORE_DOWNLOAD_KEY] = {}
 
 
+def _smartcore_signature(df: pd.DataFrame, operation: str, *, origin: str) -> str:
+    return f'{origin}:{_safe_operation(operation)}:{df_signature(df)}'
+
+
+def _cached_smartcore_result(df: pd.DataFrame, operation: str, *, origin: str) -> pd.DataFrame | None:
+    signature = _smartcore_signature(df, operation, origin=origin)
+    cached_signature = str(st.session_state.get(SMARTCORE_DOWNLOAD_SIGNATURE_KEY) or '')
+    cached_df = st.session_state.get(PREVIEW_SAFE_KEY)
+    if cached_signature == signature and valid_df(cached_df):
+        return cached_df.copy().fillna('')
+    return None
+
+
+def _apply_smartcore_once(df: pd.DataFrame, operation: str, *, origin: str) -> pd.DataFrame | None:
+    cached = _cached_smartcore_result(df, operation, origin=origin)
+    if cached is not None:
+        return cached
+
+    safe, report = apply_blingsmartcore(df.copy().fillna(''), origin=origin, operation=_safe_operation(operation))
+    _store_smartcore_download_report(report)
+    if not valid_df(safe):
+        return None
+    safe = safe.copy().fillna('')
+    st.session_state[SMARTCORE_DOWNLOAD_SIGNATURE_KEY] = _smartcore_signature(df, operation, origin=origin)
+    st.session_state[PREVIEW_SAFE_KEY] = safe.copy()
+    st.session_state[PREVIEW_SIGNATURE_KEY] = df_signature(safe)
+    return safe
+
+
 def _render_smartcore_download_report() -> None:
     report = st.session_state.get(SMARTCORE_DOWNLOAD_KEY) or {}
     if not report:
@@ -122,9 +152,8 @@ def _render_smartcore_download_report() -> None:
 def _preview_safe_df(operation: str) -> pd.DataFrame | None:
     df_preview = st.session_state.get(PREVIEW_SAFE_KEY)
     if valid_df(df_preview):
-        safe, report = apply_blingsmartcore(df_preview.copy().fillna(''), origin='preview_final', operation=_safe_operation(operation))
-        _store_smartcore_download_report(report)
-        return safe
+        safe = _apply_smartcore_once(df_preview.copy().fillna(''), operation, origin='preview_final')
+        return safe.copy().fillna('') if valid_df(safe) else None
     return None
 
 
@@ -132,9 +161,10 @@ def _build_safe_download_df(operation: str) -> pd.DataFrame | None:
     df_final = get_context_final_df()
     if not valid_df(df_final):
         return None
-    safe = sanitize_for_bling(df_final.copy().fillna(''), operation=_safe_operation(operation))
-    safe, report = apply_blingsmartcore(safe, origin='preview_final', operation=_safe_operation(operation))
-    _store_smartcore_download_report(report)
+    sanitized = sanitize_for_bling(df_final.copy().fillna(''), operation=_safe_operation(operation))
+    safe = _apply_smartcore_once(sanitized, operation, origin='download_final')
+    if not valid_df(safe):
+        return None
     if not _is_api_context():
         safe = enforce_cadastro_model_columns(safe)
     return safe.copy().fillna('') if valid_df(safe) else None
