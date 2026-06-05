@@ -7,7 +7,8 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
-from bling_app_zero.core.bling_direct_sender_smart_diff import is_direct_send_available, preview_payloads, send_dataframe_to_bling
+from bling_app_zero.core.bling_direct_sender_smart_diff import is_direct_send_available, preview_payloads
+from bling_app_zero.core.bling_intelligent_update_sender import send_dataframe_to_bling_intelligent
 from bling_app_zero.core.bling_oauth import connection_status
 from bling_app_zero.core.bling_preflight_scan import build_bling_preflight_report, build_pending_rows_dataframe, filter_sendable_dataframe
 from bling_app_zero.core.bling_send_engine import (
@@ -282,7 +283,7 @@ def _send_one_batch(download_df: pd.DataFrame, operation: str, state: dict[str, 
         progress_bar.progress(min(100, int(ratio * 100)), text=f'Lote inteligente: {processed}/{batch_total} · atualizados/criados {sent} · falhas {failed} · sem alteração/ignorados {skipped}')
         status_box.caption(f'Lote {batch_start + 1}-{batch_end} de {total} · tamanho {batch_size}')
 
-    result = send_dataframe_to_bling(batch_df, operation, progress_callback=_progress)
+    result = send_dataframe_to_bling_intelligent(batch_df, operation, progress_callback=_progress)
     elapsed = max(0.0, time.monotonic() - started_at)
     st.session_state[LAST_BATCH_SECONDS_KEY] = elapsed
 
@@ -291,7 +292,7 @@ def _send_one_batch(download_df: pd.DataFrame, operation: str, state: dict[str, 
     state = _sync_state(merged)
     state = _pause_after_slow_batch(state, elapsed)
 
-    add_audit_event('bling_api_batch_sent', area='BLING_ENVIO', status='OK' if int(result.failed) == 0 else 'PARCIAL', details={'operation': operation, 'batch_start': batch_start, 'batch_end': batch_end, 'batch_size': batch_size, 'total': total, 'sent': int(result.sent), 'failed': int(result.failed), 'skipped': int(result.skipped), 'elapsed_seconds': round(float(elapsed), 2), 'auto_running': bool(state.get('auto_running')), 'smart_sender_diff': True, 'neutral_bling_send_state': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('bling_api_batch_sent', area='BLING_ENVIO', status='OK' if int(result.failed) == 0 else 'PARCIAL', details={'operation': operation, 'batch_start': batch_start, 'batch_end': batch_end, 'batch_size': batch_size, 'total': total, 'sent': int(result.sent), 'failed': int(result.failed), 'skipped': int(result.skipped), 'elapsed_seconds': round(float(elapsed), 2), 'auto_running': bool(state.get('auto_running')), 'smart_sender_diff': True, 'intelligent_update_sender': True, 'neutral_bling_send_state': True, 'responsible_file': RESPONSIBLE_FILE})
     try:
         progress_bar.empty()
         status_box.empty()
