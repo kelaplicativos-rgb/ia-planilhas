@@ -19,18 +19,25 @@ WIZARD_STEP_KEY = 'bling_wizard_step'
 STEP_MAPEAMENTO = 'mapeamento'
 
 
+def _safe_int(value: object, default: int = 0) -> int:
+    try:
+        return int(value or 0)
+    except Exception:
+        return int(default or 0)
+
+
 def _line_indices_from_errors(errors: list[str] | tuple[str, ...]) -> set[int]:
     indices: set[int] = set()
     for error in errors or []:
-        match = re.search(r'linha\s+(\d+)', str(error or ''), flags=re.IGNORECASE)
-        if not match:
-            continue
-        try:
-            line = int(match.group(1))
-            if line > 0:
-                indices.add(line - 1)
-        except Exception:
-            pass
+        text = str(error or '')
+        matches = re.findall(r'linha\s+(\d+)', text, flags=re.IGNORECASE)
+        for raw_line in matches:
+            try:
+                line = int(raw_line)
+                if line > 0:
+                    indices.add(line - 1)
+            except Exception:
+                pass
     return indices
 
 
@@ -50,8 +57,37 @@ def _reason_for_index(index: int, errors: list[str] | tuple[str, ...], not_found
                 return ('ESTOQUE_INVALIDO', text, 'Corrigir quantidade/saldo antes de reenviar estoque.')
             if 'deposito' in low or 'depósito' in low:
                 return ('DEPOSITO_NAO_RESOLVIDO', text, 'Corrigir deposito antes de reenviar estoque.')
+            if 'pendência inteligente' in low or 'pendencia inteligente' in low or 'antes da api' in low:
+                return ('IGNORADO_PRE_API', text, 'Revisar qualidade/identidade do produto antes de reenviar ao Bling.')
             return ('FALHA_API_BLING', text, 'Revisar retorno da API e tentar reenviar estoque.')
     return ('FALHA_NAO_CLASSIFICADA', 'Produto nao confirmado como enviado.', 'Revisar antes de reenviar ou cadastrar.')
+
+
+def _candidate_indices_from_payload(download_df: pd.DataFrame, result_payload: dict[str, Any]) -> list[int]:
+    errors = list(result_payload.get('errors') or [])
+    not_found_indices = {int(item) for item in list(result_payload.get('not_found_indices') or []) if str(item).lstrip('-').isdigit()}
+    error_indices = _line_indices_from_errors(errors)
+    candidate_indices = sorted(index for index in (not_found_indices | error_indices) if 0 <= index < len(download_df))
+    if candidate_indices:
+        return candidate_indices
+
+    attempted = _safe_int(result_payload.get('attempted'))
+    sent = _safe_int(result_payload.get('sent'))
+    failed = _safe_int(result_payload.get('failed'))
+    skipped = _safe_int(result_payload.get('skipped'))
+
+    # BLINGFIX: nunca transformar envio parcial com sucesso em lista completa de nao confirmados.
+    # Antes, quando havia skipped/failed sem indice detalhado, todas as linhas eram marcadas como
+    # FALHA_NAO_CLASSIFICADA. Foi isso que gerou 338 nao confirmados mesmo com 312 enviados.
+    if sent > 0:
+        return []
+
+    # Se nada foi enviado e nao ha indice por linha, entao o lote inteiro realmente ficou sem confirmacao.
+    if attempted > 0 and sent == 0 and (failed > 0 or skipped > 0):
+        limit = min(len(download_df), attempted)
+        return list(range(limit))
+
+    return []
 
 
 def build_not_sent_dataframe(download_df: pd.DataFrame, result_payload: dict[str, Any]) -> pd.DataFrame:
@@ -60,11 +96,7 @@ def build_not_sent_dataframe(download_df: pd.DataFrame, result_payload: dict[str
 
     errors = list(result_payload.get('errors') or [])
     not_found_indices = {int(item) for item in list(result_payload.get('not_found_indices') or []) if str(item).lstrip('-').isdigit()}
-    error_indices = _line_indices_from_errors(errors)
-    candidate_indices = sorted(index for index in (not_found_indices | error_indices) if 0 <= index < len(download_df))
-
-    if not candidate_indices and (int(result_payload.get('failed') or 0) > 0 or int(result_payload.get('skipped') or 0) > 0):
-        candidate_indices = list(range(len(download_df)))
+    candidate_indices = _candidate_indices_from_payload(download_df, result_payload)
 
     if not candidate_indices:
         return pd.DataFrame()
@@ -100,6 +132,32 @@ def build_stock_pending_dataframe(download_df: pd.DataFrame, result_payload: dic
         mask = fixed['status_envio_bling'].astype(str).eq('PRODUTO_NAO_ENCONTRADO_NO_BLING')
         fixed.loc[mask, 'acao_recomendada'] = 'Produto nao localizado no Bling. Corrigir codigo/SKU/GTIN/ID ou cadastrar manualmente com dados completos antes de reenviar estoque.'
     return fixed
+
+
+def _unclassified_partial_count(result_payload: dict[str, Any]) -> int:
+    sent = _safe_int(result_payload.get('sent'))
+    failed = _safe_int(result_payload.get('failed'))
+    skipped = _safe_int(result_payload.get('skipped'))
+    if sent <= 0:
+        return 0
+    return max(0, failed + skipped)
+
+
+def _render_unclassified_partial_notice(result_payload: dict[str, Any], *, operation_label: str) -> None:
+    count = _unclassified_partial_count(result_payload)
+    if count <= 0:
+        return
+    st.warning(
+        f'{count} item(ns) ficaram sem indice individual no retorno do envio de {operation_label}. '
+        'Por segurança, o BLINGFIX nao vai gerar uma planilha falsa com todos os produtos como nao confirmados. '
+        'Quando o sender informar a linha exata, apenas essas linhas entram no relatorio.'
+    )
+    add_audit_event(
+        'blingsmartcore_partial_without_line_indices',
+        area='AUTOCADASTRO',
+        status='CORRIGIDO',
+        details={'count': count, 'operation_label': operation_label, 'responsible_file': RESPONSIBLE_FILE},
+    )
 
 
 def _force_autocadastro_navigation() -> None:
@@ -147,6 +205,7 @@ def save_autocadastro_source(df: pd.DataFrame, *, reason: str = 'produtos_nao_en
 def render_stock_pending_panel(download_df: pd.DataFrame, result_payload: dict[str, Any], *, key: str) -> None:
     df_pending = build_stock_pending_dataframe(download_df, result_payload)
     if df_pending.empty:
+        _render_unclassified_partial_notice(result_payload, operation_label='estoque')
         return
 
     csv_bytes = df_pending.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
@@ -174,6 +233,7 @@ def render_stock_pending_panel(download_df: pd.DataFrame, result_payload: dict[s
 def render_autocadastro_panel(download_df: pd.DataFrame, result_payload: dict[str, Any], *, key: str) -> None:
     df_not_sent = build_not_sent_dataframe(download_df, result_payload)
     if df_not_sent.empty:
+        _render_unclassified_partial_notice(result_payload, operation_label='cadastro')
         return
 
     eligible_count = int((df_not_sent.get('autocadastro_elegivel', '') == 'SIM').sum()) if 'autocadastro_elegivel' in df_not_sent.columns else 0
