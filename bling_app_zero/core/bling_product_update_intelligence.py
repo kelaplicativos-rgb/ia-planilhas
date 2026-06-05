@@ -33,14 +33,19 @@ IMPORTANT_FIELDS = (
     'altura',
     'profundidade',
     'url',
+    'deposito',
+    'id',
+    'id_produto',
+    'id_bling',
 )
 
 RICH_FIELDS = {'descricao', 'descricao_curta', 'marca', 'categoria', 'imagens', 'ncm', 'cest', 'peso_liquido', 'peso_bruto', 'largura', 'altura', 'profundidade'}
-IDENTITY_FIELDS = {'codigo', 'sku', 'gtin'}
+IDENTITY_FIELDS = {'codigo', 'sku', 'gtin', 'id', 'id_produto', 'id_bling'}
 PROTECTED_FIELDS = {'codigo', 'sku', 'gtin'}
 MIN_CREATE_QUALITY = 68
 MIN_UPDATE_QUALITY = 60
 MIN_UPDATE_BENEFIT = 12
+MIN_STOCK_QUALITY = 70
 
 _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     'nome': ('nome', 'titulo', 'título', 'produto', 'descricao produto', 'descrição produto'),
@@ -63,6 +68,10 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     'altura': ('altura', 'height', 'altura cm'),
     'profundidade': ('profundidade', 'comprimento', 'depth', 'length', 'profundidade cm', 'comprimento cm'),
     'url': ('url', 'link', 'produto url', 'url produto'),
+    'deposito': ('deposito', 'depósito', 'nome deposito', 'nome depósito', 'deposito bling', 'depósito bling'),
+    'id': ('id', 'id produto', 'id_produto', 'id bling', 'id_bling', 'codigo bling', 'código bling'),
+    'id_produto': ('id produto', 'id_produto', 'id bling', 'id_bling'),
+    'id_bling': ('id bling', 'id_bling', 'id produto bling', 'id_produto_bling'),
 }
 
 
@@ -205,6 +214,8 @@ def normalize_product_payload(row: Mapping[str, Any] | Any) -> dict[str, Any]:
         elif field == 'origem':
             digits = re.sub(r'\D+', '', raw)
             value = digits[:1] if digits else ''
+        elif field in {'id', 'id_produto', 'id_bling'}:
+            value = re.sub(r'\D+', '', raw)
         else:
             value = _clean_text(raw)
         if value:
@@ -213,7 +224,7 @@ def normalize_product_payload(row: Mapping[str, Any] | Any) -> dict[str, Any]:
 
 
 def _identity(payload: Mapping[str, Any]) -> str:
-    for field in ('codigo', 'sku', 'gtin'):
+    for field in ('id_bling', 'id_produto', 'id', 'codigo', 'sku', 'gtin'):
         value = _clean_text(payload.get(field))
         if value:
             return value
@@ -274,6 +285,17 @@ def _quality_score(payload: Mapping[str, Any]) -> int:
     return max(0, min(100, score))
 
 
+def _stock_quality_score(payload: Mapping[str, Any]) -> int:
+    score = 100
+    if not _identity(payload):
+        score -= 45
+    if not payload.get('estoque'):
+        score -= 35
+    if not payload.get('deposito'):
+        score -= 5
+    return max(0, min(100, score))
+
+
 def _missing_quality_fields(payload: Mapping[str, Any]) -> tuple[str, ...]:
     missing: list[str] = []
     for field in ('nome', 'preco', 'descricao', 'imagens', 'marca', 'categoria'):
@@ -286,6 +308,15 @@ def _missing_quality_fields(payload: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(missing)
 
 
+def _missing_stock_fields(payload: Mapping[str, Any]) -> tuple[str, ...]:
+    missing: list[str] = []
+    if not _identity(payload):
+        missing.append('id/codigo/sku/gtin')
+    if not payload.get('estoque'):
+        missing.append('quantidade/saldo')
+    return tuple(missing)
+
+
 def _benefit_score(changed: list[str], site_payload: Mapping[str, Any], bling_payload: Mapping[str, Any]) -> int:
     weights = {
         'descricao': 30,
@@ -294,6 +325,8 @@ def _benefit_score(changed: list[str], site_payload: Mapping[str, Any], bling_pa
         'categoria': 18,
         'marca': 14,
         'preco': 12,
+        'estoque': 16,
+        'deposito': 4,
         'ncm': 8,
         'cest': 6,
         'origem': 6,
@@ -325,6 +358,51 @@ def _safe_changed_fields(site_payload: Mapping[str, Any], bling_payload: Mapping
             changed.append(field)
             final_payload[field] = site_value
     return changed, final_payload
+
+
+def analyze_stock_update_need(site_product: Mapping[str, Any] | Any) -> ProductUpdateDecision:
+    site_payload = normalize_product_payload(site_product)
+    site_id = _identity(site_payload)
+    score = _stock_quality_score(site_payload)
+    missing = _missing_stock_fields(site_payload)
+    stock_payload = {key: value for key, value in site_payload.items() if key in {'id', 'id_produto', 'id_bling', 'codigo', 'sku', 'gtin', 'estoque', 'deposito'} and value}
+
+    if missing:
+        return ProductUpdateDecision(
+            ACTION_PENDING,
+            False,
+            False,
+            False,
+            True,
+            f'Estoque sem dados mínimos para envio automático. Falta: {", ".join(missing)}.',
+            tuple(),
+            stock_payload,
+            score,
+            'alto',
+            site_id,
+            '',
+            0,
+            tuple(),
+            missing,
+        )
+
+    return ProductUpdateDecision(
+        ACTION_UPDATE,
+        True,
+        False,
+        False,
+        False,
+        'Estoque apto para envio: identificação e quantidade/saldo encontrados. Campos ricos de cadastro não são exigidos neste fluxo.',
+        tuple(stock_payload.keys()),
+        stock_payload,
+        score,
+        'baixo' if score >= MIN_STOCK_QUALITY else 'medio',
+        site_id,
+        '',
+        20,
+        tuple(),
+        tuple(),
+    )
 
 
 def analyze_product_update_need(site_product: Mapping[str, Any] | Any, bling_product: Mapping[str, Any] | Any | None) -> ProductUpdateDecision:
@@ -372,5 +450,6 @@ __all__ = [
     'ACTION_UPDATE',
     'ProductUpdateDecision',
     'analyze_product_update_need',
+    'analyze_stock_update_need',
     'normalize_product_payload',
 ]
