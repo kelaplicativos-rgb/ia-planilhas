@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
-from bling_app_zero.core.bling_direct_sender_smart import is_direct_send_available, preview_payloads, send_dataframe_to_bling
+from bling_app_zero.core.bling_direct_sender_smart_diff import is_direct_send_available, preview_payloads, send_dataframe_to_bling
 from bling_app_zero.core.bling_oauth import connection_status
 from bling_app_zero.core.bling_send_engine import (
     append_batch_result,
@@ -172,7 +172,7 @@ def _send_one_batch(download_df: pd.DataFrame, operation: str, state: dict[str, 
     batch_end = min(batch_start + batch_size, total)
     batch_df = download_df.iloc[batch_start:batch_end].copy().fillna('')
 
-    progress_bar = st.progress(0, text=f'BLINGSMARTCORE enviando lote {batch_start + 1}-{batch_end} de {total}...')
+    progress_bar = st.progress(0, text=f'BLINGSMARTCORE comparando e enviando lote {batch_start + 1}-{batch_end} de {total}...')
     status_box = st.empty()
 
     def _progress(payload: dict[str, Any]) -> None:
@@ -182,7 +182,7 @@ def _send_one_batch(download_df: pd.DataFrame, operation: str, state: dict[str, 
         failed = int(payload.get('failed') or 0)
         skipped = int(payload.get('skipped') or 0)
         ratio = float(payload.get('progress') or 0.0)
-        progress_bar.progress(min(100, int(ratio * 100)), text=f'Lote inteligente: {processed}/{batch_total} · enviados {sent} · falhas {failed} · ignorados {skipped}')
+        progress_bar.progress(min(100, int(ratio * 100)), text=f'Lote inteligente: {processed}/{batch_total} · atualizados/criados {sent} · falhas {failed} · sem alteração/ignorados {skipped}')
         status_box.caption(f'Lote {batch_start + 1}-{batch_end} de {total} · tamanho {batch_size}')
 
     result = send_dataframe_to_bling(batch_df, operation, progress_callback=_progress)
@@ -190,7 +190,7 @@ def _send_one_batch(download_df: pd.DataFrame, operation: str, state: dict[str, 
     merged = append_batch_result(state_obj, result, batch_start=batch_start, batch_end=batch_end).state
     state = _sync_state(merged)
 
-    add_audit_event('bling_api_batch_sent', area='BLING_ENVIO', status='OK' if int(result.failed) == 0 else 'PARCIAL', details={'operation': operation, 'batch_start': batch_start, 'batch_end': batch_end, 'batch_size': batch_size, 'total': total, 'sent': int(result.sent), 'failed': int(result.failed), 'skipped': int(result.skipped), 'auto_running': bool(state.get('auto_running')), 'smart_sender': True, 'neutral_bling_send_state': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('bling_api_batch_sent', area='BLING_ENVIO', status='OK' if int(result.failed) == 0 else 'PARCIAL', details={'operation': operation, 'batch_start': batch_start, 'batch_end': batch_end, 'batch_size': batch_size, 'total': total, 'sent': int(result.sent), 'failed': int(result.failed), 'skipped': int(result.skipped), 'auto_running': bool(state.get('auto_running')), 'smart_sender_diff': True, 'neutral_bling_send_state': True, 'responsible_file': RESPONSIBLE_FILE})
     try:
         progress_bar.empty()
         status_box.empty()
@@ -227,7 +227,7 @@ def render_bling_api_batch_panel(download_df: pd.DataFrame, operation: str, key:
 
     if auto_running:
         batch_size = _batch_size_for_operation(operation)
-        st.info(f'Envio automático inteligente ativo. O sistema envia até {batch_size} item(ns) por lote e continua sozinho até finalizar ou pausar.')
+        st.info(f'Envio automático inteligente ativo. O sistema compara o produto atual do Bling, pula sem alteração e envia até {batch_size} item(ns) por lote.')
         _send_one_batch(download_df, operation, state)
         st.rerun()
 
