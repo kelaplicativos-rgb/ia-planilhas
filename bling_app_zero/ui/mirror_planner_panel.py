@@ -5,6 +5,7 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_mirror_apply import build_apply_bundle, bundle_to_frames
+from bling_app_zero.core.bling_mirror_bridge import bridge_reviewed_dataframe_to_official_flow
 from bling_app_zero.core.bling_mirror_planner import (
     MODE_BOTH,
     MODE_NEW_PRODUCTS,
@@ -14,6 +15,8 @@ from bling_app_zero.core.bling_mirror_planner import (
     decisions_dataframe,
     report_summary,
 )
+from bling_app_zero.ui.home_wizard_constants import STEP_DOWNLOAD, STEP_PREVIEW
+from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/mirror_planner_panel.py'
 MIRROR_APPROVED_STOCK_DF_KEY = 'mirror_approved_stock_df'
@@ -94,6 +97,43 @@ def _render_prepared_downloads() -> None:
         )
 
 
+def _render_official_flow_bridge(operation: str, stock_balance_only: bool) -> None:
+    stock_df = st.session_state.get(MIRROR_APPROVED_STOCK_DF_KEY)
+    new_df = st.session_state.get(MIRROR_APPROVED_NEW_PRODUCTS_DF_KEY)
+    if not isinstance(stock_df, pd.DataFrame) and not isinstance(new_df, pd.DataFrame):
+        return
+    st.markdown('#### Usar no fluxo oficial')
+    st.caption('Esta ponte prepara a base revisada para seguir pelo fluxo oficial, mantendo preview, validação e confirmação. Nada é enviado automaticamente.')
+
+    if isinstance(stock_df, pd.DataFrame) and not stock_df.empty:
+        if st.button('Usar estoque revisado no fluxo oficial', use_container_width=True, key=f'mirror_bridge_stock_{len(stock_df)}'):
+            result = bridge_reviewed_dataframe_to_official_flow(
+                stock_df,
+                operation='estoque',
+                source_label='espelhamento_estoque_revisado',
+                target_step=STEP_DOWNLOAD if stock_balance_only else STEP_PREVIEW,
+            )
+            if result.ok:
+                st.success(result.message)
+                safe_rerun('mirror_bridge_stock_to_official_flow', target_step=result.target_step)
+            else:
+                st.error(result.message)
+
+    if isinstance(new_df, pd.DataFrame) and not new_df.empty:
+        if st.button('Usar produtos novos revisados no fluxo oficial', use_container_width=True, key=f'mirror_bridge_new_products_{len(new_df)}'):
+            result = bridge_reviewed_dataframe_to_official_flow(
+                new_df,
+                operation='cadastro',
+                source_label='espelhamento_produtos_novos_revisados',
+                target_step=STEP_PREVIEW,
+            )
+            if result.ok:
+                st.success(result.message)
+                safe_rerun('mirror_bridge_new_products_to_official_flow', target_step=result.target_step)
+            else:
+                st.error(result.message)
+
+
 def render_mirror_planner_panel(df_site: pd.DataFrame, *, operation: str = '', stock_balance_only: bool = False) -> None:
     if not isinstance(df_site, pd.DataFrame) or df_site.empty:
         return
@@ -167,10 +207,11 @@ def render_mirror_planner_panel(df_site: pd.DataFrame, *, operation: str = '', s
             prepared = _prepare_bundle(report, operation=operation, stock_balance_only=stock_balance_only)
             st.success(f"Itens separados: {prepared.get('ready_rows', 0)} linha(s).")
         _render_prepared_downloads()
+        _render_official_flow_bridge(operation, stock_balance_only)
     else:
         st.warning('Simulação concluída sem itens prontos. Revise identificadores, quantidade/saldo e qualidade dos produtos novos.')
 
-    st.info('Esta etapa apenas separa e exporta os itens prontos. O envio/cadastro real continua no fluxo oficial, com revisão e confirmação.')
+    st.info('Esta etapa apenas separa, exporta e prepara os itens prontos para o fluxo oficial. O envio/cadastro real continua com revisão e confirmação.')
     add_audit_event(
         'mirror_planner_panel_rendered',
         area='ESPELHAMENTO',
