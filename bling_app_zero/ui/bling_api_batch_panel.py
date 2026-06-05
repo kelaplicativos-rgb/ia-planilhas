@@ -75,13 +75,26 @@ def _reset_state(identity: str, total: int, operation: str) -> dict[str, Any]:
     return _sync_state(result.state)
 
 
-def _render_payload_preview(download_df: pd.DataFrame, operation: str) -> None:
+def _render_payload_preview(download_df: pd.DataFrame, operation: str) -> str:
     preview_limit = 5
     preview_df = download_df.head(preview_limit).copy().fillna('')
     payload_preview = preview_payloads(preview_df, operation, limit=preview_limit)
     if not payload_preview:
         st.warning('Não consegui montar prévia de payload para envio. Confira os campos obrigatórios.')
-        return
+        return ''
+
+    blocked_items = [item for item in payload_preview if str(item.get('status') or '').upper() == 'BLOQUEADO']
+    if blocked_items:
+        reason = str(blocked_items[0].get('motivo') or 'Envio bloqueado por segurança.').strip()
+        st.error(reason)
+        add_audit_event(
+            'bling_api_batch_preview_blocked',
+            area='BLING_ENVIO',
+            status='BLOQUEADO',
+            details={'operation': operation, 'reason': reason, 'responsible_file': RESPONSIBLE_FILE},
+        )
+        return reason
+
     ok_count = sum(1 for item in payload_preview if item.get('status') == 'OK')
     ignored_count = len(payload_preview) - ok_count
     total_rows = len(download_df) if isinstance(download_df, pd.DataFrame) else 0
@@ -97,6 +110,7 @@ def _render_payload_preview(download_df: pd.DataFrame, operation: str) -> None:
             if motivo:
                 st.caption(motivo)
             st.json(item.get('payload') or {})
+    return ''
 
 
 def _render_progress(state: dict[str, Any]) -> None:
@@ -197,9 +211,13 @@ def render_bling_api_batch_panel(download_df: pd.DataFrame, operation: str, key:
         st.warning('Token do Bling indisponível. Reconecte o Bling e tente novamente.')
         return
 
+    block_reason = _render_payload_preview(download_df, operation)
+    if block_reason:
+        st.warning('O envio direto foi bloqueado. Revise a operação escolhida e gere novamente o preview final antes de enviar ao Bling.')
+        return
+
     identity = _state_id(operation, key, signature, rules_sig)
     state = _get_state(identity, len(download_df), operation)
-    _render_payload_preview(download_df, operation)
     _render_progress(state)
 
     total = int(state.get('total') or len(download_df))
