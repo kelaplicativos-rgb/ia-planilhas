@@ -21,7 +21,6 @@ from bling_app_zero.core.bling_mirror_store import (
     mirror_store_payload,
     save_persistent_config,
 )
-from bling_app_zero.core.bling_mirror_store_health import check_mirror_store_health
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/mirror_monitor_panel.py'
 
@@ -75,15 +74,16 @@ def _run_rows(limit: int = 8) -> pd.DataFrame:
 
 
 def _render_store_health() -> None:
-    health = check_mirror_store_health()
+    payload = mirror_store_payload()
+    health = payload.get('health') if isinstance(payload.get('health'), dict) else {}
     with st.expander('Diagnóstico do store persistente', expanded=False):
         cols = st.columns(4)
-        cols[0].metric('Store OK', 'Sim' if health.ok else 'Não')
-        cols[1].metric('Existe', 'Sim' if health.exists else 'Não')
-        cols[2].metric('Legível', 'Sim' if health.readable else 'Não')
-        cols[3].metric('Pasta gravável', 'Sim' if health.writable_parent else 'Não')
-        st.caption(health.message)
-        st.code(health.store_path or 'caminho não definido')
+        cols[0].metric('Store OK', 'Sim' if health.get('ok') else 'Não')
+        cols[1].metric('Existe', 'Sim' if health.get('exists') else 'Não')
+        cols[2].metric('Legível', 'Sim' if health.get('readable') else 'Não')
+        cols[3].metric('Pasta gravável', 'Sim' if health.get('writable_parent') else 'Não')
+        st.caption(str(health.get('message') or 'Diagnóstico do store indisponível.'))
+        st.code(str(health.get('store_path') or payload.get('store_path') or 'caminho não definido'))
 
 
 def _render_persistent_history() -> None:
