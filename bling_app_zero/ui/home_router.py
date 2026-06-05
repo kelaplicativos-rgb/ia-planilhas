@@ -6,6 +6,7 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_oauth import build_authorization_url, connection_status
+from bling_app_zero.ui.bling_backend_bridge import backend_connection_status, sync_backend_token_to_streamlit
 from bling_app_zero.ui.flow_context import (
     CONTEXT_BLING_API,
     CONTEXT_BLING_CSV,
@@ -24,6 +25,7 @@ HOME_ALLOW_FLOW_KEY = 'home_allow_operation_v2_session'
 HOME_BOOT_LOCK_KEY = 'home_boot_landing_rendered_once'
 HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
 BLING_AUTH_READY_KEY = 'home_bling_auth_ready_url'
+BLING_BACKEND_LAST_STATUS_KEY = 'home_bling_backend_last_status'
 FLOW_HOME = 'home'
 FLOW_WIZARD = 'wizard_cadastro_estoque'
 
@@ -198,6 +200,77 @@ def _render_open_bling_link(url: str) -> None:
     _same_tab_link('Abrir tela oficial do Bling', raw_url)
 
 
+def _safe_backend_status() -> dict:
+    try:
+        status = backend_connection_status()
+        return status if isinstance(status, dict) else {'enabled': False, 'connected': False}
+    except Exception as exc:
+        return {'enabled': True, 'connected': False, 'error': str(exc)[:220], 'source': 'backend'}
+
+
+def _effective_bling_status(*, try_sync: bool = True) -> dict:
+    local_status = connection_status()
+    if bool(local_status.get('connected')):
+        return {'connected': True, 'local_connected': True, 'backend_connected': False, 'status': local_status, 'backend_status': {}}
+
+    backend_status = _safe_backend_status()
+    st.session_state[BLING_BACKEND_LAST_STATUS_KEY] = backend_status
+    backend_connected = bool(backend_status.get('connected'))
+    synced = False
+    if backend_connected and try_sync:
+        synced = bool(sync_backend_token_to_streamlit())
+        local_status = connection_status()
+        if bool(local_status.get('connected')):
+            add_audit_event(
+                'home_router_bling_backend_status_synced',
+                area='HOME',
+                status='OK',
+                details={'responsible_file': RESPONSIBLE_FILE, 'backend_connected': True, 'token_synced': True},
+            )
+            return {'connected': True, 'local_connected': True, 'backend_connected': True, 'token_synced': True, 'status': local_status, 'backend_status': backend_status}
+
+    return {
+        'connected': False,
+        'local_connected': False,
+        'backend_connected': backend_connected,
+        'token_synced': synced,
+        'status': local_status,
+        'backend_status': backend_status,
+    }
+
+
+def _render_backend_oauth_warning(effective_status: dict) -> None:
+    backend_status = effective_status.get('backend_status') if isinstance(effective_status.get('backend_status'), dict) else {}
+    local_status = effective_status.get('status') if isinstance(effective_status.get('status'), dict) else {}
+    if bool(effective_status.get('backend_connected')) and not bool(effective_status.get('connected')):
+        st.warning(
+            'O Bling autorizou no backend, mas o Streamlit ainda não conseguiu importar o token. '
+            'Confira o segredo compartilhado BLING_BACKEND_SHARED_SECRET no Streamlit e no backend Render.'
+        )
+    elif bool(backend_status.get('enabled')) and backend_status.get('error'):
+        st.warning(f'Backend OAuth encontrado, mas não respondeu corretamente ao status: {backend_status.get("error")}')
+    elif bool(backend_status.get('enabled')) and not bool(backend_status.get('connected')):
+        st.warning('Ainda não detectei callback/token salvo no backend. Autorize no Bling e depois toque em verificar conexão.')
+    else:
+        message = str(local_status.get('message') or 'Bling ainda não conectado.')
+        st.warning(message)
+
+    with st.expander('Diagnóstico da conexão Bling', expanded=False):
+        st.write(
+            {
+                'connected_local_streamlit': bool(local_status.get('connected')),
+                'connected_backend_render': bool(backend_status.get('connected')),
+                'backend_enabled': bool(backend_status.get('enabled')),
+                'backend_error': backend_status.get('error', ''),
+                'backend_saved_at': backend_status.get('saved_at', ''),
+                'backend_expires_at': backend_status.get('expires_at', ''),
+                'required_redirect_uri': local_status.get('required_redirect_uri'),
+                'token_bridge_ready': backend_status.get('token_bridge_ready'),
+                'responsible_file': RESPONSIBLE_FILE,
+            }
+        )
+
+
 def _render_bling_connection(auth_url: str) -> None:
     url = _clean_oauth_url(auth_url)
     if not url:
@@ -216,12 +289,24 @@ def _render_bling_connection(auth_url: str) -> None:
         st.text_area('Link alternativo de autenticação', value=ready_url or url, height=100, key='bling_auth_url_fallback_hidden')
 
     if st.button('Já autorizei no Bling / verificar conexão', use_container_width=True, key='home_bling_verify_connection'):
-        if bool(connection_status().get('connected')):
+        effective_status = _effective_bling_status(try_sync=True)
+        if bool(effective_status.get('connected')):
             st.session_state.pop(BLING_AUTH_READY_KEY, None)
             _start_wizard_context(CONTEXT_BLING_API)
             safe_rerun('home_bling_verify_connected')
         else:
-            st.warning('Ainda não detectei a conexão. Autorize na tela oficial do Bling e tente verificar novamente.')
+            add_audit_event(
+                'home_router_bling_verify_connection_failed',
+                area='HOME',
+                status='AVISO',
+                details={
+                    'responsible_file': RESPONSIBLE_FILE,
+                    'backend_connected': bool(effective_status.get('backend_connected')),
+                    'local_connected': bool(effective_status.get('local_connected')),
+                    'token_synced': bool(effective_status.get('token_synced')),
+                },
+            )
+            _render_backend_oauth_warning(effective_status)
 
     add_audit_event(
         'home_router_bling_connection_visible',
@@ -232,7 +317,8 @@ def _render_bling_connection(auth_url: str) -> None:
 
 
 def _render_light_entry_home() -> None:
-    connected = bool(connection_status().get('connected'))
+    effective_status = _effective_bling_status(try_sync=True)
+    connected = bool(effective_status.get('connected'))
     st.markdown('<div class="bling-home-section-title">Começar</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="bling-home-section-subtitle">Conecte ao Bling para enviar por API ou continue sem conectar.</div>',
@@ -243,12 +329,19 @@ def _render_light_entry_home() -> None:
         st.markdown('#### Conectar ao Bling')
         if connected:
             st.session_state.pop(BLING_AUTH_READY_KEY, None)
-            st.success('Bling já conectado.')
+            st.success('Bling conectado.')
             if st.button('Continuar com Bling conectado', use_container_width=True, key='home_light_continue_connected_bling'):
                 _start_wizard_context(CONTEXT_BLING_API)
                 safe_rerun('home_light_continue_connected_bling')
         else:
-            st.caption('Você será levado para a tela oficial do Bling nesta mesma aba para autorizar o acesso.')
+            backend_status = effective_status.get('backend_status') if isinstance(effective_status.get('backend_status'), dict) else {}
+            if bool(backend_status.get('connected')):
+                st.warning(
+                    'O Bling já autorizou no backend, mas falta importar o token para o Streamlit. '
+                    'Toque em verificar conexão para tentar sincronizar e veja o diagnóstico se continuar bloqueado.'
+                )
+            else:
+                st.caption('Você será levado para a tela oficial do Bling nesta mesma aba para autorizar o acesso.')
             try:
                 auth_url = build_authorization_url({'return_to': 'start', 'source_step': 'home_same_tab_connection'})
             except Exception as exc:
@@ -278,6 +371,8 @@ def _render_light_entry_home() -> None:
         details={
             'responsible_file': RESPONSIBLE_FILE,
             'connected': connected,
+            'backend_connected': bool(effective_status.get('backend_connected')),
+            'local_connected': bool(effective_status.get('local_connected')),
             'home_order': 'same_tab_bling_or_continue_without',
             'lazy_flow_entry': True,
         },
