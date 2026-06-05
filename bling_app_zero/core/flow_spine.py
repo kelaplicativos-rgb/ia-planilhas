@@ -25,6 +25,9 @@ STEP_REGRAS = 'regras'
 STEP_PREVIEW = 'preview'
 STEP_DOWNLOAD = 'download'
 
+DESTINATION_API = 'api_bling'
+DESTINATION_CSV = 'csv_download'
+
 DEFAULT_RENDER_STEPS = (
     STEP_MODELO,
     STEP_ORIGEM,
@@ -57,6 +60,10 @@ class FlowSpinePlan:
     steps: tuple[str, ...]
     labels: dict[str, str]
     primary_action_label: str
+    final_destination: str
+    final_title: str
+    final_caption: str
+    backup_enabled: bool
     needs_model: bool
     needs_pricing: bool
     needs_mapping: bool
@@ -98,6 +105,9 @@ class FlowSpinePlan:
             'is_api': self.is_api,
             'steps': list(self.steps),
             'primary_action_label': self.primary_action_label,
+            'final_destination': self.final_destination,
+            'final_title': self.final_title,
+            'backup_enabled': self.backup_enabled,
             'needs_model': self.needs_model,
             'needs_pricing': self.needs_pricing,
             'needs_mapping': self.needs_mapping,
@@ -119,6 +129,30 @@ def _labels_for_contract(contract: FeatureContract, steps: Iterable[str]) -> dic
     return {step: labels.get(step, step) for step in steps}
 
 
+def _final_destination_for(contract: FeatureContract) -> str:
+    return DESTINATION_API if contract.is_api else DESTINATION_CSV
+
+
+def _final_title_for(contract: FeatureContract) -> str:
+    if contract.is_api:
+        return 'Enviar para o Bling'
+    if contract.operation == 'estoque':
+        return 'Download do estoque'
+    if contract.operation == 'atualizacao_preco':
+        return 'Download de preços'
+    return 'Download'
+
+
+def _final_caption_for(contract: FeatureContract) -> str:
+    if contract.is_api:
+        return 'Envie a base revisada diretamente para o Bling conectado. O CSV fica disponível apenas como backup opcional.'
+    if contract.operation == 'estoque':
+        return 'Baixe o arquivo final de atualização de estoque, usando a mesma base validada da prévia.'
+    if contract.operation == 'atualizacao_preco':
+        return 'Baixe o arquivo final de preços, usando a mesma base validada da prévia.'
+    return 'Baixe exatamente o mesmo arquivo conferido na prévia final.'
+
+
 def build_flow_spine_plan(*, render_steps: Iterable[str] = DEFAULT_RENDER_STEPS) -> FlowSpinePlan:
     contract = active_contract()
     allowed_render_steps = [str(step).strip().lower() for step in render_steps if str(step).strip()]
@@ -134,6 +168,7 @@ def build_flow_spine_plan(*, render_steps: Iterable[str] = DEFAULT_RENDER_STEPS)
     if not steps:
         steps = [STEP_ORIGEM, STEP_ENTRADA, STEP_DOWNLOAD]
 
+    final_destination = _final_destination_for(contract)
     plan = FlowSpinePlan(
         contract_key=contract.key,
         operation=contract.operation,
@@ -142,6 +177,10 @@ def build_flow_spine_plan(*, render_steps: Iterable[str] = DEFAULT_RENDER_STEPS)
         steps=tuple(steps),
         labels=_labels_for_contract(contract, steps),
         primary_action_label=contract.primary_action_label,
+        final_destination=final_destination,
+        final_title=_final_title_for(contract),
+        final_caption=_final_caption_for(contract),
+        backup_enabled=final_destination == DESTINATION_API,
         needs_model=feature_needs_model(),
         needs_pricing=feature_needs_pricing(),
         needs_mapping=feature_needs_mapping(),
@@ -153,6 +192,8 @@ def build_flow_spine_plan(*, render_steps: Iterable[str] = DEFAULT_RENDER_STEPS)
     st.session_state['flow_spine_mode'] = plan.mode
     st.session_state['flow_spine_steps'] = list(plan.steps)
     st.session_state['flow_spine_primary_action_label'] = plan.primary_action_label
+    st.session_state['flow_spine_final_destination'] = plan.final_destination
+    st.session_state['flow_spine_final_title'] = plan.final_title
     return plan
 
 
@@ -187,8 +228,18 @@ def pending_message_for(plan: FlowSpinePlan, step: str) -> str:
     return 'Conclua esta etapa para continuar.'
 
 
+def is_api_destination(plan: FlowSpinePlan) -> bool:
+    return plan.final_destination == DESTINATION_API
+
+
+def is_csv_destination(plan: FlowSpinePlan) -> bool:
+    return plan.final_destination == DESTINATION_CSV
+
+
 __all__ = [
     'DEFAULT_RENDER_STEPS',
+    'DESTINATION_API',
+    'DESTINATION_CSV',
     'FlowSpinePlan',
     'STEP_DOWNLOAD',
     'STEP_ENTRADA',
@@ -199,6 +250,8 @@ __all__ = [
     'STEP_PREVIEW',
     'STEP_REGRAS',
     'build_flow_spine_plan',
+    'is_api_destination',
+    'is_csv_destination',
     'pending_message_for',
     'resolve_step',
 ]
