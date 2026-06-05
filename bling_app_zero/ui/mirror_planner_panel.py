@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.bling_mirror_apply import build_apply_bundle, bundle_to_frames
 from bling_app_zero.core.bling_mirror_planner import (
     MODE_BOTH,
     MODE_NEW_PRODUCTS,
@@ -15,6 +16,9 @@ from bling_app_zero.core.bling_mirror_planner import (
 )
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/mirror_planner_panel.py'
+MIRROR_APPROVED_STOCK_DF_KEY = 'mirror_approved_stock_df'
+MIRROR_APPROVED_NEW_PRODUCTS_DF_KEY = 'mirror_approved_new_products_df'
+MIRROR_APPROVED_BUNDLE_KEY = 'mirror_approved_bundle_summary'
 
 
 def _csv_bytes(df: pd.DataFrame) -> bytes:
@@ -41,12 +45,61 @@ def _mode_label(mode: str) -> str:
     return labels.get(mode, 'Estoque + produtos novos')
 
 
+def _prepare_bundle(report, *, operation: str, stock_balance_only: bool) -> dict[str, object]:
+    bundle = build_apply_bundle(report)
+    frames = bundle_to_frames(bundle)
+    stock_df = frames.get('estoque')
+    new_df = frames.get('cadastro')
+    if isinstance(stock_df, pd.DataFrame) and not stock_df.empty:
+        st.session_state[MIRROR_APPROVED_STOCK_DF_KEY] = stock_df.copy().fillna('')
+    else:
+        st.session_state.pop(MIRROR_APPROVED_STOCK_DF_KEY, None)
+    if isinstance(new_df, pd.DataFrame) and not new_df.empty:
+        st.session_state[MIRROR_APPROVED_NEW_PRODUCTS_DF_KEY] = new_df.copy().fillna('')
+    else:
+        st.session_state.pop(MIRROR_APPROVED_NEW_PRODUCTS_DF_KEY, None)
+    summary = bundle.to_dict()
+    summary['operation'] = operation
+    summary['stock_balance_only'] = stock_balance_only
+    st.session_state[MIRROR_APPROVED_BUNDLE_KEY] = summary
+    add_audit_event(
+        'mirror_reviewed_items_export_prepared',
+        area='ESPELHAMENTO',
+        status='PREPARADO',
+        details={'summary': summary, 'responsible_file': RESPONSIBLE_FILE},
+    )
+    return summary
+
+
+def _render_prepared_downloads() -> None:
+    stock_df = st.session_state.get(MIRROR_APPROVED_STOCK_DF_KEY)
+    new_df = st.session_state.get(MIRROR_APPROVED_NEW_PRODUCTS_DF_KEY)
+    if isinstance(stock_df, pd.DataFrame) and not stock_df.empty:
+        st.download_button(
+            '⬇️ Baixar estoque revisado CSV',
+            data=_csv_bytes(stock_df),
+            file_name='espelhamento_estoque_revisado.csv',
+            mime='text/csv; charset=utf-8',
+            use_container_width=True,
+            key=f'mirror_stock_reviewed_csv_{len(stock_df)}',
+        )
+    if isinstance(new_df, pd.DataFrame) and not new_df.empty:
+        st.download_button(
+            '⬇️ Baixar produtos novos revisados CSV',
+            data=_csv_bytes(new_df),
+            file_name='espelhamento_produtos_novos_revisados.csv',
+            mime='text/csv; charset=utf-8',
+            use_container_width=True,
+            key=f'mirror_new_products_reviewed_csv_{len(new_df)}',
+        )
+
+
 def render_mirror_planner_panel(df_site: pd.DataFrame, *, operation: str = '', stock_balance_only: bool = False) -> None:
     if not isinstance(df_site, pd.DataFrame) or df_site.empty:
         return
 
     st.markdown('### Espelhamento inteligente')
-    st.caption('Simulação segura: o sistema separa o que poderia atualizar estoque, o que parece produto novo e o que virou pendência. Nada é aplicado automaticamente.')
+    st.caption('Simulação segura: o sistema separa o que poderia atualizar estoque, o que parece produto novo e o que virou pendência. Nada é aplicado sozinho.')
 
     default_mode = _default_mode(operation, stock_balance_only)
     mode_options = [MODE_STOCK, MODE_NEW_PRODUCTS, MODE_BOTH]
@@ -102,12 +155,22 @@ def render_mirror_planner_panel(df_site: pd.DataFrame, *, operation: str = '', s
                     key=f'mirror_decisions_csv_{operation}_{stock_balance_only}_{len(decisions_df)}',
                 )
 
-    if int(summary.get('stock_ready') or 0) or int(summary.get('new_products_ready') or 0):
-        st.success('Simulação concluída. Há itens prontos para uma futura aplicação assistida, com confirmação manual.')
+    ready_total = int(summary.get('stock_ready') or 0) + int(summary.get('new_products_ready') or 0)
+    if ready_total:
+        st.success('Simulação concluída. Há itens prontos para exportação revisada.')
+        confirm = st.checkbox(
+            'Confirmo que revisei a simulação e quero separar apenas os itens prontos',
+            value=False,
+            key=f'mirror_confirm_prepare_{operation}_{stock_balance_only}',
+        )
+        if st.button('Separar itens prontos para revisão', use_container_width=True, disabled=not confirm, key=f'mirror_prepare_reviewed_{operation}_{stock_balance_only}'):
+            prepared = _prepare_bundle(report, operation=operation, stock_balance_only=stock_balance_only)
+            st.success(f"Itens separados: {prepared.get('ready_rows', 0)} linha(s).")
+        _render_prepared_downloads()
     else:
-        st.warning('Simulação concluída sem itens prontos para aplicação. Revise identificadores, quantidade/saldo e qualidade dos produtos novos.')
+        st.warning('Simulação concluída sem itens prontos. Revise identificadores, quantidade/saldo e qualidade dos produtos novos.')
 
-    st.info('Aplicação automática ainda está bloqueada por segurança. O próximo passo será criar “Aplicar somente itens aprovados” com confirmação e logs.')
+    st.info('Esta etapa apenas separa e exporta os itens prontos. O envio/cadastro real continua no fluxo oficial, com revisão e confirmação.')
     add_audit_event(
         'mirror_planner_panel_rendered',
         area='ESPELHAMENTO',
