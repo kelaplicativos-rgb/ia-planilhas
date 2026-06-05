@@ -96,6 +96,17 @@ RUNTIME_EXTRA_INVENTORY: tuple[SystemInventoryItem, ...] = (
         action='Próximo passo: comparar resultado estruturado contra o Bling e enviar somente diferenças aprovadas.',
     ),
     SystemInventoryItem(
+        id='mirror_read_state',
+        name='Resumo local da leitura monitorada',
+        status=STATUS_ATIVO,
+        layer='JOB',
+        purpose='Conta linhas lidas, linhas prontas localmente, linhas em revisão e linhas vazias dentro do ciclo monitorado.',
+        owner_spine='Mirror Discovery Cycle / Executor',
+        main_paths=('bling_app_zero/core/mirror_read_state.py',),
+        risk='É apenas resumo local; não consulta nem altera dados no Bling.',
+        action='Usar estes contadores no diagnóstico antes de avançar para comparação real com Bling.',
+    ),
+    SystemInventoryItem(
         id='mirror_discovery_cycle',
         name='Ciclo seguro de descoberta do espelhamento',
         status=STATUS_ATIVO,
