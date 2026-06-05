@@ -51,6 +51,17 @@ RUNTIME_EXTRA_INVENTORY: tuple[SystemInventoryItem, ...] = (
         risk='Deve continuar apenas preparando/exportando dados até ser conectado ao fluxo oficial com confirmação explícita.',
         action='Próximo passo: criar ponte para enviar as bases revisadas ao preview/download/envio oficial, sem pular conferência.',
     ),
+    SystemInventoryItem(
+        id='mirror_official_bridge',
+        name='Ponte segura do espelhamento para o fluxo oficial',
+        status=STATUS_ATIVO,
+        layer='ORQUESTRACAO',
+        purpose='Coloca a base revisada do espelhamento no fluxo oficial, preservando preview, validação e confirmação antes de qualquer saída.',
+        owner_spine='Mirror Planner / Flow Spine',
+        main_paths=('bling_app_zero/core/bling_mirror_bridge.py',),
+        risk='Não deve ser usada para pular revisão. A ponte apenas prepara a origem e redireciona para as etapas oficiais.',
+        action='Manter logs e diagnóstico para confirmar que preview/download/envio oficial continuam obrigatórios.',
+    ),
 )
 
 
