@@ -44,6 +44,15 @@ def _update_existing_product_diff(
     )
 
 
+def _has_unchanged_skip(attempts: list[dict[str, Any]]) -> bool:
+    for item in attempts:
+        mode = str(item.get('mode') or '').lower()
+        status = str(item.get('status') or '').upper()
+        if mode.startswith('skip_unchanged') or status in {'UNCHANGED', 'UNCHANGED_OR_NOT_BETTER'}:
+            return True
+    return False
+
+
 def _send_cadastro_smart_diff(
     df: pd.DataFrame,
     *,
@@ -96,6 +105,12 @@ def _send_cadastro_smart_diff(
                 add_audit_event('bling_smart_diff_product_skipped_unchanged', area='BLING_ENVIO', status='PULADO', details={'line': line, 'product_id': existing_id, 'responsible_file': RESPONSIBLE_FILE})
                 _emit_progress(progress_callback, {'stage': 'Sem alteração: pulado', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
                 continue
+            failed += 1
+            if len(errors) < 8:
+                errors.append(f'Linha {line}: produto existente ID {existing_id} encontrado, mas a atualização inteligente falhou. O sistema não tentou recriar para evitar duplicidade.')
+            add_audit_event('bling_smart_diff_existing_update_failed_no_create', area='BLING_ENVIO', status='AVISO', details={'line': line, 'product_id': existing_id, 'attempts': update_attempts[-6:], 'responsible_file': RESPONSIBLE_FILE})
+            _emit_progress(progress_callback, {'stage': 'Falha ao atualizar existente: recriação bloqueada', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
+            continue
 
         ok = False
         attempts: list[dict[str, Any]] = []
@@ -121,15 +136,22 @@ def _send_cadastro_smart_diff(
                         if update_status == 'unchanged':
                             skipped += 1
                             ok = True
+                            add_audit_event('bling_smart_diff_duplicate_skipped_unchanged', area='BLING_ENVIO', status='PULADO', details={'line': line, 'product_id': resolved_after_error, 'strategy': strategy, 'responsible_file': RESPONSIBLE_FILE})
                             break
+                        failed += 1
+                        if len(errors) < 8:
+                            errors.append(f'Linha {line}: código já existe no Bling, mas atualização do produto ID {resolved_after_error} falhou. Recriação bloqueada.')
+                        add_audit_event('bling_smart_diff_duplicate_update_failed_no_create', area='BLING_ENVIO', status='AVISO', details={'line': line, 'product_id': resolved_after_error, 'strategy': strategy, 'attempts': update_attempts[-6:], 'responsible_file': RESPONSIBLE_FILE})
+                        ok = False
+                        break
                 if response.status_code in {401, 403}:
                     break
             except Exception as exc:
                 attempts.append({'mode': 'create', 'strategy': strategy, 'status': 'EXCEPTION', 'error': str(exc)[:240]})
 
-        if ok and not any(item.get('mode') == 'skip_unchanged' for item in attempts):
+        if ok and not _has_unchanged_skip(attempts):
             sent += 1
-        elif not ok:
+        elif not ok and not any(str(item.get('mode') or '').startswith('update_existing') for item in attempts if str(item.get('status') or '').upper() == 'EXCEPTION'):
             failed += 1
             status = getattr(last_response, 'status_code', 'sem resposta')
             preview = str(getattr(last_response, 'text', '') or '')[:700]
@@ -140,7 +162,7 @@ def _send_cadastro_smart_diff(
         _emit_progress(progress_callback, {'stage': 'Cadastrando no Bling com comparação', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
 
     _emit_progress(progress_callback, {'stage': 'Cadastro inteligente com comparação concluído', 'processed': total, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': 1.0})
-    add_audit_event('bling_smart_diff_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'attempted': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'mode': 'diff_update_only_changed_create_new_skip_unchanged', 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('bling_smart_diff_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'attempted': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'mode': 'diff_update_only_changed_create_new_skip_unchanged_no_duplicate_recreate', 'responsible_file': RESPONSIBLE_FILE})
     return DirectSendResult(total, sent, failed, skipped, tuple(errors), tuple())
 
 
