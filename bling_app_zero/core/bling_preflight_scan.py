@@ -61,23 +61,61 @@ def _filled_mask(df: pd.DataFrame, column: str) -> pd.Series:
     return df[column].fillna('').astype(str).str.strip().ne('')
 
 
+def _safe_value(row: pd.Series, column: str) -> str:
+    if not column or column not in row.index:
+        return ''
+    value = row.get(column, '')
+    if pd.isna(value):
+        return ''
+    return str(value or '').strip()
+
+
+def _operation_columns(df: pd.DataFrame) -> dict[str, str]:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return {'codigo': '', 'gtin': '', 'nome': '', 'quantidade': '', 'imagem': ''}
+    return {
+        'codigo': _find_column(df, _CODE_TERMS),
+        'gtin': _find_column(df, _GTIN_TERMS),
+        'nome': _find_column(df, _NAME_TERMS),
+        'quantidade': _find_column(df, _QTY_TERMS),
+        'imagem': _find_column(df, _IMAGE_TERMS),
+    }
+
+
 def _sendable_mask(df: pd.DataFrame, operation: str) -> pd.Series:
     op = normalize_operation(operation)
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.Series([], dtype=bool)
 
-    code_col = _find_column(df, _CODE_TERMS)
-    gtin_col = _find_column(df, _GTIN_TERMS)
-    name_col = _find_column(df, _NAME_TERMS)
-    qty_col = _find_column(df, _QTY_TERMS)
-
-    has_identifier = _filled_mask(df, code_col) | _filled_mask(df, gtin_col)
-    has_name = _filled_mask(df, name_col)
-    has_qty = _filled_mask(df, qty_col)
+    columns = _operation_columns(df)
+    has_identifier = _filled_mask(df, columns['codigo']) | _filled_mask(df, columns['gtin'])
+    has_name = _filled_mask(df, columns['nome'])
+    has_qty = _filled_mask(df, columns['quantidade'])
 
     if op == OP_ESTOQUE:
         return has_identifier & has_qty
     return has_identifier | has_name
+
+
+def pending_reason_for_row(row: pd.Series, operation: str, columns: dict[str, str]) -> str:
+    op = normalize_operation(operation)
+    has_code = bool(_safe_value(row, columns.get('codigo', '')))
+    has_gtin = bool(_safe_value(row, columns.get('gtin', '')))
+    has_name = bool(_safe_value(row, columns.get('nome', '')))
+    has_qty = bool(_safe_value(row, columns.get('quantidade', '')))
+    has_identifier = has_code or has_gtin
+
+    if op == OP_ESTOQUE:
+        missing: list[str] = []
+        if not has_identifier:
+            missing.append('SKU/código/GTIN')
+        if not has_qty:
+            missing.append('quantidade')
+        return 'Falta ' + ' e '.join(missing) if missing else ''
+
+    if not has_identifier and not has_name:
+        return 'Falta SKU/código/GTIN ou nome do produto'
+    return ''
 
 
 def filter_sendable_dataframe(df: pd.DataFrame, operation: str) -> pd.DataFrame:
@@ -88,6 +126,35 @@ def filter_sendable_dataframe(df: pd.DataFrame, operation: str) -> pd.DataFrame:
     if len(mask) != len(df):
         return pd.DataFrame(columns=list(df.columns))
     return df.loc[mask].copy().fillna('')
+
+
+def build_pending_rows_dataframe(df: pd.DataFrame, operation: str, *, limit: int = 100) -> pd.DataFrame:
+    """Monta uma tabela curta com as linhas que foram bloqueadas pela pré-varredura."""
+    columns_out = ['linha', 'codigo', 'gtin', 'produto', 'quantidade', 'motivo']
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame(columns=columns_out)
+
+    mask = _sendable_mask(df, operation)
+    if len(mask) != len(df):
+        return pd.DataFrame(columns=columns_out)
+
+    columns = _operation_columns(df)
+    blocked = df.loc[~mask].copy().fillna('')
+    rows: list[dict[str, str]] = []
+    for position, (index, row) in enumerate(blocked.iterrows(), start=1):
+        if position > max(1, int(limit or 100)):
+            break
+        rows.append(
+            {
+                'linha': str(int(index) + 1 if isinstance(index, int) else index),
+                'codigo': _safe_value(row, columns['codigo']),
+                'gtin': _safe_value(row, columns['gtin']),
+                'produto': _safe_value(row, columns['nome']),
+                'quantidade': _safe_value(row, columns['quantidade']),
+                'motivo': pending_reason_for_row(row, operation, columns),
+            }
+        )
+    return pd.DataFrame(rows, columns=columns_out)
 
 
 def build_bling_preflight_report(df: pd.DataFrame, operation: str, *, batch_size: int) -> BlingPreflightReport:
@@ -111,18 +178,15 @@ def build_bling_preflight_report(df: pd.DataFrame, operation: str, *, batch_size
         )
 
     total = int(len(df))
-    code_col = _find_column(df, _CODE_TERMS)
-    gtin_col = _find_column(df, _GTIN_TERMS)
-    image_col = _find_column(df, _IMAGE_TERMS)
-
-    has_identifier = _filled_mask(df, code_col) | _filled_mask(df, gtin_col)
+    columns = _operation_columns(df)
+    has_identifier = _filled_mask(df, columns['codigo']) | _filled_mask(df, columns['gtin'])
     required_ok = _sendable_mask(df, op)
 
     safe_rows = int(required_ok.sum())
     blocked_rows = int(total - safe_rows)
     missing_identifier = int((~has_identifier).sum())
     missing_required = int((~required_ok).sum())
-    rows_with_images = int(_filled_mask(df, image_col).sum()) if image_col else 0
+    rows_with_images = int(_filled_mask(df, columns['imagem']).sum()) if columns['imagem'] else 0
     estimated_batches = int((safe_rows + safe_batch - 1) // safe_batch) if safe_rows else 0
     sendable_labels = tuple(df.index[required_ok].tolist())
     blocked_labels = tuple(df.index[~required_ok].tolist())
@@ -161,4 +225,10 @@ def build_bling_preflight_report(df: pd.DataFrame, operation: str, *, batch_size
     )
 
 
-__all__ = ['BlingPreflightReport', 'build_bling_preflight_report', 'filter_sendable_dataframe']
+__all__ = [
+    'BlingPreflightReport',
+    'build_bling_preflight_report',
+    'build_pending_rows_dataframe',
+    'filter_sendable_dataframe',
+    'pending_reason_for_row',
+]
