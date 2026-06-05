@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from bling_app_zero.core.bling_mirror_config import MirrorMonitorConfig
+from bling_app_zero.core.bling_mirror_extract import read_mirror_site_products
+from bling_app_zero.core.bling_mirror_planner import MirrorPlanConfig, build_mirror_plan, report_summary
 from bling_app_zero.engines.fast_site_scraper.constants import FLOW_CAPTURE_MAX_DEPTH, FLOW_CAPTURE_MAX_PAGES, FLOW_CAPTURE_MAX_PRODUCTS
 from bling_app_zero.engines.fast_site_scraper.deep_site_capture import discover_deep_product_urls
 
@@ -34,8 +36,16 @@ class MirrorCycleResult:
     budget_seconds: int
     started_at: str
     finished_at: str
+    extracted_rows: int = 0
+    extracted_columns: int = 0
+    stock_ready: int = 0
+    new_products_ready: int = 0
+    pending: int = 0
+    skipped: int = 0
     ready_for_compare: bool = False
     ready_for_apply: bool = False
+    extract: dict[str, Any] | None = None
+    plan: dict[str, Any] | None = None
     responsible_file: str = RESPONSIBLE_FILE
 
     def to_dict(self) -> dict[str, Any]:
@@ -59,6 +69,30 @@ def _valid_url(value: object) -> bool:
     return text.startswith(('http://', 'https://')) and '.' in text
 
 
+def _empty_result(cfg: MirrorMonitorConfig, *, ok: bool, stage: str, message: str, started: str, max_pages: int, max_products: int, max_depth: int, budget: int) -> MirrorCycleResult:
+    return MirrorCycleResult(
+        ok=ok,
+        stage=stage,
+        message=message,
+        site_url=cfg.site_url,
+        deposit_name=cfg.deposit_name,
+        mode=cfg.mode,
+        rows_seen=0,
+        product_urls_found=0,
+        visited_pages=0,
+        scanned_pages=0,
+        ignored_external_links=0,
+        stopped_by_budget=False,
+        stop_reason='',
+        max_pages=max_pages,
+        max_products=max_products,
+        max_depth=max_depth,
+        budget_seconds=budget,
+        started_at=started,
+        finished_at=_now_iso(),
+    )
+
+
 def run_mirror_discovery_cycle(config: MirrorMonitorConfig | Mapping[str, Any]) -> MirrorCycleResult:
     cfg = config if isinstance(config, MirrorMonitorConfig) else MirrorMonitorConfig(**{key: value for key, value in dict(config or {}).items() if key in MirrorMonitorConfig.__dataclass_fields__})
     cfg = cfg.normalized()
@@ -69,50 +103,10 @@ def run_mirror_discovery_cycle(config: MirrorMonitorConfig | Mapping[str, Any]) 
     budget = _clamp_int(DEFAULT_CYCLE_BUDGET_SECONDS, DEFAULT_CYCLE_BUDGET_SECONDS, 8, MAX_CYCLE_BUDGET_SECONDS)
 
     if not cfg.enabled:
-        return MirrorCycleResult(
-            ok=True,
-            stage='inactive',
-            message='Espelhamento desligado. Ciclo não executado.',
-            site_url=cfg.site_url,
-            deposit_name=cfg.deposit_name,
-            mode=cfg.mode,
-            rows_seen=0,
-            product_urls_found=0,
-            visited_pages=0,
-            scanned_pages=0,
-            ignored_external_links=0,
-            stopped_by_budget=False,
-            stop_reason='',
-            max_pages=max_pages,
-            max_products=max_products,
-            max_depth=max_depth,
-            budget_seconds=budget,
-            started_at=started,
-            finished_at=_now_iso(),
-        )
+        return _empty_result(cfg, ok=True, stage='inactive', message='Espelhamento desligado. Ciclo não executado.', started=started, max_pages=max_pages, max_products=max_products, max_depth=max_depth, budget=budget)
 
     if not _valid_url(cfg.site_url) or not cfg.deposit_name:
-        return MirrorCycleResult(
-            ok=False,
-            stage='blocked',
-            message='Configuração incompleta: site válido e depósito são obrigatórios.',
-            site_url=cfg.site_url,
-            deposit_name=cfg.deposit_name,
-            mode=cfg.mode,
-            rows_seen=0,
-            product_urls_found=0,
-            visited_pages=0,
-            scanned_pages=0,
-            ignored_external_links=0,
-            stopped_by_budget=False,
-            stop_reason='',
-            max_pages=max_pages,
-            max_products=max_products,
-            max_depth=max_depth,
-            budget_seconds=budget,
-            started_at=started,
-            finished_at=_now_iso(),
-        )
+        return _empty_result(cfg, ok=False, stage='blocked', message='Configuração incompleta: site válido e depósito são obrigatórios.', started=started, max_pages=max_pages, max_products=max_products, max_depth=max_depth, budget=budget)
 
     try:
         discovery = discover_deep_product_urls(
@@ -124,14 +118,51 @@ def run_mirror_discovery_cycle(config: MirrorMonitorConfig | Mapping[str, Any]) 
             progress_callback=None,
         )
         found = len(discovery.product_urls)
+        raw_urls = discovery.raw_urls or cfg.site_url
+        extract = read_mirror_site_products(cfg, raw_urls=raw_urls)
+        extract_payload = extract.to_dict(include_dataframe=False)
+        plan_payload: dict[str, Any] = {}
+        summary: dict[str, Any] = {}
+        if extract.ok and extract.rows > 0:
+            plan = build_mirror_plan(
+                extract.dataframe,
+                MirrorPlanConfig(
+                    enabled=True,
+                    mode=cfg.mode,
+                    site_url=cfg.site_url,
+                    deposit_name=cfg.deposit_name,
+                    interval_minutes=cfg.interval_minutes,
+                    max_rows_per_cycle=cfg.max_products_per_cycle,
+                    include_stock=cfg.mode in {'estoque', 'estoque_e_novos'},
+                    include_new_products=cfg.mode in {'novos_produtos', 'estoque_e_novos'},
+                    simulation_only=True,
+                ),
+            )
+            summary = report_summary(plan)
+            plan_payload = {
+                'rows_seen': int(summary.get('rows_seen') or 0),
+                'stock_ready': int(summary.get('stock_ready') or 0),
+                'new_products_ready': int(summary.get('new_products_ready') or 0),
+                'pending': int(summary.get('pending') or 0),
+                'skipped': int(summary.get('skipped') or 0),
+                'simulation_only': True,
+            }
+
+        message = (
+            f'Ciclo monitorado concluído. URLs: {found}; produtos lidos: {int(extract.rows or 0)}; '
+            f'estoque pronto: {int(summary.get("stock_ready") or 0)}; produtos novos: {int(summary.get("new_products_ready") or 0)}; pendências: {int(summary.get("pending") or 0)}.'
+        )
+        if not extract.ok:
+            message = f'Descoberta concluída com {found} URL(s), mas a leitura monitorada ainda não retornou dados válidos: {extract.message}'
+
         return MirrorCycleResult(
-            ok=True,
-            stage='discovery_done',
-            message=f'Ciclo de monitoramento executado. {found} URL(s) provável(is) de produto localizada(s). Comparação com Bling ainda não aplicada neste estágio.',
+            ok=bool(extract.ok or found > 0),
+            stage='plan_ready' if extract.ok and plan_payload else 'discovery_done',
+            message=message,
             site_url=cfg.site_url,
             deposit_name=cfg.deposit_name,
             mode=cfg.mode,
-            rows_seen=found,
+            rows_seen=int(extract.rows or found),
             product_urls_found=found,
             visited_pages=int(discovery.visited_pages),
             scanned_pages=int(discovery.scanned_pages),
@@ -144,8 +175,16 @@ def run_mirror_discovery_cycle(config: MirrorMonitorConfig | Mapping[str, Any]) 
             budget_seconds=budget,
             started_at=started,
             finished_at=_now_iso(),
-            ready_for_compare=found > 0,
+            extracted_rows=int(extract.rows or 0),
+            extracted_columns=int(extract.columns or 0),
+            stock_ready=int(summary.get('stock_ready') or 0),
+            new_products_ready=int(summary.get('new_products_ready') or 0),
+            pending=int(summary.get('pending') or 0),
+            skipped=int(summary.get('skipped') or 0),
+            ready_for_compare=bool(extract.ok and extract.rows > 0),
             ready_for_apply=False,
+            extract=extract_payload,
+            plan=plan_payload,
         )
     except Exception as exc:
         return MirrorCycleResult(
