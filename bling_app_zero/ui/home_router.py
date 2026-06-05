@@ -165,20 +165,30 @@ def _clean_oauth_url(url: str) -> str:
     return unescape(str(url or '').strip()).replace('&amp;', '&')
 
 
-def _same_tab_link(label: str, url: str) -> None:
+def _android_safe_oauth_links(label: str, url: str) -> None:
     raw_url = _clean_oauth_url(url)
     if not raw_url:
         return
     safe_url = escape(raw_url, quote=True)
     safe_label = escape(label, quote=False)
+    st.info('No Android, alguns navegadores internos podem abrir uma tela vazia. Se a primeira opção falhar, use a opção de compatibilidade ou copie o link.')
+    try:
+        st.link_button(safe_label, raw_url, use_container_width=True)
+    except Exception:
+        pass
     st.markdown(
         f'''
-<a href="{safe_url}" target="_self" style="display:block;text-align:center;text-decoration:none;border:1px solid #d0d5dd;border-radius:14px;padding:0.85rem 1rem;font-weight:800;color:#5f6b7a;background:#ffffff;">
-  {safe_label}
+<a href="{safe_url}" target="_top" style="display:block;text-align:center;text-decoration:none;border:1px solid #2563eb;border-radius:14px;padding:0.85rem 1rem;font-weight:900;color:#ffffff;background:#2563eb;box-shadow:0 10px 22px rgba(37,99,235,.18);">
+  Abrir conexão nesta aba se o Android bloquear
 </a>
 ''',
         unsafe_allow_html=True,
     )
+
+
+def _same_tab_link(label: str, url: str) -> None:
+    # Compatibilidade: o antigo same_tab agora usa fallback Android seguro.
+    _android_safe_oauth_links(label, url)
 
 
 def _request_bling_link(auth_url: str) -> None:
@@ -187,7 +197,7 @@ def _request_bling_link(auth_url: str) -> None:
         'home_router_bling_auth_link_requested',
         area='HOME',
         status='OK',
-        details={'responsible_file': RESPONSIBLE_FILE, 'connection_mode': 'same_tab_html_link'},
+        details={'responsible_file': RESPONSIBLE_FILE, 'connection_mode': 'android_safe_oauth_link'},
     )
     st.rerun()
 
@@ -196,8 +206,8 @@ def _render_open_bling_link(url: str) -> None:
     raw_url = _clean_oauth_url(url)
     if not raw_url:
         return
-    st.success('Link oficial do Bling pronto. Toque abaixo para abrir a autorização na mesma aba.')
-    _same_tab_link('Abrir tela oficial do Bling', raw_url)
+    st.success('Link oficial do Bling pronto. Toque abaixo para abrir a autorização.')
+    _android_safe_oauth_links('Abrir tela oficial do Bling', raw_url)
 
 
 def _safe_backend_status() -> dict:
@@ -281,11 +291,11 @@ def _render_bling_connection(auth_url: str) -> None:
     if ready_url:
         _render_open_bling_link(ready_url)
     else:
-        if st.button('Conectar ao Bling', use_container_width=True, key='home_bling_prepare_link_button'):
+        if st.button('Preparar conexão com o Bling', use_container_width=True, key='home_bling_prepare_link_button'):
             _request_bling_link(url)
 
     with st.expander('Problemas para abrir?', expanded=False):
-        st.caption('Copie o link apenas se o botão não abrir no seu navegador.')
+        st.caption('Copie o link apenas se os botões não abrirem no seu navegador.')
         st.text_area('Link alternativo de autenticação', value=ready_url or url, height=100, key='bling_auth_url_fallback_hidden')
 
     if st.button('Já autorizei no Bling / verificar conexão', use_container_width=True, key='home_bling_verify_connection'):
@@ -312,7 +322,7 @@ def _render_bling_connection(auth_url: str) -> None:
         'home_router_bling_connection_visible',
         area='HOME',
         status='OK',
-        details={'responsible_file': RESPONSIBLE_FILE, 'connection_mode': 'same_tab_html_link_no_popup'},
+        details={'responsible_file': RESPONSIBLE_FILE, 'connection_mode': 'android_safe_oauth_link'},
     )
 
 
@@ -325,44 +335,31 @@ def _render_light_entry_home() -> None:
         unsafe_allow_html=True,
     )
 
-    with st.container(border=True):
-        st.markdown('#### Conectar ao Bling')
-        if connected:
-            st.session_state.pop(BLING_AUTH_READY_KEY, None)
-            st.success('Bling conectado.')
-            if st.button('Continuar com Bling conectado', use_container_width=True, key='home_light_continue_connected_bling'):
+    if connected:
+        st.success('Bling conectado. Você pode iniciar o fluxo com envio por API.')
+        col_api, col_file = st.columns(2)
+        with col_api:
+            if st.button('Usar Bling conectado', use_container_width=True, key='home_use_connected_bling'):
                 _start_wizard_context(CONTEXT_BLING_API)
-                safe_rerun('home_light_continue_connected_bling')
-        else:
-            backend_status = effective_status.get('backend_status') if isinstance(effective_status.get('backend_status'), dict) else {}
-            if bool(backend_status.get('connected')):
-                st.warning(
-                    'O Bling já autorizou no backend, mas falta importar o token para o Streamlit. '
-                    'Toque em verificar conexão para tentar sincronizar e veja o diagnóstico se continuar bloqueado.'
-                )
-            else:
-                st.caption('Você será levado para a tela oficial do Bling nesta mesma aba para autorizar o acesso.')
-            try:
-                auth_url = build_authorization_url({'return_to': 'start', 'source_step': 'home_same_tab_connection'})
-            except Exception as exc:
-                auth_url = ''
-                add_audit_event(
-                    'home_router_bling_auth_url_error',
-                    area='HOME',
-                    status='ERRO',
-                    details={'error': str(exc), 'responsible_file': RESPONSIBLE_FILE},
-                )
-            if auth_url:
-                _render_bling_connection(auth_url)
-            else:
-                st.warning('Credenciais do Bling ainda não configuradas. Você ainda pode continuar sem conectar.')
+                safe_rerun('home_use_connected_bling')
+        with col_file:
+            if st.button('Gerar arquivo sem API', use_container_width=True, key='home_continue_without_bling_connected'):
+                _start_wizard_context(CONTEXT_UNIVERSAL, step=STEP_MODELO)
+                safe_rerun('home_continue_without_bling_connected')
+        return
 
-    with st.container(border=True):
-        st.markdown('#### Continuar sem conectar')
-        st.caption('Prepare dados e planilhas sem envio direto pela API.')
-        if st.button('Continuar sem conectar', use_container_width=True, key='home_light_continue_without_bling'):
-            _start_wizard_context(CONTEXT_UNIVERSAL, step=STEP_MODELO)
-            safe_rerun('home_light_continue_without_bling', target_step=STEP_MODELO)
+    try:
+        auth_url = build_authorization_url({'return_to': 'home_light_entry', 'open_mode': 'android_safe'})
+    except Exception as exc:
+        auth_url = ''
+        st.warning(f'Não consegui preparar o link do Bling agora: {exc}')
+
+    _render_bling_connection(auth_url)
+
+    st.divider()
+    if st.button('Continuar sem conectar ao Bling', use_container_width=True, key='home_continue_without_bling'):
+        _start_wizard_context(CONTEXT_UNIVERSAL, step=STEP_MODELO)
+        safe_rerun('home_continue_without_bling')
 
     add_audit_event(
         'home_router_render_light_entry_home',
@@ -373,70 +370,58 @@ def _render_light_entry_home() -> None:
             'connected': connected,
             'backend_connected': bool(effective_status.get('backend_connected')),
             'local_connected': bool(effective_status.get('local_connected')),
-            'home_order': 'same_tab_bling_or_continue_without',
+            'home_order': 'android_safe_bling_or_continue_without',
             'lazy_flow_entry': True,
         },
     )
 
 
-def render_professional_home() -> None:
+def _render_professional_home() -> None:
+    st.markdown(
+        '''
+<style>
+.bling-home-hero{border:1px solid rgba(15,23,42,.10);background:linear-gradient(135deg,#ffffff 0%,#f8fafc 100%);border-radius:22px;padding:1.05rem 1rem;margin:.35rem 0 1rem 0;box-shadow:0 14px 34px rgba(15,23,42,.06)}
+.bling-home-eyebrow{font-size:.78rem;font-weight:800;color:#2563eb;text-transform:uppercase;letter-spacing:.08em;margin-bottom:.35rem}.bling-home-title{font-size:1.55rem;line-height:1.08;font-weight:950;color:#0f172a;margin:0}.bling-home-subtitle{font-size:.95rem;line-height:1.38;color:#475569;margin:.65rem 0 0 0}.bling-home-section-title{font-size:1.05rem;font-weight:900;color:#0f172a;margin:1rem 0 .25rem}.bling-home-section-subtitle{font-size:.88rem;color:#64748b;margin:0 0 .75rem}.bling-home-card{border:1px solid rgba(15,23,42,.08);background:#fff;border-radius:18px;padding:.95rem;margin:.65rem 0}.bling-home-alert{border:1px solid rgba(234,88,12,.30);background:rgba(255,237,213,.75);color:#7c2d12;border-radius:16px;padding:.85rem .9rem;font-weight:700;line-height:1.35}.bling-home-muted{font-size:.82rem;color:#64748b;line-height:1.35}
+</style>
+<div class="bling-home-hero">
+  <div class="bling-home-eyebrow">MapeiaAI · Bling</div>
+  <h1 class="bling-home-title">Envie produtos para o Bling ou gere arquivo pronto.</h1>
+  <p class="bling-home-subtitle">Fluxo enxuto: conecte ao Bling para API direta ou continue sem conectar para gerar planilha/modelo.</p>
+</div>
+''',
+        unsafe_allow_html=True,
+    )
+    _render_light_entry_home()
     add_audit_event(
         'home_router_render_professional_home',
         area='HOME',
         status='OK',
         details={
             'responsible_file': RESPONSIBLE_FILE,
-            'home_order': 'same_tab_bling_or_continue_without',
+            'home_order': 'android_safe_bling_or_continue_without',
             'style': 'clean_connection_entry_no_iframe',
-            'bling_oauth_target': 'same_tab_html_link',
+            'bling_oauth_target': 'android_safe_top_or_copy',
             'legacy_routes_removed': True,
             'lazy_flow_entry': True,
         },
     )
-    _render_light_entry_home()
 
 
-def _redirect_legacy_flow_to_home(flow: str) -> None:
-    add_audit_event(
-        'home_router_legacy_flow_removed',
-        area='HOME',
-        status='LEGADO_REDIRECIONADO',
-        details={'legacy_flow': flow, 'responsible_file': RESPONSIBLE_FILE},
-    )
-    _set_home_flow()
-    render_professional_home()
-
-
-def render_home_router() -> None:
-    requested_flow = _requested_flow()
-    if requested_flow in {'', FLOW_HOME}:
+def render_home() -> None:
+    flow = _requested_flow()
+    if flow == FLOW_HOME:
+        _render_professional_home()
+        return
+    if flow == FLOW_WIZARD:
+        _set_single_page_wizard_state()
+        render_home_wizard()
+        return
+    if flow in LEGACY_DISABLED_FLOWS:
         _set_home_flow()
-        render_professional_home()
+        safe_rerun('legacy_home_flow_disabled')
         return
-    if requested_flow in LEGACY_DISABLED_FLOWS:
-        _redirect_legacy_flow_to_home(requested_flow)
-        return
-    _set_single_page_wizard_state()
-    add_audit_event(
-        'home_router_render_single_page_wizard',
-        area='HOME',
-        details={
-            'responsible_file': RESPONSIBLE_FILE,
-            'wizard_step': st.session_state.get(WIZARD_STEP_KEY),
-            'step_preserved': True,
-            'single_page_flow_enabled': True,
-            'home_entry_context': st.session_state.get(HOME_ENTRY_CONTEXT_KEY),
-        },
-    )
-    render_home_wizard()
+    _set_home_flow()
+    _render_professional_home()
 
 
-__all__ = [
-    'FLOW_HOME',
-    'FLOW_LINKS_UTEIS',
-    'FLOW_MODELOS_BLING',
-    'FLOW_PRICE_UPDATE',
-    'FLOW_WIZARD',
-    'render_home_router',
-    'render_professional_home',
-]
+__all__ = ['render_home']
