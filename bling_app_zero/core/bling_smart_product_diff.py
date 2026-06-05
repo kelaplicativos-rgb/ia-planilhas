@@ -9,6 +9,12 @@ from bling_app_zero.core.audit import add_audit_event
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_smart_product_diff.py'
 
+_IMAGE_VARIANT_RE = re.compile(
+    r'(?:[-_](?:\d{2,5}x\d{2,5}|\d{2,5}w|\d{2,5}h|small|medium|large|thumb|thumbnail|scaled|resize|resized|original|webp|jpg|jpeg|png|avif))*$',
+    re.IGNORECASE,
+)
+_IMAGE_HASH_RE = re.compile(r'[-_][a-f0-9]{8,32}$', re.IGNORECASE)
+
 
 def _extract_dict(payload: Any) -> dict[str, Any]:
     if isinstance(payload, dict):
@@ -54,12 +60,37 @@ def _dig(value: Any, *path: str) -> Any:
     return current
 
 
+def _image_key(value: Any) -> str:
+    text = str(value or '').strip().lower().replace('\\', '/')
+    if not text:
+        return ''
+    text = text.split('?', 1)[0].split('#', 1)[0]
+    text = text.rstrip('/').rsplit('/', 1)[-1]
+    text = re.sub(r'\.(?:jpg|jpeg|png|webp|gif|bmp|tif|tiff|avif)$', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'@\d+x$', '', text, flags=re.IGNORECASE)
+    text = _IMAGE_VARIANT_RE.sub('', text)
+    text = _IMAGE_HASH_RE.sub('', text)
+    text = re.sub(r'[^a-z0-9]+', '-', text).strip('-')
+    return text
+
+
+def _cmp_images(value: Any) -> str:
+    keys: list[str] = []
+    for item in _images_from_any(value):
+        key = _image_key(item)
+        if key and key not in keys:
+            keys.append(key)
+    return '|'.join(sorted(keys))
+
+
 def _images_from_any(value: Any) -> list[str]:
     images: list[str] = []
     if isinstance(value, dict):
-        for key in ('imagens', 'images'):
+        for key in ('midia', 'media'):
             images.extend(_images_from_any(value.get(key)))
-        for key in ('link', 'url', 'src'):
+        for key in ('imagens', 'images', 'imagem', 'image'):
+            images.extend(_images_from_any(value.get(key)))
+        for key in ('link', 'url', 'src', 'href'):
             item = value.get(key)
             if item:
                 images.append(str(item))
@@ -93,7 +124,7 @@ def _existing_comparable(existing: dict[str, Any]) -> dict[str, str]:
         'ncm': _cmp_text(tributacao.get('ncm') or existing.get('ncm')),
         'categoria_id': _cmp_text(categoria.get('id') or existing.get('idCategoria')),
         'categoria_descricao': _cmp_text(categoria.get('descricao') or categoria.get('nome') or existing.get('categoria')),
-        'imagens': '|'.join(sorted(_images_from_any(existing.get('midia') or existing.get('imagens') or existing.get('images')))),
+        'imagens': _cmp_images(existing.get('midia') or existing.get('imagens') or existing.get('images')),
     }
 
 
@@ -112,7 +143,7 @@ def _payload_comparable(payload: dict[str, Any]) -> dict[str, str]:
         'ncm': _cmp_text(tributacao.get('ncm')),
         'categoria_id': _cmp_text(categoria.get('id')),
         'categoria_descricao': _cmp_text(categoria.get('descricao') or categoria.get('nome')),
-        'imagens': '|'.join(sorted(_images_from_any(payload.get('midia') or payload.get('imagens') or payload.get('images')))),
+        'imagens': _cmp_images(payload.get('midia') or payload.get('imagens') or payload.get('images')),
     }
 
 
