@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import json
 import re
-from typing import Callable
+from html import unescape
+from typing import Any, Callable
+from urllib.parse import urljoin
 
 import pandas as pd
+import requests
 
+from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.exporter import sanitize_for_bling
 from bling_app_zero.core.text import clean_cell, normalize_key
 from bling_app_zero.engines.fast_site_scraper.constants import (
@@ -18,11 +23,14 @@ from bling_app_zero.engines.fast_site_scraper.text_cleaner import clean_product_
 from bling_app_zero.engines.site_operations import run_site_operation_engine
 from bling_app_zero.universal.model_contract_detector import normalize_contract_operation
 
-
+RESPONSIBLE_FILE = 'bling_app_zero/pipelines/site_pipeline.py'
 VALID_OPERATIONS = {'cadastro', 'estoque', 'universal', 'atualizacao_preco'}
 UNIVERSAL_ALIASES = {'universal', 'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}
 ALL_PAGES_LIMIT = DEEP_CAPTURE_MAX_PAGES
 ALL_PRODUCTS_LIMIT = DEEP_CAPTURE_MAX_PRODUCTS
+PAGE_ENRICH_TIMEOUT = 12
+PAGE_ENRICH_MAX_ROWS = 160
+
 ESTOQUE_COLUMN_SIGNALS = (
     'estoque',
     'saldo',
@@ -96,6 +104,20 @@ TITLE_COLUMN_SIGNALS = (
 FALLBACK_TITLE_COLUMN_SIGNALS = (
     'descricao',
     'descrição',
+)
+URL_COLUMN_SIGNALS = (
+    'url',
+    'link',
+    'produto_url',
+    'url_produto',
+)
+IMAGE_COLUMN_SIGNALS = (
+    'imagem',
+    'imagens',
+    'url_imagens',
+    'url imagem',
+    'foto',
+    'fotos',
 )
 DESCRIPTION_NOISE_SIGNALS = (
     'ainda nao ha para este produto',
@@ -275,6 +297,206 @@ def _clean_site_description_columns(df: pd.DataFrame, operation: str) -> pd.Data
     return out.fillna('')
 
 
+def _find_column(df: pd.DataFrame, signals: tuple[str, ...]) -> str:
+    if not isinstance(df, pd.DataFrame):
+        return ''
+    for column in df.columns:
+        if _has_any_signal(_column_key(column), signals):
+            return str(column)
+    return ''
+
+
+def _is_short_or_empty_description(value: object) -> bool:
+    text = clean_cell(value)
+    return (not text) or len(text) < 55 or _word_count(text) < 8 or _value_key(text).isdigit()
+
+
+def _extract_meta_content(html: str, names: tuple[str, ...]) -> str:
+    raw = str(html or '')
+    for name in names:
+        patterns = (
+            rf'<meta[^>]+(?:property|name)=["\']{re.escape(name)}["\'][^>]+content=["\']([^"\']+)["\']',
+            rf'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\']{re.escape(name)}["\']',
+        )
+        for pattern in patterns:
+            match = re.search(pattern, raw, flags=re.IGNORECASE | re.DOTALL)
+            if match:
+                return unescape(match.group(1)).strip()
+    return ''
+
+
+def _jsonld_objects(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, dict):
+        items = [value]
+        graph = value.get('@graph')
+        if isinstance(graph, list):
+            for item in graph:
+                items.extend(_jsonld_objects(item))
+        return items
+    if isinstance(value, list):
+        out: list[dict[str, Any]] = []
+        for item in value:
+            out.extend(_jsonld_objects(item))
+        return out
+    return []
+
+
+def _extract_jsonld_product(html: str) -> dict[str, Any]:
+    for script in re.findall(r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', str(html or ''), flags=re.IGNORECASE | re.DOTALL):
+        try:
+            data = json.loads(unescape(script).strip())
+        except Exception:
+            continue
+        for item in _jsonld_objects(data):
+            item_type = item.get('@type') or item.get('type')
+            if isinstance(item_type, list):
+                types = [str(t).lower() for t in item_type]
+            else:
+                types = [str(item_type or '').lower()]
+            if 'product' in types:
+                return item
+    return {}
+
+
+def _string_or_join(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        return ' '.join(str(item).strip() for item in value if str(item).strip())
+    return str(value or '').strip()
+
+
+def _images_from_jsonld(product: dict[str, Any]) -> list[str]:
+    value = product.get('image') or product.get('images')
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return []
+
+
+def _page_enrichment(url: str) -> dict[str, str]:
+    clean_url = str(url or '').strip()
+    if not clean_url.startswith(('http://', 'https://')):
+        return {}
+    try:
+        response = requests.get(
+            clean_url,
+            timeout=PAGE_ENRICH_TIMEOUT,
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+            },
+        )
+        if response.status_code >= 400:
+            return {}
+        html = response.text or ''
+    except Exception:
+        return {}
+
+    product = _extract_jsonld_product(html)
+    name = _string_or_join(product.get('name')) if product else ''
+    description = _string_or_join(product.get('description')) if product else ''
+    image_urls = _images_from_jsonld(product) if product else []
+
+    if not name:
+        name = _extract_meta_content(html, ('og:title', 'twitter:title'))
+    if not description:
+        description = _extract_meta_content(html, ('description', 'og:description', 'twitter:description'))
+    if not image_urls:
+        image = _extract_meta_content(html, ('og:image', 'twitter:image'))
+        if image:
+            image_urls = [image]
+
+    normalized_images: list[str] = []
+    for image in image_urls:
+        value = str(image or '').strip()
+        if not value:
+            continue
+        if value.startswith('//'):
+            value = 'https:' + value
+        if value.startswith('/'):
+            value = urljoin(clean_url, value)
+        if value.startswith(('http://', 'https://')) and value not in normalized_images:
+            normalized_images.append(value)
+
+    return {
+        'name': clean_cell(unescape(name)),
+        'description': clean_cell(unescape(description)),
+        'images': '|'.join(normalized_images[:8]),
+    }
+
+
+def _enrich_missing_product_pages(df: pd.DataFrame, operation: str, progress_callback: Callable[[dict], None] | None = None) -> pd.DataFrame:
+    if operation == 'estoque' or not isinstance(df, pd.DataFrame) or df.empty:
+        return df
+
+    url_col = _find_column(df, URL_COLUMN_SIGNALS)
+    if not url_col:
+        return df
+
+    title_col = _best_title_column(df)
+    desc_cols = [col for col in df.columns if _is_description_column(col)]
+    if not desc_cols:
+        fallback_desc = _find_column(df, PLAIN_DESCRIPTION_COLUMN_SIGNALS)
+        if fallback_desc:
+            desc_cols = [fallback_desc]
+    image_col = _find_column(df, IMAGE_COLUMN_SIGNALS)
+
+    if not desc_cols and not image_col and not title_col:
+        return df
+
+    out = df.copy().fillna('')
+    enriched = 0
+    checked = 0
+    for index, row in out.head(PAGE_ENRICH_MAX_ROWS).iterrows():
+        url = clean_cell(row.get(url_col, ''))
+        if not url:
+            continue
+        needs_description = any(_is_short_or_empty_description(row.get(col, '')) for col in desc_cols)
+        needs_image = bool(image_col and not clean_cell(row.get(image_col, '')))
+        needs_title = bool(title_col and _is_short_or_empty_description(row.get(title_col, '')))
+        if not (needs_description or needs_image or needs_title):
+            continue
+        checked += 1
+        data = _page_enrichment(url)
+        if not data:
+            continue
+        title = clean_cell(row.get(title_col, '')) if title_col else ''
+        if title_col and needs_title and data.get('name'):
+            out.at[index, title_col] = data['name']
+            title = data['name']
+        if desc_cols and data.get('description'):
+            description = clean_product_description(data['description'], title=title or data.get('name', ''), limit=1800)
+            if description:
+                for col in desc_cols:
+                    if _is_short_or_empty_description(out.at[index, col]):
+                        out.at[index, col] = description
+        if image_col and needs_image and data.get('images'):
+            out.at[index, image_col] = data['images']
+        enriched += 1
+        if progress_callback and enriched % 10 == 0:
+            progress_callback({'stage': 'Enriquecendo páginas', 'message': f'{enriched} produto(s) complementado(s) pela página individual.', 'progress': 0.965})
+
+    if enriched:
+        add_audit_event(
+            'site_pipeline_product_pages_enriched',
+            area='SITE',
+            status='OK',
+            details={
+                'checked_rows': checked,
+                'enriched_rows': enriched,
+                'url_column': url_col,
+                'title_column': title_col,
+                'description_columns': desc_cols,
+                'image_column': image_col,
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+    return out.fillna('')
+
+
 def run_pipeline(
     raw_urls: str,
     requested_columns: list[str] | None = None,
@@ -318,8 +540,9 @@ def run_pipeline(
     )
 
     if progress_callback:
-        progress_callback({'stage': 'Organizando', 'message': 'Organizando os dados conforme o modelo anexado...', 'progress': 0.96})
-    cleaned_result = _clean_site_description_columns(df_result, selected_operation)
+        progress_callback({'stage': 'Organizando', 'message': 'Organizando e enriquecendo os dados do site antes do Bling...', 'progress': 0.96})
+    enriched_result = _enrich_missing_product_pages(df_result, selected_operation, progress_callback=progress_callback)
+    cleaned_result = _clean_site_description_columns(enriched_result, selected_operation)
     safe = sanitize_for_bling(cleaned_result, operation=selected_operation)
     if progress_callback:
         progress_callback({'stage': 'Pronto', 'message': f'{len(safe)} produto(s) preparados na origem.', 'progress': 1.0})
