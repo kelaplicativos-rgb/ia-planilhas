@@ -17,6 +17,7 @@ from bling_app_zero.ui.home_shared import show_contract
 from bling_app_zero.ui.home_wizard_constants import STEP_DOWNLOAD, STEP_ENTRADA, STEP_MAPEAMENTO
 from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 from bling_app_zero.ui.manual_table_import_panel import render_manual_table_import_panel
+from bling_app_zero.ui.mirror_planner_panel import render_mirror_planner_panel
 from bling_app_zero.ui.site_capture_spine import capture_profile
 from bling_app_zero.ui.site_models import (
     choose_site_cadastro_model_df,
@@ -207,6 +208,7 @@ def _render_ready_state(operation: str, df_site_bruto: pd.DataFrame, stock_balan
                 st.metric('Qualidade da captura', f"{notice.get('score')}/100")
             for warning in list(notice.get('warnings') or [])[:5]:
                 st.warning(str(warning))
+    render_mirror_planner_panel(df_site_bruto, operation=operation, stock_balance_only=stock_balance_only)
     st.caption(f'O resultado já está salvo em Origem dos dados. Toque abaixo para seguir para {next_label}.')
     if st.button(f'Continuar para {next_label}', use_container_width=True, key=f'continuar_pos_smartscan_{operation}'):
         _clear_smartscan_manual_flags()
