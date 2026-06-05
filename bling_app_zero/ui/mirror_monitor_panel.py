@@ -13,10 +13,14 @@ from bling_app_zero.core.bling_mirror_config import (
     MIRROR_MODE_STOCK,
     MirrorMonitorConfig,
     current_mirror_config,
-    current_mirror_status,
     save_mirror_config,
 )
-from bling_app_zero.core.bling_mirror_store import mirror_store_payload, save_persistent_config
+from bling_app_zero.core.bling_mirror_store import (
+    load_persistent_config,
+    load_persistent_status,
+    mirror_store_payload,
+    save_persistent_config,
+)
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/mirror_monitor_panel.py'
 
@@ -32,6 +36,16 @@ def _mode_label(mode: str) -> str:
 
 def _mode_options() -> list[str]:
     return [MIRROR_MODE_STOCK, MIRROR_MODE_NEW_PRODUCTS, MIRROR_MODE_BOTH]
+
+
+def _config_for_panel() -> MirrorMonitorConfig:
+    session_cfg = current_mirror_config()
+    persistent_cfg = load_persistent_config()
+    if persistent_cfg.updated_at and not session_cfg.updated_at:
+        return persistent_cfg
+    if persistent_cfg.updated_at and persistent_cfg.updated_at > session_cfg.updated_at:
+        return persistent_cfg
+    return session_cfg
 
 
 def _run_rows(limit: int = 8) -> pd.DataFrame:
@@ -79,8 +93,8 @@ def _render_persistent_history() -> None:
 
 
 def render_mirror_monitor_panel(*, default_site_url: str = '', default_deposit_name: str = '') -> None:
-    cfg = current_mirror_config()
-    status = current_mirror_status()
+    cfg = _config_for_panel()
+    status = load_persistent_status()
 
     with st.expander('Configuração do espelhamento automático futuro', expanded=False):
         st.caption('Esta configuração liga apenas o modo monitoramento. O ciclo automático real ainda não roda dentro do Streamlit.')
@@ -130,14 +144,14 @@ def render_mirror_monitor_panel(*, default_site_url: str = '', default_deposit_n
                 status='CONFIGURADO',
                 details={'config': persistent.to_dict(), 'persistent_store': True, 'responsible_file': RESPONSIBLE_FILE},
             )
+            status = load_persistent_status()
 
-        status = current_mirror_status()
         st.markdown('#### Status do monitoramento')
         cols = st.columns(3)
         cols[0].metric('Estado', status.state)
-        cols[1].metric('Última simulação', status.last_run_at or '—')
+        cols[1].metric('Último ciclo persistente', status.last_run_at or '—')
         cols[2].metric('Próximo ciclo previsto', status.next_run_at or '—')
-        st.caption(status.last_message or 'Aguardando configuração.')
+        st.caption(status.last_message or 'Aguardando configuração persistente.')
         _render_persistent_history()
         st.info('Para virar automático real, o próximo passo é configurar o executor agendado fora da tela Streamlit.')
 
