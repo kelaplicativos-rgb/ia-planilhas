@@ -40,6 +40,44 @@ def _empty_payload() -> dict[str, Any]:
     }
 
 
+def _store_health_payload(path: Path, payload: Mapping[str, Any]) -> dict[str, Any]:
+    exists = path.exists()
+    parent_exists = path.parent.exists()
+    readable = False
+    writable_parent = False
+    if exists:
+        try:
+            path.read_text(encoding='utf-8')
+            readable = True
+        except Exception:
+            readable = False
+    if parent_exists:
+        try:
+            probe = path.parent / '.mirror_store_write_probe.tmp'
+            probe.write_text('ok', encoding='utf-8')
+            probe.unlink(missing_ok=True)
+            writable_parent = True
+        except Exception:
+            writable_parent = False
+    runs = payload.get('runs') if isinstance(payload.get('runs'), list) else []
+    has_config = isinstance(payload.get('config'), dict)
+    has_status = isinstance(payload.get('status'), dict)
+    ok = bool(parent_exists and writable_parent and has_config and has_status)
+    return {
+        'ok': ok,
+        'exists': exists,
+        'parent_exists': parent_exists,
+        'readable': readable,
+        'writable_parent': writable_parent,
+        'store_path': str(path),
+        'runs_total': len(runs),
+        'has_config': has_config,
+        'has_status': has_status,
+        'message': 'Store persistente pronto para leitura/gravação.' if ok else 'Store persistente precisa de revisão no ambiente.',
+        'responsible_file': RESPONSIBLE_FILE,
+    }
+
+
 def read_mirror_store() -> dict[str, Any]:
     path = _store_path()
     if not path.exists():
@@ -139,8 +177,10 @@ def append_mirror_run(run_payload: Mapping[str, Any], *, max_runs: int = 80) -> 
 
 
 def mirror_store_payload() -> dict[str, Any]:
+    path = _store_path()
     payload = read_mirror_store()
-    payload['store_path'] = str(_store_path())
+    payload['store_path'] = str(path)
+    payload['health'] = _store_health_payload(path, payload)
     payload['responsible_file'] = RESPONSIBLE_FILE
     return payload
 
