@@ -9,6 +9,7 @@ import streamlit as st
 from bling_app_zero.adapters.streamlit_site_capture_adapter import fail_site_capture, finish_site_capture, start_site_capture
 from bling_app_zero.agents.site_capture_agent import run_bling_smartscan
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.intelligent_flow_decision import decide_after_site_capture
 from bling_app_zero.engines.fast_site_scraper.constants import (
     DISCOVERY_BUDGET_SECONDS,
     FLOW_CAPTURE_MAX_DEPTH,
@@ -113,7 +114,7 @@ def _smartscan_notice_payload(report, *, rows: int) -> dict[str, object]:
     try:
         quality = report.quality
         platform = report.platform
-        return {
+        payload = {
             'title': 'BLINGSMARTSCAN concluído.',
             'platform': platform.platform,
             'confidence': int(platform.confidence * 100),
@@ -121,6 +122,10 @@ def _smartscan_notice_payload(report, *, rows: int) -> dict[str, object]:
             'rows': int(rows or quality.rows),
             'warnings': [str(item) for item in list(quality.warnings or [])[:5]],
         }
+        decision = getattr(report, 'decision', None)
+        if decision is not None:
+            payload['decision'] = decision.to_dict() if hasattr(decision, 'to_dict') else decision
+        return payload
     except Exception:
         return {'title': 'BLINGSMARTSCAN concluído.', 'rows': int(rows or 0), 'warnings': []}
 
@@ -135,6 +140,65 @@ def _progress_callback_for_capture(*, operation: str, options: dict[str, int | b
     if _is_stock_balance_only(operation, options):
         return None
     return make_site_progress_callback(progress_bar, status_box)
+
+
+def _decision_from_smart_report(operation: str, smart_report):
+    if smart_report is None:
+        return None
+    try:
+        existing = getattr(smart_report, 'decision', None)
+        if existing is not None:
+            return existing
+        platform = getattr(getattr(smart_report, 'platform', None), 'platform', '')
+        used_api = bool(getattr(smart_report, 'used_api', False))
+        return decide_after_site_capture(
+            operation=operation,
+            quality=getattr(smart_report, 'quality', None),
+            used_api=used_api,
+            platform=platform,
+        )
+    except Exception:
+        return None
+
+
+def _render_capture_decision(operation: str, smart_report, *, rows: int) -> dict[str, object]:
+    decision = _decision_from_smart_report(operation, smart_report)
+    if decision is None:
+        return {'action': 'REVISAR', 'status': 'ATENCAO', 'should_block': False, 'should_recapture': False}
+
+    payload = decision.to_dict()
+    st.session_state[f'blingsmartscan_decision_{operation}'] = payload
+    st.session_state['blingsmartscan_last_decision'] = payload
+
+    if decision.status == 'BLOQUEADO':
+        st.error(f'{decision.title}: {decision.message}')
+    elif decision.status == 'ATENCAO':
+        st.warning(f'{decision.title}: {decision.message}')
+    else:
+        st.success(f'{decision.title}: {decision.message}')
+
+    if decision.reasons:
+        with st.expander('Decisão inteligente da captura', expanded=False):
+            for reason in decision.reasons[:10]:
+                st.caption(f'• {reason}')
+
+    _emit_capture_progress(
+        'Decisão inteligente',
+        f'{decision.title}: {decision.message}',
+        progress=0.90,
+        rows=int(rows),
+        action=decision.action,
+        status=decision.status,
+        next_step=decision.next_step,
+    )
+    add_audit_event(
+        'blingsmartscan_ui_intelligent_decision',
+        area='SITE',
+        step='decisao',
+        status=decision.status,
+        details={'operation': operation, 'rows': int(rows), 'decision': payload, 'responsible_file': RESPONSIBLE_FILE},
+    )
+    return payload
 
 
 def prepare_raw_urls_for_capture(
@@ -428,6 +492,15 @@ def run_site_capture(
         _orange_notice('Nenhum dado válido foi encontrado nesse lote inteligente. Confira o link inicial ou cole links diretos de produtos.')
         return
 
+    flow_decision = _render_capture_decision(operation, smart_report, rows=rows)
+    if bool(flow_decision.get('should_block')) or bool(flow_decision.get('should_recapture')):
+        clear_site_df(operation, 'blingsmartscan_decisao_bloqueada')
+        set_capture_state(operation=operation, running=False, finished=False, error=str(flow_decision.get('message') or 'Decisão inteligente bloqueou o avanço.'), rows=rows, columns=columns)
+        fail_site_capture(str(flow_decision.get('message') or 'Decisão inteligente bloqueou o avanço.'), _capture_context(raw_urls, operation, max_pages, max_products))
+        finish_progress(progress_bar, status_box, text='BLINGSMARTSCAN aguardando correção da captura.')
+        st.warning('A captura foi protegida e não avançou automaticamente. Revise os links ou rode uma nova captura com dados mais completos.')
+        return
+
     save_site_source(df_site, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, operation)
     store_site_df(operation, df_site)
     finish_site_capture(
@@ -440,9 +513,11 @@ def run_site_capture(
     set_capture_state(operation=operation, running=False, finished=True, rows=rows, columns=columns)
     if smart_report is not None:
         try:
-            st.session_state[f'blingsmartscan_report_{operation}'] = asdict(smart_report)
+            report_payload = asdict(smart_report)
+            report_payload['flow_decision'] = flow_decision
+            st.session_state[f'blingsmartscan_report_{operation}'] = report_payload
         except Exception:
-            st.session_state[f'blingsmartscan_report_{operation}'] = {'message': getattr(smart_report, 'message', '')}
+            st.session_state[f'blingsmartscan_report_{operation}'] = {'message': getattr(smart_report, 'message', ''), 'flow_decision': flow_decision}
         _store_smartscan_notice(operation, smart_report, rows=rows)
 
     target_step = _next_step_after_capture()
@@ -464,11 +539,12 @@ def run_site_capture(
         'responsible_file': RESPONSIBLE_FILE,
         'manual_continue_required': True,
         'manual_continue_target_step': target_step,
+        'flow_decision': flow_decision,
     }
     details.update(deep_details)
     if smart_report is not None:
         details['blingsmartscan_report'] = asdict(smart_report)
-    add_audit_event('blingsmartscan_ui_saved_to_state', area='SITE', step='entrada', status='OK', details=details)
+    add_audit_event('blingsmartscan_ui_saved_to_state', area='SITE', step='entrada', status=str(flow_decision.get('status') or 'OK'), details=details)
 
     if deep_details.get('deep_capture_stopped_by_budget'):
         st.session_state['blingsmartscan_budget_notice'] = f'O BLINGSMARTSCAN encontrou {rows} produto(s) neste lote e parou para evitar queda do sistema. Você pode rodar outro lote depois.'
