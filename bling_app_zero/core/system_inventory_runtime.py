@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from bling_app_zero.core.system_inventory import (
     SYSTEM_INVENTORY,
-    inventory_items,
+    STATUS_ATIVO,
+    SystemInventoryItem,
     inventory_markdown as official_inventory_markdown,
     inventory_payload as official_inventory_payload,
     inventory_summary as official_inventory_summary,
-    registered_paths,
+    registered_paths as official_registered_paths,
 )
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/system_inventory_runtime.py'
@@ -26,6 +27,38 @@ IGNORED_DIR_NAMES = {
     'node_modules',
     'venv',
 }
+
+RUNTIME_EXTRA_INVENTORY: tuple[SystemInventoryItem, ...] = (
+    SystemInventoryItem(
+        id='mirror_planner',
+        name='Planejador seguro de espelhamento site → Bling',
+        status=STATUS_ATIVO,
+        layer='ORQUESTRACAO',
+        purpose='Classifica, em modo simulação, quais linhas do site estão prontas para atualização de estoque e quais parecem produtos novos para cadastro.',
+        owner_spine='Flow Spine / Site Capture Spine',
+        main_paths=('bling_app_zero/core/bling_mirror_planner.py',),
+        risk='Não executa rotina em segundo plano; apenas planeja e separa decisões. A execução automática deve ser ligada depois com confirmação e logs.',
+        action='Próximo passo: criar painel visual e somente depois habilitar execução assistida por ciclos seguros.',
+    ),
+)
+
+
+def inventory_items(statuses: Iterable[str] | None = None) -> tuple[SystemInventoryItem, ...]:
+    items = tuple(SYSTEM_INVENTORY) + tuple(RUNTIME_EXTRA_INVENTORY)
+    wanted = {str(status).strip().upper() for status in statuses or () if str(status).strip()}
+    if not wanted:
+        return items
+    return tuple(item for item in items if item.status in wanted)
+
+
+def registered_paths() -> set[str]:
+    paths = set(official_registered_paths())
+    for item in RUNTIME_EXTRA_INVENTORY:
+        for path in item.main_paths:
+            normalized = str(path or '').replace('\\', '/').strip()
+            if normalized:
+                paths.add(normalized)
+    return paths
 
 
 def _project_root() -> Path:
@@ -86,6 +119,17 @@ def runtime_repository_snapshot() -> dict[str, Any]:
 def inventory_summary() -> dict[str, Any]:
     summary = dict(official_inventory_summary())
     snapshot = runtime_repository_snapshot()
+    extra_count = len(RUNTIME_EXTRA_INVENTORY)
+    status_counts = dict(summary.get('status_counts') or {})
+    layer_counts = dict(summary.get('layer_counts') or {})
+    for item in RUNTIME_EXTRA_INVENTORY:
+        status_counts[item.status] = int(status_counts.get(item.status, 0)) + 1
+        layer_counts[item.layer] = int(layer_counts.get(item.layer, 0)) + 1
+    summary['status_counts'] = status_counts
+    summary['layer_counts'] = layer_counts
+    summary['total_subsystems'] = int(summary.get('total_subsystems') or 0) + extra_count
+    summary['active_subsystems'] = int(summary.get('active_subsystems') or 0) + sum(1 for item in RUNTIME_EXTRA_INVENTORY if item.status == STATUS_ATIVO)
+    summary['runtime_extra_inventory_total'] = extra_count
     summary['runtime_repository_python_files_total'] = snapshot.get('python_files_total', 0)
     summary['runtime_repository_unregistered_files_total'] = snapshot.get('unregistered_files_total', 0)
     summary['runtime_repository_scan_scope'] = snapshot.get('scope')
@@ -95,7 +139,11 @@ def inventory_summary() -> dict[str, Any]:
 
 def inventory_payload() -> dict[str, Any]:
     payload = dict(official_inventory_payload())
+    official_items = list(payload.get('items') or [])
+    official_items.extend(item.to_dict() for item in RUNTIME_EXTRA_INVENTORY)
     repository_snapshot = runtime_repository_snapshot()
+    payload['items'] = official_items
+    payload['runtime_extra_inventory'] = [item.to_dict() for item in RUNTIME_EXTRA_INVENTORY]
     payload['runtime_repository_file_snapshot'] = repository_snapshot
     payload['summary'] = inventory_summary()
     return payload
@@ -104,10 +152,25 @@ def inventory_payload() -> dict[str, Any]:
 def inventory_markdown() -> str:
     base = official_inventory_markdown().rstrip()
     snapshot = runtime_repository_snapshot()
-    lines = [base, '', '## Varredura automática ampliada do repositório', '']
+    lines = [base, '', '## Inventário runtime extra', '']
+    for item in RUNTIME_EXTRA_INVENTORY:
+        lines.append(f'### {item.id} · {item.status}')
+        lines.append(f'**Nome:** {item.name}')
+        lines.append(f'**Camada:** {item.layer}')
+        lines.append(f'**Dono/Espinha:** {item.owner_spine}')
+        lines.append(f'**Função:** {item.purpose}')
+        if item.risk:
+            lines.append(f'**Risco:** {item.risk}')
+        if item.action:
+            lines.append(f'**Ação:** {item.action}')
+        lines.append('**Arquivos principais:**')
+        for path in item.main_paths:
+            lines.append(f'- `{path}`')
+        lines.append('')
+    lines.extend(['', '## Varredura automática ampliada do repositório', ''])
     lines.append(f'- Escopo: `{snapshot.get("scope")}`')
     lines.append(f'- Arquivos Python detectados no repositório/runtime: {snapshot.get("python_files_total", 0)}')
-    lines.append(f'- Arquivos cadastrados no inventário oficial: {snapshot.get("registered_paths_total", 0)}')
+    lines.append(f'- Arquivos cadastrados no inventário oficial/runtime: {snapshot.get("registered_paths_total", 0)}')
     lines.append(f'- Arquivos ainda não cadastrados diretamente: {snapshot.get("unregistered_files_total", 0)}')
     unregistered = list(snapshot.get('unregistered_files') or [])
     if unregistered:
@@ -122,11 +185,13 @@ def inventory_markdown() -> str:
 
 
 __all__ = [
+    'RUNTIME_EXTRA_INVENTORY',
     'SYSTEM_INVENTORY',
     'inventory_items',
     'inventory_markdown',
     'inventory_payload',
     'inventory_summary',
+    'registered_paths',
     'runtime_repository_python_files',
     'runtime_repository_snapshot',
     'unregistered_repository_python_files',
