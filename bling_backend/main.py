@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hmac
 import secrets
 from urllib.parse import urlencode
 
@@ -11,7 +12,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from bling_backend.config import load_config
 from bling_backend.token_store import clear_token, load_token, save_token
 
-app = FastAPI(title='MapeiaAI Bling OAuth Backend', version='1.1.0')
+app = FastAPI(title='MapeiaAI Bling OAuth Backend', version='1.1.1')
 _STATE_COOKIE = 'bling_oauth_state'
 
 
@@ -20,33 +21,21 @@ def _basic_auth_header(client_id: str, client_secret: str) -> str:
     return 'Basic ' + base64.b64encode(raw).decode('ascii')
 
 
-def _html_message(title: str, message: str, link: str = '/') -> HTMLResponse:
-    return HTMLResponse(
-        f'''
+def _html_message(title: str, message: str, link: str = '/'):
+    html = f"""
 <!doctype html>
 <html lang="pt-BR">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{title}</title>
-  <style>
-    body {{ font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background:#f8fafc; color:#0f172a; padding:24px; }}
-    .card {{ max-width:620px; margin:48px auto; background:white; border:1px solid #e2e8f0; border-radius:18px; padding:24px; box-shadow:0 12px 30px rgba(15,23,42,.08); }}
-    .ok {{ color:#166534; }}
-    .warn {{ color:#9a3412; }}
-    a {{ display:block; text-align:center; margin-top:18px; padding:12px 14px; border-radius:12px; background:#2563eb; color:white; text-decoration:none; font-weight:800; }}
-  </style>
-</head>
-<body>
-  <main class="card">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title}</title></head>
+<body style="font-family:Arial,sans-serif;background:#f8fafc;color:#0f172a;padding:24px;">
+  <main style="max-width:620px;margin:48px auto;background:white;border:1px solid #e2e8f0;border-radius:18px;padding:24px;">
     <h1>{title}</h1>
     <p>{message}</p>
-    <a href="{link}">Voltar para o sistema</a>
+    <a href="{link}" style="display:block;text-align:center;margin-top:18px;padding:12px 14px;border-radius:12px;background:#2563eb;color:white;text-decoration:none;font-weight:800;">Voltar para o sistema</a>
   </main>
 </body>
 </html>
-'''
-    )
+"""
+    return HTMLResponse(html)
 
 
 def _require_backend_secret(request: Request) -> None:
@@ -55,7 +44,7 @@ def _require_backend_secret(request: Request) -> None:
     provided = str(request.headers.get('X-Backend-Secret') or '').strip()
     if not expected:
         raise HTTPException(status_code=403, detail='BLING_BACKEND_SHARED_SECRET não configurado no backend.')
-    if not secrets.compare_digest(provided, expected):
+    if not hmac.compare_digest(provided, expected):
         raise HTTPException(status_code=403, detail='Segredo inválido.')
 
 
@@ -73,7 +62,7 @@ def health() -> dict[str, object]:
 
 
 @app.get('/auth/bling/start')
-def start_auth() -> RedirectResponse:
+def start_auth():
     config = load_config()
     if not config.client_id:
         raise HTTPException(status_code=500, detail='BLING_CLIENT_ID não configurado.')
@@ -90,7 +79,7 @@ def start_auth() -> RedirectResponse:
 
 
 @app.get('/auth/bling/callback')
-def callback(request: Request, code: str | None = None, state: str | None = None, error: str | None = None) -> HTMLResponse | RedirectResponse:
+def callback(request: Request, code: str | None = None, state: str | None = None, error: str | None = None):
     config = load_config()
     if error:
         return _html_message('Bling não autorizou', f'Erro retornado pelo Bling: {error}', config.frontend_return_url)
