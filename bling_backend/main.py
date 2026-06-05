@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from bling_backend.config import load_config
 from bling_backend.token_store import clear_token, load_token, save_token
 
-app = FastAPI(title='MapeiaAI Bling OAuth Backend', version='1.0.0')
+app = FastAPI(title='MapeiaAI Bling OAuth Backend', version='1.1.0')
 _STATE_COOKIE = 'bling_oauth_state'
 
 
@@ -49,6 +49,16 @@ def _html_message(title: str, message: str, link: str = '/') -> HTMLResponse:
     )
 
 
+def _require_backend_secret(request: Request) -> None:
+    config = load_config()
+    expected = str(config.backend_shared_secret or '').strip()
+    provided = str(request.headers.get('X-Backend-Secret') or '').strip()
+    if not expected:
+        raise HTTPException(status_code=403, detail='BLING_BACKEND_SHARED_SECRET não configurado no backend.')
+    if not secrets.compare_digest(provided, expected):
+        raise HTTPException(status_code=403, detail='Segredo inválido.')
+
+
 @app.get('/health')
 def health() -> dict[str, object]:
     config = load_config()
@@ -58,6 +68,7 @@ def health() -> dict[str, object]:
         'oauth_ready': config.ready,
         'connected': bool(token.get('access_token')),
         'redirect_uri': config.redirect_uri,
+        'token_bridge_ready': bool(config.backend_shared_secret),
     }
 
 
@@ -112,12 +123,23 @@ def callback(request: Request, code: str | None = None, state: str | None = None
 
 @app.get('/auth/bling/status')
 def status() -> dict[str, object]:
+    config = load_config()
     token = load_token()
     return {
         'connected': bool(token.get('access_token')),
         'saved_at': token.get('saved_at', ''),
         'expires_at': token.get('expires_at', ''),
+        'token_bridge_ready': bool(config.backend_shared_secret),
     }
+
+
+@app.get('/auth/bling/token')
+def token_bridge(request: Request) -> dict[str, object]:
+    _require_backend_secret(request)
+    token = load_token()
+    if not token.get('access_token'):
+        raise HTTPException(status_code=404, detail='Token Bling não encontrado no backend.')
+    return {'connected': True, 'token': token}
 
 
 @app.post('/auth/bling/disconnect')
