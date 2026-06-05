@@ -297,14 +297,14 @@ def _render_stock_deposit_field(operation: str) -> None:
     st.warning('Nenhum depósito selecionado. Atualize os depósitos do Bling antes de enviar estoque.')
 
 
-def render_same_tab_connect_button(auth_url: str) -> None:
+def render_new_tab_connect_button(auth_url: str) -> None:
     safe_url = escape(str(auth_url or ''), quote=True)
     if not safe_url:
         st.warning('Não consegui gerar o link de conexão com o Bling agora. Confira Client ID, Client Secret e Redirect URI nos secrets do Streamlit ou configure BLING_BACKEND_AUTH_URL.')
         return
     st.markdown(
         f'''
-<a href="{safe_url}" target="_self" style="
+<a href="{safe_url}" target="_blank" rel="noopener noreferrer" style="
     display:block;
     width:100%;
     box-sizing:border-box;
@@ -318,11 +318,20 @@ def render_same_tab_connect_button(auth_url: str) -> None:
     background:#2563eb;
     box-shadow:0 10px 22px rgba(37,99,235,.18);
 ">
-    Conectar ao Bling
+    Conectar ao Bling em nova aba
 </a>
 ''',
         unsafe_allow_html=True,
     )
+    st.info('A autorização será aberta em outra aba. Depois de concluir no Bling, volte para esta aba; o fluxo será liberado assim que a conexão for reconhecida.')
+    if st.button('Já autorizei no Bling, verificar conexão', use_container_width=True, key='bling_check_connection_after_new_tab'):
+        add_audit_event('bling_api_manual_connection_check_clicked', area='BLING_API', status='OK', details={'responsible_file': RESPONSIBLE_FILE})
+        safe_rerun('bling_api_manual_connection_check', target_step=STEP_ORIGEM)
+
+
+def render_same_tab_connect_button(auth_url: str) -> None:
+    # Compatibilidade: chamadas antigas agora usam a versão segura em nova aba.
+    render_new_tab_connect_button(auth_url)
 
 
 def render_callback_hint(callback_url: str) -> None:
@@ -395,7 +404,7 @@ def render_bling_connection_step(section_title) -> None:
         if not auth_url:
             render_callback_hint(callback_url)
         try:
-            auth_url = auth_url or build_authorization_url({'return_to': 'start', 'source_step': 'bling_connection_entry'})
+            auth_url = auth_url or build_authorization_url({'return_to': 'start', 'source_step': 'bling_connection_entry', 'open_mode': 'new_tab'})
         except Exception as exc:
             auth_url = ''
             add_audit_event('bling_api_authorization_url_error', area='BLING_API', status='ERRO', details={'error': str(exc), 'responsible_file': RESPONSIBLE_FILE})
@@ -405,10 +414,10 @@ def render_bling_connection_step(section_title) -> None:
             else:
                 st.info('Conexão do Bling será feita pelo backend externo. O Streamlit não processa o OAuth neste caminho.')
             add_audit_event('bling_api_external_backend_auth_enabled', area='BLING_API', status='OK', details={'responsible_file': RESPONSIBLE_FILE})
-        render_same_tab_connect_button(auth_url)
+        render_new_tab_connect_button(auth_url)
         st.markdown('<div style="height:.55rem"></div>', unsafe_allow_html=True)
         st.caption('Sem conexão com o Bling, este caminho fica bloqueado. Para gerar arquivo manual, volte para a Home e use modelo de destino.')
-        add_audit_event('bling_api_connection_required', area='BLING_API', status='AGUARDANDO_CONEXAO', details={'required_redirect_uri': callback_url, 'external_backend': bool(configured_backend_auth_url()), 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('bling_api_connection_required', area='BLING_API', status='AGUARDANDO_CONEXAO', details={'required_redirect_uri': callback_url, 'external_backend': bool(configured_backend_auth_url()), 'open_mode': 'new_tab', 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = [
