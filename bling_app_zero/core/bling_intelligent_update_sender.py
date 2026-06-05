@@ -7,7 +7,8 @@ import pandas as pd
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_direct_sender import DirectSendResult
 from bling_app_zero.core.bling_direct_sender_smart_diff import send_dataframe_to_bling as _smart_diff_send_dataframe_to_bling
-from bling_app_zero.core.bling_product_update_intelligence import ACTION_PENDING, analyze_product_update_need
+from bling_app_zero.core.bling_product_update_intelligence import ACTION_PENDING, analyze_product_update_need, analyze_stock_update_need
+from bling_app_zero.core.operation_contract import OP_ESTOQUE, normalize_operation
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_intelligent_update_sender.py'
 
@@ -80,17 +81,26 @@ def _pending_errors_by_line(pending: list[dict[str, Any]], *, limit: int = 120) 
     return errors
 
 
-def split_intelligent_update_rows(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
+def _decision_for_operation(row: Any, operation: str):
+    op = normalize_operation(operation)
+    if op == OP_ESTOQUE:
+        return analyze_stock_update_need(row)
+    return analyze_product_update_need(row, None)
+
+
+def split_intelligent_update_rows(df: pd.DataFrame, operation: str = '') -> tuple[pd.DataFrame, list[dict[str, Any]]]:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame(), []
 
+    op = normalize_operation(operation)
     allowed_indices: list[Any] = []
     pending: list[dict[str, Any]] = []
     for position, (index, row) in enumerate(df.fillna('').iterrows(), start=1):
         line = int(index) + 1 if isinstance(index, int) else position
-        decision = analyze_product_update_need(row, None)
+        decision = _decision_for_operation(row, op)
         payload = decision.to_dict()
         payload['line'] = line
+        payload['operation'] = op
         if decision.action == ACTION_PENDING or decision.should_hold:
             pending.append(payload)
             continue
@@ -107,30 +117,34 @@ def send_dataframe_to_bling_intelligent(
     limit: int | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> DirectSendResult:
-    """Envio com pré-decisão de qualidade antes do sender atual.
+    """Envio com pré-decisão inteligente antes do sender atual.
 
-    Este wrapper não substitui o comparador existente; ele apenas evita gastar API
-    com linhas que já sabemos que virariam pendência por falta de identidade/nome.
+    BLINGFIX: a pré-decisão agora é sensível à operação.
+    - cadastro/preço de produto: usa qualidade rica de produto.
+    - estoque: exige apenas identificação + quantidade/saldo, sem cobrar nome,
+      preço, descrição, imagem, marca ou categoria.
     O sender smart_diff continua fazendo a comparação profunda contra o Bling e
     atualiza somente produtos com mudança real.
     """
     if not isinstance(df, pd.DataFrame) or df.empty:
         return DirectSendResult(0, 0, 0, 0, tuple(), tuple())
 
-    allowed_df, pending = split_intelligent_update_rows(df)
+    op = normalize_operation(operation)
+    allowed_df, pending = split_intelligent_update_rows(df, op)
     skipped_before_api = len(pending)
     for item in pending[:50]:
         add_audit_event(
             'bling_intelligent_update_pending_before_api',
             area='BLING_ENVIO',
             status='PENDENCIA',
-            details={'decision': item, 'responsible_file': RESPONSIBLE_FILE},
+            details={'operation': op, 'decision': item, 'responsible_file': RESPONSIBLE_FILE},
         )
 
     _emit(
         progress_callback,
         {
             'stage': 'Pré-decisão inteligente de atualização',
+            'operation': op,
             'processed': 0,
             'total': len(df),
             'sent': 0,
@@ -139,6 +153,7 @@ def send_dataframe_to_bling_intelligent(
             'pending_before_api': skipped_before_api,
             'allowed_rows': len(allowed_df),
             'progress': 0.02,
+            'stock_quality_mode': op == OP_ESTOQUE,
         },
     )
 
@@ -150,13 +165,13 @@ def send_dataframe_to_bling_intelligent(
             'bling_intelligent_update_all_pending_before_api',
             area='BLING_ENVIO',
             status='BLOQUEADO',
-            details={'total': len(df), 'pending': skipped_before_api, 'responsible_file': RESPONSIBLE_FILE},
+            details={'operation': op, 'total': len(df), 'pending': skipped_before_api, 'stock_quality_mode': op == OP_ESTOQUE, 'responsible_file': RESPONSIBLE_FILE},
         )
         return DirectSendResult(len(df), 0, 0, skipped_before_api, tuple([message] + pending_errors), tuple())
 
     result = _smart_diff_send_dataframe_to_bling(
         allowed_df,
-        operation,
+        op,
         limit=limit,
         progress_callback=progress_callback,
     )
@@ -181,6 +196,7 @@ def send_dataframe_to_bling_intelligent(
         area='BLING_ENVIO',
         status='OK' if failed == 0 else 'PARCIAL',
         details={
+            'operation': op,
             'total_input': len(df),
             'attempted_after_api': attempted_after_api,
             'attempted_total': attempted_total,
@@ -190,6 +206,7 @@ def send_dataframe_to_bling_intelligent(
             'failed': failed,
             'skipped_after_api': skipped_after_api,
             'skipped_total': skipped_total,
+            'stock_quality_mode': op == OP_ESTOQUE,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
