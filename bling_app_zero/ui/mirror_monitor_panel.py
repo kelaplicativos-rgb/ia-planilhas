@@ -56,6 +56,7 @@ def _run_rows(limit: int = 8) -> pd.DataFrame:
         if not isinstance(item, dict):
             continue
         cycle = item.get('cycle') if isinstance(item.get('cycle'), dict) else {}
+        diff = item.get('diff') if isinstance(item.get('diff'), dict) else {}
         rows.append(
             {
                 'quando': item.get('finished_at') or item.get('created_at') or '',
@@ -67,10 +68,20 @@ def _run_rows(limit: int = 8) -> pd.DataFrame:
                 'estoque_pronto': cycle.get('stock_ready') or 0,
                 'novos_produtos': cycle.get('new_products_ready') or 0,
                 'pendencias': cycle.get('pending') or 0,
-                'mensagem': item.get('message') or cycle.get('message') or '',
+                'mudou': 'Sim' if diff.get('changed') else 'Não',
+                'mensagem': item.get('message') or cycle.get('message') or diff.get('message') or '',
             }
         )
     return pd.DataFrame(rows)
+
+
+def _latest_diff() -> dict[str, object]:
+    payload = mirror_store_payload()
+    runs = payload.get('runs') if isinstance(payload.get('runs'), list) else []
+    for item in reversed(runs):
+        if isinstance(item, dict) and isinstance(item.get('diff'), dict):
+            return dict(item.get('diff') or {})
+    return {}
 
 
 def _render_store_health() -> None:
@@ -90,13 +101,17 @@ def _render_persistent_history() -> None:
     payload = mirror_store_payload()
     status = payload.get('status') if isinstance(payload.get('status'), dict) else {}
     runs = payload.get('runs') if isinstance(payload.get('runs'), list) else []
+    diff = _latest_diff()
     st.markdown('#### Histórico persistente')
-    cols = st.columns(5)
+    cols = st.columns(6)
     cols[0].metric('Execuções', len(runs))
     cols[1].metric('Linhas lidas', int(status.get('last_rows_seen') or 0))
     cols[2].metric('Estoque pronto', int(status.get('last_stock_ready') or 0))
     cols[3].metric('Produtos novos', int(status.get('last_new_products_ready') or 0))
     cols[4].metric('Pendências', int(status.get('last_pending') or 0))
+    cols[5].metric('Mudou?', 'Sim' if diff.get('changed') else 'Não')
+    if diff:
+        st.caption(str(diff.get('message') or 'Comparação entre ciclos registrada.'))
     df_runs = _run_rows()
     if isinstance(df_runs, pd.DataFrame) and not df_runs.empty:
         with st.expander('Ver últimas execuções monitoradas', expanded=False):
