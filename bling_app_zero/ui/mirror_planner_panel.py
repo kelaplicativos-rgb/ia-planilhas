@@ -15,7 +15,7 @@ from bling_app_zero.core.bling_mirror_planner import (
     decisions_dataframe,
     report_summary,
 )
-from bling_app_zero.ui.home_wizard_constants import STEP_DOWNLOAD, STEP_PREVIEW
+from bling_app_zero.ui.home_wizard_constants import STEP_PREVIEW
 from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/mirror_planner_panel.py'
@@ -111,11 +111,11 @@ def _render_official_flow_bridge(operation: str, stock_balance_only: bool) -> No
                 stock_df,
                 operation='estoque',
                 source_label='espelhamento_estoque_revisado',
-                target_step=STEP_DOWNLOAD if stock_balance_only else STEP_PREVIEW,
+                target_step=STEP_PREVIEW,
             )
             if result.ok:
                 st.success(result.message)
-                safe_rerun('mirror_bridge_stock_to_official_flow', target_step=result.target_step)
+                safe_rerun('mirror_bridge_stock_to_official_flow_preview_first', target_step=result.target_step)
             else:
                 st.error(result.message)
 
@@ -220,6 +220,7 @@ def render_mirror_planner_panel(df_site: pd.DataFrame, *, operation: str = '', s
             'operation': operation,
             'stock_balance_only': stock_balance_only,
             'summary': summary,
+            'preview_required_for_stock_bridge': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
