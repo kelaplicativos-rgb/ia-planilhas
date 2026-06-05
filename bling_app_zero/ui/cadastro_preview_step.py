@@ -5,6 +5,7 @@ import streamlit as st
 
 from bling_app_zero.agents.blingsmartcore import apply_blingsmartcore
 from bling_app_zero.core.exporter import sanitize_for_bling
+from bling_app_zero.core.flow_spine_output import output_diagnostics, output_is_api, output_operation, preview_caption, preview_title
 from bling_app_zero.ui.cadastro_wizard_state import (
     enforce_cadastro_model_columns,
     get_universal_final_df,
@@ -42,21 +43,11 @@ def _context_final_key() -> str:
 
 
 def _context_title() -> str:
-    context = _entry_context()
-    if context == CONTEXT_BLING_API:
-        return 'Prévia final do envio direto ao Bling'
-    if context == CONTEXT_BLING_CSV:
-        return 'Prévia final do CSV Bling'
-    return 'Prévia final'
+    return preview_title()
 
 
 def _context_caption() -> str:
-    context = _entry_context()
-    if context == CONTEXT_BLING_API:
-        return 'Confira os dados que serão enviados pela API. O envio usará exatamente esta base revisada.'
-    if context == CONTEXT_BLING_CSV:
-        return 'Confira se o arquivo final segue o modelo Bling anexado no início.'
-    return 'Confira se o arquivo final segue o modelo de destino anexado no início.'
+    return preview_caption()
 
 
 def _normalize_operation(value: object) -> str:
@@ -70,7 +61,9 @@ def _normalize_operation(value: object) -> str:
 
 
 def _current_operation() -> str:
-    """Resolve a operação real do contrato antes de aplicar regras da prévia final."""
+    spine_operation = _normalize_operation(output_operation())
+    if spine_operation:
+        return spine_operation
     for key in (
         MODEL_CONTRACT_TYPE_KEY,
         'df_final_preview_operation',
@@ -85,7 +78,6 @@ def _current_operation() -> str:
         operation = _normalize_operation(st.session_state.get(key))
         if operation:
             return operation
-
     for key in ('operacao', 'operation', 'operation_v2'):
         try:
             operation = _normalize_operation(st.query_params.get(key, ''))
@@ -93,7 +85,6 @@ def _current_operation() -> str:
                 return operation
         except Exception:
             pass
-
     return 'universal'
 
 
@@ -112,6 +103,7 @@ def _store_context_preview(df_preview: pd.DataFrame, operation: str) -> None:
     set_universal_final_df(df_preview)
     st.session_state['df_final_cadastro_preview_rules_applied'] = df_preview
     st.session_state['df_final_preview_operation'] = operation
+    st.session_state['flow_spine_preview_ready'] = True
 
 
 def _store_smartcore_report(result) -> None:
@@ -122,6 +114,7 @@ def _store_smartcore_report(result) -> None:
             'score': int(result.quality.score),
             'rows': int(result.quality.rows),
             'warnings': list(result.quality.warnings),
+            'flow_spine': output_diagnostics(),
         }
     except Exception:
         st.session_state[SMARTCORE_PREVIEW_KEY] = {}
@@ -139,12 +132,11 @@ def _render_smartcore_report() -> None:
 
 
 def _final_preview_df(df_final: pd.DataFrame, operation: str) -> pd.DataFrame:
-    """Aplica na prévia final a blindagem correta para cada caminho."""
     safe_operation = operation if operation in VALID_OPERATIONS else 'universal'
     safe = sanitize_for_bling(df_final.copy().fillna(''), operation=safe_operation)
     safe, smartcore_result = apply_blingsmartcore(safe, origin='preview_final', operation=safe_operation)
     _store_smartcore_report(smartcore_result)
-    if _entry_context() == CONTEXT_BLING_API:
+    if output_is_api():
         return safe
     fixed = enforce_cadastro_model_columns(safe)
     return fixed if isinstance(fixed, pd.DataFrame) else safe
@@ -154,19 +146,14 @@ def render_cadastro_preview_step() -> None:
     operation = _current_operation()
     st.markdown(f'### {_context_title()}')
     st.caption(_context_caption())
-
     df_final = _context_final_df()
-
     if not valid_df(df_final):
         st.warning('A prévia final ainda não foi gerada. Volte para o mapeamento e confirme os campos.')
         return
-
     df_preview = _final_preview_df(df_final, operation)
     _store_context_preview(df_preview, operation)
-
-    if _entry_context() != CONTEXT_BLING_API and render_row_count_blocker(df_preview):
+    if not output_is_api() and render_row_count_blocker(df_preview):
         return
-
     _render_smartcore_report()
     preview_df('Resultado final preenchido', df_preview)
 
