@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: mapeiaai-bling-oauth
+    env: python
+    plan: free
+    region: oregon
+    rootDir: .
+    buildCommand: pip install -r bling_backend/requirements.txt
+    startCommand: uvicorn bling_backend.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: BLING_CLIENT_ID
+        sync: false
+      - key: BLING_CLIENT_SECRET
+        sync: false
+      - key: BLING_REDIRECT_URI
+        sync: false
+      - key: FRONTEND_RETURN_URL
+        value: https://ia-planilhas.streamlit.app/
+      - key: BLING_BACKEND_TOKEN_DIR
+        value: /tmp/bling_tokens
