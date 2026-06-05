@@ -73,6 +73,28 @@ RUNTIME_EXTRA_INVENTORY: tuple[SystemInventoryItem, ...] = (
         risk='É apenas configuração e status. Executor recorrente real deve ser criado separado da tela Streamlit.',
         action='Próximo passo: criar executor agendado externo/seguro que leia esta configuração.',
     ),
+    SystemInventoryItem(
+        id='mirror_persistent_store',
+        name='Store persistente do espelhamento',
+        status=STATUS_ATIVO,
+        layer='ORQUESTRACAO',
+        purpose='Salva configuração, status e histórico curto de execuções fora do session_state, permitindo uso por executor externo.',
+        owner_spine='Mirror Monitor / Executor',
+        main_paths=('bling_app_zero/core/bling_mirror_store.py',),
+        risk='Store local em arquivo pode ser efêmero em alguns provedores; para produção robusta, migrar para banco externo.',
+        action='Usar variável de ambiente BLING_MIRROR_STORE_PATH no deploy ou migrar para banco persistente.',
+    ),
+    SystemInventoryItem(
+        id='mirror_scheduled_executor',
+        name='Executor agendável do espelhamento',
+        status=STATUS_ATIVO,
+        layer='JOB',
+        purpose='Permite execução por Cron/Worker fora da tela, lendo a configuração persistente e registrando status sem loop no Streamlit.',
+        owner_spine='Mirror Store / Render Cron',
+        main_paths=('bling_app_zero/jobs/mirror_executor.py',),
+        risk='Aplicação real por API ainda está bloqueada até ligar captura, comparação com Bling e logs transacionais.',
+        action='Próximo passo: ligar o executor ao motor de captura + comparação + envio somente de diferenças.',
+    ),
 )
 
 
