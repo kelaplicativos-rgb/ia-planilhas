@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.flow_spine_output import output_diagnostics, output_plan
 from bling_app_zero.ui.cadastro_pricing import apply_cadastro_pricing, clear_cadastro_pricing_state
 from bling_app_zero.ui.home_pricing_config import (
     disable_home_pricing,
@@ -15,6 +16,29 @@ from bling_app_zero.ui.home_wizard_ui import render_pending_notice
 from bling_app_zero.ui.universal_wizard_state import UNIVERSAL_ORIGEM_KEY, UNIVERSAL_ORIGEM_PRICED_KEY, universal_context_ready
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_wizard_pricing_step.py'
+
+
+def _pricing_plan():
+    try:
+        return output_plan()
+    except Exception:
+        return None
+
+
+def _pricing_enabled_by_spine() -> bool:
+    plan = _pricing_plan()
+    if plan is None:
+        return True
+    return bool(plan.needs_pricing)
+
+
+def _store_pricing_spine_state() -> None:
+    try:
+        plan = output_plan()
+        st.session_state['flow_spine_pricing_ready'] = bool(plan.needs_pricing)
+        st.session_state['flow_spine_pricing_diagnostics'] = output_diagnostics()
+    except Exception:
+        pass
 
 
 def source_dataframe_for_pricing() -> pd.DataFrame | None:
@@ -35,8 +59,10 @@ def apply_pricing_step_result() -> None:
     if bool(st.session_state.get('cadastro_preco_calculado_ativo', False)):
         suffix = f' usando a coluna de custo "{selected_cost_column}"' if selected_cost_column else ''
         st.success(f'Preço calculado linha a linha{suffix}. O campo Preço de venda será usado no mapeamento e no preview.')
+        st.session_state['flow_spine_pricing_applied'] = True
     else:
         st.warning('Calcule um preço para aplicar a referência de precificação aos dados carregados.')
+        st.session_state['flow_spine_pricing_applied'] = False
 
 
 def render_pricing_step(
@@ -51,18 +77,37 @@ def render_pricing_step(
     render_price_update_notice,
 ) -> None:
     render_step_anchor(step_key)
+    _store_pricing_spine_state()
+
+    plan = _pricing_plan()
+    title = 'Preço'
+    if plan is not None and plan.operation == 'atualizacao_preco':
+        title = 'Atualização de preços'
+
+    if not _pricing_enabled_by_spine():
+        section_title(section_number, title)
+        disable_home_pricing()
+        clear_cadastro_pricing_state()
+        st.caption('A espinha dorsal deste fluxo não exige precificação. Esta etapa foi mantida apenas por compatibilidade visual e não altera os dados.')
+        return
+
     if is_price_update and not is_api_direct and not is_universal_entry:
-        section_title(section_number, 'Preço')
+        section_title(section_number, title)
         render_price_update_notice()
         st.caption('A planilha de atualização de preços já contém a estrutura e a origem. Use a calculadora somente se quiser recalcular os valores antes do mapeamento.')
     else:
-        section_title(section_number, 'Preço')
+        section_title(section_number, title)
+
+    if plan is not None:
+        st.caption(f'Fluxo ativo: {plan.contract_key} · operação: {plan.operation} · destino: {plan.final_destination}')
+
     if not model_available:
         render_pending_notice('Liberado após escolher o caminho do fluxo.')
         return
     if not universal_context_ready():
         render_pending_notice('Carregue os dados primeiro.')
         return
+
     df_origem = source_dataframe_for_pricing()
     current_config = get_home_pricing_config()
     use_pricing = st.toggle('Usar calculadora', value=bool(current_config.get('enabled', False)), key='home_pricing_enabled_toggle')
@@ -75,6 +120,7 @@ def render_pricing_step(
         disable_home_pricing()
         if not is_price_update:
             clear_cadastro_pricing_state()
+        st.session_state['flow_spine_pricing_applied'] = False
         st.caption('Opcional. Se desligada, mantém o preço da origem ou do mapeamento.')
 
 
