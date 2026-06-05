@@ -3,10 +3,9 @@ from __future__ import annotations
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.flow_spine import build_flow_spine_plan, pending_message_for, resolve_step
 from bling_app_zero.features_runtime.router import (
     active_contract,
-    active_steps as runtime_active_steps,
-    feature_needs_mapping,
     feature_needs_model,
     feature_needs_pricing,
     feature_needs_rules_review,
@@ -108,11 +107,12 @@ def _section_title(number: int, title: str) -> None:
     st.markdown(f'### {number}. {title}')
 
 
+def _flow_plan():
+    return build_flow_spine_plan(render_steps=ACTIVE_RENDER_STEPS)
+
+
 def _active_steps() -> list[str]:
-    steps = [step for step in runtime_active_steps() if step in ACTIVE_RENDER_STEPS]
-    if not feature_needs_model():
-        steps = [step for step in steps if step != STEP_MODELO]
-    return steps or [STEP_ORIGEM, STEP_ENTRADA, STEP_MAPEAMENTO, STEP_PREVIEW, STEP_DOWNLOAD]
+    return list(_flow_plan().steps)
 
 
 def _context_mapping_keys() -> tuple[str, str]:
@@ -167,11 +167,10 @@ def _go_to_step(step: str) -> None:
 
 
 def _label_for(step: str) -> str:
-    contract = active_contract()
-    if contract.is_api and step == STEP_ENTRADA:
-        return 'Dados'
-    if contract.is_api and step == STEP_DOWNLOAD:
-        return 'Enviar para o Bling'
+    plan = _flow_plan()
+    label = plan.label_for(step)
+    if label:
+        return label
     return str(STEP_LABELS.get(step, step)).strip()
 
 
@@ -204,25 +203,7 @@ def _can_advance_from(step: str) -> bool:
 
 
 def _pending_message_for(step: str) -> str:
-    contract = active_contract()
-    if contract.is_api:
-        if step == STEP_ORIGEM:
-            return 'Escolha Arquivo ou Site para buscar os produtos que serão enviados ao Bling.'
-        if step == STEP_ENTRADA:
-            return 'Carregue os produtos da origem para liberar o envio direto.'
-        if step == STEP_DOWNLOAD:
-            return 'Carregue os dados para enviar direto ao Bling.'
-    if step == STEP_MODELO:
-        return 'Anexe ou confirme o modelo de destino para liberar a próxima etapa.'
-    if step == STEP_ORIGEM:
-        return 'Escolha se os dados virão de Arquivo ou Site para continuar.'
-    if step == STEP_ENTRADA:
-        return 'Carregue os dados da origem para liberar a próxima etapa.'
-    if step == STEP_MAPEAMENTO:
-        return 'Confirme o mapeamento obrigatório antes de avançar.'
-    if step in {STEP_REGRAS, STEP_PREVIEW}:
-        return 'Confirme o mapeamento e revise os dados antes de continuar.'
-    return 'Conclua esta etapa para continuar.'
+    return pending_message_for(_flow_plan(), step)
 
 
 def _render_blocked_next_state(next_step: str) -> None:
@@ -247,9 +228,9 @@ def _render_step_progress(steps: list[str], active_step: str) -> None:
 def _render_safe_step_nav(steps: list[str], active_step: str) -> None:
     if active_step not in steps:
         return
-    index = steps.index(active_step)
-    previous_step = steps[index - 1] if index > 0 else ''
-    next_step = steps[index + 1] if index < len(steps) - 1 else ''
+    plan = _flow_plan()
+    previous_step = plan.previous_step(active_step)
+    next_step = plan.next_step(active_step)
     can_go_next = bool(next_step) and _can_advance_from(active_step)
     contract = active_contract()
 
@@ -259,7 +240,7 @@ def _render_safe_step_nav(steps: list[str], active_step: str) -> None:
             'wizard_api_auto_next_applied',
             area='WIZARD',
             step=next_step,
-            details={'from': active_step, 'to': next_step, 'responsible_file': RESPONSIBLE_FILE},
+            details={'from': active_step, 'to': next_step, 'flow_spine': plan.to_dict(), 'responsible_file': RESPONSIBLE_FILE},
         )
         safe_rerun('wizard_api_auto_next', target_step=next_step)
         return
@@ -269,7 +250,7 @@ def _render_safe_step_nav(steps: list[str], active_step: str) -> None:
     with col_back:
         if previous_step and st.button('⬅️ Voltar', use_container_width=True, key=f'wizard_local_back_{active_step}'):
             _go_to_step(previous_step)
-            add_audit_event('wizard_local_back_clicked', area='WIZARD', step=previous_step, details={'from': active_step, 'to': previous_step, 'state_preserved': True, 'responsible_file': RESPONSIBLE_FILE})
+            add_audit_event('wizard_local_back_clicked', area='WIZARD', step=previous_step, details={'from': active_step, 'to': previous_step, 'state_preserved': True, 'flow_spine': plan.to_dict(), 'responsible_file': RESPONSIBLE_FILE})
             safe_rerun('wizard_back_clicked', target_step=previous_step)
         elif not previous_step:
             st.caption('Início do fluxo')
@@ -286,7 +267,7 @@ def _render_safe_step_nav(steps: list[str], active_step: str) -> None:
             if can_go_next:
                 if st.button(f'Próximo: {_label_for(next_step)}', use_container_width=True, key=f'wizard_local_next_{active_step}'):
                     _go_to_step(next_step)
-                    add_audit_event('wizard_local_next_clicked', area='WIZARD', step=next_step, details={'from': active_step, 'to': next_step, 'prerequisite_ok': True, 'state_preserved': True, 'responsible_file': RESPONSIBLE_FILE})
+                    add_audit_event('wizard_local_next_clicked', area='WIZARD', step=next_step, details={'from': active_step, 'to': next_step, 'prerequisite_ok': True, 'state_preserved': True, 'flow_spine': plan.to_dict(), 'responsible_file': RESPONSIBLE_FILE})
                     safe_rerun('wizard_next_clicked', target_step=next_step)
             else:
                 _render_blocked_next_state(next_step)
@@ -295,9 +276,9 @@ def _render_safe_step_nav(steps: list[str], active_step: str) -> None:
 
 
 def _resolve_active_step(active_step: str, *, has_model: bool, start_at_origin: bool) -> str:
-    steps = _active_steps()
-    if active_step not in steps:
-        return steps[0]
+    plan = _flow_plan()
+    steps = list(plan.steps)
+    active_step = resolve_step(plan, active_step)
     contract = active_contract()
     if start_at_origin and active_step == STEP_MODELO:
         return STEP_ORIGEM if STEP_ORIGEM in steps else steps[0]
@@ -371,7 +352,7 @@ def _render_universal_entrada(section_number: int = 4) -> None:
     if origin not in {'arquivo', 'site'}:
         render_pending_notice('Escolha a origem primeiro.')
         return
-    add_audit_event('single_page_origin_data_rendered', area='UNIVERSAL', step=STEP_ENTRADA, details={'origin': origin, 'operation': _current_contract_operation(), 'finish_mode': _finish_mode(), 'home_entry_context': _entry_context(), 'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('single_page_origin_data_rendered', area='UNIVERSAL', step=STEP_ENTRADA, details={'origin': origin, 'operation': _current_contract_operation(), 'finish_mode': _finish_mode(), 'home_entry_context': _entry_context(), 'single_page_flow': SINGLE_PAGE_FLOW, 'flow_spine': _flow_plan().to_dict(), 'responsible_file': RESPONSIBLE_FILE})
     if origin == 'site':
         from bling_app_zero.ui.site_panel import render_site_panel
         render_site_panel()
@@ -465,9 +446,9 @@ def _query_step() -> str:
 
 
 def _active_start_step() -> str:
-    steps = _active_steps()
-    current = str(st.session_state.get(WIZARD_STEP_KEY) or _query_step() or steps[0]).strip().lower()
-    return current if current in steps else steps[0]
+    plan = _flow_plan()
+    current = str(st.session_state.get(WIZARD_STEP_KEY) or _query_step() or (plan.steps[0] if plan.steps else STEP_ORIGEM)).strip().lower()
+    return resolve_step(plan, current)
 
 
 def _render_active_step(step: str, section_number: int) -> None:
@@ -490,7 +471,10 @@ def _render_active_step(step: str, section_number: int) -> None:
 
 
 def _render_steps_from(start_step: str, *, skip_model: bool) -> None:
-    steps = [step for step in _active_steps() if not (skip_model and step == STEP_MODELO)]
+    plan = _flow_plan()
+    steps = [step for step in plan.steps if not (skip_model and step == STEP_MODELO)]
+    if not steps:
+        steps = [STEP_ORIGEM, STEP_ENTRADA, STEP_DOWNLOAD]
     if start_step not in steps:
         start_step = steps[0]
     _go_to_step(start_step)
@@ -526,7 +510,8 @@ def render_home_wizard() -> None:
     elif feature_needs_model() and not has_model:
         set_step_without_rerun(STEP_MODELO)
         st.session_state.pop('home_slim_flow_origin', None)
-        add_audit_event('wizard_model_first_guard_active', area='WIZARD', step=STEP_MODELO, details={'reason': 'missing_destination_model', 'single_page_flow': SINGLE_PAGE_FLOW, 'finish_mode': mode, 'home_entry_context': context, 'responsible_file': RESPONSIBLE_FILE})
+        plan = _flow_plan()
+        add_audit_event('wizard_model_first_guard_active', area='WIZARD', step=STEP_MODELO, details={'reason': 'missing_destination_model', 'single_page_flow': SINGLE_PAGE_FLOW, 'finish_mode': mode, 'home_entry_context': context, 'flow_spine': plan.to_dict(), 'responsible_file': RESPONSIBLE_FILE})
         _render_step_progress([STEP_MODELO], STEP_MODELO)
         _render_model_step(1 if context != CONTEXT_BLING_API else 2)
         _render_safe_step_nav([STEP_MODELO], STEP_MODELO)
@@ -535,8 +520,9 @@ def render_home_wizard() -> None:
 
     start_at_origin = came_from_bling_quick_model() or direct_mode or not feature_needs_model()
     active_step = _resolve_active_step(_active_start_step(), has_model=has_model, start_at_origin=start_at_origin)
-    steps = _active_steps()
-    add_audit_event('wizard_single_step_rendered', area='WIZARD', step=active_step, details={'operation': operation or 'universal', 'feature_contract': active_contract().key, 'steps': steps, 'render_mode': 'runtime_contract_safe_nav', 'single_page_flow': SINGLE_PAGE_FLOW, 'skip_model_step': start_at_origin, 'active_start_step': active_step, 'finish_mode': mode, 'home_entry_context': context, 'responsible_file': RESPONSIBLE_FILE})
+    plan = _flow_plan()
+    steps = list(plan.steps)
+    add_audit_event('wizard_single_step_rendered', area='WIZARD', step=active_step, details={'operation': operation or 'universal', 'feature_contract': plan.contract_key, 'steps': steps, 'render_mode': 'flow_spine_safe_nav', 'single_page_flow': SINGLE_PAGE_FLOW, 'skip_model_step': start_at_origin, 'active_start_step': active_step, 'finish_mode': mode, 'home_entry_context': context, 'flow_spine': plan.to_dict(), 'responsible_file': RESPONSIBLE_FILE})
     _render_steps_from(active_step, skip_model=start_at_origin)
     inject_scroll_to_target()
 
