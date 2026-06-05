@@ -165,6 +165,58 @@ def _clean_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return clean
 
 
+def _cadastro_schema_error(df: pd.DataFrame) -> str:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return 'Cadastro bloqueado: não há produtos para enviar.'
+
+    mapping = _column_map(df.columns)
+    normalized_columns = {_normalize_column_name(column) for column in df.columns}
+    stock_only_columns = {'quantidade', 'id', 'codigo', 'gtin', 'deposito'}
+    content_fields = {'nome', 'descricao', 'descricao_curta', 'descricao_complementar'}
+
+    has_name_or_description = any(mapping.get(field) for field in content_fields)
+    has_price = bool(mapping.get('preco'))
+    has_stock_shape = normalized_columns.issubset(stock_only_columns) and {'quantidade', 'deposito'}.intersection(normalized_columns)
+
+    if has_stock_shape or not has_name_or_description or not has_price:
+        add_audit_event(
+            'bling_smart_cadastro_schema_blocked',
+            area='BLING_ENVIO',
+            status='BLOQUEADO',
+            details={
+                'columns': list(map(str, df.columns)),
+                'mapped_fields': sorted(mapping.keys()),
+                'has_stock_shape': has_stock_shape,
+                'has_name_or_description': has_name_or_description,
+                'has_price': has_price,
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+        return (
+            'Cadastro bloqueado por segurança: a tabela preparada não parece ser cadastro de produtos. '
+            'Ela está sem Nome/Descrição e/ou Preço, ou está com formato de estoque. '
+            'Refaça o preview final antes de enviar ao Bling.'
+        )
+
+    price_column = mapping.get('preco', '')
+    positive_prices = 0
+    if price_column:
+        for value in df[price_column].head(80).tolist():
+            price = _number_value(value)
+            if price is not None and price > 0:
+                positive_prices += 1
+    if positive_prices == 0:
+        add_audit_event(
+            'bling_smart_cadastro_price_blocked',
+            area='BLING_ENVIO',
+            status='BLOQUEADO',
+            details={'columns': list(map(str, df.columns)), 'price_column': price_column, 'responsible_file': RESPONSIBLE_FILE},
+        )
+        return 'Cadastro bloqueado por segurança: nenhum preço positivo foi encontrado. O Bling não deve receber produtos com preço zerado.'
+
+    return ''
+
+
 def _extract_items(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, list):
         return [item for item in payload if isinstance(item, dict)]
@@ -387,10 +439,7 @@ def _base_payload(row: pd.Series, mapping: dict[str, str]) -> tuple[dict[str, An
     unit = _clean_text(_value(row, mapping, 'unidade') or 'UN', 6).upper()
     if re.fullmatch(r'[A-Z0-9]{1,6}', unit):
         payload['unidade'] = unit
-    full_description = _join_full_description_for_bling(
-        short=enrichment.description_short,
-        complement=enrichment.description_complementary,
-    )
+    full_description = _join_full_description_for_bling(short=enrichment.description_short, complement=enrichment.description_complementary)
     if full_description and full_description.lower() != name.lower():
         payload['descricaoCurta'] = full_description
     price = _number_value(_value(row, mapping, 'preco'))
@@ -464,6 +513,9 @@ def _payload_variants(token: dict[str, Any], row: pd.Series, mapping: dict[str, 
 
 
 def _smart_preview_payloads(df: pd.DataFrame, *, limit: int = 5) -> list[dict[str, Any]]:
+    schema_error = _cadastro_schema_error(df)
+    if schema_error:
+        return [{'payload': {}, 'status': 'BLOQUEADO', 'motivo': schema_error}]
     token, _meta = load_token()
     if not isinstance(token, dict) or not token.get('access_token'):
         return _safe_preview_payloads(df, OP_CADASTRO, limit=limit)
@@ -512,6 +564,10 @@ def _update_existing_product(token: dict[str, Any], product_id: str, variants: l
 
 
 def _send_cadastro_smart(df: pd.DataFrame, *, limit: int | None = None, progress_callback: Callable[[dict[str, Any]], None] | None = None) -> DirectSendResult:
+    schema_error = _cadastro_schema_error(df)
+    if schema_error:
+        total = len(df) if isinstance(df, pd.DataFrame) else 0
+        return DirectSendResult(total, 0, 0, total, (schema_error,), tuple())
     token, _meta = load_token()
     if not isinstance(token, dict) or not token.get('access_token'):
         return DirectSendResult(0, 0, 0, len(df) if isinstance(df, pd.DataFrame) else 0, ('Bling não conectado. Conecte o app antes de enviar direto.',))
