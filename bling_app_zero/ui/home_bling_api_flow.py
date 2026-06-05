@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from html import escape
 from typing import Any
 
@@ -72,9 +73,11 @@ def _secret(name: str, default: str = '') -> str:
     try:
         bling = st.secrets.get('bling', {})
         value = bling.get(name, default) if hasattr(bling, 'get') else default
-        return str(value or default).strip()
+        if value not in (None, ''):
+            return str(value).strip()
     except Exception:
-        return default
+        pass
+    return str(os.getenv(name) or os.getenv(name.upper()) or default or '').strip()
 
 
 def _api_base_url() -> str:
@@ -278,7 +281,7 @@ def _render_stock_deposit_field(operation: str) -> None:
 def render_same_tab_connect_button(auth_url: str) -> None:
     safe_url = escape(str(auth_url or ''), quote=True)
     if not safe_url:
-        st.warning('Não consegui gerar o link de conexão com o Bling agora. Confira Client ID, Client Secret e Redirect URI nos secrets do Streamlit.')
+        st.warning('Não consegui gerar o link de conexão com o Bling agora. Confira Client ID, Client Secret e Redirect URI nos secrets do Streamlit ou configure BLING_BACKEND_AUTH_URL.')
         return
     st.markdown(
         f'''
@@ -367,16 +370,21 @@ def render_bling_connection_step(section_title) -> None:
             return
 
         st.warning('Bling não conectado. Conecte para liberar o envio direto pela API.')
-        render_callback_hint(callback_url)
+        backend_auth_url = _secret('backend_auth_url', '') or _secret('BLING_BACKEND_AUTH_URL', '')
+        if not backend_auth_url:
+            render_callback_hint(callback_url)
         try:
-            auth_url = build_authorization_url({'return_to': 'start', 'source_step': 'bling_connection_entry'})
+            auth_url = backend_auth_url or build_authorization_url({'return_to': 'start', 'source_step': 'bling_connection_entry'})
         except Exception as exc:
             auth_url = ''
             add_audit_event('bling_api_authorization_url_error', area='BLING_API', status='ERRO', details={'error': str(exc), 'responsible_file': RESPONSIBLE_FILE})
+        if backend_auth_url:
+            st.info('Conexão do Bling será feita pelo backend externo. O Streamlit não processa o OAuth neste caminho.')
+            add_audit_event('bling_api_external_backend_auth_enabled', area='BLING_API', status='OK', details={'responsible_file': RESPONSIBLE_FILE})
         render_same_tab_connect_button(auth_url)
         st.markdown('<div style="height:.55rem"></div>', unsafe_allow_html=True)
         st.caption('Sem conexão com o Bling, este caminho fica bloqueado. Para gerar arquivo manual, volte para a Home e use modelo de destino.')
-        add_audit_event('bling_api_connection_required', area='BLING_API', status='AGUARDANDO_CONEXAO', details={'required_redirect_uri': callback_url, 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('bling_api_connection_required', area='BLING_API', status='AGUARDANDO_CONEXAO', details={'required_redirect_uri': callback_url, 'external_backend': bool(backend_auth_url), 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = [
