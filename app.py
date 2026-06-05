@@ -8,7 +8,6 @@ from bling_app_zero.core.bling_oauth import process_oauth_callback
 from bling_app_zero.core.cache_control import clear_cache_once_per_version
 from bling_app_zero.core.mapping_widget_state import restore_mapping_widget_state_from_snapshot
 from bling_app_zero.ui.alerts import enforce_attention_alert_policy
-from bling_app_zero.ui.bling_same_tab_patch import install_bling_same_tab_auth_patch
 from bling_app_zero.ui.home import render_home
 from bling_app_zero.ui.layout import inject_streamlit_toolbar_fix
 from bling_app_zero.ui.sidebar_tools import render_sidebar_tools
@@ -26,7 +25,6 @@ def main() -> None:
 
     restore_mapping_widget_state_from_snapshot()
     process_oauth_callback()
-    install_bling_same_tab_auth_patch()
     add_audit_event('app_started', area='APP', details={'version': APP_VERSION, 'mode': 'session_guarded_start'})
 
     try:
