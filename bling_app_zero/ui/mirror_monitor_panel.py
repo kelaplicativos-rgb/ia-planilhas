@@ -21,6 +21,7 @@ from bling_app_zero.core.bling_mirror_store import (
     mirror_store_payload,
     save_persistent_config,
 )
+from bling_app_zero.core.bling_mirror_store_health import check_mirror_store_health
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/mirror_monitor_panel.py'
 
@@ -71,6 +72,18 @@ def _run_rows(limit: int = 8) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows)
+
+
+def _render_store_health() -> None:
+    health = check_mirror_store_health()
+    with st.expander('Diagnóstico do store persistente', expanded=False):
+        cols = st.columns(4)
+        cols[0].metric('Store OK', 'Sim' if health.ok else 'Não')
+        cols[1].metric('Existe', 'Sim' if health.exists else 'Não')
+        cols[2].metric('Legível', 'Sim' if health.readable else 'Não')
+        cols[3].metric('Pasta gravável', 'Sim' if health.writable_parent else 'Não')
+        st.caption(health.message)
+        st.code(health.store_path or 'caminho não definido')
 
 
 def _render_persistent_history() -> None:
@@ -152,6 +165,7 @@ def render_mirror_monitor_panel(*, default_site_url: str = '', default_deposit_n
         cols[1].metric('Último ciclo persistente', status.last_run_at or '—')
         cols[2].metric('Próximo ciclo previsto', status.next_run_at or '—')
         st.caption(status.last_message or 'Aguardando configuração persistente.')
+        _render_store_health()
         _render_persistent_history()
         st.info('Para virar automático real, o próximo passo é configurar o executor agendado fora da tela Streamlit.')
 
