@@ -62,6 +62,17 @@ RUNTIME_EXTRA_INVENTORY: tuple[SystemInventoryItem, ...] = (
         risk='Não deve ser usada para pular revisão. A ponte apenas prepara a origem e redireciona para as etapas oficiais.',
         action='Manter logs e diagnóstico para confirmar que preview/download/envio oficial continuam obrigatórios.',
     ),
+    SystemInventoryItem(
+        id='mirror_monitor_config',
+        name='Configuração persistente do espelhamento monitorado',
+        status=STATUS_ATIVO,
+        layer='ORQUESTRACAO',
+        purpose='Guarda toggle, site, depósito, modo, intervalo e status de monitoramento sem iniciar loop dentro do Streamlit.',
+        owner_spine='Mirror Planner / Diagnóstico',
+        main_paths=('bling_app_zero/core/bling_mirror_config.py', 'bling_app_zero/ui/mirror_monitor_panel.py'),
+        risk='É apenas configuração e status. Executor recorrente real deve ser criado separado da tela Streamlit.',
+        action='Próximo passo: criar executor agendado externo/seguro que leia esta configuração.',
+    ),
 )
 
 
