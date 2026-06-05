@@ -17,6 +17,7 @@ from bling_app_zero.ui.home_shared import show_contract
 from bling_app_zero.ui.home_wizard_constants import STEP_DOWNLOAD, STEP_ENTRADA, STEP_MAPEAMENTO
 from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 from bling_app_zero.ui.manual_table_import_panel import render_manual_table_import_panel
+from bling_app_zero.ui.site_capture_spine import capture_profile
 from bling_app_zero.ui.site_models import (
     choose_site_cadastro_model_df,
     choose_site_estoque_model_df,
@@ -86,8 +87,7 @@ def _render_site_models_inline(operation: str) -> tuple[object, pd.DataFrame | N
     if not feature_needs_model():
         requested_columns = _columns_from_contract()
         if requested_columns:
-            title = 'Campos de saldo que serão buscados' if _is_stock_api_balance_mode(operation) else 'Campos que serão buscados'
-            with st.expander(title, expanded=False):
+            with st.expander('Campos que serão buscados', expanded=False):
                 show_contract(requested_columns)
         else:
             st.caption('Modo API direta: o sistema usará os campos mínimos do contrato ativo do Bling.')
@@ -107,23 +107,13 @@ def _render_site_models_inline(operation: str) -> tuple[object, pd.DataFrame | N
 
 
 def _render_urls_input(operation: str) -> str:
-    if _is_stock_api_balance_mode(operation):
-        return st.text_area(
-            'Link inicial, categoria ou produtos para buscar saldo',
-            value=query_urls_default(),
-            height=120,
-            key=f'urls_site_{operation}',
-            placeholder='https://site.com.br\nhttps://site.com.br/categoria\nhttps://site.com.br/produto-1',
-            help='Cole a home, categoria ou links de produtos. O sistema varre em lote seguro para evitar queda da sessão no celular.',
-        )
-
     return st.text_area(
         'Links para buscar produtos',
         value=query_urls_default(),
         height=120,
         key=f'urls_site_{operation}',
         placeholder='https://site.com.br\nhttps://site.com.br/categoria\nhttps://site.com.br/produto-1',
-        help='Cole página inicial, categorias ou produtos. O sistema vai procurar produtos e montar os dados importados.',
+        help='Cole página inicial, categorias ou produtos. A mesma captura inteligente será usada para cadastro ou estoque, mudando apenas os campos finais salvos.',
     )
 
 
@@ -154,21 +144,18 @@ def _scan_total_options(operation: str) -> dict[str, int | bool]:
 def _render_scan_total_notice(operation: str) -> None:
     if _is_stock_api_balance_mode(operation):
         orange_warning(
-            '📦 Modo saldo de estoque completo: o sistema varre os produtos encontrados em lote seguro, prepara ID/código/GTIN, quantidade/saldo e depósito, e evita processamento gigante em uma única sessão do celular.'
+            '🚀 Busca completa ativa: o sistema vai capturar produtos com a mesma interface do cadastro e, no final, salvar somente os campos necessários para estoque/API.'
         )
         return
-
     orange_warning(
-        '🚀 Busca completa ativa: ao clicar no botão, o sistema procura produtos no site e prepara os dados importados conforme o contrato ativo.'
+        '🚀 Busca completa ativa: o sistema procura produtos no site, captura imagens, descrições, preços e dados técnicos conforme o contrato ativo.'
     )
 
 
 def _render_running_state(operation: str) -> None:
-    st.markdown('### Busca em andamento')
-    if _is_stock_api_balance_mode(operation):
-        orange_warning('Busca de saldos em andamento em modo seguro. Aguarde finalizar. Para proteger o celular, outras ações ficam bloqueadas durante a captura.')
-    else:
-        orange_warning('Busca por site em andamento. Aguarde finalizar. Para proteger o celular, outras ações ficam bloqueadas durante a captura.')
+    profile = capture_profile(operation, stock_balance_only=_is_stock_api_balance_mode(operation))
+    st.markdown(f'### {profile.running_title}')
+    orange_warning(profile.running_notice)
     render_site_progress_history()
     st.info('A tela está em modo seguro: campos, botões e módulos pesados ficam ocultos enquanto a busca roda.')
     with st.expander('Busca parece travada?', expanded=False):
@@ -176,17 +163,16 @@ def _render_running_state(operation: str) -> None:
         if st.button('🧹 Limpar busca travada e tentar novamente', use_container_width=True, key=f'limpar_captura_travada_{operation}'):
             clear_stuck_capture(operation)
             safe_rerun('site_capture_stuck_cleared', target_step=STEP_ENTRADA)
-    add_audit_event('site_panel_running_guard_rendered', area='SITE', step='entrada', status='INFO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('site_panel_running_guard_rendered', area='SITE', step='entrada', status='INFO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE, 'capture_spine': 'site_capture_spine_v1'})
 
 
 def _render_last_error(error: str, operation: str) -> None:
     if not error:
         return
+    st.error('A última busca por site não conseguiu finalizar.')
     if _is_stock_api_balance_mode(operation):
-        st.error('A última busca completa de saldo de estoque não conseguiu finalizar.')
         st.caption('Confira o link inicial/categoria ou use Site protegido para colar tabela com Código/ID produto e Quantidade/Saldo.')
     else:
-        st.error('A última busca por site não conseguiu finalizar.')
         st.caption('Confira os links, tente novamente ou use a opção de site protegido para colar HTML, tabela, CSV ou XLSX.')
     with st.expander('Detalhe da falha', expanded=False):
         st.code(error)
@@ -207,10 +193,11 @@ def _clear_smartscan_manual_flags() -> None:
 def _render_ready_state(operation: str, df_site_bruto: pd.DataFrame, stock_balance_only: bool) -> None:
     rows = len(df_site_bruto)
     columns = len(df_site_bruto.columns)
-    title = 'Saldos capturados e salvos' if stock_balance_only else 'Produtos capturados e salvos'
     next_step = _next_step_after_site_capture()
     next_label = _next_step_label()
-    st.success(f'{title}: {rows} produto(s), {columns} coluna(s).')
+    st.success(f'Produtos capturados e salvos: {rows} produto(s), {columns} coluna(s).')
+    if stock_balance_only:
+        st.caption('O mesmo motor capturou os produtos; para estoque/API, o sistema usará os campos de saldo, identificação e depósito necessários.')
     notice = st.session_state.get(f'blingsmartscan_notice_{operation}') or st.session_state.get('blingsmartscan_last_notice') or {}
     if isinstance(notice, dict) and notice:
         with st.expander('Resumo do BLINGSMARTSCAN', expanded=False):
@@ -254,13 +241,11 @@ def render_site_panel() -> None:
     clear_legacy_authenticated_state()
     operation = _site_operation()
     stock_balance_only = _is_stock_api_balance_mode(operation)
+    profile = capture_profile(operation, stock_balance_only=stock_balance_only)
 
     recovered = recover_stale_capture_if_needed(operation)
     if recovered:
-        if stock_balance_only:
-            orange_warning('A busca anterior de saldo ficou travada e foi destravada automaticamente. Revise os links e execute novamente.')
-        else:
-            orange_warning('A busca anterior ficou travada e foi destravada automaticamente. Revise os links e execute novamente.')
+        orange_warning('A busca anterior ficou travada e foi destravada automaticamente. Revise os links e execute novamente.')
 
     if bool(st.session_state.get('site_capture_running')):
         _render_running_state(operation)
@@ -273,15 +258,13 @@ def render_site_panel() -> None:
             area='SITE',
             step='entrada',
             status='OK',
-            details={'operation': operation, 'rows': len(df_site_bruto), 'columns': len(df_site_bruto.columns), 'stock_balance_only': stock_balance_only, 'manual_continue': True, 'target_step': _next_step_after_site_capture(), 'responsible_file': RESPONSIBLE_FILE},
+            details={'operation': operation, 'rows': len(df_site_bruto), 'columns': len(df_site_bruto.columns), 'stock_balance_only': stock_balance_only, 'manual_continue': True, 'target_step': _next_step_after_site_capture(), 'responsible_file': RESPONSIBLE_FILE, 'capture_spine': 'site_capture_spine_v1'},
         )
         _render_ready_state(operation, df_site_bruto, stock_balance_only)
         return
 
-    title = 'Buscar saldos de todos os produtos' if stock_balance_only else 'Buscar produtos no site'
-    kicker = 'Estoque API' if stock_balance_only else 'Entrada por site'
     st.markdown(
-        f'<section class="bling-flow-card bling-inline-card"><div class="bling-flow-card-kicker">{kicker}</div><h2 class="bling-flow-card-title">{title}</h2></section>',
+        f'<section class="bling-flow-card bling-inline-card"><div class="bling-flow-card-kicker">{profile.kicker}</div><h2 class="bling-flow-card-title">{profile.title}</h2></section>',
         unsafe_allow_html=True,
     )
 
@@ -293,7 +276,6 @@ def render_site_panel() -> None:
     error = str(st.session_state.get('site_capture_error') or '').strip()
     _render_last_error(error, operation)
 
-    button_label = '🔎 Buscar saldos em modo seguro' if stock_balance_only else '🚀 Buscar produtos agora'
     needs_model = feature_needs_model()
     has_urls_value = has_urls(raw_urls)
     button_disabled = not has_urls_value or (needs_model and operation in {UNIVERSAL_OPERATION} and not has_columns(requested_columns))
@@ -304,7 +286,7 @@ def render_site_panel() -> None:
     if needs_model and operation in {UNIVERSAL_OPERATION} and not has_columns(requested_columns):
         orange_warning('Modelo de destino necessário: envie o modelo para o sistema saber quais campos buscar.')
 
-    if st.button(button_label, use_container_width=True, disabled=button_disabled, key=f'buscar_site_{operation}'):
+    if st.button(profile.button_label, use_container_width=True, disabled=button_disabled, key=f'buscar_site_{operation}'):
         add_audit_event(
             'site_capture_main_button_clicked',
             area='SITE',
@@ -314,6 +296,7 @@ def render_site_panel() -> None:
                 'operation': operation,
                 'stock_balance_only': stock_balance_only,
                 'deep_options': deep_options,
+                'capture_spine': 'site_capture_spine_v1',
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
