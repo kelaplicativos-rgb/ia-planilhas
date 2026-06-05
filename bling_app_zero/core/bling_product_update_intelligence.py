@@ -24,29 +24,44 @@ IMPORTANT_FIELDS = (
     'marca',
     'categoria',
     'imagens',
-    'peso',
+    'ncm',
+    'cest',
+    'origem',
+    'peso_liquido',
+    'peso_bruto',
     'largura',
     'altura',
     'profundidade',
     'url',
 )
 
+RICH_FIELDS = {'descricao', 'descricao_curta', 'marca', 'categoria', 'imagens', 'ncm', 'cest', 'peso_liquido', 'peso_bruto', 'largura', 'altura', 'profundidade'}
+IDENTITY_FIELDS = {'codigo', 'sku', 'gtin'}
+PROTECTED_FIELDS = {'codigo', 'sku', 'gtin'}
+MIN_CREATE_QUALITY = 68
+MIN_UPDATE_QUALITY = 60
+MIN_UPDATE_BENEFIT = 12
+
 _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
-    'nome': ('nome', 'titulo', 'título', 'produto', 'descricao', 'descrição'),
-    'descricao': ('descricao complementar', 'descrição complementar', 'descricao longa', 'descrição longa', 'descricao', 'descrição'),
+    'nome': ('nome', 'titulo', 'título', 'produto', 'descricao produto', 'descrição produto'),
+    'descricao': ('descricao complementar', 'descrição complementar', 'descricao longa', 'descrição longa', 'descricao', 'descrição', 'detalhes', 'caracteristicas', 'características'),
     'descricao_curta': ('descricao curta', 'descrição curta', 'resumo', 'short_description'),
-    'preco': ('preco', 'preço', 'valor', 'price', 'preco venda', 'preço venda'),
+    'preco': ('preco', 'preço', 'valor', 'price', 'preco venda', 'preço venda', 'preço unitário', 'preco unitario'),
     'estoque': ('estoque', 'quantidade', 'qtd', 'saldo', 'balanco', 'balanço', 'stock'),
-    'codigo': ('codigo', 'código', 'sku', 'referencia', 'referência', 'code'),
+    'codigo': ('codigo', 'código', 'sku', 'referencia', 'referência', 'code', 'cod produto'),
     'sku': ('sku', 'codigo', 'código', 'referencia', 'referência'),
-    'gtin': ('gtin', 'ean', 'codigo de barras', 'código de barras'),
+    'gtin': ('gtin', 'ean', 'codigo de barras', 'código de barras', 'gtin/ean'),
     'marca': ('marca', 'brand', 'fabricante'),
-    'categoria': ('categoria', 'category', 'departamento'),
-    'imagens': ('imagens', 'imagem', 'fotos', 'foto', 'image', 'images'),
-    'peso': ('peso', 'weight'),
-    'largura': ('largura', 'width'),
-    'altura': ('altura', 'height'),
-    'profundidade': ('profundidade', 'comprimento', 'depth', 'length'),
+    'categoria': ('categoria', 'category', 'departamento', 'grupo'),
+    'imagens': ('imagens', 'imagem', 'fotos', 'foto', 'image', 'images', 'url imagem', 'url imagens'),
+    'ncm': ('ncm',),
+    'cest': ('cest',),
+    'origem': ('origem', 'origem produto', 'origem do produto'),
+    'peso_liquido': ('peso liquido', 'peso líquido', 'peso_liquido', 'peso líquido kg', 'peso liquido kg'),
+    'peso_bruto': ('peso bruto', 'peso_bruto', 'peso bruto kg'),
+    'largura': ('largura', 'width', 'largura cm'),
+    'altura': ('altura', 'height', 'altura cm'),
+    'profundidade': ('profundidade', 'comprimento', 'depth', 'length', 'profundidade cm', 'comprimento cm'),
     'url': ('url', 'link', 'produto url', 'url produto'),
 }
 
@@ -65,11 +80,16 @@ class ProductUpdateDecision:
     risk: str
     site_identity: str
     bling_identity: str
+    benefit_score: int = 0
+    rich_fields: tuple[str, ...] = tuple()
+    missing_quality_fields: tuple[str, ...] = tuple()
     responsible_file: str = RESPONSIBLE_FILE
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data['changed_fields'] = list(self.changed_fields)
+        data['rich_fields'] = list(self.rich_fields)
+        data['missing_quality_fields'] = list(self.missing_quality_fields)
         return data
 
 
@@ -84,7 +104,7 @@ def _clean_key(value: object) -> str:
 def _clean_text(value: object) -> str:
     if value is None:
         return ''
-    text = str(value).strip()
+    text = str(value).replace('\u200b', '').replace('\ufeff', '').strip()
     if text.lower() in {'nan', 'none', 'null'}:
         return ''
     return re.sub(r'\s+', ' ', text).strip()
@@ -150,16 +170,18 @@ def _images(value: object) -> str:
     parts = [part.strip() for part in re.split(r'[;,|\n]+', text) if part.strip()]
     clean: list[str] = []
     seen: set[str] = set()
-    blocked = ('logo', 'placeholder', 'sem-imagem', 'no-image', 'favicon')
+    blocked = ('logo', 'placeholder', 'sem-imagem', 'semimagem', 'no-image', 'favicon', 'sprite', 'icon', 'whatsapp', 'instagram', 'facebook')
     for part in parts:
         low = part.lower()
+        if not low.startswith(('http://', 'https://')):
+            continue
         if any(term in low for term in blocked):
             continue
         normalized = re.sub(r'([?&])(v|cache|width|height|w|h|resize|quality)=[^&]+', '', part, flags=re.I).rstrip('?&')
         if normalized not in seen:
             clean.append(normalized)
             seen.add(normalized)
-    return '|'.join(clean[:8])
+    return '|'.join(clean[:10])
 
 
 def normalize_product_payload(row: Mapping[str, Any] | Any) -> dict[str, Any]:
@@ -168,12 +190,21 @@ def normalize_product_payload(row: Mapping[str, Any] | Any) -> dict[str, Any]:
         raw = _row_get(row, field)
         if field == 'preco':
             value = _money(raw)
-        elif field in {'estoque', 'peso', 'largura', 'altura', 'profundidade'}:
+        elif field in {'estoque', 'peso_liquido', 'peso_bruto', 'largura', 'altura', 'profundidade'}:
             value = _number(raw)
         elif field == 'gtin':
             value = _gtin(raw)
         elif field == 'imagens':
             value = _images(raw)
+        elif field in {'ncm'}:
+            digits = re.sub(r'\D+', '', raw)
+            value = digits if len(digits) == 8 else ''
+        elif field in {'cest'}:
+            digits = re.sub(r'\D+', '', raw)
+            value = digits if len(digits) == 7 else ''
+        elif field == 'origem':
+            digits = re.sub(r'\D+', '', raw)
+            value = digits[:1] if digits else ''
         else:
             value = _clean_text(raw)
         if value:
@@ -202,13 +233,24 @@ def _similar_text(a: object, b: object) -> bool:
 def _same_value(field: str, site_value: object, bling_value: object) -> bool:
     if field == 'preco':
         return _money(site_value) == _money(bling_value)
-    if field in {'estoque', 'peso', 'largura', 'altura', 'profundidade'}:
+    if field in {'estoque', 'peso_liquido', 'peso_bruto', 'largura', 'altura', 'profundidade'}:
         return _number(site_value) == _number(bling_value)
     if field == 'gtin':
         return _gtin(site_value) == _gtin(bling_value)
     if field == 'imagens':
         return _images(site_value) == _images(bling_value)
     return _similar_text(site_value, bling_value)
+
+
+def _text_quality(value: object) -> int:
+    text = _clean_text(value)
+    if not text:
+        return 0
+    words = re.findall(r'[A-Za-zÀ-ÿ0-9]{2,}', text)
+    score = min(len(text), 3500) + min(len(words), 400) * 4
+    if re.match(r'^(produto|produto sem nome|sem nome|item)\b', text, flags=re.I):
+        score -= 160
+    return max(score, 0)
 
 
 def _quality_score(payload: Mapping[str, Any]) -> int:
@@ -220,14 +262,69 @@ def _quality_score(payload: Mapping[str, Any]) -> int:
     if not payload.get('preco'):
         score -= 12
     if not payload.get('imagens'):
-        score -= 8
-    if not payload.get('descricao') and not payload.get('descricao_curta'):
         score -= 10
+    if not payload.get('descricao') and not payload.get('descricao_curta'):
+        score -= 12
     if not payload.get('marca'):
         score -= 5
     if not payload.get('categoria'):
         score -= 5
+    if payload.get('descricao') and _text_quality(payload.get('descricao')) < 80:
+        score -= 5
     return max(0, min(100, score))
+
+
+def _missing_quality_fields(payload: Mapping[str, Any]) -> tuple[str, ...]:
+    missing: list[str] = []
+    for field in ('nome', 'preco', 'descricao', 'imagens', 'marca', 'categoria'):
+        if field == 'descricao':
+            if not payload.get('descricao') and not payload.get('descricao_curta'):
+                missing.append(field)
+            continue
+        if not payload.get(field):
+            missing.append(field)
+    return tuple(missing)
+
+
+def _benefit_score(changed: list[str], site_payload: Mapping[str, Any], bling_payload: Mapping[str, Any]) -> int:
+    weights = {
+        'descricao': 30,
+        'descricao_curta': 28,
+        'imagens': 28,
+        'categoria': 18,
+        'marca': 14,
+        'preco': 12,
+        'ncm': 8,
+        'cest': 6,
+        'origem': 6,
+        'peso_liquido': 7,
+        'peso_bruto': 7,
+        'largura': 6,
+        'altura': 6,
+        'profundidade': 6,
+    }
+    score = 0
+    for field in changed:
+        score += weights.get(field, 4)
+        if not bling_payload.get(field) and site_payload.get(field):
+            score += 8
+    return score
+
+
+def _safe_changed_fields(site_payload: Mapping[str, Any], bling_payload: Mapping[str, Any]) -> tuple[list[str], dict[str, Any]]:
+    changed: list[str] = []
+    final_payload: dict[str, Any] = {}
+    for field, site_value in site_payload.items():
+        if field == 'url':
+            final_payload[field] = site_value
+            continue
+        bling_value = bling_payload.get(field, '')
+        if field in PROTECTED_FIELDS and bling_value:
+            continue
+        if not _same_value(field, site_value, bling_value):
+            changed.append(field)
+            final_payload[field] = site_value
+    return changed, final_payload
 
 
 def analyze_product_update_need(site_product: Mapping[str, Any] | Any, bling_product: Mapping[str, Any] | Any | None) -> ProductUpdateDecision:
@@ -236,102 +333,36 @@ def analyze_product_update_need(site_product: Mapping[str, Any] | Any, bling_pro
     site_id = _identity(site_payload)
     bling_id = _identity(bling_payload)
     score = _quality_score(site_payload)
+    missing = _missing_quality_fields(site_payload)
+    rich = tuple(field for field in RICH_FIELDS if site_payload.get(field))
 
     if not site_id and not site_payload.get('nome'):
-        return ProductUpdateDecision(
-            action=ACTION_PENDING,
-            should_update=False,
-            should_skip=False,
-            should_create=False,
-            should_hold=True,
-            reason='Produto do site sem SKU/código/GTIN e sem nome confiável para localizar ou cadastrar.',
-            changed_fields=tuple(),
-            payload=site_payload,
-            quality_score=score,
-            risk='alto',
-            site_identity=site_id,
-            bling_identity=bling_id,
-        )
+        return ProductUpdateDecision(ACTION_PENDING, False, False, False, True, 'Produto do site sem SKU/código/GTIN e sem nome confiável para localizar ou cadastrar.', tuple(), site_payload, score, 'alto', site_id, bling_id, 0, rich, missing)
 
     if not bling_product:
-        return ProductUpdateDecision(
-            action=ACTION_CREATE,
-            should_update=False,
-            should_skip=False,
-            should_create=True,
-            should_hold=False,
-            reason='Produto não encontrado no Bling; enviar para cadastro inteligente.',
-            changed_fields=tuple(site_payload.keys()),
-            payload=site_payload,
-            quality_score=score,
-            risk='medio' if score >= 70 else 'alto',
-            site_identity=site_id,
-            bling_identity=bling_id,
-        )
+        if score < MIN_CREATE_QUALITY:
+            return ProductUpdateDecision(ACTION_PENDING, False, False, False, True, f'Produto extraído do site com qualidade insuficiente para envio automático ({score}/100). Falta: {", ".join(missing) or "dados ricos"}.', tuple(site_payload.keys()), site_payload, score, 'alto', site_id, bling_id, 0, rich, missing)
+        return ProductUpdateDecision(ACTION_CREATE, False, False, True, False, 'Produto não encontrado no Bling; enviar para cadastro inteligente com dados enriquecidos do site.', tuple(site_payload.keys()), site_payload, score, 'baixo' if score >= 82 else 'medio', site_id, bling_id, _benefit_score(list(site_payload.keys()), site_payload, {}), rich, missing)
 
-    changed: list[str] = []
-    final_payload: dict[str, Any] = {}
-    for field, site_value in site_payload.items():
-        if field == 'url':
-            final_payload[field] = site_value
-            continue
-        bling_value = bling_payload.get(field, '')
-        if not _same_value(field, site_value, bling_value):
-            changed.append(field)
-            final_payload[field] = site_value
+    changed, final_payload = _safe_changed_fields(site_payload, bling_payload)
+    benefit = _benefit_score(changed, site_payload, bling_payload)
 
     if not changed:
-        return ProductUpdateDecision(
-            action=ACTION_SKIP,
-            should_update=False,
-            should_skip=True,
-            should_create=False,
-            should_hold=False,
-            reason='Produto já está atualizado no Bling; nenhuma mudança real detectada.',
-            changed_fields=tuple(),
-            payload={},
-            quality_score=score,
-            risk='baixo',
-            site_identity=site_id,
-            bling_identity=bling_id,
-        )
+        return ProductUpdateDecision(ACTION_SKIP, False, True, False, False, 'Produto já está atualizado no Bling; nenhuma mudança real detectada.', tuple(), {}, score, 'baixo', site_id, bling_id, 0, rich, missing)
+
+    if score < MIN_UPDATE_QUALITY:
+        return ProductUpdateDecision(ACTION_PENDING, False, False, False, True, f'Mudanças detectadas ({", ".join(changed)}), mas a qualidade do site está baixa para atualizar automaticamente ({score}/100).', tuple(changed), final_payload, score, 'alto', site_id, bling_id, benefit, rich, missing)
+
+    if benefit < MIN_UPDATE_BENEFIT and not (set(changed) & RICH_FIELDS):
+        return ProductUpdateDecision(ACTION_SKIP, False, True, False, False, f'Mudança pequena detectada ({", ".join(changed)}), mas não compensa chamar a API do Bling.', tuple(changed), {}, score, 'baixo', site_id, bling_id, benefit, rich, missing)
 
     risk = 'baixo'
-    if score < 60:
-        risk = 'alto'
-    elif any(field in changed for field in ('gtin', 'codigo', 'sku')):
+    if score < 72:
+        risk = 'medio'
+    if any(field in changed for field in ('gtin', 'codigo', 'sku')):
         risk = 'medio'
 
-    if risk == 'alto':
-        return ProductUpdateDecision(
-            action=ACTION_PENDING,
-            should_update=False,
-            should_skip=False,
-            should_create=False,
-            should_hold=True,
-            reason=f'Mudanças detectadas ({", ".join(changed)}), mas a qualidade do site está baixa para atualizar automaticamente.',
-            changed_fields=tuple(changed),
-            payload=final_payload,
-            quality_score=score,
-            risk=risk,
-            site_identity=site_id,
-            bling_identity=bling_id,
-        )
-
-    return ProductUpdateDecision(
-        action=ACTION_UPDATE,
-        should_update=True,
-        should_skip=False,
-        should_create=False,
-        should_hold=False,
-        reason=f'Atualização necessária: {", ".join(changed)}.',
-        changed_fields=tuple(changed),
-        payload=final_payload,
-        quality_score=score,
-        risk=risk,
-        site_identity=site_id,
-        bling_identity=bling_id,
-    )
+    return ProductUpdateDecision(ACTION_UPDATE, True, False, False, False, f'Atualização necessária e compensadora: {", ".join(changed)}. Benefício {benefit}.', tuple(changed), final_payload, score, risk, site_id, bling_id, benefit, tuple(field for field in rich if field in changed or field in final_payload), missing)
 
 
 __all__ = [
