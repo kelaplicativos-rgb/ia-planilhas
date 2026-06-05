@@ -13,8 +13,8 @@ COMMON_FIXES: tuple[tuple[str, str], ...] = (
     (r'\bconexao\b', 'conexão'),
     (r'\binstalacao\b', 'instalação'),
     (r'\butilizacao\b', 'utilização'),
-    (r'\bcompatibilidade\b', 'compatibilidade'),
     (r'\bcompativel\b', 'compatível'),
+    (r'\bcompativeis\b', 'compatíveis'),
     (r'\bpratico\b', 'prático'),
     (r'\bpratica\b', 'prática'),
     (r'\botimo\b', 'ótimo'),
@@ -24,14 +24,13 @@ COMMON_FIXES: tuple[tuple[str, str], ...] = (
     (r'\bduravel\b', 'durável'),
     (r'\bmultimidia\b', 'multimídia'),
     (r'\bteclado numerico\b', 'teclado numérico'),
-    (r'\bsem fio\b', 'sem fio'),
-    (r'\bplug\s*-?\s*and\s*-?\s*play\b', 'plug-and-play'),
-    (r'\bhome office\b', 'home office'),
     (r'\bescritorio\b', 'escritório'),
     (r'\bqualidade\b', 'qualidade'),
     (r'\bproduto novo\b', 'produto novo'),
     (r'\bfone de ouvido\b', 'fone de ouvido'),
     (r'\bcaixa de som\b', 'caixa de som'),
+    (r'\bplug\s*-?\s*and\s*-?\s*play\b', 'plug-and-play'),
+    (r'\bhome office\b', 'home office'),
 )
 
 NOISE_REPLACEMENTS: tuple[str, ...] = (
@@ -45,10 +44,26 @@ NOISE_REPLACEMENTS: tuple[str, ...] = (
     r'clique\s+aqui',
     r'veja\s+mais',
     r'saiba\s+mais',
+    r'produto\s+indispon[ií]vel',
+    r'esgotado',
 )
 
 LOWER_WORDS = {'de', 'da', 'do', 'das', 'dos', 'para', 'com', 'sem', 'em', 'e', 'ou', 'a', 'o'}
 UPPER_TOKENS = {'usb', 'hdmi', 'led', 'p2', 'p3', 'vga', 'wifi', 'wi-fi', 'bluetooth', 'rgb', 'type-c', 'tipo-c'}
+
+CATEGORY_HINTS: tuple[tuple[str, str], ...] = (
+    ('teclado', 'Ideal para escritório, estudos e uso diário, oferecendo digitação confortável e prática.'),
+    ('mouse', 'Oferece navegação precisa e confortável para computador, notebook ou estação de trabalho.'),
+    ('fone', 'Proporciona uma experiência sonora prática para chamadas, músicas e uso no dia a dia.'),
+    ('headset', 'Indicado para chamadas, jogos, reuniões e uso prolongado com mais praticidade.'),
+    ('caixa de som', 'Entrega som prático para ambientes domésticos, trabalho ou momentos de lazer.'),
+    ('carregador', 'Ajuda a manter seus dispositivos sempre prontos para uso com praticidade e segurança.'),
+    ('cabo', 'Facilita a conexão entre dispositivos no dia a dia com mais organização e praticidade.'),
+    ('adaptador', 'Solução prática para ampliar compatibilidade entre dispositivos e acessórios.'),
+    ('suporte', 'Ajuda a organizar melhor o ambiente e melhora a praticidade no uso diário.'),
+    ('lâmpada', 'Opção prática para iluminação com boa eficiência no uso diário.'),
+    ('lampada', 'Opção prática para iluminação com boa eficiência no uso diário.'),
+)
 
 
 def _protect_tokens(text: str) -> tuple[str, dict[str, str]]:
@@ -75,11 +90,18 @@ def _normalize_spaces(text: str) -> str:
     out = re.sub(r'\s+', ' ', out)
     out = re.sub(r'\s+([,.;:!?])', r'\1', out)
     out = re.sub(r'([,.;:!?])(?=[^\s\n])', r'\1 ', out)
-    # BLINGFIX: não transformar hífen simples em separador visual.
-    # Isso preserva modelos e padrões técnicos como AL-507, USB-C, X-100 e Tipo-C.
     out = re.sub(r'\s*[|•·]+\s*', ' - ', out)
     out = re.sub(r'\s+-\s+', ' - ', out)
     return re.sub(r'\s+', ' ', out).strip(' -|•·\t\n\r')
+
+
+def _norm_key(value: object) -> str:
+    text = str(value or '').strip().lower()
+    text = text.replace('ã', 'a').replace('á', 'a').replace('à', 'a').replace('â', 'a')
+    text = text.replace('é', 'e').replace('ê', 'e').replace('í', 'i')
+    text = text.replace('ó', 'o').replace('ô', 'o').replace('õ', 'o')
+    text = text.replace('ú', 'u').replace('ç', 'c')
+    return re.sub(r'\s+', ' ', re.sub(r'[^a-z0-9]+', ' ', text)).strip()
 
 
 def strip_product_noise(text: object) -> str:
@@ -143,22 +165,83 @@ def polish_sentence(text: object) -> str:
     return cleaned
 
 
-def polish_product_description(text: object, *, title: object = '', limit: int = 3500) -> str:
-    cleaned = strip_product_noise(text)
-    if not cleaned:
+def _sentence_marker(text: str) -> str:
+    return re.sub(r'\W+', '', _norm_key(text))
+
+
+def _title_tokens(title: object) -> set[str]:
+    return {token for token in _norm_key(title).split() if len(token) >= 4}
+
+
+def _looks_technical_sentence(sentence: str) -> bool:
+    text = sentence.lower()
+    return bool(re.search(r'\b(usb|hdmi|bluetooth|wi-fi|wifi|p2|p3|tipo-c|type-c|mah|w|v|hz|gb|tb|cm|mm|kg|plug-and-play|windows|android|ios|notebook|pc)\b', text, flags=re.I))
+
+
+def _persuasive_intro(title: str, sentences: list[str]) -> str:
+    if not title:
         return ''
-    title_norm = _normalize_spaces(str(title or '')).lower()
+    title_low = _norm_key(title)
+    if sentences and title_low in _norm_key(sentences[0]):
+        return ''
+    return f'O {title} é uma ótima opção para quem busca praticidade, qualidade e bom desempenho no uso diário.'
+
+
+def _category_sentence(title: str, existing_markers: set[str]) -> str:
+    title_norm = _norm_key(title)
+    for key, sentence in CATEGORY_HINTS:
+        if _norm_key(key) in title_norm:
+            marker = _sentence_marker(sentence)
+            if marker not in existing_markers:
+                return sentence
+    return ''
+
+
+def _closing_sentence(sentences: list[str], title: str) -> str:
+    technical_count = sum(1 for sentence in sentences if _looks_technical_sentence(sentence))
+    if technical_count >= 2:
+        return 'Com esses recursos, é uma escolha prática para quem deseja mais eficiência, conforto e confiança na rotina.'
+    if title:
+        return 'Produto indicado para quem procura uma solução funcional, prática e fácil de usar.'
+    return ''
+
+
+def polish_product_description(text: object, *, title: object = '', limit: int = 3500, persuasive: bool = True) -> str:
+    cleaned = strip_product_noise(text)
+    fixed_title = title_case_product_name(title, limit=140) if title else ''
+    if not cleaned:
+        if persuasive and fixed_title:
+            return _persuasive_intro(fixed_title, [])[:limit]
+        return ''
+
+    title_norm = _normalize_spaces(str(fixed_title or title or '')).lower()
     sentences: list[str] = []
     seen: set[str] = set()
+
+    intro = _persuasive_intro(fixed_title, []) if persuasive else ''
+    if intro:
+        sentences.append(intro)
+        seen.add(_sentence_marker(intro))
+
     for part in split_sentences(cleaned):
         polished = polish_sentence(part)
-        marker = re.sub(r'\W+', '', polished.lower())
+        marker = _sentence_marker(polished)
         if not marker or marker in seen:
             continue
         if title_norm and _normalize_spaces(polished).rstrip('.').lower() == title_norm:
             continue
         seen.add(marker)
         sentences.append(polished)
+
+    category_line = _category_sentence(fixed_title, seen) if persuasive else ''
+    if category_line:
+        sentences.append(category_line)
+        seen.add(_sentence_marker(category_line))
+
+    close = _closing_sentence(sentences, fixed_title) if persuasive else ''
+    if close and _sentence_marker(close) not in seen and len(sentences) < 8:
+        sentences.append(close)
+
     out = ' '.join(sentences).strip()
     if len(out) > limit:
         out = out[: limit - 3].rstrip() + '...'
@@ -168,7 +251,7 @@ def polish_product_description(text: object, *, title: object = '', limit: int =
 def polish_product_texts(*, title: object = '', description: object = '', description_extra: object = '') -> dict[str, str]:
     polished_title = title_case_product_name(title)
     full_description = ' '.join(part for part in (str(description or '').strip(), str(description_extra or '').strip()) if part)
-    polished_description = polish_product_description(full_description, title=polished_title)
+    polished_description = polish_product_description(full_description, title=polished_title, persuasive=True)
     return {
         'title': polished_title,
         'description': polished_description,
