@@ -18,6 +18,11 @@ from bling_app_zero.core.bling_api_contract import (
 )
 from bling_app_zero.core.bling_oauth import build_authorization_url, connection_status, disconnect, required_redirect_uri
 from bling_app_zero.core.bling_token_store import load_token
+from bling_app_zero.ui.bling_backend_bridge import (
+    backend_auth_url as configured_backend_auth_url,
+    backend_connection_status,
+    sync_backend_token_to_streamlit,
+)
 from bling_app_zero.ui.cadastro_wizard_state import CADASTRO_MODELO_KEY
 from bling_app_zero.ui.flow_context import (
     CONTEXT_BLING_API,
@@ -94,12 +99,25 @@ def _direct_operation() -> str:
     return normalize_direct_operation(st.session_state.get('home_slim_flow_operation'))
 
 
+def _local_token_connected() -> bool:
+    token, _meta = load_token()
+    return isinstance(token, dict) and bool(token.get('access_token'))
+
+
+def _connected_via_backend() -> bool:
+    backend_status = backend_connection_status()
+    if not backend_status.get('enabled') or not backend_status.get('connected'):
+        return False
+    sync_backend_token_to_streamlit()
+    return _local_token_connected() or bool(backend_status.get('connected'))
+
+
 def is_bling_api_entry() -> bool:
     return entry_context() == CONTEXT_BLING_API
 
 
 def is_api_direct_mode() -> bool:
-    return finish_mode() == FINISH_MODE_API and bool(connection_status().get('connected')) and is_bling_api_entry()
+    return finish_mode() == FINISH_MODE_API and (bool(connection_status().get('connected')) or _connected_via_backend()) and is_bling_api_entry()
 
 
 def clear_direct_api_contract() -> None:
@@ -194,6 +212,7 @@ def _normalize_deposit(item: dict[str, Any]) -> dict[str, str] | None:
 
 
 def _fetch_stock_deposits() -> tuple[list[dict[str, str]], str]:
+    sync_backend_token_to_streamlit()
     token, _meta = load_token()
     if not isinstance(token, dict) or not token.get('access_token'):
         return [], 'Bling não conectado.'
@@ -345,12 +364,14 @@ def render_bling_connection_step(section_title) -> None:
     section_title(1, 'Bling API')
     with st.container(border=True):
         st.caption('Fluxo curto: escolha a operação, carregue os dados e envie direto ao Bling. Não usa modelo de planilha.')
-        status = connection_status()
-        connected = bool(status.get('connected'))
-        callback_url = str(status.get('required_redirect_uri') or required_redirect_uri()).strip()
+        local_status = connection_status()
+        backend_status = backend_connection_status()
+        connected = bool(local_status.get('connected')) or _connected_via_backend()
+        callback_url = str(local_status.get('required_redirect_uri') or required_redirect_uri()).strip()
 
         if connected:
-            st.success('Bling conectado. O modo API direta já está ativo.')
+            source = 'backend externo' if backend_status.get('enabled') and backend_status.get('connected') else 'Streamlit'
+            st.success(f'Bling conectado via {source}. O modo API direta já está ativo.')
             operation = st.radio(
                 'O que deseja fazer no Bling?',
                 options=direct_operation_options(),
@@ -370,21 +391,24 @@ def render_bling_connection_step(section_title) -> None:
             return
 
         st.warning('Bling não conectado. Conecte para liberar o envio direto pela API.')
-        backend_auth_url = _secret('backend_auth_url', '') or _secret('BLING_BACKEND_AUTH_URL', '')
-        if not backend_auth_url:
+        auth_url = configured_backend_auth_url()
+        if not auth_url:
             render_callback_hint(callback_url)
         try:
-            auth_url = backend_auth_url or build_authorization_url({'return_to': 'start', 'source_step': 'bling_connection_entry'})
+            auth_url = auth_url or build_authorization_url({'return_to': 'start', 'source_step': 'bling_connection_entry'})
         except Exception as exc:
             auth_url = ''
             add_audit_event('bling_api_authorization_url_error', area='BLING_API', status='ERRO', details={'error': str(exc), 'responsible_file': RESPONSIBLE_FILE})
-        if backend_auth_url:
-            st.info('Conexão do Bling será feita pelo backend externo. O Streamlit não processa o OAuth neste caminho.')
+        if configured_backend_auth_url():
+            if backend_status.get('error'):
+                st.warning(f'Backend Bling configurado, mas status falhou: {backend_status.get("error")}')
+            else:
+                st.info('Conexão do Bling será feita pelo backend externo. O Streamlit não processa o OAuth neste caminho.')
             add_audit_event('bling_api_external_backend_auth_enabled', area='BLING_API', status='OK', details={'responsible_file': RESPONSIBLE_FILE})
         render_same_tab_connect_button(auth_url)
         st.markdown('<div style="height:.55rem"></div>', unsafe_allow_html=True)
         st.caption('Sem conexão com o Bling, este caminho fica bloqueado. Para gerar arquivo manual, volte para a Home e use modelo de destino.')
-        add_audit_event('bling_api_connection_required', area='BLING_API', status='AGUARDANDO_CONEXAO', details={'required_redirect_uri': callback_url, 'external_backend': bool(backend_auth_url), 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('bling_api_connection_required', area='BLING_API', status='AGUARDANDO_CONEXAO', details={'required_redirect_uri': callback_url, 'external_backend': bool(configured_backend_auth_url()), 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = [
