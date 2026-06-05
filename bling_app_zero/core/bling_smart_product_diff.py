@@ -80,7 +80,7 @@ def _cmp_images(value: Any) -> str:
         key = _image_key(item)
         if key and key not in keys:
             keys.append(key)
-    return '|'.join(keys)
+    return '|'.join(sorted(keys))
 
 
 def _images_from_any(value: Any) -> list[str]:
