@@ -63,12 +63,16 @@ def _run_rows(limit: int = 8) -> pd.DataFrame:
                 'estado': item.get('state') or '',
                 'modo': item.get('execution_mode') or item.get('mode') or '',
                 'linhas': cycle.get('extracted_rows') or cycle.get('rows_seen') or 0,
-                'local_prontas': cycle.get('local_ready_rows') or 0,
-                'local_revisao': cycle.get('local_review_rows') or 0,
+                'itens': cycle.get('item_snapshot_total') or 0,
+                'sem_id': cycle.get('item_snapshot_missing_identity') or 0,
                 'estoque_pronto': cycle.get('stock_ready') or 0,
                 'novos_produtos': cycle.get('new_products_ready') or 0,
                 'pendencias': cycle.get('pending') or 0,
                 'mudou': 'Sim' if diff.get('changed') else 'Não',
+                'novos': diff.get('item_new') or 0,
+                'alterados': diff.get('item_changed') or 0,
+                'removidos': diff.get('item_removed') or 0,
+                'iguais': diff.get('item_unchanged') or 0,
                 'mensagem': item.get('message') or cycle.get('message') or diff.get('message') or '',
             }
         )
@@ -112,6 +116,11 @@ def _render_persistent_history() -> None:
     cols[5].metric('Mudou?', 'Sim' if diff.get('changed') else 'Não')
     if diff:
         st.caption(str(diff.get('message') or 'Comparação entre ciclos registrada.'))
+        diff_cols = st.columns(4)
+        diff_cols[0].metric('Itens novos', int(diff.get('item_new') or 0))
+        diff_cols[1].metric('Itens alterados', int(diff.get('item_changed') or 0))
+        diff_cols[2].metric('Itens removidos', int(diff.get('item_removed') or 0))
+        diff_cols[3].metric('Itens iguais', int(diff.get('item_unchanged') or 0))
     df_runs = _run_rows()
     if isinstance(df_runs, pd.DataFrame) and not df_runs.empty:
         with st.expander('Ver últimas execuções monitoradas', expanded=False):
