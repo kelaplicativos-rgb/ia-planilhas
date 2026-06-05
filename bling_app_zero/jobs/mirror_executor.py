@@ -5,9 +5,10 @@ import json
 import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Mapping
+from typing import Any
 
 from bling_app_zero.core.bling_mirror_config import MirrorMonitorStatus
+from bling_app_zero.core.bling_mirror_cycle import run_mirror_discovery_cycle
 from bling_app_zero.core.bling_mirror_store import (
     append_mirror_run,
     load_persistent_config,
@@ -40,6 +41,7 @@ class MirrorExecutorResult:
     started_at: str
     finished_at: str
     next_run_at: str
+    cycle: dict[str, Any] | None = None
     responsible_file: str = RESPONSIBLE_FILE
 
     def to_dict(self) -> dict[str, Any]:
@@ -61,115 +63,13 @@ def _execution_mode(cli_mode: str = '') -> str:
     return mode
 
 
-def run_once(*, execution_mode: str = '') -> MirrorExecutorResult:
-    started = _now()
-    cfg = load_persistent_config()
-    mode = _execution_mode(execution_mode)
-    next_run = started + timedelta(minutes=cfg.interval_minutes)
-
-    if not cfg.enabled:
-        result = MirrorExecutorResult(
-            ok=True,
-            enabled=False,
-            execution_mode=mode,
-            state='inactive',
-            message='Espelhamento desligado. Nenhuma ação executada.',
-            site_url=cfg.site_url,
-            deposit_name=cfg.deposit_name,
-            mode=cfg.mode,
-            interval_minutes=cfg.interval_minutes,
-            max_products_per_cycle=cfg.max_products_per_cycle,
-            stock_auto_allowed=cfg.stock_auto_allowed,
-            new_products_review_only=cfg.new_products_review_only,
-            require_preview=cfg.require_preview,
-            monitor_only=cfg.monitor_only,
-            started_at=_iso(started),
-            finished_at=_iso(_now()),
-            next_run_at='',
-        )
-        save_persistent_status(MirrorMonitorStatus(state='inactive', last_run_at=result.finished_at, next_run_at='', last_message=result.message))
-        append_mirror_run(result.to_dict())
-        return result
-
-    if not cfg.site_url or not cfg.deposit_name:
-        result = MirrorExecutorResult(
-            ok=False,
-            enabled=True,
-            execution_mode=mode,
-            state='blocked',
-            message='Configuração incompleta: informe site e depósito antes do executor automático.',
-            site_url=cfg.site_url,
-            deposit_name=cfg.deposit_name,
-            mode=cfg.mode,
-            interval_minutes=cfg.interval_minutes,
-            max_products_per_cycle=cfg.max_products_per_cycle,
-            stock_auto_allowed=cfg.stock_auto_allowed,
-            new_products_review_only=cfg.new_products_review_only,
-            require_preview=cfg.require_preview,
-            monitor_only=cfg.monitor_only,
-            started_at=_iso(started),
-            finished_at=_iso(_now()),
-            next_run_at=_iso(next_run),
-        )
-        save_persistent_status(MirrorMonitorStatus(state='blocked', last_run_at=result.finished_at, next_run_at=result.next_run_at, last_message=result.message))
-        append_mirror_run(result.to_dict())
-        return result
-
-    if cfg.monitor_only or mode == MODE_MONITOR:
-        message = 'Monitoramento persistente OK. Executor externo leu a configuração, mas modo monitoramento não aplica alterações.'
-        result = MirrorExecutorResult(
-            ok=True,
-            enabled=True,
-            execution_mode=MODE_MONITOR,
-            state='monitoring_enabled',
-            message=message,
-            site_url=cfg.site_url,
-            deposit_name=cfg.deposit_name,
-            mode=cfg.mode,
-            interval_minutes=cfg.interval_minutes,
-            max_products_per_cycle=cfg.max_products_per_cycle,
-            stock_auto_allowed=cfg.stock_auto_allowed,
-            new_products_review_only=cfg.new_products_review_only,
-            require_preview=cfg.require_preview,
-            monitor_only=cfg.monitor_only,
-            started_at=_iso(started),
-            finished_at=_iso(_now()),
-            next_run_at=_iso(next_run),
-        )
-        save_persistent_status(MirrorMonitorStatus(state='monitoring_enabled', last_run_at=result.finished_at, next_run_at=result.next_run_at, last_message=result.message))
-        append_mirror_run(result.to_dict())
-        return result
-
-    if mode in {MODE_APPLY_STOCK, MODE_APPLY_FULL} and not cfg.stock_auto_allowed:
-        result = MirrorExecutorResult(
-            ok=False,
-            enabled=True,
-            execution_mode=mode,
-            state='blocked',
-            message='Aplicação automática bloqueada: estoque automático ainda não foi permitido na configuração.',
-            site_url=cfg.site_url,
-            deposit_name=cfg.deposit_name,
-            mode=cfg.mode,
-            interval_minutes=cfg.interval_minutes,
-            max_products_per_cycle=cfg.max_products_per_cycle,
-            stock_auto_allowed=cfg.stock_auto_allowed,
-            new_products_review_only=cfg.new_products_review_only,
-            require_preview=cfg.require_preview,
-            monitor_only=cfg.monitor_only,
-            started_at=_iso(started),
-            finished_at=_iso(_now()),
-            next_run_at=_iso(next_run),
-        )
-        save_persistent_status(MirrorMonitorStatus(state='blocked', last_run_at=result.finished_at, next_run_at=result.next_run_at, last_message=result.message))
-        append_mirror_run(result.to_dict())
-        return result
-
-    result = MirrorExecutorResult(
-        ok=False,
-        enabled=True,
+def _result_from_config(*, cfg, mode: str, state: str, message: str, ok: bool, started: datetime, next_run_at: str, cycle: dict[str, Any] | None = None) -> MirrorExecutorResult:
+    return MirrorExecutorResult(
+        ok=ok,
+        enabled=bool(cfg.enabled),
         execution_mode=mode,
-        state='not_implemented',
-        message='Executor agendável criado, mas aplicação real por API ainda está bloqueada até conectar captura, comparação com Bling e logs transacionais.',
+        state=state,
+        message=message,
         site_url=cfg.site_url,
         deposit_name=cfg.deposit_name,
         mode=cfg.mode,
@@ -181,11 +81,100 @@ def run_once(*, execution_mode: str = '') -> MirrorExecutorResult:
         monitor_only=cfg.monitor_only,
         started_at=_iso(started),
         finished_at=_iso(_now()),
-        next_run_at=_iso(next_run),
+        next_run_at=next_run_at,
+        cycle=cycle,
     )
-    save_persistent_status(MirrorMonitorStatus(state='not_implemented', last_run_at=result.finished_at, next_run_at=result.next_run_at, last_message=result.message))
+
+
+def _persist_result(result: MirrorExecutorResult) -> MirrorExecutorResult:
+    cycle = result.cycle or {}
+    save_persistent_status(
+        MirrorMonitorStatus(
+            state=result.state,
+            last_run_at=result.finished_at,
+            next_run_at=result.next_run_at,
+            last_message=result.message,
+            last_rows_seen=int(cycle.get('rows_seen') or cycle.get('product_urls_found') or 0),
+            last_stock_ready=0,
+            last_new_products_ready=0,
+            last_pending=0,
+            last_skipped=0,
+        )
+    )
     append_mirror_run(result.to_dict())
     return result
+
+
+def run_once(*, execution_mode: str = '') -> MirrorExecutorResult:
+    started = _now()
+    cfg = load_persistent_config()
+    mode = _execution_mode(execution_mode)
+    next_run = started + timedelta(minutes=cfg.interval_minutes)
+
+    if not cfg.enabled:
+        result = _result_from_config(
+            cfg=cfg,
+            mode=mode,
+            state='inactive',
+            message='Espelhamento desligado. Nenhum ciclo executado.',
+            ok=True,
+            started=started,
+            next_run_at='',
+        )
+        return _persist_result(result)
+
+    if not cfg.site_url or not cfg.deposit_name:
+        result = _result_from_config(
+            cfg=cfg,
+            mode=mode,
+            state='blocked',
+            message='Configuração incompleta: informe site e depósito antes do executor automático.',
+            ok=False,
+            started=started,
+            next_run_at=_iso(next_run),
+        )
+        return _persist_result(result)
+
+    cycle = run_mirror_discovery_cycle(cfg)
+    cycle_payload = cycle.to_dict()
+
+    if cfg.monitor_only or mode == MODE_MONITOR:
+        result = _result_from_config(
+            cfg=cfg,
+            mode=MODE_MONITOR,
+            state='monitoring_enabled' if cycle.ok else cycle.stage,
+            message=cycle.message,
+            ok=bool(cycle.ok),
+            started=started,
+            next_run_at=_iso(next_run),
+            cycle=cycle_payload,
+        )
+        return _persist_result(result)
+
+    if mode in {MODE_APPLY_STOCK, MODE_APPLY_FULL} and not cfg.stock_auto_allowed:
+        result = _result_from_config(
+            cfg=cfg,
+            mode=mode,
+            state='blocked',
+            message='Aplicação automática bloqueada: estoque automático ainda não foi permitido na configuração.',
+            ok=False,
+            started=started,
+            next_run_at=_iso(next_run),
+            cycle=cycle_payload,
+        )
+        return _persist_result(result)
+
+    result = _result_from_config(
+        cfg=cfg,
+        mode=mode,
+        state='not_implemented',
+        message='Ciclo de descoberta executado, mas comparação com Bling e aplicação por API ainda estão bloqueadas até o próximo BLINGFIX.',
+        ok=False,
+        started=started,
+        next_run_at=_iso(next_run),
+        cycle=cycle_payload,
+    )
+    return _persist_result(result)
 
 
 def main(argv: list[str] | None = None) -> int:
