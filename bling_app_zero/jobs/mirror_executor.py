@@ -94,11 +94,11 @@ def _persist_result(result: MirrorExecutorResult) -> MirrorExecutorResult:
             last_run_at=result.finished_at,
             next_run_at=result.next_run_at,
             last_message=result.message,
-            last_rows_seen=int(cycle.get('rows_seen') or cycle.get('product_urls_found') or 0),
-            last_stock_ready=0,
-            last_new_products_ready=0,
-            last_pending=0,
-            last_skipped=0,
+            last_rows_seen=int(cycle.get('extracted_rows') or cycle.get('rows_seen') or cycle.get('product_urls_found') or 0),
+            last_stock_ready=int(cycle.get('stock_ready') or 0),
+            last_new_products_ready=int(cycle.get('new_products_ready') or 0),
+            last_pending=int(cycle.get('pending') or 0),
+            last_skipped=int(cycle.get('skipped') or 0),
         )
     )
     append_mirror_run(result.to_dict())
@@ -168,7 +168,7 @@ def run_once(*, execution_mode: str = '') -> MirrorExecutorResult:
         cfg=cfg,
         mode=mode,
         state='not_implemented',
-        message='Ciclo de descoberta executado, mas comparação com Bling e aplicação por API ainda estão bloqueadas até o próximo BLINGFIX.',
+        message='Ciclo monitorado gerou leitura/plano, mas comparação com Bling e envio por API ainda estão bloqueados até o próximo BLINGFIX.',
         ok=False,
         started=started,
         next_run_at=_iso(next_run),
