@@ -6,6 +6,7 @@ import streamlit as st
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_mirror_apply import build_apply_bundle, bundle_to_frames
 from bling_app_zero.core.bling_mirror_bridge import bridge_reviewed_dataframe_to_official_flow
+from bling_app_zero.core.bling_mirror_config import update_status_from_summary
 from bling_app_zero.core.bling_mirror_planner import (
     MODE_BOTH,
     MODE_NEW_PRODUCTS,
@@ -17,6 +18,7 @@ from bling_app_zero.core.bling_mirror_planner import (
 )
 from bling_app_zero.ui.home_wizard_constants import STEP_PREVIEW
 from bling_app_zero.ui.home_wizard_rerun import safe_rerun
+from bling_app_zero.ui.mirror_monitor_panel import render_mirror_monitor_panel
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/mirror_planner_panel.py'
 MIRROR_APPROVED_STOCK_DF_KEY = 'mirror_approved_stock_df'
@@ -138,6 +140,8 @@ def render_mirror_planner_panel(df_site: pd.DataFrame, *, operation: str = '', s
     if not isinstance(df_site, pd.DataFrame) or df_site.empty:
         return
 
+    render_mirror_monitor_panel(default_site_url=st.session_state.get('site_capture_last_url', ''), default_deposit_name=st.session_state.get('estoque_deposito_nome', ''))
+
     st.markdown('### Espelhamento inteligente')
     st.caption('Simulação segura: o sistema separa o que poderia atualizar estoque, o que parece produto novo e o que virou pendência. Nada é aplicado sozinho.')
 
@@ -171,6 +175,7 @@ def render_mirror_planner_panel(df_site: pd.DataFrame, *, operation: str = '', s
     )
     report = build_mirror_plan(df_site, config)
     summary = report_summary(report)
+    update_status_from_summary(summary)
     st.session_state['mirror_planner_last_report'] = report.to_dict()
     st.session_state['mirror_planner_last_summary'] = summary
 
@@ -221,6 +226,7 @@ def render_mirror_planner_panel(df_site: pd.DataFrame, *, operation: str = '', s
             'stock_balance_only': stock_balance_only,
             'summary': summary,
             'preview_required_for_stock_bridge': True,
+            'monitor_status_updated': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
