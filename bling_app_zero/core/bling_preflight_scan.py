@@ -81,12 +81,7 @@ def _sendable_mask(df: pd.DataFrame, operation: str) -> pd.Series:
 
 
 def filter_sendable_dataframe(df: pd.DataFrame, operation: str) -> pd.DataFrame:
-    """Mantém apenas linhas que podem ser enviadas com segurança ao Bling.
-
-    O objetivo é impedir que o lote da API carregue linhas sem campos mínimos e
-    gaste tempo com itens que já sabemos que serão pendência. A tabela original
-    continua preservada para relatório/backup; o envio recebe só as linhas aptas.
-    """
+    """Mantém apenas linhas que podem ser enviadas com segurança ao Bling."""
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame()
     mask = _sendable_mask(df, operation)
