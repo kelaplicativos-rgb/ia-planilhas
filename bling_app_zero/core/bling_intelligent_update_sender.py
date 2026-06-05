@@ -49,6 +49,37 @@ def _safe_tuple_attr(obj: object, name: str) -> tuple[Any, ...]:
     return (value,)
 
 
+def _pending_reason_text(item: dict[str, Any]) -> str:
+    for key in ('reason', 'motivo', 'message', 'mensagem', 'title', 'titulo'):
+        value = str(item.get(key) or '').strip()
+        if value:
+            return value
+    reasons = item.get('reasons')
+    if isinstance(reasons, (list, tuple)):
+        joined = '; '.join(str(part or '').strip() for part in reasons if str(part or '').strip())
+        if joined:
+            return joined
+    return 'pendência inteligente antes da API'
+
+
+def _pending_errors_by_line(pending: list[dict[str, Any]], *, limit: int = 120) -> list[str]:
+    errors: list[str] = []
+    for item in pending[:limit]:
+        try:
+            line = int(item.get('line') or 0)
+        except Exception:
+            line = 0
+        reason = _pending_reason_text(item)
+        if line > 0:
+            errors.append(f'linha {line}: pendência inteligente antes da API. {reason}')
+        else:
+            errors.append(f'pendência inteligente antes da API. {reason}')
+    extra = len(pending) - len(errors)
+    if extra > 0:
+        errors.append(f'{extra} linha(s) adicionais ficaram como pendência inteligente antes da API sem detalhamento exibido.')
+    return errors
+
+
 def split_intelligent_update_rows(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame(), []
@@ -111,6 +142,8 @@ def send_dataframe_to_bling_intelligent(
         },
     )
 
+    pending_errors = _pending_errors_by_line(pending)
+
     if allowed_df.empty:
         message = 'Todas as linhas viraram pendência inteligente antes da API; nada foi enviado ao Bling.'
         add_audit_event(
@@ -119,7 +152,7 @@ def send_dataframe_to_bling_intelligent(
             status='BLOQUEADO',
             details={'total': len(df), 'pending': skipped_before_api, 'responsible_file': RESPONSIBLE_FILE},
         )
-        return DirectSendResult(len(df), 0, 0, skipped_before_api, (message,), tuple())
+        return DirectSendResult(len(df), 0, 0, skipped_before_api, tuple([message] + pending_errors), tuple())
 
     result = _smart_diff_send_dataframe_to_bling(
         allowed_df,
@@ -138,6 +171,7 @@ def send_dataframe_to_bling_intelligent(
 
     errors = list(_safe_tuple_attr(result, 'errors'))
     if skipped_before_api:
+        errors.extend(pending_errors)
         errors.append(f'{skipped_before_api} linha(s) ficaram como pendência inteligente antes da API.')
 
     not_found_indices = _safe_tuple_attr(result, 'not_found_indices')
