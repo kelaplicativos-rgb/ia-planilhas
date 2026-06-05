@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import pandas as pd
@@ -8,6 +9,7 @@ import streamlit as st
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_direct_sender_smart_diff import is_direct_send_available, preview_payloads, send_dataframe_to_bling
 from bling_app_zero.core.bling_oauth import connection_status
+from bling_app_zero.core.bling_preflight_scan import build_bling_preflight_report
 from bling_app_zero.core.bling_send_engine import (
     append_batch_result,
     ensure_send_state,
@@ -25,6 +27,10 @@ RESPONSIBLE_FILE = 'bling_app_zero/ui/bling_api_batch_panel.py'
 BATCH_STATE_KEY = 'bling_api_batch_send_state_v2'
 NEUTRAL_BLING_SEND_STATE_KEY = 'neutral_bling_send_state_v1'
 NEUTRAL_BLING_SEND_REPORT_KEY = 'neutral_bling_send_report_v1'
+PREFLIGHT_CACHE_KEY = 'bling_api_preflight_cache_v1'
+PAYLOAD_PREVIEW_CACHE_KEY = 'bling_api_payload_preview_cache_v2'
+LAST_BATCH_SECONDS_KEY = 'bling_api_last_batch_seconds_v1'
+MAX_AUTO_BATCH_SECONDS = 22.0
 
 DIRECT_SEND_TEXT = {
     OP_CADASTRO: 'Cadastrar produtos no Bling',
@@ -72,13 +78,50 @@ def _get_state(identity: str, total: int, operation: str) -> dict[str, Any]:
 
 def _reset_state(identity: str, total: int, operation: str) -> dict[str, Any]:
     result = reset_send(identity=identity, total=total, operation=operation)
+    st.session_state.pop(LAST_BATCH_SECONDS_KEY, None)
     return _sync_state(result.state)
 
 
-def _render_payload_preview(download_df: pd.DataFrame, operation: str) -> str:
+def _cached_payload_preview(preview_df: pd.DataFrame, operation: str, identity: str, preview_limit: int) -> list[dict[str, Any]]:
+    preview_signature = f'{identity}::preview::{preview_limit}'
+    cache = st.session_state.get(PAYLOAD_PREVIEW_CACHE_KEY)
+    if isinstance(cache, dict) and cache.get('signature') == preview_signature:
+        payload = cache.get('payload')
+        if isinstance(payload, list):
+            return payload
+
+    payload_preview = preview_payloads(preview_df, operation, limit=preview_limit)
+    st.session_state[PAYLOAD_PREVIEW_CACHE_KEY] = {
+        'signature': preview_signature,
+        'payload': payload_preview,
+    }
+    return payload_preview
+
+
+def _render_preflight(download_df: pd.DataFrame, operation: str, identity: str) -> None:
+    cache = st.session_state.get(PREFLIGHT_CACHE_KEY)
+    if isinstance(cache, dict) and cache.get('identity') == identity:
+        report = cache.get('report') if isinstance(cache.get('report'), dict) else {}
+    else:
+        built = build_bling_preflight_report(download_df, operation, batch_size=_batch_size_for_operation(operation))
+        report = built.to_dict()
+        st.session_state[PREFLIGHT_CACHE_KEY] = {'identity': identity, 'report': report}
+
+    with st.expander('BLINGSCAN · pré-varredura antes do envio', expanded=False):
+        st.caption('Varredura local leve para evitar envio pesado e detectar risco antes de chamar a API.')
+        cols = st.columns(4)
+        cols[0].metric('Linhas', int(report.get('total_rows') or 0))
+        cols[1].metric('Aptas', int(report.get('safe_to_send_rows') or 0))
+        cols[2].metric('Pendências', int(report.get('missing_required_rows') or 0))
+        cols[3].metric('Lotes previstos', int(report.get('estimated_batches') or 0))
+        for warning in list(report.get('warnings') or [])[:6]:
+            st.warning(str(warning))
+
+
+def _render_payload_preview(download_df: pd.DataFrame, operation: str, identity: str) -> str:
     preview_limit = 5
     preview_df = download_df.head(preview_limit).copy().fillna('')
-    payload_preview = preview_payloads(preview_df, operation, limit=preview_limit)
+    payload_preview = _cached_payload_preview(preview_df, operation, identity, preview_limit)
     if not payload_preview:
         st.warning('Não consegui montar prévia de payload para envio. Confira os campos obrigatórios.')
         return ''
@@ -130,6 +173,10 @@ def _render_progress(state: dict[str, Any]) -> None:
     cols[2].metric('Falhas', failed)
     cols[3].metric('Lote atual', batch_size)
 
+    elapsed = st.session_state.get(LAST_BATCH_SECONDS_KEY)
+    if isinstance(elapsed, (int, float)) and elapsed > 0:
+        st.caption(f'Último lote: {elapsed:.1f}s · checkpoint salvo.')
+
 
 def _state_obj_from_legacy(state: dict[str, Any]):
     return ensure_send_state(state, identity=str(state.get('identity') or ''), total=int(state.get('total') or 0), operation=str(state.get('operation') or OP_CADASTRO))
@@ -165,6 +212,29 @@ def _render_final_result(download_df: pd.DataFrame, state: dict[str, Any], key: 
         render_autocadastro_panel(download_df, payload, key=key)
 
 
+def _pause_after_slow_batch(state: dict[str, Any], elapsed: float) -> dict[str, Any]:
+    if elapsed <= MAX_AUTO_BATCH_SECONDS or bool(state.get('done')) or not bool(state.get('auto_running')):
+        return state
+    result = pause_send(_state_obj_from_legacy(state))
+    paused = _sync_state(result.state)
+    st.warning(
+        'Envio automático pausado por segurança: o último lote demorou demais. '
+        'O checkpoint foi salvo; toque em continuar para processar o próximo lote.'
+    )
+    add_audit_event(
+        'bling_api_batch_auto_paused_slow_batch',
+        area='BLING_ENVIO',
+        status='PAUSADO',
+        details={
+            'elapsed_seconds': round(float(elapsed), 2),
+            'limit_seconds': MAX_AUTO_BATCH_SECONDS,
+            'operation': state.get('operation'),
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+    return paused
+
+
 def _send_one_batch(download_df: pd.DataFrame, operation: str, state: dict[str, Any]) -> dict[str, Any]:
     total = int(state.get('total') or len(download_df))
     batch_start = int(state.get('offset') or 0)
@@ -174,6 +244,7 @@ def _send_one_batch(download_df: pd.DataFrame, operation: str, state: dict[str, 
 
     progress_bar = st.progress(0, text=f'BLINGSMARTCORE comparando e enviando lote {batch_start + 1}-{batch_end} de {total}...')
     status_box = st.empty()
+    started_at = time.monotonic()
 
     def _progress(payload: dict[str, Any]) -> None:
         processed = int(payload.get('processed') or 0)
@@ -186,11 +257,34 @@ def _send_one_batch(download_df: pd.DataFrame, operation: str, state: dict[str, 
         status_box.caption(f'Lote {batch_start + 1}-{batch_end} de {total} · tamanho {batch_size}')
 
     result = send_dataframe_to_bling(batch_df, operation, progress_callback=_progress)
+    elapsed = max(0.0, time.monotonic() - started_at)
+    st.session_state[LAST_BATCH_SECONDS_KEY] = elapsed
+
     state_obj = _state_obj_from_legacy(state)
     merged = append_batch_result(state_obj, result, batch_start=batch_start, batch_end=batch_end).state
     state = _sync_state(merged)
+    state = _pause_after_slow_batch(state, elapsed)
 
-    add_audit_event('bling_api_batch_sent', area='BLING_ENVIO', status='OK' if int(result.failed) == 0 else 'PARCIAL', details={'operation': operation, 'batch_start': batch_start, 'batch_end': batch_end, 'batch_size': batch_size, 'total': total, 'sent': int(result.sent), 'failed': int(result.failed), 'skipped': int(result.skipped), 'auto_running': bool(state.get('auto_running')), 'smart_sender_diff': True, 'neutral_bling_send_state': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event(
+        'bling_api_batch_sent',
+        area='BLING_ENVIO',
+        status='OK' if int(result.failed) == 0 else 'PARCIAL',
+        details={
+            'operation': operation,
+            'batch_start': batch_start,
+            'batch_end': batch_end,
+            'batch_size': batch_size,
+            'total': total,
+            'sent': int(result.sent),
+            'failed': int(result.failed),
+            'skipped': int(result.skipped),
+            'elapsed_seconds': round(float(elapsed), 2),
+            'auto_running': bool(state.get('auto_running')),
+            'smart_sender_diff': True,
+            'neutral_bling_send_state': True,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
     try:
         progress_bar.empty()
         status_box.empty()
@@ -211,12 +305,14 @@ def render_bling_api_batch_panel(download_df: pd.DataFrame, operation: str, key:
         st.warning('Token do Bling indisponível. Reconecte o Bling e tente novamente.')
         return
 
-    block_reason = _render_payload_preview(download_df, operation)
+    identity = _state_id(operation, key, signature, rules_sig)
+    _render_preflight(download_df, operation, identity)
+
+    block_reason = _render_payload_preview(download_df, operation, identity)
     if block_reason:
         st.warning('O envio direto foi bloqueado. Revise a operação escolhida e gere novamente o preview final antes de enviar ao Bling.')
         return
 
-    identity = _state_id(operation, key, signature, rules_sig)
     state = _get_state(identity, len(download_df), operation)
     _render_progress(state)
 
@@ -239,7 +335,7 @@ def render_bling_api_batch_panel(download_df: pd.DataFrame, operation: str, key:
             _sync_state(result.state)
             st.rerun()
     with col2:
-        if not done and st.button('Enviar apenas 1 lote', use_container_width=True, key=f'batch_send_one_{identity}'):
+        if not done and st.button('Enviar apenas 1 lote seguro', use_container_width=True, key=f'batch_send_one_{identity}'):
             result = mark_manual_batch_mode(_state_obj_from_legacy(state))
             state = _sync_state(result.state)
             _send_one_batch(download_df, operation, state)
