@@ -23,33 +23,40 @@ DEFAULT_API_BASE_URL = 'https://www.bling.com.br/Api/v3'
 SEND_TIMEOUT = 30
 LOOKUP_TIMEOUT = 15
 CATEGORY_TIMEOUT = 15
-CATEGORY_CACHE_KEY = 'bling_smart_sender_category_cache_v2'
-PRODUCT_CACHE_KEY = 'bling_smart_sender_product_cache_v2'
+CATEGORY_CACHE_KEY = 'bling_smart_sender_category_cache_v3'
+PRODUCT_CACHE_KEY = 'bling_smart_sender_product_cache_v3'
 
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
-    'codigo': ('código', 'codigo', 'sku', 'ref', 'referencia', 'referência', 'codigo produto', 'código produto', 'cod produto', 'cod'),
+    'codigo': ('código', 'codigo', 'sku', 'ref', 'referencia', 'referência', 'codigo produto', 'código produto', 'cod produto', 'cod', 'id produto', 'id do produto'),
     'nome': ('nome', 'produto', 'título', 'titulo', 'nome produto', 'nome do produto', 'descrição produto', 'descricao produto'),
     'descricao': ('descrição', 'descricao', 'descrição do produto', 'descricao do produto', 'detalhes'),
     'descricao_curta': ('descrição curta', 'descricao curta', 'descrição resumida', 'descricao resumida', 'resumo', 'sinopse'),
-    'descricao_complementar': ('descricao complementar', 'descrição complementar', 'complementar', 'descrição detalhada', 'descricao detalhada', 'ficha tecnica', 'ficha técnica', 'caracteristicas', 'características'),
+    'descricao_complementar': ('descricao complementar', 'descrição complementar', 'complementar', 'descrição detalhada', 'descricao detalhada', 'ficha tecnica', 'ficha técnica', 'caracteristicas', 'características', 'informações adicionais', 'informacoes adicionais'),
     'preco': ('preço', 'preco', 'preço unitário', 'preco unitario', 'preço unitário (obrigatório)', 'preco unitario (obrigatorio)', 'valor', 'valor venda', 'preço de venda', 'preco de venda'),
     'gtin': ('gtin', 'ean', 'codigo de barras', 'código de barras', 'gtin/ean'),
     'marca': ('marca', 'fabricante'),
     'unidade': ('unidade', 'un'),
     'ncm': ('ncm',),
+    'cest': ('cest',),
+    'origem': ('origem', 'origem produto', 'origem do produto'),
     'categoria': ('categoria', 'categoria produto', 'categoria do produto', 'departamento', 'grupo'),
     'imagens': ('imagens', 'imagem', 'url imagem', 'url imagens', 'fotos', 'foto'),
+    'peso_liquido': ('peso liquido', 'peso líquido', 'peso_liquido', 'peso líquido kg', 'peso liquido kg'),
+    'peso_bruto': ('peso bruto', 'peso_bruto', 'peso bruto kg'),
+    'largura': ('largura', 'largura cm'),
+    'altura': ('altura', 'altura cm'),
+    'profundidade': ('profundidade', 'comprimento', 'profundidade cm', 'comprimento cm'),
 }
 
 KNOWN_BRANDS: tuple[str, ...] = (
     'Samsung', 'Apple', 'Motorola', 'Xiaomi', 'LG', 'JBL', 'Sony', 'Philips', 'Epson', 'Canon', 'HP', 'Dell', 'Lenovo',
-    'Logitech', 'Redragon', 'Intelbras', 'Positivo', 'Multilaser', 'Elgin', 'Exbom', 'Knup', 'Inova', 'H\'Maston',
+    'Logitech', 'Redragon', 'Intelbras', 'Positivo', 'Multilaser', 'Elgin', 'Exbom', 'Knup', 'Inova', "H'Maston",
     'H Maston', 'It-Blue', 'Altomex', 'Goldentec', 'Hoopson', 'Hayom', 'Aiwa', 'Tomate', 'Sumay', 'Aquario', 'Aquário',
     'Bright', 'Leadership', 'Maxprint', 'C3Tech', 'Fortrek', 'Dazz', 'OEX', 'Baseus', 'Hoco', 'Lenoxx', 'Mondial',
     'Britania', 'Britânia', 'Philco', 'Acer', 'Asus', 'Kingston', 'Sandisk', 'Seagate', 'Western Digital', 'WD', 'TP-Link',
     'D-Link', 'Mercusys', 'Tenda', 'Intel', 'AMD', 'Nvidia', 'Microsoft', 'Google', 'Amazon', 'Xtrad', 'Kross', 'Gshield',
+    'Kaidi', 'KD', 'Kapbom', 'Kimaster', 'Kemei', 'Lelong', 'X-Cell', 'Mox', 'G-Tech', 'Jeway', 'Deko', 'Deko Eletrônicos',
 )
-
 BLOCKED_BRAND_TERMS = ('mega center', 'megacenter', 'stoqui', 'loja', 'eletronicos', 'eletrônicos')
 
 
@@ -67,9 +74,9 @@ def _api_base_url() -> str:
 
 
 def _url(path: str) -> str:
-    if path.startswith(('http://', 'https://')):
-        return path
-    return _api_base_url() + '/' + path.lstrip('/')
+    if str(path or '').startswith(('http://', 'https://')):
+        return str(path)
+    return _api_base_url() + '/' + str(path or '').lstrip('/')
 
 
 def _headers(token: dict[str, Any]) -> dict[str, str]:
@@ -109,17 +116,23 @@ def _value(row: pd.Series, mapping: dict[str, str], field: str) -> str:
 
 
 def _number_value(value: object) -> float | None:
-    text = str(value or '').strip().replace('R$', '').replace(' ', '')
+    text = str(value or '').strip().replace('R$', '').replace('\xa0', '').replace(' ', '')
     if not text:
         return None
     if ',' in text and '.' in text:
         text = text.replace('.', '').replace(',', '.')
     else:
         text = text.replace(',', '.')
+    text = re.sub(r'[^0-9.\-]+', '', text)
     try:
-        return float(text)
+        return float(text) if text not in {'', '-', '.', '-.'} else None
     except Exception:
         return None
+
+
+def _api_number(value: float) -> int | float:
+    number = float(value)
+    return int(number) if number.is_integer() else round(number, 4)
 
 
 def _digits_only(value: object) -> str:
@@ -128,6 +141,7 @@ def _digits_only(value: object) -> str:
 
 def _clean_text(value: object, limit: int = 120) -> str:
     text = str(value or '').replace('\u200b', '').replace('\ufeff', '').strip()
+    text = re.sub(r'<[^>]+>', ' ', text)
     text = re.sub(r'\s+', ' ', text).strip()
     return text[:limit]
 
@@ -152,7 +166,7 @@ def _clean_payload(payload: dict[str, Any]) -> dict[str, Any]:
         if value in ('', None, {}, []):
             continue
         if isinstance(value, dict):
-            nested = {k: v for k, v in value.items() if v not in ('', None, {}, [])}
+            nested = _clean_payload(value)
             if nested:
                 clean[key] = nested
             continue
@@ -168,36 +182,16 @@ def _clean_payload(payload: dict[str, Any]) -> dict[str, Any]:
 def _cadastro_schema_error(df: pd.DataFrame) -> str:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return 'Cadastro bloqueado: não há produtos para enviar.'
-
     mapping = _column_map(df.columns)
     normalized_columns = {_normalize_column_name(column) for column in df.columns}
     stock_only_columns = {'quantidade', 'id', 'codigo', 'gtin', 'deposito'}
     content_fields = {'nome', 'descricao', 'descricao_curta', 'descricao_complementar'}
-
     has_name_or_description = any(mapping.get(field) for field in content_fields)
     has_price = bool(mapping.get('preco'))
     has_stock_shape = normalized_columns.issubset(stock_only_columns) and {'quantidade', 'deposito'}.intersection(normalized_columns)
-
     if has_stock_shape or not has_name_or_description or not has_price:
-        add_audit_event(
-            'bling_smart_cadastro_schema_blocked',
-            area='BLING_ENVIO',
-            status='BLOQUEADO',
-            details={
-                'columns': list(map(str, df.columns)),
-                'mapped_fields': sorted(mapping.keys()),
-                'has_stock_shape': has_stock_shape,
-                'has_name_or_description': has_name_or_description,
-                'has_price': has_price,
-                'responsible_file': RESPONSIBLE_FILE,
-            },
-        )
-        return (
-            'Cadastro bloqueado por segurança: a tabela preparada não parece ser cadastro de produtos. '
-            'Ela está sem Nome/Descrição e/ou Preço, ou está com formato de estoque. '
-            'Refaça o preview final antes de enviar ao Bling.'
-        )
-
+        add_audit_event('bling_smart_cadastro_schema_blocked', area='BLING_ENVIO', status='BLOQUEADO', details={'columns': list(map(str, df.columns)), 'mapped_fields': sorted(mapping.keys()), 'has_stock_shape': bool(has_stock_shape), 'has_name_or_description': has_name_or_description, 'has_price': has_price, 'responsible_file': RESPONSIBLE_FILE})
+        return 'Cadastro bloqueado por segurança: a tabela preparada não parece ser cadastro de produtos. Ela está sem Nome/Descrição e/ou Preço, ou está com formato de estoque. Refaça o preview final antes de enviar ao Bling.'
     price_column = mapping.get('preco', '')
     positive_prices = 0
     if price_column:
@@ -206,14 +200,8 @@ def _cadastro_schema_error(df: pd.DataFrame) -> str:
             if price is not None and price > 0:
                 positive_prices += 1
     if positive_prices == 0:
-        add_audit_event(
-            'bling_smart_cadastro_price_blocked',
-            area='BLING_ENVIO',
-            status='BLOQUEADO',
-            details={'columns': list(map(str, df.columns)), 'price_column': price_column, 'responsible_file': RESPONSIBLE_FILE},
-        )
+        add_audit_event('bling_smart_cadastro_price_blocked', area='BLING_ENVIO', status='BLOQUEADO', details={'columns': list(map(str, df.columns)), 'price_column': price_column, 'responsible_file': RESPONSIBLE_FILE})
         return 'Cadastro bloqueado por segurança: nenhum preço positivo foi encontrado. O Bling não deve receber produtos com preço zerado.'
-
     return ''
 
 
@@ -413,6 +401,12 @@ def _join_full_description_for_bling(*, short: object = '', complement: object =
     return full
 
 
+def _put_if_number(payload: dict[str, Any], key: str, value: object) -> None:
+    number = _number_value(value)
+    if number is not None and number >= 0:
+        payload[key] = _api_number(number)
+
+
 def _base_payload(row: pd.Series, mapping: dict[str, str]) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     raw_code = _value(row, mapping, 'codigo')
     gtin = _digits_only(_value(row, mapping, 'gtin'))
@@ -444,13 +438,34 @@ def _base_payload(row: pd.Series, mapping: dict[str, str]) -> tuple[dict[str, An
         payload['descricaoCurta'] = full_description
     price = _number_value(_value(row, mapping, 'preco'))
     if price is not None and price >= 0:
-        payload['preco'] = price
+        payload['preco'] = _api_number(price)
     brand = _resolve_brand(name, _value(row, mapping, 'marca'))
     if brand:
         payload['marca'] = brand
+    tributacao: dict[str, Any] = {}
+    if len(gtin) in {8, 12, 13, 14}:
+        payload['gtin'] = gtin
+        tributacao['gtin'] = gtin
     ncm = _digits_only(_value(row, mapping, 'ncm'))
     if len(ncm) == 8:
-        payload['tributacao'] = {'ncm': ncm}
+        tributacao['ncm'] = ncm
+    cest = _digits_only(_value(row, mapping, 'cest'))
+    if len(cest) == 7:
+        tributacao['cest'] = cest
+    origem = _digits_only(_value(row, mapping, 'origem'))
+    if origem:
+        tributacao['origem'] = origem[:1]
+    if tributacao:
+        payload['tributacao'] = tributacao
+    _put_if_number(payload, 'pesoLiquido', _value(row, mapping, 'peso_liquido'))
+    _put_if_number(payload, 'pesoBruto', _value(row, mapping, 'peso_bruto'))
+    dimensoes: dict[str, Any] = {}
+    for source_field, bling_key in (('largura', 'largura'), ('altura', 'altura'), ('profundidade', 'profundidade')):
+        number = _number_value(_value(row, mapping, source_field))
+        if number is not None and number > 0:
+            dimensoes[bling_key] = _api_number(number)
+    if dimensoes:
+        payload['dimensoes'] = dimensoes
     meta = {
         'category': enrichment.category,
         'images': list(enrichment.image_urls),
@@ -465,6 +480,7 @@ def _base_payload(row: pd.Series, mapping: dict[str, str]) -> tuple[dict[str, An
         'description_complementary_len': 0,
         'description_rule': 'descricao_completa_em_descricaoCurta_sem_descricaoComplementar',
         'formato': 'S',
+        'rich_fields': sorted(payload.keys()),
     }
     return _clean_payload(payload), meta
 
@@ -482,24 +498,20 @@ def _payload_variants(token: dict[str, Any], row: pd.Series, mapping: dict[str, 
     elif category:
         full['categoria'] = {'descricao': category}
     if images:
-        full['midia'] = {'imagens': [{'link': url} for url in images]}
+        full['midia'] = {'imagens': [{'link': url} for url in images[:10]]}
     with_category = dict(base)
     if category_id:
         with_category['categoria'] = {'id': category_id}
     elif category:
         with_category['categoria'] = {'descricao': category}
-    no_format_risk = {k: v for k, v in base.items() if k not in {'unidade', 'marca', 'preco', 'tributacao', 'descricaoCurta', 'descricaoComplementar'}}
-    name_only = {'nome': base.get('nome', 'Produto sem nome'), 'tipo': 'P', 'situacao': 'A', 'formato': 'S'}
-    if base.get('codigo'):
-        name_only['codigo'] = base['codigo']
+    no_media = dict(with_category)
     variants: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
     seen: set[str] = set()
     for label, payload in (
-        ('smart_completo_categoria_imagem_descricao_curta_formato', full),
-        ('smart_categoria_descricao_curta_sem_imagem_formato', with_category),
-        ('smart_minimo_com_descricao_curta_formato', base),
-        ('smart_sem_campos_de_formato_risco', no_format_risk),
-        ('smart_nome_codigo_minimo_formato', name_only),
+        ('smart_completo_todos_dados_site_categoria_imagem_gtin_dimensoes', full),
+        ('smart_todos_dados_site_categoria_sem_imagem', no_media),
+        ('smart_todos_dados_site_basico_sem_categoria_imagem', base),
+        ('smart_nome_codigo_minimo_formato', {'nome': base.get('nome', 'Produto sem nome'), 'tipo': 'P', 'situacao': 'A', 'formato': 'S', **({'codigo': base['codigo']} if base.get('codigo') else {})}),
     ):
         cleaned = _clean_payload(payload)
         marker = repr(sorted(cleaned.items()))
@@ -525,7 +537,7 @@ def _smart_preview_payloads(df: pd.DataFrame, *, limit: int = 5) -> list[dict[st
         variants = _payload_variants(token, row, mapping)
         if variants:
             label, payload, meta = variants[0]
-            out.append({'payload': payload, 'status': 'OK', 'motivo': f'BLINGSMARTCORE {label} · confiança {meta.get("confidence", 0)}/100 · formato {meta.get("formato", "S")} · descrição curta {meta.get("description_short_len", 0)} · marca {meta.get("brand", "") or "não definida"} ({meta.get("brand_source", "") or "sem fonte"})'})
+            out.append({'payload': payload, 'status': 'OK', 'motivo': f'BLINGSMARTCORE {label} · confiança {meta.get("confidence", 0)}/100 · campos {", ".join(meta.get("rich_fields", []))} · marca {meta.get("brand", "") or "não definida"} ({meta.get("brand_source", "") or "sem fonte"})'})
         else:
             out.append({'payload': {}, 'status': 'IGNORADO', 'motivo': 'Nome/código insuficiente para cadastro.'})
     return out
@@ -549,11 +561,10 @@ def _emit_progress(callback: Callable[[dict[str, Any]], None] | None, payload: d
 def _update_existing_product(token: dict[str, Any], product_id: str, variants: list[tuple[str, dict[str, Any], dict[str, Any]]]) -> tuple[bool, list[dict[str, Any]]]:
     attempts: list[dict[str, Any]] = []
     for strategy, payload, meta in variants:
-        update_payload = dict(payload)
-        for method in ('PUT', 'PATCH'):
+        for method in ('PATCH', 'PUT'):
             try:
-                response = requests.request(method, _url(f'/produtos/{product_id}'), headers=_headers(token), json=update_payload, timeout=SEND_TIMEOUT)
-                attempts.append({'mode': 'update_existing', 'method': method, 'product_id': product_id, 'strategy': strategy, 'status': int(response.status_code), 'confidence': meta.get('confidence'), 'response_preview': str(response.text or '')[:300]})
+                response = requests.request(method, _url(f'/produtos/{product_id}'), headers=_headers(token), json=payload, timeout=SEND_TIMEOUT)
+                attempts.append({'mode': 'update_existing', 'method': method, 'product_id': product_id, 'strategy': strategy, 'status': int(response.status_code), 'confidence': meta.get('confidence'), 'payload_keys': sorted(payload.keys()), 'response_preview': str(response.text or '')[:300]})
                 if response.status_code < 400:
                     return True, attempts
                 if response.status_code in {401, 403, 404}:
@@ -585,7 +596,7 @@ def _send_cadastro_smart(df: pd.DataFrame, *, limit: int | None = None, progress
             skipped += 1
             if len(errors) < 8:
                 errors.append(f'Linha {line}: nome/código insuficiente para cadastro.')
-            _emit_progress(progress_callback, {'stage': 'Cadastrando no Bling', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
+            _emit_progress(progress_callback, {'stage': 'Produto ignorado', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
             continue
         first_meta = variants[0][2]
         candidates = [first_meta.get('code'), first_meta.get('gtin'), first_meta.get('raw_code')]
@@ -605,7 +616,7 @@ def _send_cadastro_smart(df: pd.DataFrame, *, limit: int | None = None, progress
                 response = requests.post(_url(create_path), headers=_headers(token), json=payload, timeout=SEND_TIMEOUT)
                 last_response = response
                 response_text = str(response.text or '')
-                attempts.append({'mode': 'create', 'strategy': strategy, 'status': int(response.status_code), 'confidence': meta.get('confidence'), 'category': meta.get('category'), 'category_id': meta.get('category_id'), 'brand': meta.get('brand'), 'brand_source': meta.get('brand_source'), 'formato': meta.get('formato', 'S'), 'description_short_len': meta.get('description_short_len'), 'description_complementary_len': 0, 'payload_keys': sorted(payload.keys()), 'response_preview': response_text[:500]})
+                attempts.append({'mode': 'create', 'strategy': strategy, 'status': int(response.status_code), 'confidence': meta.get('confidence'), 'category': meta.get('category'), 'category_id': meta.get('category_id'), 'brand': meta.get('brand'), 'brand_source': meta.get('brand_source'), 'formato': meta.get('formato', 'S'), 'rich_fields': meta.get('rich_fields'), 'payload_keys': sorted(payload.keys()), 'response_preview': response_text[:500]})
                 if response.status_code < 400:
                     ok = True
                     add_audit_event('bling_smart_cadastro_strategy_succeeded', area='BLING_ENVIO', status='OK', details={'line': line, 'strategy': strategy, 'meta': meta, 'responsible_file': RESPONSIBLE_FILE})
@@ -623,7 +634,6 @@ def _send_cadastro_smart(df: pd.DataFrame, *, limit: int | None = None, progress
                     break
             except Exception as exc:
                 attempts.append({'mode': 'create', 'strategy': strategy, 'status': 'EXCEPTION', 'error': str(exc)[:240]})
-                continue
         if ok:
             sent += 1
         else:
@@ -635,7 +645,7 @@ def _send_cadastro_smart(df: pd.DataFrame, *, limit: int | None = None, progress
             add_audit_event('bling_smart_cadastro_failed', area='BLING_ENVIO', status='AVISO', details={'line': line, 'status': status, 'attempts': attempts[-8:], 'responsible_file': RESPONSIBLE_FILE})
         _emit_progress(progress_callback, {'stage': 'Cadastrando no Bling', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
     _emit_progress(progress_callback, {'stage': 'Cadastro inteligente concluído', 'processed': total, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': 1.0})
-    add_audit_event('bling_smart_cadastro_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'attempted': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'mode': 'upsert_heuristic_categoria_imagem_descricao_curta_marca_titulo_formato_s', 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('bling_smart_cadastro_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'attempted': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'mode': 'upsert_heuristic_todos_dados_site_categoria_imagem_gtin_dimensoes', 'responsible_file': RESPONSIBLE_FILE})
     return DirectSendResult(total, sent, failed, skipped, tuple(errors), tuple())
 
 
