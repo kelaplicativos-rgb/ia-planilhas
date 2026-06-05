@@ -9,9 +9,11 @@ from typing import Any
 
 from bling_app_zero.core.bling_mirror_config import MirrorMonitorStatus
 from bling_app_zero.core.bling_mirror_cycle import run_mirror_discovery_cycle
+from bling_app_zero.core.bling_mirror_cycle_diff import build_cycle_diff
 from bling_app_zero.core.bling_mirror_store import (
     append_mirror_run,
     load_persistent_config,
+    read_mirror_store,
     save_persistent_status,
 )
 
@@ -42,6 +44,7 @@ class MirrorExecutorResult:
     finished_at: str
     next_run_at: str
     cycle: dict[str, Any] | None = None
+    diff: dict[str, Any] | None = None
     responsible_file: str = RESPONSIBLE_FILE
 
     def to_dict(self) -> dict[str, Any]:
@@ -63,7 +66,16 @@ def _execution_mode(cli_mode: str = '') -> str:
     return mode
 
 
-def _result_from_config(*, cfg, mode: str, state: str, message: str, ok: bool, started: datetime, next_run_at: str, cycle: dict[str, Any] | None = None) -> MirrorExecutorResult:
+def _last_run_from_store() -> dict[str, Any] | None:
+    payload = read_mirror_store()
+    runs = payload.get('runs') if isinstance(payload.get('runs'), list) else []
+    for item in reversed(runs):
+        if isinstance(item, dict):
+            return item
+    return None
+
+
+def _result_from_config(*, cfg, mode: str, state: str, message: str, ok: bool, started: datetime, next_run_at: str, cycle: dict[str, Any] | None = None, diff: dict[str, Any] | None = None) -> MirrorExecutorResult:
     return MirrorExecutorResult(
         ok=ok,
         enabled=bool(cfg.enabled),
@@ -83,6 +95,7 @@ def _result_from_config(*, cfg, mode: str, state: str, message: str, ok: bool, s
         finished_at=_iso(_now()),
         next_run_at=next_run_at,
         cycle=cycle,
+        diff=diff,
     )
 
 
@@ -135,19 +148,23 @@ def run_once(*, execution_mode: str = '') -> MirrorExecutorResult:
         )
         return _persist_result(result)
 
+    previous_run = _last_run_from_store()
     cycle = run_mirror_discovery_cycle(cfg)
     cycle_payload = cycle.to_dict()
+    diff_payload = build_cycle_diff(cycle_payload, previous_run).to_dict()
+    message_with_diff = f'{cycle.message} {diff_payload.get("message", "")}'.strip()
 
     if cfg.monitor_only or mode == MODE_MONITOR:
         result = _result_from_config(
             cfg=cfg,
             mode=MODE_MONITOR,
             state='monitoring_enabled' if cycle.ok else cycle.stage,
-            message=cycle.message,
+            message=message_with_diff,
             ok=bool(cycle.ok),
             started=started,
             next_run_at=_iso(next_run),
             cycle=cycle_payload,
+            diff=diff_payload,
         )
         return _persist_result(result)
 
@@ -161,6 +178,7 @@ def run_once(*, execution_mode: str = '') -> MirrorExecutorResult:
             started=started,
             next_run_at=_iso(next_run),
             cycle=cycle_payload,
+            diff=diff_payload,
         )
         return _persist_result(result)
 
@@ -168,11 +186,12 @@ def run_once(*, execution_mode: str = '') -> MirrorExecutorResult:
         cfg=cfg,
         mode=mode,
         state='not_implemented',
-        message='Ciclo monitorado gerou leitura/plano, mas comparação com Bling e envio por API ainda estão bloqueados até o próximo BLINGFIX.',
+        message='Ciclo monitorado gerou leitura/plano e diferença entre ciclos, mas comparação com Bling e envio por API ainda estão bloqueados até o próximo BLINGFIX.',
         ok=False,
         started=started,
         next_run_at=_iso(next_run),
         cycle=cycle_payload,
+        diff=diff_payload,
     )
     return _persist_result(result)
 
