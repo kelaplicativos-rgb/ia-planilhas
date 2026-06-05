@@ -6,6 +6,7 @@ import streamlit as st
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_oauth import connection_status
 from bling_app_zero.core.exporter import filename_for_operation, to_bling_csv_bytes
+from bling_app_zero.core.flow_spine_output import output_diagnostics, output_is_api, output_operation, output_plan
 from bling_app_zero.core.operation_contract import (
     OP_ATUALIZACAO_PRECO,
     OP_CADASTRO,
@@ -26,7 +27,7 @@ from bling_app_zero.core.validators import validate_final_df
 from bling_app_zero.ui.bling_api_batch_panel import render_bling_api_batch_panel
 from bling_app_zero.ui.flow_context import (
     entry_context as _entry_context,
-    is_bling_api_context as _is_api_context,
+    is_bling_api_context as _legacy_is_api_context,
 )
 from bling_app_zero.universal.contract_adapter import adapt_dataframe_to_model_contract, model_for_operation
 
@@ -63,6 +64,23 @@ def df_signature(df: pd.DataFrame) -> str:
 
 def download_label() -> str:
     return '⬇️ Baixar CSV pronto'
+
+
+def _is_api_context() -> bool:
+    try:
+        return output_is_api()
+    except Exception:
+        return _legacy_is_api_context()
+
+
+def _spine_operation_or(operation: str) -> str:
+    try:
+        op = normalize_operation(output_operation())
+        if op:
+            return op
+    except Exception:
+        pass
+    return normalize_operation(operation)
 
 
 def _normalized_columns(df: pd.DataFrame) -> list[str]:
@@ -109,6 +127,7 @@ def _operation_contract_mismatch_error(raw_df: pd.DataFrame, download_df: pd.Dat
                     'raw_looks_stock': _looks_like_stock_contract(raw_df),
                     'download_looks_stock': _looks_like_stock_contract(download_df),
                     'download_looks_cadastro': _looks_like_cadastro_contract(download_df),
+                    'flow_spine': output_diagnostics(),
                     'responsible_file': RESPONSIBLE_FILE,
                 },
             )
@@ -129,6 +148,7 @@ def _operation_contract_mismatch_error(raw_df: pd.DataFrame, download_df: pd.Dat
                     'download_columns': download_columns,
                     'download_looks_cadastro': _looks_like_cadastro_contract(download_df),
                     'download_looks_stock': _looks_like_stock_contract(download_df),
+                    'flow_spine': output_diagnostics(),
                     'responsible_file': RESPONSIBLE_FILE,
                 },
             )
@@ -172,6 +192,7 @@ def after_final_download(operation: str, signature: str, rules_sig: str) -> None
             'rules_signature': rules_sig,
             'download_state_preserved': True,
             'home_entry_context': _entry_context(),
+            'flow_spine': output_diagnostics(),
         },
     )
 
@@ -241,6 +262,8 @@ def save_download_snapshot(
     st.session_state[FINAL_DOWNLOAD_SIGNATURE_KEY] = signature
     st.session_state[FINAL_DOWNLOAD_RULES_SIGNATURE_KEY] = rules_sig
     st.session_state[FINAL_DOWNLOAD_WIDGET_KEY] = widget_key
+    st.session_state['flow_spine_sender_operation'] = normalize_operation(operation)
+    st.session_state['flow_spine_sender_destination'] = 'api_bling' if _is_api_context() else 'csv_download'
 
 
 def _render_optional_template_download(download_df: pd.DataFrame, key: str, signature: str, rules_sig: str) -> None:
@@ -262,18 +285,23 @@ def _render_optional_template_download(download_df: pd.DataFrame, key: str, sign
 
 
 def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: str, signature: str, rules_sig: str) -> None:
-    operation = normalize_operation(operation)
+    operation = _spine_operation_or(operation)
     if not _is_api_context():
+        add_audit_event('final_api_send_skipped_by_flow_spine', area='DOWNLOAD', status='PULADO', details={'operation': operation, 'flow_spine': output_diagnostics(), 'responsible_file': RESPONSIBLE_FILE})
         return
+    st.session_state['flow_spine_sender_operation'] = operation
+    st.session_state['flow_spine_sender_destination'] = 'api_bling'
+    add_audit_event('final_api_send_rendered_by_flow_spine', area='DOWNLOAD', status='OK', details={'operation': operation, 'rows': len(download_df), 'columns': len(download_df.columns), 'flow_spine': output_diagnostics(), 'responsible_file': RESPONSIBLE_FILE})
     render_bling_api_batch_panel(download_df, operation, key, signature, rules_sig)
 
 
 def _render_api_final(df_final: pd.DataFrame, operation: str, key: str = 'api_final') -> None:
+    operation = _spine_operation_or(operation)
     _render_direct_bling_send(df_final, operation, key, df_signature(df_final), rules_signature())
 
 
 def render_download(df_final: pd.DataFrame, operation: str, key: str = 'final') -> None:
-    operation = normalize_operation(operation)
+    operation = _spine_operation_or(operation)
     if not isinstance(df_final, pd.DataFrame) or df_final.empty:
         st.warning('Nada para baixar/enviar ainda.')
         return
@@ -319,20 +347,8 @@ def render_download(df_final: pd.DataFrame, operation: str, key: str = 'final') 
     _render_optional_template_download(download_df, key, signature, rules_sig)
 
 
-def render_download_final(df_final: pd.DataFrame, operation: str, key: str = 'final') -> None:
-    render_download(df_final, operation, key)
-
-
 def download_final(df_final: pd.DataFrame, operation: str, key: str = 'final') -> None:
     render_download(df_final, operation, key)
 
 
-__all__ = [
-    '_render_api_final',
-    'df_signature',
-    'download_dataframe_for_contract',
-    'download_final',
-    'download_label',
-    'render_download',
-    'render_download_final',
-]
+__all__ = ['df_signature', 'download_final', 'download_label', 'render_download']
