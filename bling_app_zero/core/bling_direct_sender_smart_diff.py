@@ -26,6 +26,10 @@ from bling_app_zero.core.bling_direct_sender_safe import send_dataframe_to_bling
 from bling_app_zero.core.operation_contract import OP_CADASTRO, normalize_operation
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_direct_sender_smart_diff.py'
+_IMAGE_PAYLOAD_KEYS = {'midia', 'imagens', 'images'}
+_CATEGORY_PAYLOAD_KEYS = {'categoria'}
+_IMAGE_FIELD_KEYS = {'imagens'}
+_CATEGORY_FIELD_KEYS = {'categoria_id', 'categoria_descricao'}
 
 
 def _update_existing_product_diff(
@@ -51,6 +55,90 @@ def _has_unchanged_skip(attempts: list[dict[str, Any]]) -> bool:
         if mode.startswith('skip_unchanged') or status in {'UNCHANGED', 'UNCHANGED_OR_NOT_BETTER'}:
             return True
     return False
+
+
+def _attempt_failed(attempt: dict[str, Any]) -> bool:
+    status = attempt.get('status')
+    if isinstance(status, int):
+        return status >= 400
+    return str(status or '').upper() == 'EXCEPTION'
+
+
+def _attempt_ok(attempt: dict[str, Any]) -> bool:
+    status = attempt.get('status')
+    return isinstance(status, int) and status < 400
+
+
+def _attempt_field_keys(attempt: dict[str, Any]) -> set[str]:
+    fields = {str(item) for item in list(attempt.get('changed_fields') or []) if str(item).strip()}
+    payload_keys = {str(item) for item in list(attempt.get('payload_keys') or []) if str(item).strip()}
+    if payload_keys & _IMAGE_PAYLOAD_KEYS:
+        fields.add('imagens')
+    if payload_keys & _CATEGORY_PAYLOAD_KEYS:
+        fields.add('categoria_id')
+    return fields
+
+
+def _update_attempt_summary(attempts: list[dict[str, Any]]) -> dict[str, Any]:
+    attempted_fields: set[str] = set()
+    accepted_fields: set[str] = set()
+    failed_fields: set[str] = set()
+    failed_statuses: list[Any] = []
+    success_strategy = ''
+
+    for attempt in attempts:
+        fields = _attempt_field_keys(attempt)
+        attempted_fields.update(fields)
+        if _attempt_failed(attempt):
+            failed_fields.update(fields)
+            failed_statuses.append(attempt.get('status'))
+        if _attempt_ok(attempt):
+            accepted_fields.update(fields)
+            success_strategy = str(attempt.get('strategy') or success_strategy)
+
+    rejected_fields = sorted(field for field in failed_fields if field not in accepted_fields)
+    image_attempted = bool((attempted_fields | accepted_fields) & _IMAGE_FIELD_KEYS)
+    image_accepted = bool(accepted_fields & _IMAGE_FIELD_KEYS)
+    image_rejected = bool(set(rejected_fields) & _IMAGE_FIELD_KEYS)
+    category_attempted = bool((attempted_fields | accepted_fields) & _CATEGORY_FIELD_KEYS)
+    category_accepted = bool(accepted_fields & _CATEGORY_FIELD_KEYS)
+    category_rejected = bool(set(rejected_fields) & _CATEGORY_FIELD_KEYS)
+
+    return {
+        'attempted_fields': sorted(attempted_fields | accepted_fields),
+        'accepted_fields': sorted(accepted_fields),
+        'rejected_fields': rejected_fields,
+        'image_status': 'ACEITA' if image_accepted else ('RECUSADA_OU_REMOVIDA_NO_FALLBACK' if image_rejected else ('NAO_ALTERADA' if image_attempted else 'NAO_TENTADA')),
+        'category_status': 'ACEITA' if category_accepted else ('RECUSADA_OU_REMOVIDA_NO_FALLBACK' if category_rejected else ('NAO_ALTERADA' if category_attempted else 'NAO_TENTADA')),
+        'failed_statuses': failed_statuses[:8],
+        'success_strategy': success_strategy,
+    }
+
+
+def _audit_update_attempt_summary(*, line: int, product_id: str, attempts: list[dict[str, Any]], origin: str) -> None:
+    summary = _update_attempt_summary(attempts)
+    if not summary.get('attempted_fields'):
+        return
+    status = 'AVISO' if summary.get('rejected_fields') else 'OK'
+    add_audit_event(
+        'bling_smart_diff_existing_update_field_report',
+        area='BLING_ENVIO',
+        status=status,
+        details={
+            'line': line,
+            'product_id': product_id,
+            'origin': origin,
+            'attempted_fields': summary.get('attempted_fields'),
+            'accepted_fields': summary.get('accepted_fields'),
+            'rejected_fields': summary.get('rejected_fields'),
+            'image_status': summary.get('image_status'),
+            'category_status': summary.get('category_status'),
+            'failed_statuses': summary.get('failed_statuses'),
+            'success_strategy': summary.get('success_strategy'),
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+    attempts.append({'mode': 'field_acceptance_summary', **summary})
 
 
 def _send_cadastro_smart_diff(
@@ -97,7 +185,8 @@ def _send_cadastro_smart_diff(
             update_status, update_attempts = _update_existing_product_diff(token, existing_id, variants)
             if update_status == 'updated':
                 sent += 1
-                add_audit_event('bling_smart_diff_product_updated', area='BLING_ENVIO', status='OK', details={'line': line, 'product_id': existing_id, 'attempts': update_attempts[-3:], 'responsible_file': RESPONSIBLE_FILE, 'base_file': BASE_RESPONSIBLE_FILE})
+                _audit_update_attempt_summary(line=line, product_id=existing_id, attempts=update_attempts, origin='produto_existente_localizado_antes_do_cadastro')
+                add_audit_event('bling_smart_diff_product_updated', area='BLING_ENVIO', status='OK', details={'line': line, 'product_id': existing_id, 'attempts': update_attempts[-4:], 'responsible_file': RESPONSIBLE_FILE, 'base_file': BASE_RESPONSIBLE_FILE})
                 _emit_progress(progress_callback, {'stage': 'Produto alterado atualizado', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
                 continue
             if update_status == 'unchanged':
@@ -133,6 +222,7 @@ def _send_cadastro_smart_diff(
                         attempts.extend(update_attempts[-4:])
                         if update_status == 'updated':
                             ok = True
+                            _audit_update_attempt_summary(line=line, product_id=resolved_after_error, attempts=attempts, origin='produto_existente_resolvido_apos_codigo_duplicado')
                             break
                         if update_status == 'unchanged':
                             skipped += 1
@@ -164,7 +254,7 @@ def _send_cadastro_smart_diff(
         _emit_progress(progress_callback, {'stage': 'Cadastrando no Bling com comparação', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
 
     _emit_progress(progress_callback, {'stage': 'Cadastro inteligente com comparação concluído', 'processed': total, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': 1.0})
-    add_audit_event('bling_smart_diff_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'attempted': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'mode': 'diff_update_only_changed_create_new_skip_unchanged_no_duplicate_recreate_no_double_count', 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('bling_smart_diff_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'attempted': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'mode': 'diff_update_only_changed_create_new_skip_unchanged_no_duplicate_recreate_no_double_count_field_acceptance_audit', 'responsible_file': RESPONSIBLE_FILE})
     return DirectSendResult(total, sent, failed, skipped, tuple(errors), tuple())
 
 
