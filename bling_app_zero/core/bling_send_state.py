@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_send_state.py'
@@ -13,6 +13,7 @@ STATUS_ERROR = 'error'
 
 OP_CADASTRO = 'cadastro'
 OP_ESTOQUE = 'estoque'
+OP_ATUALIZACAO_PRECO = 'atualizacao_preco'
 
 # BLINGFIX: lotes menores para evitar timeout/queda no Streamlit.
 # O envio direto roda dentro do ciclo de renderização; lotes grandes deixam a tela
@@ -20,6 +21,39 @@ OP_ESTOQUE = 'estoque'
 # ao Bling antes de criar/atualizar.
 CADASTRO_BATCH_SIZE = 10
 ESTOQUE_BATCH_SIZE = 20
+PRECO_BATCH_SIZE = 20
+
+
+def normalize_operation(value: object) -> str:
+    text = str(value or '').strip().lower()
+    if text in {'estoque', 'stock', 'atualizacao_estoque', 'atualização de estoque'}:
+        return OP_ESTOQUE
+    if text in {
+        'preco',
+        'preço',
+        'precos',
+        'preços',
+        'price',
+        'atualizacao_preco',
+        'atualizacao_precos',
+        'atualizar_preco',
+        'atualizar_precos',
+        'atualização de preço',
+        'atualização de preços',
+        'atualização_preço',
+        'atualização_preços',
+    }:
+        return OP_ATUALIZACAO_PRECO
+    return OP_CADASTRO
+
+
+def batch_size_for_operation(operation: object) -> int:
+    normalized = normalize_operation(operation)
+    if normalized == OP_ESTOQUE:
+        return ESTOQUE_BATCH_SIZE
+    if normalized == OP_ATUALIZACAO_PRECO:
+        return PRECO_BATCH_SIZE
+    return CADASTRO_BATCH_SIZE
 
 
 @dataclass(frozen=True)
@@ -107,22 +141,13 @@ class BlingSendState:
         )
 
 
-def normalize_operation(value: object) -> str:
-    text = str(value or '').strip().lower()
-    if text in {'estoque', 'stock', 'atualizacao_estoque', 'atualização de estoque'}:
-        return OP_ESTOQUE
-    return OP_CADASTRO
-
-
-def batch_size_for_operation(operation: object) -> int:
-    return ESTOQUE_BATCH_SIZE if normalize_operation(operation) == OP_ESTOQUE else CADASTRO_BATCH_SIZE
-
-
 __all__ = [
     'BlingSendRequest',
     'BlingSendState',
     'CADASTRO_BATCH_SIZE',
     'ESTOQUE_BATCH_SIZE',
+    'PRECO_BATCH_SIZE',
+    'OP_ATUALIZACAO_PRECO',
     'OP_CADASTRO',
     'OP_ESTOQUE',
     'STATUS_DONE',
