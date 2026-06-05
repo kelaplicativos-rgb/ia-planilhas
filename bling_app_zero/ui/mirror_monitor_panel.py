@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
@@ -15,7 +16,7 @@ from bling_app_zero.core.bling_mirror_config import (
     current_mirror_status,
     save_mirror_config,
 )
-from bling_app_zero.core.bling_mirror_store import save_persistent_config
+from bling_app_zero.core.bling_mirror_store import mirror_store_payload, save_persistent_config
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/mirror_monitor_panel.py'
 
@@ -31,6 +32,50 @@ def _mode_label(mode: str) -> str:
 
 def _mode_options() -> list[str]:
     return [MIRROR_MODE_STOCK, MIRROR_MODE_NEW_PRODUCTS, MIRROR_MODE_BOTH]
+
+
+def _run_rows(limit: int = 8) -> pd.DataFrame:
+    payload = mirror_store_payload()
+    runs = payload.get('runs') if isinstance(payload.get('runs'), list) else []
+    rows: list[dict[str, object]] = []
+    for item in list(reversed(runs))[: max(1, int(limit or 8))]:
+        if not isinstance(item, dict):
+            continue
+        cycle = item.get('cycle') if isinstance(item.get('cycle'), dict) else {}
+        rows.append(
+            {
+                'quando': item.get('finished_at') or item.get('created_at') or '',
+                'estado': item.get('state') or '',
+                'modo': item.get('execution_mode') or item.get('mode') or '',
+                'linhas': cycle.get('extracted_rows') or cycle.get('rows_seen') or 0,
+                'local_prontas': cycle.get('local_ready_rows') or 0,
+                'local_revisao': cycle.get('local_review_rows') or 0,
+                'estoque_pronto': cycle.get('stock_ready') or 0,
+                'novos_produtos': cycle.get('new_products_ready') or 0,
+                'pendencias': cycle.get('pending') or 0,
+                'mensagem': item.get('message') or cycle.get('message') or '',
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _render_persistent_history() -> None:
+    payload = mirror_store_payload()
+    status = payload.get('status') if isinstance(payload.get('status'), dict) else {}
+    runs = payload.get('runs') if isinstance(payload.get('runs'), list) else []
+    st.markdown('#### Histórico persistente')
+    cols = st.columns(5)
+    cols[0].metric('Execuções', len(runs))
+    cols[1].metric('Linhas lidas', int(status.get('last_rows_seen') or 0))
+    cols[2].metric('Estoque pronto', int(status.get('last_stock_ready') or 0))
+    cols[3].metric('Produtos novos', int(status.get('last_new_products_ready') or 0))
+    cols[4].metric('Pendências', int(status.get('last_pending') or 0))
+    df_runs = _run_rows()
+    if isinstance(df_runs, pd.DataFrame) and not df_runs.empty:
+        with st.expander('Ver últimas execuções monitoradas', expanded=False):
+            st.dataframe(df_runs, use_container_width=True, hide_index=True)
+    else:
+        st.caption('Ainda não há execução persistente registrada pelo executor externo.')
 
 
 def render_mirror_monitor_panel(*, default_site_url: str = '', default_deposit_name: str = '') -> None:
@@ -93,6 +138,7 @@ def render_mirror_monitor_panel(*, default_site_url: str = '', default_deposit_n
         cols[1].metric('Última simulação', status.last_run_at or '—')
         cols[2].metric('Próximo ciclo previsto', status.next_run_at or '—')
         st.caption(status.last_message or 'Aguardando configuração.')
+        _render_persistent_history()
         st.info('Para virar automático real, o próximo passo é configurar o executor agendado fora da tela Streamlit.')
 
 
