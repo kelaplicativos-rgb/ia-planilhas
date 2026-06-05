@@ -21,6 +21,7 @@ from bling_app_zero.core.bling_send_engine import (
 )
 from bling_app_zero.core.bling_send_state import batch_size_for_operation
 from bling_app_zero.core.blingsmartcore_autocadastro import render_autocadastro_panel, render_stock_pending_panel
+from bling_app_zero.core.intelligent_flow_decision import decide_before_api_send
 from bling_app_zero.core.operation_contract import OP_CADASTRO, OP_ESTOQUE, normalize_operation
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/bling_api_batch_panel.py'
@@ -114,6 +115,27 @@ def _render_preflight(download_df: pd.DataFrame, operation: str, identity: str) 
         for warning in list(report.get('warnings') or [])[:6]:
             st.warning(str(warning))
     return report
+
+
+def _render_flow_decision(report: dict[str, Any], operation: str) -> dict[str, Any]:
+    decision = decide_before_api_send(operation=operation, preflight_report=report)
+    if decision.status == 'BLOQUEADO':
+        st.error(f'{decision.title}: {decision.message}')
+    elif decision.status == 'ATENCAO':
+        st.warning(f'{decision.title}: {decision.message}')
+    else:
+        st.success(f'{decision.title}: {decision.message}')
+    if decision.reasons:
+        with st.expander('Decisão inteligente · motivos', expanded=False):
+            for reason in decision.reasons[:10]:
+                st.caption(f'• {reason}')
+    add_audit_event(
+        'bling_api_intelligent_flow_decision',
+        area='BLING_ENVIO',
+        status=decision.status,
+        details={'operation': operation, 'decision': decision.to_dict(), 'responsible_file': RESPONSIBLE_FILE},
+    )
+    return decision.to_dict()
 
 
 def _render_pending_rows(download_df: pd.DataFrame, operation: str, identity: str, blocked_rows: int) -> None:
@@ -292,12 +314,13 @@ def render_bling_api_batch_panel(download_df: pd.DataFrame, operation: str, key:
 
     identity = _state_id(operation, key, signature, rules_sig)
     report = _render_preflight(download_df, operation, identity)
+    flow_decision = _render_flow_decision(report, operation)
     send_df = filter_sendable_dataframe(download_df, operation)
 
     blocked_rows = int(report.get('blocked_rows') or 0)
     _render_pending_rows(download_df, operation, identity, blocked_rows)
 
-    if bool(report.get('block_send')) or not isinstance(send_df, pd.DataFrame) or send_df.empty:
+    if bool(flow_decision.get('should_block')) or not isinstance(send_df, pd.DataFrame) or send_df.empty:
         st.error('Envio bloqueado: nenhuma linha apta para a API do Bling após a pré-varredura.')
         st.warning('Revise SKU/código/GTIN e quantidade no estoque, ou nome/código no cadastro, antes de enviar.')
         add_audit_event('bling_api_batch_blocked_no_sendable_rows', area='BLING_ENVIO', status='BLOQUEADO', details={'operation': operation, 'rows': len(download_df) if isinstance(download_df, pd.DataFrame) else 0, 'responsible_file': RESPONSIBLE_FILE})
