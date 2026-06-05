@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Iterable
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/system_inventory.py'
@@ -191,7 +192,7 @@ SYSTEM_INVENTORY: tuple[SystemInventoryItem, ...] = (
         purpose='Gera pacote BLINGFIX com logs, auditoria, estado da sessão e inventário dos subsistemas.',
         owner_spine='Diagnostics',
         main_paths=('bling_app_zero/ui/maintenance_panel.py', 'bling_app_zero/ui/support_diagnostic_panel.py', 'bling_app_zero/core/audit.py', 'bling_app_zero/core/debug.py'),
-        action='Incluir inventário oficial no zip de diagnóstico.',
+        action='Incluir inventário oficial e varredura automática no zip de diagnóstico.',
     ),
     SystemInventoryItem(
         id='legacy_features_runtime_old',
@@ -247,12 +248,68 @@ def inventory_items(statuses: Iterable[str] | None = None) -> tuple[SystemInvent
     return tuple(item for item in SYSTEM_INVENTORY if item.status in wanted)
 
 
+def _project_root() -> Path:
+    # .../bling_app_zero/core/system_inventory.py -> raiz do projeto
+    return Path(__file__).resolve().parents[2]
+
+
+def _relative_path(path: Path, root: Path) -> str:
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except Exception:
+        return path.as_posix()
+
+
+def registered_paths() -> set[str]:
+    paths: set[str] = set()
+    for item in SYSTEM_INVENTORY:
+        for path in item.main_paths:
+            normalized = str(path or '').replace('\\', '/').strip()
+            if normalized:
+                paths.add(normalized)
+    return paths
+
+
+def runtime_python_files() -> tuple[str, ...]:
+    root = _project_root()
+    package_root = root / 'bling_app_zero'
+    if not package_root.exists():
+        return tuple()
+    files: list[str] = []
+    for path in package_root.rglob('*.py'):
+        parts = set(path.parts)
+        if '__pycache__' in parts or '.venv' in parts or 'venv' in parts:
+            continue
+        files.append(_relative_path(path, root))
+    return tuple(sorted(set(files)))
+
+
+def unregistered_runtime_files() -> tuple[str, ...]:
+    registered = registered_paths()
+    files = runtime_python_files()
+    return tuple(path for path in files if path not in registered and not path.endswith('/__init__.py'))
+
+
+def runtime_file_snapshot() -> dict[str, object]:
+    files = runtime_python_files()
+    unregistered = unregistered_runtime_files()
+    return {
+        'python_files_total': len(files),
+        'registered_paths_total': len(registered_paths()),
+        'unregistered_files_total': len(unregistered),
+        'unregistered_files': list(unregistered),
+        'all_python_files': list(files),
+        'responsible_file': RESPONSIBLE_FILE,
+    }
+
+
 def inventory_summary() -> dict[str, object]:
     counts: dict[str, int] = {}
     layers: dict[str, int] = {}
     for item in SYSTEM_INVENTORY:
         counts[item.status] = counts.get(item.status, 0) + 1
         layers[item.layer] = layers.get(item.layer, 0) + 1
+    snapshot = runtime_file_snapshot()
     return {
         'total_subsystems': len(SYSTEM_INVENTORY),
         'status_counts': counts,
@@ -260,6 +317,8 @@ def inventory_summary() -> dict[str, object]:
         'active_subsystems': counts.get(STATUS_ATIVO, 0),
         'risk_subsystems': counts.get(STATUS_RISCO, 0),
         'legacy_or_removal_subsystems': counts.get(STATUS_LEGADO, 0) + counts.get(STATUS_SUBSTITUIDO, 0) + counts.get(STATUS_REMOVER_DEPOIS, 0),
+        'runtime_python_files_total': snapshot.get('python_files_total', 0),
+        'runtime_unregistered_files_total': snapshot.get('unregistered_files_total', 0),
         'responsible_file': RESPONSIBLE_FILE,
     }
 
@@ -268,6 +327,7 @@ def inventory_payload() -> dict[str, object]:
     return {
         'summary': inventory_summary(),
         'items': [item.to_dict() for item in SYSTEM_INVENTORY],
+        'runtime_file_snapshot': runtime_file_snapshot(),
     }
 
 
@@ -277,6 +337,18 @@ def inventory_markdown() -> str:
     lines.append('## Resumo por status')
     for status, count in sorted(dict(summary.get('status_counts') or {}).items()):
         lines.append(f'- {status}: {count}')
+    lines.append('')
+    snapshot = runtime_file_snapshot()
+    lines.append('## Varredura automática de arquivos Python')
+    lines.append(f'- Arquivos Python detectados em runtime: {snapshot.get("python_files_total", 0)}')
+    lines.append(f'- Arquivos cadastrados no inventário: {snapshot.get("registered_paths_total", 0)}')
+    lines.append(f'- Arquivos ainda não cadastrados diretamente: {snapshot.get("unregistered_files_total", 0)}')
+    unregistered = list(snapshot.get('unregistered_files') or [])
+    if unregistered:
+        lines.append('')
+        lines.append('### Arquivos não cadastrados diretamente')
+        for path in unregistered[:300]:
+            lines.append(f'- `{path}`')
     lines.append('')
     lines.append('## Itens')
     for item in SYSTEM_INVENTORY:
@@ -308,4 +380,8 @@ __all__ = [
     'inventory_markdown',
     'inventory_payload',
     'inventory_summary',
+    'registered_paths',
+    'runtime_file_snapshot',
+    'runtime_python_files',
+    'unregistered_runtime_files',
 ]
