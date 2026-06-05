@@ -157,17 +157,26 @@ def _split_sentences(text: str) -> list[str]:
     return out
 
 
+def _title_based_description(name: object, *, limit: int = 3500) -> str:
+    final_name = title_case_product_name(name, limit=140) or _clean_text(name, 140)
+    if not final_name or looks_like_code(final_name) or _norm(final_name) in {'produto sem nome', 'produto'}:
+        return ''
+    return polish_product_description('', title=final_name, limit=limit, persuasive=True)
+
+
 def build_product_descriptions(*, name: object = '', short_description: object = '', complementary_description: object = '') -> tuple[str, str]:
     final_name = title_case_product_name(name, limit=140) or _clean_text(name, 140)
     raw_short = _strip_noise(str(short_description or ''))
     raw_complement = _strip_noise(str(complementary_description or ''))
     combined = ' '.join(part for part in (raw_short, raw_complement) if part).strip()
     if not combined or looks_like_code(combined):
-        return '', ''
+        fallback = _title_based_description(final_name)
+        return (fallback, '') if fallback else ('', '')
 
-    polished_full = polish_product_description(combined, title=final_name, limit=3500)
+    polished_full = polish_product_description(combined, title=final_name, limit=3500, persuasive=True)
     if not polished_full:
-        return '', ''
+        fallback = _title_based_description(final_name)
+        return (fallback, '') if fallback else ('', '')
 
     # Regra Bling do usuário: toda a descrição tratada deve seguir para descricaoCurta.
     # A descrição complementar do Bling deve permanecer vazia.
@@ -178,9 +187,9 @@ def clean_description(description: object, *, fallback_name: object = '') -> str
     desc = _clean_text(description, 1000)
     name = title_case_product_name(fallback_name, limit=120) or _clean_text(fallback_name, 120)
     if not desc or looks_like_code(desc):
-        return ''
+        return _title_based_description(name)
     if name and _norm(desc) == _norm(name):
-        return ''
+        return _title_based_description(name)
     short, _complement = build_product_descriptions(name=name, short_description=desc)
     return short
 
@@ -256,6 +265,7 @@ def enrich_product_payload_fields(
     category: object = '',
     images: object = '',
 ) -> EnrichmentResult:
+    had_input_description = bool(_strip_noise(str(description or description_short or description_complementary or '')).strip())
     raw_name = choose_product_name(name=name, description=description or description_short or description_complementary, code=code, gtin=gtin)
     final_name = title_case_product_name(raw_name, limit=120) or raw_name
     short, complement = build_product_descriptions(
@@ -280,7 +290,9 @@ def enrich_product_payload_fields(
     else:
         warnings.append('imagem_nao_confiavel')
     if short:
-        confidence += 10
+        confidence += 10 if had_input_description else 6
+        if not had_input_description:
+            warnings.append('descricao_gerada_por_titulo_sem_inventar_ficha_tecnica')
     else:
         warnings.append('descricao_curta_nao_confiavel')
     warnings.append('texto_polido_sem_alterar_dados_tecnicos')
