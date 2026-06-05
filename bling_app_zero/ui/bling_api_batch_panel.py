@@ -9,7 +9,7 @@ import streamlit as st
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_direct_sender_smart_diff import is_direct_send_available, preview_payloads, send_dataframe_to_bling
 from bling_app_zero.core.bling_oauth import connection_status
-from bling_app_zero.core.bling_preflight_scan import build_bling_preflight_report, filter_sendable_dataframe
+from bling_app_zero.core.bling_preflight_scan import build_bling_preflight_report, build_pending_rows_dataframe, filter_sendable_dataframe
 from bling_app_zero.core.bling_send_engine import (
     append_batch_result,
     ensure_send_state,
@@ -114,6 +114,31 @@ def _render_preflight(download_df: pd.DataFrame, operation: str, identity: str) 
         for warning in list(report.get('warnings') or [])[:6]:
             st.warning(str(warning))
     return report
+
+
+def _render_pending_rows(download_df: pd.DataFrame, operation: str, identity: str, blocked_rows: int) -> None:
+    if blocked_rows <= 0:
+        return
+    pending_df = build_pending_rows_dataframe(download_df, operation, limit=150)
+    if not isinstance(pending_df, pd.DataFrame) or pending_df.empty:
+        return
+
+    with st.expander('Pendências do envio · linhas que não serão enviadas', expanded=True):
+        st.caption('Essas linhas foram separadas antes da API para evitar erro, demora e queda do sistema.')
+        st.dataframe(pending_df, use_container_width=True, hide_index=True)
+        try:
+            csv_bytes = pending_df.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+        except Exception:
+            csv_bytes = b''
+        if csv_bytes:
+            st.download_button(
+                '⬇️ Baixar pendências CSV',
+                data=csv_bytes,
+                file_name='bling_pendencias_envio.csv',
+                mime='text/csv; charset=utf-8',
+                use_container_width=True,
+                key=f'bling_pending_rows_csv_{identity}',
+            )
 
 
 def _render_payload_preview(download_df: pd.DataFrame, operation: str, identity: str) -> str:
@@ -269,13 +294,15 @@ def render_bling_api_batch_panel(download_df: pd.DataFrame, operation: str, key:
     report = _render_preflight(download_df, operation, identity)
     send_df = filter_sendable_dataframe(download_df, operation)
 
+    blocked_rows = int(report.get('blocked_rows') or 0)
+    _render_pending_rows(download_df, operation, identity, blocked_rows)
+
     if bool(report.get('block_send')) or not isinstance(send_df, pd.DataFrame) or send_df.empty:
         st.error('Envio bloqueado: nenhuma linha apta para a API do Bling após a pré-varredura.')
         st.warning('Revise SKU/código/GTIN e quantidade no estoque, ou nome/código no cadastro, antes de enviar.')
         add_audit_event('bling_api_batch_blocked_no_sendable_rows', area='BLING_ENVIO', status='BLOQUEADO', details={'operation': operation, 'rows': len(download_df) if isinstance(download_df, pd.DataFrame) else 0, 'responsible_file': RESPONSIBLE_FILE})
         return
 
-    blocked_rows = int(report.get('blocked_rows') or 0)
     if blocked_rows:
         st.warning(f'{blocked_rows} linha(s) ficaram como pendência e não serão enviadas neste lote. O envio seguirá apenas com {len(send_df)} linha(s) apta(s).')
 
