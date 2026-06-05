@@ -36,9 +36,20 @@ RUNTIME_EXTRA_INVENTORY: tuple[SystemInventoryItem, ...] = (
         layer='ORQUESTRACAO',
         purpose='Classifica, em modo simulação, quais linhas do site estão prontas para atualização de estoque e quais parecem produtos novos para cadastro.',
         owner_spine='Flow Spine / Site Capture Spine',
-        main_paths=('bling_app_zero/core/bling_mirror_planner.py',),
-        risk='Não executa rotina em segundo plano; apenas planeja e separa decisões. A execução automática deve ser ligada depois com confirmação e logs.',
-        action='Próximo passo: criar painel visual e somente depois habilitar execução assistida por ciclos seguros.',
+        main_paths=('bling_app_zero/core/bling_mirror_planner.py', 'bling_app_zero/ui/mirror_planner_panel.py'),
+        risk='Não executa rotina em segundo plano; apenas planeja e separa decisões. A execução recorrente deve ser ligada depois com confirmação e logs.',
+        action='Manter como simulação/revisão até os diagnósticos confirmarem estabilidade.',
+    ),
+    SystemInventoryItem(
+        id='mirror_apply_bundle',
+        name='Preparador assistido de itens revisados do espelhamento',
+        status=STATUS_ATIVO,
+        layer='ORQUESTRACAO',
+        purpose='Separa as decisões revisadas em duas bases: estoque revisado e produtos novos revisados, sem enviar nada automaticamente.',
+        owner_spine='Mirror Planner / Flow Spine',
+        main_paths=('bling_app_zero/core/bling_mirror_apply.py',),
+        risk='Deve continuar apenas preparando/exportando dados até ser conectado ao fluxo oficial com confirmação explícita.',
+        action='Próximo passo: criar ponte para enviar as bases revisadas ao preview/download/envio oficial, sem pular conferência.',
     ),
 )
 
