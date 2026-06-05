@@ -42,6 +42,7 @@ SECRET_ALIASES: dict[str, tuple[str, ...]] = {
     'authorize_url': ('authorize_url', 'authorization_url', 'BLING_AUTHORIZE_URL', 'bling_authorize_url'),
     'token_url': ('token_url', 'BLING_TOKEN_URL', 'bling_token_url'),
     'include_redirect_uri_in_authorize': ('include_redirect_uri_in_authorize', 'BLING_INCLUDE_REDIRECT_URI_IN_AUTHORIZE'),
+    'backend_auth_url': ('backend_auth_url', 'BLING_BACKEND_AUTH_URL'),
 }
 
 
@@ -172,6 +173,10 @@ def token_url() -> str:
     return _secret('token_url', TOKEN_URL_DEFAULT)
 
 
+def backend_auth_url() -> str:
+    return _secret('backend_auth_url', '')
+
+
 def include_redirect_uri_in_authorize() -> bool:
     return _secret_bool('include_redirect_uri_in_authorize', False)
 
@@ -180,8 +185,9 @@ def oauth_config_status() -> dict[str, Any]:
     cid = client_id()
     secret = client_secret()
     uri = redirect_uri()
+    backend_url = backend_auth_url()
     return {
-        'ready': bool(cid and secret and uri),
+        'ready': bool(backend_url or (cid and secret and uri)),
         'has_client_id': bool(cid),
         'has_client_secret': bool(secret),
         'has_redirect_uri': bool(uri),
@@ -189,8 +195,10 @@ def oauth_config_status() -> dict[str, Any]:
         'redirect_uri': uri,
         'authorize_url': authorize_url(),
         'token_url': token_url(),
+        'backend_auth_url': backend_url,
+        'uses_backend_auth': bool(backend_url),
         'include_redirect_uri_in_authorize': include_redirect_uri_in_authorize(),
-        'missing': [name for name, ok in (('client_id', bool(cid)), ('client_secret', bool(secret)), ('redirect_uri', bool(uri))) if not ok],
+        'missing': [] if backend_url else [name for name, ok in (('client_id', bool(cid)), ('client_secret', bool(secret)), ('redirect_uri', bool(uri))) if not ok],
     }
 
 
@@ -224,6 +232,16 @@ def _new_state(extra_context: dict[str, Any] | None = None) -> str:
 
 
 def build_authorization_url(extra_context: dict[str, Any] | None = None) -> str:
+    forced_backend_url = backend_auth_url()
+    if forced_backend_url:
+        add_audit_event(
+            'bling_oauth_backend_authorization_forced',
+            area='BLING_OAUTH',
+            status='OK',
+            details={'backend_auth_url': forced_backend_url, 'responsible_file': RESPONSIBLE_FILE},
+        )
+        return forced_backend_url
+
     store = _state_store()
     cid = client_id()
     if not cid:
@@ -261,6 +279,9 @@ def build_authorization_url(extra_context: dict[str, Any] | None = None) -> str:
 
 
 def required_redirect_uri() -> str:
+    backend_url = backend_auth_url()
+    if backend_url and '/auth/bling/start' in backend_url:
+        return backend_url.split('/auth/bling/start', 1)[0].rstrip('/') + '/auth/bling/callback'
     return redirect_uri()
 
 
@@ -379,163 +400,99 @@ def _state_is_trusted(state: str, expected: str, payload: dict[str, Any]) -> boo
     return not expected
 
 
-def _clear_legacy_query_params() -> None:
-    query = _query_params_store()
-    for key in ('operation', 'flow', 'origem', 'operacao'):
+def _restore_oauth_return_context(payload: dict[str, Any]) -> None:
+    store = _state_store()
+    if store.get(RESTORED_AFTER_CALLBACK_KEY):
+        return
+    source_step = payload.get('source_step') or ''
+    return_to = payload.get('return_to') or ''
+    if source_step == 'download_panel' or return_to == 'download_panel':
+        restore_download_oauth_return()
+    if source_step in {'bling_connection_entry', 'home_same_tab_connection'} or return_to == 'start':
+        store['home_slim_entry_context'] = CONTEXT_BLING_API
+        store['home_entry_context'] = CONTEXT_BLING_API
+        store['finish_mode'] = 'api'
+        store['home_wizard_step'] = 'origem'
+    store[RESTORED_AFTER_CALLBACK_KEY] = True
+
+
+def _clear_query_params_after_callback() -> None:
+    qp = _query_params_store()
+    for key in ('code', 'state', 'error', 'error_description'):
         try:
-            query.pop(key, None)
+            qp.pop(key, None)
         except Exception:
             pass
-
-
-def _clear_non_api_flow_state() -> None:
-    store = _state_store()
-    store.pop('bling_finish_mode', None)
-    store.pop('skip_direct_bling_connection_this_flow', None)
-    for key in ('home_modelo_universal_df', 'df_modelo_universal', 'modelo_universal_df'):
-        store.pop(key, None)
-
-
-def _force_start_query_params() -> None:
-    query = _query_params_store()
-    try:
-        query['operation_v2'] = 'wizard_cadastro_estoque'
-        query.pop('step', None)
-        _clear_legacy_query_params()
-    except Exception:
-        pass
-
-
-def _force_download_query_params() -> None:
-    query = _query_params_store()
-    try:
-        query['operation_v2'] = 'wizard_cadastro_estoque'
-        query['step'] = 'download'
-        _clear_legacy_query_params()
-    except Exception:
-        pass
-
-
-def _restore_oauth_return_context(state_payload: dict[str, Any]) -> None:
-    store = _state_store()
-    return_to = str(state_payload.get('return_to') or '').strip().lower()
-    session_id = str(state_payload.get('session_id') or state_payload.get('sid') or get_user_session_id()).strip()
-    store['home_boot_landing_rendered_once'] = True
-    store['home_active_operation_v2'] = 'wizard_cadastro_estoque'
-    store['home_allow_operation_v2_session'] = True
-    store['home_single_page_flow_active'] = True
-    store['home_entry_context'] = CONTEXT_BLING_API
-    if return_to == 'download':
-        restored = restore_download_oauth_return(session_id)
-        store[RESTORED_AFTER_CALLBACK_KEY] = bool(restored)
-        store['bling_wizard_step'] = 'download'
-        _force_download_query_params()
-        return
-    _clear_non_api_flow_state()
-    store.pop('bling_wizard_step', None)
-    _force_start_query_params()
-
-
-def handle_oauth_callback() -> None:
-    st = _streamlit_module()
-    store = _state_store()
-    query = _query_params_store()
-    code = _query_param('code')
-    state = _query_param('state')
-    error = _query_param('error')
-    expected_state = str(store.get(EXPECTED_STATE_KEY) or '')
-    state_payload = _decode_state_payload(state)
-    if error:
-        store[LAST_ERROR_KEY] = error
-        if st is not None:
-            st.error(f'Bling não autorizou a conexão: {error}')
-        add_audit_event('bling_oauth_callback_error_param', area='BLING_OAUTH', status='ERRO', details={'error': error, 'responsible_file': RESPONSIBLE_FILE})
-        return
-    if not code:
-        return
-    if not _state_is_trusted(state, expected_state, state_payload):
-        if st is not None:
-            st.warning('Recebi retorno do Bling, mas a sessão de segurança não confere. Gere o link novamente.')
-        add_audit_event('bling_oauth_state_mismatch', area='BLING_OAUTH', status='ERRO', details={'has_expected_state': bool(expected_state), 'has_state': bool(state), 'state_payload': state_payload, 'responsible_file': RESPONSIBLE_FILE})
-        return
-    if store.get(CALLBACK_DONE_KEY) == code:
-        return
-    ok, message = exchange_code_for_token(code)
-    store[CALLBACK_DONE_KEY] = code
-    if ok:
-        if st is not None:
-            st.success(message)
-        _restore_oauth_return_context(state_payload)
-        store.pop(EXPECTED_STATE_KEY, None)
-        store.pop(LAST_ERROR_KEY, None)
-        try:
-            query.pop('code', None)
-            query.pop('state', None)
-        except Exception:
-            pass
-        if st is not None:
-            st.rerun()
-    else:
-        if st is not None:
-            st.error(message)
 
 
 def process_oauth_callback() -> None:
-    handle_oauth_callback()
+    code = _query_param('code')
+    state = _query_param('state')
+    error = _query_param('error')
+    error_description = _query_param('error_description')
+    if not code and not error:
+        return
+    store = _state_store()
+    callback_marker = f'{code}:{state}'
+    if code and store.get(CALLBACK_DONE_KEY) == callback_marker:
+        return
+    if error:
+        store[LAST_ERROR_KEY] = error_description or error
+        add_audit_event('bling_oauth_callback_error', area='BLING_OAUTH', status='ERRO', details={'error': error, 'description': error_description, 'responsible_file': RESPONSIBLE_FILE})
+        _clear_query_params_after_callback()
+        return
+    expected = str(store.get(EXPECTED_STATE_KEY) or '').strip()
+    payload = _decode_state_payload(state)
+    if not _state_is_trusted(state, expected, payload):
+        store[LAST_ERROR_KEY] = 'Estado OAuth inválido. Gere o link novamente.'
+        add_audit_event('bling_oauth_invalid_state', area='BLING_OAUTH', status='ERRO', details={'expected': bool(expected), 'received': bool(state), 'payload': payload, 'responsible_file': RESPONSIBLE_FILE})
+        _clear_query_params_after_callback()
+        return
+    ok, message = exchange_code_for_token(code)
+    if ok:
+        store[CALLBACK_DONE_KEY] = callback_marker
+        _restore_oauth_return_context(payload)
+    store[LAST_ERROR_KEY] = '' if ok else message
+    _clear_query_params_after_callback()
+    st = _streamlit_module()
+    if st is not None:
+        try:
+            st.rerun()
+        except Exception:
+            pass
 
 
 def disconnect() -> None:
-    store = _state_store()
     clear_token()
-    store.pop(EXPECTED_STATE_KEY, None)
-    store.pop(LAST_ERROR_KEY, None)
-    store.pop(CALLBACK_DONE_KEY, None)
+    store = _state_store()
+    for key in (LAST_ERROR_KEY, EXPECTED_STATE_KEY, CALLBACK_DONE_KEY, RETURN_CONTEXT_KEY, RESTORED_AFTER_CALLBACK_KEY):
+        store.pop(key, None)
     add_audit_event('bling_oauth_disconnected', area='BLING_OAUTH', status='OK', details={'responsible_file': RESPONSIBLE_FILE})
 
 
-def _same_tab_link(label: str, url: str) -> None:
-    st = _streamlit_module()
-    if st is None:
-        return
-    raw_url = str(url or '').strip()
-    if not raw_url:
-        return
-    safe_url = escape(raw_url, quote=True)
-    safe_label = escape(label, quote=False)
-    st.markdown(
-        f'''
-<a href="{safe_url}" target="_self" style="display:block;text-align:center;text-decoration:none;border:1px solid #d0d5dd;border-radius:14px;padding:0.85rem 1rem;font-weight:800;color:#5f6b7a;background:#ffffff;">
-  {safe_label}
-</a>
-''',
-        unsafe_allow_html=True,
-    )
-
-
-def render_connection_panel() -> None:
+def render_connection_status_card() -> None:
     st = _streamlit_module()
     if st is None:
         return
     status = connection_status()
     if status.get('connected'):
         st.success('Bling conectado.')
-        st.caption(f"Conectado em: {status.get('connected_at', '')}")
-        if st.button('Desconectar Bling', use_container_width=True):
-            disconnect()
-            st.success('Bling desconectado.')
-            st.rerun()
-        return
-    config = status.get('oauth_config') if isinstance(status.get('oauth_config'), dict) else oauth_config_status()
-    if not config.get('has_client_id'):
-        st.error('Credencial do Bling ausente: client_id não configurado nos secrets do app.')
-    if not config.get('has_client_secret'):
-        st.warning('Client Secret do Bling ainda não está configurado. A autorização pode abrir, mas o token não será concluído sem ele.')
-    st.caption(f"Callback URL exigido no Bling: {required_redirect_uri()}")
-    auth_url = build_authorization_url({'return_to': 'download', 'source_step': 'connection_panel_same_tab'})
-    if auth_url:
-        _same_tab_link('Conectar com Bling', auth_url)
     else:
-        st.info('Configure as credenciais do Bling para liberar o botão de conexão.')
+        st.warning('Bling não conectado.')
+    config = status.get('oauth_config') if isinstance(status.get('oauth_config'), dict) else {}
+    with st.expander('Detalhes técnicos da conexão Bling', expanded=False):
+        st.write({
+            'ready': config.get('ready'),
+            'uses_backend_auth': config.get('uses_backend_auth'),
+            'backend_auth_url_configured': bool(config.get('backend_auth_url')),
+            'has_client_id': config.get('has_client_id'),
+            'has_client_secret': config.get('has_client_secret'),
+            'redirect_uri': status.get('required_redirect_uri'),
+            'include_redirect_uri_in_authorize': status.get('include_redirect_uri_in_authorize'),
+            'connected': status.get('connected'),
+            'store_mode': status.get('store_mode'),
+            'missing': config.get('missing'),
+        })
 
 
 __all__ = [
@@ -545,12 +502,11 @@ __all__ = [
     'connection_status',
     'disconnect',
     'exchange_code_for_token',
-    'handle_oauth_callback',
     'include_redirect_uri_in_authorize',
     'is_connected',
     'oauth_config_status',
     'process_oauth_callback',
     'redirect_uri',
-    'render_connection_panel',
+    'render_connection_status_card',
     'required_redirect_uri',
 ]
