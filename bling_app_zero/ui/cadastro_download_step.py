@@ -5,6 +5,7 @@ import streamlit as st
 
 from bling_app_zero.agents.blingsmartcore import apply_blingsmartcore
 from bling_app_zero.core.exporter import filename_for_operation, sanitize_for_bling, to_bling_csv_bytes
+from bling_app_zero.core.flow_spine import build_flow_spine_plan, is_api_destination
 from bling_app_zero.ui.cadastro_wizard_state import (
     enforce_cadastro_model_columns,
     get_context_final_df,
@@ -31,6 +32,10 @@ SMARTCORE_DOWNLOAD_KEY = 'blingsmartcore_download_report'
 SMARTCORE_DOWNLOAD_SIGNATURE_KEY = 'blingsmartcore_download_signature'
 
 
+def _flow_plan():
+    return build_flow_spine_plan()
+
+
 def _entry_context() -> str:
     value = str(st.session_state.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower()
     if value in {CONTEXT_BLING_API, CONTEXT_BLING_CSV, CONTEXT_UNIVERSAL}:
@@ -39,19 +44,27 @@ def _entry_context() -> str:
 
 
 def _is_api_context() -> bool:
-    return _entry_context() == CONTEXT_BLING_API
+    # BLINGFIX: destino final vem da espinha dorsal. O contexto antigo fica só como fallback.
+    try:
+        return is_api_destination(_flow_plan())
+    except Exception:
+        return _entry_context() == CONTEXT_BLING_API
 
 
 def _title() -> str:
-    if _is_api_context():
-        return 'Enviar para o Bling'
-    return 'Download'
+    try:
+        return _flow_plan().final_title
+    except Exception:
+        return 'Enviar para o Bling' if _is_api_context() else 'Download'
 
 
 def _caption() -> str:
-    if _is_api_context():
-        return 'Envie exatamente o resultado revisado na prévia final para o Bling conectado. Este caminho não baixa planilha como etapa principal.'
-    return 'Baixe exatamente o mesmo arquivo conferido na prévia final.'
+    try:
+        return _flow_plan().final_caption
+    except Exception:
+        if _is_api_context():
+            return 'Envie exatamente o resultado revisado na prévia final para o Bling conectado. Este caminho não baixa planilha como etapa principal.'
+        return 'Baixe exatamente o mesmo arquivo conferido na prévia final.'
 
 
 def _normalize_operation(value: object) -> str:
@@ -66,6 +79,13 @@ def _normalize_operation(value: object) -> str:
 
 def _current_operation() -> str:
     """Resolve a operação real antes de gerar a saída final."""
+    try:
+        plan_operation = _normalize_operation(_flow_plan().operation)
+        if plan_operation:
+            return plan_operation
+    except Exception:
+        pass
+
     for key in (
         PREVIEW_OPERATION_KEY,
         MODEL_CONTRACT_TYPE_KEY,
@@ -104,13 +124,18 @@ def _store_smartcore_download_report(result) -> None:
             'score': int(result.quality.score),
             'rows': int(result.quality.rows),
             'warnings': list(result.quality.warnings),
+            'flow_spine': _flow_plan().to_dict(),
         }
     except Exception:
         st.session_state[SMARTCORE_DOWNLOAD_KEY] = {}
 
 
 def _smartcore_signature(df: pd.DataFrame, operation: str, *, origin: str) -> str:
-    return f'{origin}:{_safe_operation(operation)}:{df_signature(df)}'
+    try:
+        spine_key = _flow_plan().contract_key
+    except Exception:
+        spine_key = 'legacy'
+    return f'{spine_key}:{origin}:{_safe_operation(operation)}:{df_signature(df)}'
 
 
 def _cached_smartcore_result(df: pd.DataFrame, operation: str, *, origin: str) -> pd.DataFrame | None:
@@ -183,6 +208,7 @@ def _store_output_consistency(df_final: pd.DataFrame, operation: str) -> None:
     st.session_state[DOWNLOAD_SIGNATURE_KEY] = signature
     st.session_state[PREVIEW_SAFE_KEY] = df_final.copy()
     st.session_state[PREVIEW_SIGNATURE_KEY] = signature
+    st.session_state['flow_spine_final_destination'] = _flow_plan().final_destination
     set_context_final_df(df_final)
 
 
@@ -210,25 +236,27 @@ def _render_optional_csv_backup(df_final: pd.DataFrame, operation: str) -> None:
 
 
 def render_cadastro_download_step() -> None:
+    plan = _flow_plan()
     operation = _current_operation()
-    st.markdown(f'### {_title()}')
-    st.caption(_caption())
+    st.markdown(f'### {plan.final_title}')
+    st.caption(plan.final_caption)
 
     df_final = _final_df_for_context(operation)
     if not valid_df(df_final):
         st.warning('O resultado final ainda não foi gerado. Volte para a prévia final.')
         return
 
-    if not _is_api_context() and render_row_count_blocker(df_final):
+    if not is_api_destination(plan) and render_row_count_blocker(df_final):
         return
 
     _store_output_consistency(df_final, operation)
     _render_smartcore_download_report()
 
-    if _is_api_context():
+    if is_api_destination(plan):
         st.success('Base revisada pronta para envio direto ao Bling.')
         _render_api_final(df_final, operation, f'{_entry_context()}_{operation}')
-        _render_optional_csv_backup(df_final, operation)
+        if plan.backup_enabled:
+            _render_optional_csv_backup(df_final, operation)
         return
 
     st.success('Download usando a mesma base blindada da prévia final.')
