@@ -15,6 +15,7 @@ from bling_app_zero.core.bling_mirror_config import (
     current_mirror_status,
     save_mirror_config,
 )
+from bling_app_zero.core.bling_mirror_store import save_persistent_config
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/mirror_monitor_panel.py'
 
@@ -76,12 +77,13 @@ def render_mirror_monitor_panel(*, default_site_url: str = '', default_deposit_n
                     monitor_only=True,
                 )
             )
-            st.success('Configuração de monitoramento salva. Nenhum ciclo automático foi iniciado dentro da tela.')
+            persistent = save_persistent_config(saved)
+            st.success('Configuração de monitoramento salva de forma persistente. Nenhum ciclo automático foi iniciado dentro da tela.')
             add_audit_event(
                 'mirror_monitor_config_saved',
                 area='ESPELHAMENTO',
                 status='CONFIGURADO',
-                details={'config': saved.to_dict(), 'responsible_file': RESPONSIBLE_FILE},
+                details={'config': persistent.to_dict(), 'persistent_store': True, 'responsible_file': RESPONSIBLE_FILE},
             )
 
         status = current_mirror_status()
@@ -91,7 +93,7 @@ def render_mirror_monitor_panel(*, default_site_url: str = '', default_deposit_n
         cols[1].metric('Última simulação', status.last_run_at or '—')
         cols[2].metric('Próximo ciclo previsto', status.next_run_at or '—')
         st.caption(status.last_message or 'Aguardando configuração.')
-        st.info('Para virar automático real, o próximo passo é criar um executor agendado separado da tela Streamlit.')
+        st.info('Para virar automático real, o próximo passo é configurar o executor agendado fora da tela Streamlit.')
 
 
 __all__ = ['render_mirror_monitor_panel']
