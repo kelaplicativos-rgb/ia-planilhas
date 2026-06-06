@@ -15,6 +15,8 @@ from bling_app_zero.pipelines.site_pipeline import run_pipeline as _base_run_pip
 
 RESPONSIBLE_FILE = 'bling_app_zero/pipelines/site_pipeline_blingfix.py'
 PAGE_TIMEOUT = 14
+PLAYWRIGHT_TIMEOUT_MS = 18_000
+PLAYWRIGHT_WAIT_MS = 1_800
 MAX_ROWS = 180
 IMAGE_COLUMNS = ('imagens', 'imagem', 'url_imagens', 'url imagem', 'fotos', 'foto')
 TITLE_COLUMNS = ('nome', 'produto', 'titulo', 'título', 'descricao produto', 'descrição produto')
@@ -157,10 +159,81 @@ def _normalize_images(urls: list[str], base_url: str) -> list[str]:
     return out[:10]
 
 
+def _rendered_html_with_playwright(url: str) -> str:
+    clean_url = clean_cell(url)
+    if not clean_url.startswith(('http://', 'https://')):
+        return ''
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as exc:
+        add_audit_event(
+            'site_pipeline_blingfix_playwright_unavailable',
+            area='SITE',
+            status='AVISO',
+            details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE},
+        )
+        return ''
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled', '--no-sandbox'])
+            context = browser.new_context(
+                viewport={'width': 1366, 'height': 900},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+                locale='pt-BR',
+            )
+            page = context.new_page()
+            page.goto(clean_url, wait_until='domcontentloaded', timeout=PLAYWRIGHT_TIMEOUT_MS)
+            page.wait_for_timeout(PLAYWRIGHT_WAIT_MS)
+            try:
+                page.evaluate('window.scrollTo(0, Math.max(document.body.scrollHeight, document.documentElement.scrollHeight));')
+                page.wait_for_timeout(700)
+                page.evaluate('window.scrollTo(0, 0);')
+                page.wait_for_timeout(400)
+            except Exception:
+                pass
+            html = page.content()
+            browser.close()
+            add_audit_event(
+                'site_pipeline_blingfix_playwright_rendered',
+                area='SITE',
+                status='OK',
+                details={'url': clean_url, 'html_size': len(html or ''), 'responsible_file': RESPONSIBLE_FILE},
+            )
+            return html or ''
+    except Exception as exc:
+        add_audit_event(
+            'site_pipeline_blingfix_playwright_failed',
+            area='SITE',
+            status='AVISO',
+            details={'url': clean_url, 'error': str(exc)[:260], 'responsible_file': RESPONSIBLE_FILE},
+        )
+        return ''
+
+
+def _extract_from_html(html: str, url: str) -> dict[str, str]:
+    product = _extract_jsonld_product(html)
+    name = clean_cell(product.get('name') if product else '') or _meta(html, ('og:title', 'twitter:title')) or _first_h1(html)
+    description = clean_cell(product.get('description') if product else '') or _meta(html, ('description', 'og:description', 'twitter:description'))
+    image_urls = _as_list(product.get('image') or product.get('images')) if product else []
+    if not image_urls:
+        meta_image = _meta(html, ('og:image', 'twitter:image', 'image'))
+        if meta_image:
+            image_urls.append(meta_image)
+    image_urls.extend(_img_candidates_from_html(html))
+    images = _normalize_images(image_urls, url)
+    return {
+        'nome': clean_cell(unescape(name)),
+        'descricao': clean_cell(unescape(description)),
+        'imagens': '|'.join(images),
+    }
+
+
 def _fetch_product_page(url: str) -> dict[str, str]:
     clean_url = clean_cell(url)
     if not clean_url.startswith(('http://', 'https://')):
         return {}
+    html = ''
     try:
         response = requests.get(
             clean_url,
@@ -171,27 +244,26 @@ def _fetch_product_page(url: str) -> dict[str, str]:
                 'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
             },
         )
-        if response.status_code >= 400:
-            return {}
-        html = response.text or ''
+        if response.status_code < 400:
+            html = response.text or ''
     except Exception:
-        return {}
+        html = ''
 
-    product = _extract_jsonld_product(html)
-    name = clean_cell(product.get('name') if product else '') or _meta(html, ('og:title', 'twitter:title')) or _first_h1(html)
-    description = clean_cell(product.get('description') if product else '') or _meta(html, ('description', 'og:description', 'twitter:description'))
-    image_urls = _as_list(product.get('image') or product.get('images')) if product else []
-    if not image_urls:
-        meta_image = _meta(html, ('og:image', 'twitter:image', 'image'))
-        if meta_image:
-            image_urls.append(meta_image)
-    image_urls.extend(_img_candidates_from_html(html))
-    images = _normalize_images(image_urls, clean_url)
-    return {
-        'nome': clean_cell(unescape(name)),
-        'descricao': clean_cell(unescape(description)),
-        'imagens': '|'.join(images),
-    }
+    data = _extract_from_html(html, clean_url) if html else {}
+    if data and data.get('imagens'):
+        return data
+
+    rendered_html = _rendered_html_with_playwright(clean_url)
+    rendered_data = _extract_from_html(rendered_html, clean_url) if rendered_html else {}
+    if rendered_data:
+        merged = dict(data or {})
+        for key, value in rendered_data.items():
+            if value and not merged.get(key):
+                merged[key] = value
+        if rendered_data.get('imagens'):
+            merged['imagens'] = rendered_data['imagens']
+        return merged
+    return data or {}
 
 
 def enrich_product_pages_for_bling(df: pd.DataFrame, *, operation: str, progress_callback: Callable[[dict], None] | None = None) -> pd.DataFrame:
@@ -245,6 +317,7 @@ def enrich_product_pages_for_bling(df: pd.DataFrame, *, operation: str, progress
                 'description_column': desc_col,
                 'image_column': image_col,
                 'operation': operation,
+                'playwright_fallback_enabled': True,
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
