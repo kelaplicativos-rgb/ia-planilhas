@@ -78,12 +78,14 @@ def send_verified_products(df: pd.DataFrame, *, limit: int | None = None, progre
 
         flags = product_persistence_flags(saved)
         missing_important = missing_product_fields(saved, IMPORTANT_PRODUCT_FIELDS)
-        add_audit_event('verified_api_product_checkpoint', area='BLING_ENVIO', status='OK' if not missing else 'ERRO', details={'line': line, 'product_id': product_id, 'persisted_flags': flags, 'missing_required': missing, 'missing_important': missing_important, 'image_pending': not flags.get('imagens'), 'attempts': attempts[-6:], 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('verified_api_product_checkpoint', area='BLING_ENVIO', status='OK' if not missing else 'ERRO', details={'line': line, 'product_id': product_id, 'persisted_flags': flags, 'missing_required': missing, 'missing_important': missing_important, 'image_pending': not flags.get('imagens'), 'next_product_allowed': not bool(missing), 'attempts': attempts[-6:], 'responsible_file': RESPONSIBLE_FILE})
 
         if missing:
             failed += 1
             if len(errors) < 8:
                 errors.append(f'Linha {line}: produto nao aprovado. Faltando {", ".join(missing)}.')
+            add_audit_event('verified_api_sender_finished_early', area='BLING_ENVIO', status='PARCIAL', details={'line': line, 'product_id': product_id, 'missing_fields': missing, 'sent': sent, 'failed': failed, 'responsible_file': RESPONSIBLE_FILE})
+            return DirectSendResult(pos, sent, failed, skipped, tuple(errors), tuple())
         else:
             sent += 1
 
