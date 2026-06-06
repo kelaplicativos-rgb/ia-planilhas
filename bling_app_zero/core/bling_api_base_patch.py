@@ -60,6 +60,20 @@ def _patch_complete_product_update() -> bool:
     return changed
 
 
+def _install_review() -> bool:
+    try:
+        from bling_app_zero.core.bling_review_runtime import install_review_before_api
+        return bool(install_review_before_api())
+    except Exception as exc:
+        add_audit_event(
+            'bling_review_install_call_failed',
+            area='BLING_ENVIO',
+            status='AVISO',
+            details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE},
+        )
+        return False
+
+
 def patch_bling_api_base_urls() -> None:
     global _PATCH_DONE
     changed_modules: list[str] = []
@@ -68,15 +82,17 @@ def patch_bling_api_base_urls() -> None:
         if module is not None and _patch_module(module, module_name):
             changed_modules.append(module_name)
     complete_update_patched = _patch_complete_product_update()
-    if changed_modules or complete_update_patched or not _PATCH_DONE:
+    review_engine_patched = _install_review()
+    if changed_modules or complete_update_patched or review_engine_patched or not _PATCH_DONE:
         add_audit_event(
             'bling_api_base_runtime_patch_applied',
             area='BLING_ENVIO',
-            status='OK' if changed_modules or complete_update_patched else 'SEM_ALTERACAO',
+            status='OK' if changed_modules or complete_update_patched or review_engine_patched else 'SEM_ALTERACAO',
             details={
                 'changed_modules': changed_modules,
                 'correct_api_base_url': CORRECT_API_BASE_URL,
                 'complete_product_update_patched': complete_update_patched,
+                'review_engine_patched': review_engine_patched,
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
