@@ -12,7 +12,12 @@ from bling_app_zero.core.audit import add_audit_event
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_product_image_client.py'
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
-IMAGE_TIMEOUT = 25
+IMAGE_TIMEOUT = 10
+REQUEST_TIMEOUT = 8
+DEEP_SCAN_ENV = 'BLING_IMAGE_DEEP_SCAN'
+FAST_JSON_PATHS = 2
+FAST_JSON_PAYLOADS = 4
+FAST_MAX_ATTEMPTS = 10
 
 
 @dataclass(frozen=True)
@@ -23,6 +28,10 @@ class ImageProbe:
     filename: str
     content: bytes
     error: str = ''
+
+
+def _deep_scan_enabled() -> bool:
+    return str(os.getenv(DEEP_SCAN_ENV, '')).strip().lower() in {'1', 'true', 'sim', 'yes', 'on'}
 
 
 def _image_links_from_payload(payload: dict[str, Any]) -> list[str]:
@@ -50,7 +59,7 @@ def _image_links_from_payload(payload: dict[str, Any]) -> list[str]:
             link = str(item or '').strip()
         if link.startswith(('http://', 'https://')) and link not in links:
             links.append(link)
-    return links[:8]
+    return links[:3 if _deep_scan_enabled() else 1]
 
 
 def _safe_filename(url: str, mime: str) -> str:
@@ -93,23 +102,22 @@ def _json_payloads(url: str) -> list[tuple[str, dict[str, Any]]]:
     link = {'link': url}
     url_obj = {'url': url}
     both = {'link': url, 'url': url}
-    return [
-        ('json.imagensURL.link', {'midia': {'imagens': {'imagensURL': [link]}}}),
+    payloads = [
         ('json.imagensURL.url', {'midia': {'imagens': {'imagensURL': [url_obj]}}}),
+        ('json.imagensURL.link', {'midia': {'imagens': {'imagensURL': [link]}}}),
         ('json.imagensURL.link_url', {'midia': {'imagens': {'imagensURL': [both]}}}),
         ('json.imagensURL.string', {'midia': {'imagens': {'imagensURL': [url]}}}),
-        ('json.externas.link', {'midia': {'imagens': {'externas': [link]}}}),
         ('json.externas.url', {'midia': {'imagens': {'externas': [url_obj]}}}),
-        ('json.imagens.list.link', {'midia': {'imagens': [link]}}),
+        ('json.externas.link', {'midia': {'imagens': {'externas': [link]}}}),
         ('json.imagens.list.url', {'midia': {'imagens': [url_obj]}}),
-        ('json.root.imagens.link', {'imagens': [link]}),
         ('json.root.imagens.url', {'imagens': [url_obj]}),
         ('json.root.imagensURL', {'imagensURL': [url_obj]}),
     ]
+    return payloads if _deep_scan_enabled() else payloads[:FAST_JSON_PAYLOADS]
 
 
 def _candidate_paths(product_id: str) -> list[str]:
-    return [
+    paths = [
         f'/produtos/{product_id}/imagens',
         f'/produtos/{product_id}/midia/imagens',
         f'/produtos/{product_id}/midias/imagens',
@@ -120,6 +128,7 @@ def _candidate_paths(product_id: str) -> list[str]:
         f'/produtos/imagens/{product_id}',
         f'/produtos/midias/{product_id}',
     ]
+    return paths if _deep_scan_enabled() else paths[:FAST_JSON_PATHS]
 
 
 def _attempt_json(
@@ -131,9 +140,12 @@ def _attempt_json(
     payload: dict[str, Any],
     attempts: list[dict[str, Any]],
 ) -> None:
-    for method in ('POST', 'PUT', 'PATCH'):
+    methods = ('POST', 'PATCH') if not _deep_scan_enabled() else ('POST', 'PUT', 'PATCH')
+    for method in methods:
+        if not _deep_scan_enabled() and len(attempts) >= FAST_MAX_ATTEMPTS:
+            return
         try:
-            response = requests.request(method, url_builder(path), headers=headers, json=payload, timeout=30)
+            response = requests.request(method, url_builder(path), headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
             attempts.append({
                 'mode': 'image_endpoint_json',
                 'method': method,
@@ -143,8 +155,6 @@ def _attempt_json(
                 'payload_keys': sorted(payload.keys()),
                 'response_preview': str(response.text or '')[:500],
             })
-            if response.status_code in {401, 403, 404, 405}:
-                continue
         except Exception as exc:
             attempts.append({'mode': 'image_endpoint_json', 'method': method, 'path': path, 'label': label, 'status': 'EXCEPTION', 'error': str(exc)[:220]})
 
@@ -159,26 +169,22 @@ def _attempt_multipart(
 ) -> None:
     upload_headers = dict(headers)
     upload_headers.pop('Content-Type', None)
-    files_variants = [
-        ('arquivo', (probe.filename, probe.content, probe.mime)),
-        ('imagem', (probe.filename, probe.content, probe.mime)),
-        ('file', (probe.filename, probe.content, probe.mime)),
-        ('files', (probe.filename, probe.content, probe.mime)),
-    ]
-    data_variants = [
-        {'link': probe.url, 'url': probe.url},
-        {'url': probe.url},
-        {},
-    ]
+    files_variants = [('imagem', (probe.filename, probe.content, probe.mime)), ('arquivo', (probe.filename, probe.content, probe.mime))]
+    data_variants = [{'url': probe.url}, {}]
+    if _deep_scan_enabled():
+        files_variants.extend([('file', (probe.filename, probe.content, probe.mime)), ('files', (probe.filename, probe.content, probe.mime))])
+        data_variants.insert(0, {'link': probe.url, 'url': probe.url})
     for field, file_tuple in files_variants:
         for data in data_variants:
+            if not _deep_scan_enabled() and len(attempts) >= FAST_MAX_ATTEMPTS:
+                return
             try:
                 response = requests.post(
                     url_builder(path),
                     headers=upload_headers,
                     files={field: file_tuple},
                     data=data,
-                    timeout=45,
+                    timeout=15 if not _deep_scan_enabled() else 45,
                 )
                 attempts.append({
                     'mode': 'image_endpoint_multipart',
@@ -191,8 +197,6 @@ def _attempt_multipart(
                     'bytes': len(probe.content),
                     'response_preview': str(response.text or '')[:500],
                 })
-                if response.status_code in {401, 403, 404, 405}:
-                    continue
             except Exception as exc:
                 attempts.append({'mode': 'image_endpoint_multipart', 'method': 'POST', 'path': path, 'file_field': field, 'status': 'EXCEPTION', 'error': str(exc)[:220]})
 
@@ -217,6 +221,13 @@ def push_product_images(
 ) -> tuple[bool, list[dict[str, Any]]]:
     links = _image_links_from_payload(payload)
     attempts: list[dict[str, Any]] = []
+    deep_scan = _deep_scan_enabled()
+    add_audit_event(
+        'bling_product_image_client_started',
+        area='BLING_IMAGEM',
+        status='INFO',
+        details={'product_id': product_id, 'links': links, 'mode': 'deep_scan' if deep_scan else 'fast', 'responsible_file': RESPONSIBLE_FILE},
+    )
     if not links:
         add_audit_event(
             'bling_product_image_client_no_links',
@@ -226,20 +237,39 @@ def push_product_images(
         )
         return False, attempts
 
-    for image_url in links[:3]:
+    for image_url in links:
         for path in _candidate_paths(product_id):
             for label, json_payload in _json_payloads(image_url):
+                if not deep_scan and len(attempts) >= FAST_MAX_ATTEMPTS:
+                    break
                 _attempt_json(url_builder=url_builder, headers=headers, path=path, label=label, payload=json_payload, attempts=attempts)
-                saved = get_product(product_id)
-                if _has_images(saved):
-                    add_audit_event(
-                        'bling_product_image_client_persisted_json',
-                        area='BLING_IMAGEM',
-                        status='OK',
-                        details={'product_id': product_id, 'path': path, 'label': label, 'image_url': image_url, 'attempts': attempts[-6:], 'responsible_file': RESPONSIBLE_FILE},
-                    )
-                    return True, attempts
+            if not deep_scan and len(attempts) >= FAST_MAX_ATTEMPTS:
+                break
+        if not deep_scan:
+            break
 
+    # Fluxo normal: 1 GET final, sem travar. Multipart fica só no modo profundo.
+    if not deep_scan:
+        saved = get_product(product_id)
+        ok = _has_images(saved)
+        add_audit_event(
+            'bling_product_image_client_fast_finished',
+            area='BLING_IMAGEM',
+            status='OK' if ok else 'AVISO',
+            details={'product_id': product_id, 'has_images': ok, 'links': links, 'attempts': attempts[-12:], 'responsible_file': RESPONSIBLE_FILE},
+        )
+        return ok, attempts
+
+    for image_url in links:
+        saved = get_product(product_id)
+        if _has_images(saved):
+            add_audit_event(
+                'bling_product_image_client_persisted_json',
+                area='BLING_IMAGEM',
+                status='OK',
+                details={'product_id': product_id, 'image_url': image_url, 'attempts': attempts[-12:], 'responsible_file': RESPONSIBLE_FILE},
+            )
+            return True, attempts
         probe = _download_image(image_url, headers)
         attempts.append({'mode': 'image_download_probe', 'url': image_url, 'ok': probe.ok, 'mime': probe.mime, 'filename': probe.filename, 'bytes': len(probe.content), 'error': probe.error})
         if not probe.ok:
@@ -252,7 +282,7 @@ def push_product_images(
                     'bling_product_image_client_persisted_multipart',
                     area='BLING_IMAGEM',
                     status='OK',
-                    details={'product_id': product_id, 'path': path, 'image_url': image_url, 'attempts': attempts[-8:], 'responsible_file': RESPONSIBLE_FILE},
+                    details={'product_id': product_id, 'path': path, 'image_url': image_url, 'attempts': attempts[-12:], 'responsible_file': RESPONSIBLE_FILE},
                 )
                 return True, attempts
 
