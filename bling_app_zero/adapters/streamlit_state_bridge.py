@@ -10,10 +10,24 @@ from bling_app_zero.core.navigation_controller import NavigationState
 
 RESPONSIBLE_FILE = 'bling_app_zero/adapters/streamlit_state_bridge.py'
 
+# Chaves de controle do sidebar/bottom nav: são estado real do sistema, não widgets.
+# BLINGSCAN: antes elas eram bloqueadas pelo prefixo "bottom_nav_", então os botões
+# "Atalhos" e "Diagnóstico" mudavam o AppState, mas o sync nunca gravava no
+# st.session_state. Resultado visual: o usuário clicava e parecia não funcionar.
+PERSISTENT_CONTROL_KEYS = (
+    'bottom_nav_fluxos_open',
+    'bottom_nav_logs_open',
+    'bottom_nav_last_refresh_at',
+    'bottom_nav_last_safe_clear_at',
+)
+
 WIDGET_ACTION_KEY_PREFIXES = (
     'home_light_',
-    'bottom_nav_',
     'nav_',
+    'sidebar_system_action_',
+    'sidebar_shortcut_',
+    'sidebar_hard_reset_',
+    'support_diagnostic_',
 )
 
 WIDGET_ACTION_KEY_SUFFIXES = (
@@ -22,9 +36,16 @@ WIDGET_ACTION_KEY_SUFFIXES = (
 )
 
 
+def _is_persistent_control_key(key: object) -> bool:
+    text = str(key or '')
+    return text in PERSISTENT_CONTROL_KEYS
+
+
 def _is_widget_action_key(key: object) -> bool:
     text = str(key or '')
     if not text:
+        return False
+    if _is_persistent_control_key(text):
         return False
     if text.startswith(WIDGET_ACTION_KEY_PREFIXES):
         return True
@@ -37,6 +58,10 @@ def _filtered_streamlit_state() -> dict[str, Any]:
     Keys de widgets pertencem ao Streamlit. Elas não devem entrar no AppState
     neutro, porque depois o sync tentaria escrever nelas novamente e o
     Streamlit bloqueia quando o widget já foi instanciado.
+
+    As chaves listadas em PERSISTENT_CONTROL_KEYS são exceções: apesar do nome
+    começar com bottom_nav_, elas são estado persistente usado para abrir/fechar
+    os menus de Atalhos e Diagnóstico.
     """
     data: dict[str, Any] = {}
     for key, value in dict(st.session_state).items():
