@@ -7,11 +7,13 @@ import pandas as pd
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_pre_send_defaults.py'
 DEFAULT_BRAND = 'Genérico'
+DEFAULT_CONDITION = 'Novo'
 
 _NAME_FIELDS = ('nome', 'Nome', 'produto', 'Produto', 'titulo', 'Título', 'título', 'descricao produto', 'Descrição produto', 'descricao_produto')
 _DESC_FIELDS = ('descricao', 'Descrição', 'descrição', 'descricao_curta', 'Descrição Curta', 'descrição curta', 'detalhes', 'Detalhes')
 _CODE_FIELDS = ('codigo', 'Código', 'código', 'sku', 'SKU', 'gtin', 'GTIN', 'ean', 'EAN')
 _BRAND_FIELDS = ('marca', 'Marca', 'fabricante', 'Fabricante')
+_CONDITION_FIELDS = ('condicao', 'condição', 'Condição', 'Condicao', 'condicao_produto', 'condição_produto', 'estado', 'Estado')
 _STORE_BRANDS = {'mega center', 'mega center eletronicos', 'mega center eletrônicos', 'stoqui', 'stoqui shop'}
 _STOPWORDS = {
     'fone', 'ouvido', 'estereo', 'estéreo', 'sem', 'fio', 'bluetooth', 'bt', 'power', 'bank', 'carregador', 'cabo',
@@ -123,6 +125,7 @@ def apply_product_send_defaults(row: Any) -> dict[str, Any]:
     descricao = _first(data, _DESC_FIELDS)
     codigo = _first(data, _CODE_FIELDS)
     marca = _first(data, _BRAND_FIELDS)
+    condicao = _first(data, _CONDITION_FIELDS)
 
     if not nome:
         fallback = descricao or codigo
@@ -139,6 +142,10 @@ def apply_product_send_defaults(row: Any) -> dict[str, Any]:
         inferred = infer_brand_from_title(nome or descricao)
         key = _target_key(data, 'marca', _BRAND_FIELDS)
         data[key] = inferred if _brand_is_valid(inferred) else DEFAULT_BRAND
+
+    if not condicao:
+        key = _target_key(data, 'condicao', _CONDITION_FIELDS)
+        data[key] = DEFAULT_CONDITION
 
     return data
 
@@ -165,4 +172,4 @@ def apply_dataframe_send_defaults(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=columns).fillna('')
 
 
-__all__ = ['RESPONSIBLE_FILE', 'DEFAULT_BRAND', 'apply_dataframe_send_defaults', 'apply_product_send_defaults', 'infer_brand_from_title']
+__all__ = ['RESPONSIBLE_FILE', 'DEFAULT_BRAND', 'DEFAULT_CONDITION', 'apply_dataframe_send_defaults', 'apply_product_send_defaults', 'infer_brand_from_title']
