@@ -31,6 +31,20 @@ def _patch_module(module: Any, module_name: str) -> bool:
     return changed
 
 
+def _attempt_statuses(attempts: list[dict[str, Any]]) -> list[int]:
+    statuses: list[int] = []
+    for attempt in attempts:
+        try:
+            statuses.append(int(attempt.get('status')))
+        except Exception:
+            continue
+    return statuses
+
+
+def _has_not_found(attempts: list[dict[str, Any]]) -> bool:
+    return 404 in set(_attempt_statuses(attempts))
+
+
 def _patch_complete_product_update() -> bool:
     global _FORCE_UPDATE_PATCH_DONE
     if _FORCE_UPDATE_PATCH_DONE:
@@ -42,8 +56,15 @@ def _patch_complete_product_update() -> bool:
 
         def update_existing_product_if_changed_v3(*, token, product_id, variants, url_builder, headers_builder, timeout, responsible_file):
             client = BlingV3ProductClient(token=token, url_builder=url_builder, headers_builder=headers_builder, timeout=timeout)
-            attempts = []
+            attempts: list[dict[str, Any]] = []
+            first_payload = None
+            first_strategy = ''
+            first_meta: dict[str, Any] = {}
             for strategy, payload, meta in variants:
+                if first_payload is None:
+                    first_payload = payload
+                    first_strategy = str(strategy or '')
+                    first_meta = meta if isinstance(meta, dict) else {}
                 result = client.update_product(str(product_id), payload)
                 for attempt in result.attempts:
                     item = dict(attempt)
@@ -53,6 +74,46 @@ def _patch_complete_product_update() -> bool:
                     attempts.append(item)
                 if result.ok:
                     return 'updated', attempts
+
+            # BLINGFIX: se o usuário excluiu o produto no Bling, a busca pode
+            # devolver/cachear um ID antigo. Quando o update desse ID retorna 404,
+            # o fluxo correto em operação cadastro é recriar com POST /produtos.
+            if first_payload is not None and _has_not_found(attempts):
+                created_id, create_attempts = client.create_product(first_payload)
+                for attempt in create_attempts:
+                    item = dict(attempt)
+                    item['strategy'] = first_strategy or 'create_after_stale_deleted_id_404'
+                    item['confidence'] = first_meta.get('confidence')
+                    item['mode'] = 'bling_v3_create_after_deleted_old_id'
+                    item['stale_deleted_product_id'] = str(product_id)
+                    attempts.append(item)
+                if created_id:
+                    add_audit_event(
+                        'bling_v3_created_after_stale_deleted_id',
+                        area='BLING_ENVIO',
+                        status='OK',
+                        details={
+                            'old_product_id': str(product_id),
+                            'new_product_id': str(created_id),
+                            'reason': 'ID antigo retornou 404; produto provavelmente foi excluido no Bling. Cadastro novo executado via POST /produtos.',
+                            'attempts': attempts[-8:],
+                            'responsible_file': RESPONSIBLE_FILE,
+                        },
+                    )
+                    return 'updated', attempts
+
+            add_audit_event(
+                'bling_v3_update_existing_failed_no_create_condition',
+                area='BLING_ENVIO',
+                status='AVISO',
+                details={
+                    'product_id': str(product_id),
+                    'statuses': _attempt_statuses(attempts),
+                    'has_not_found': _has_not_found(attempts),
+                    'attempts': attempts[-8:],
+                    'responsible_file': RESPONSIBLE_FILE,
+                },
+            )
             return 'failed', attempts
 
         original = getattr(bling_smart_product_diff, '_blingfix_original_update_existing_product_if_changed', None)
@@ -128,6 +189,7 @@ def patch_bling_api_base_urls() -> None:
                 'complete_product_update_patched': complete_update_patched,
                 'review_engine_patched': review_engine_patched,
                 'image_client_patched': image_client_patched,
+                'create_after_stale_404_enabled': True,
                 'smart_diff_alias_patch': True,
                 'api_rebuild_client': 'bling_app_zero/core/bling_v3_product_client.py',
                 'image_client': 'bling_app_zero/core/bling_product_image_client.py',
