@@ -6,6 +6,7 @@ from typing import Any, Mapping
 import pandas as pd
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_pre_send_defaults.py'
+DEFAULT_BRAND = 'Genérico'
 
 _NAME_FIELDS = ('nome', 'Nome', 'produto', 'Produto', 'titulo', 'Título', 'título', 'descricao produto', 'Descrição produto', 'descricao_produto')
 _DESC_FIELDS = ('descricao', 'Descrição', 'descrição', 'descricao_curta', 'Descrição Curta', 'descrição curta', 'detalhes', 'Detalhes')
@@ -19,7 +20,7 @@ _STOPWORDS = {
     'azul', 'rosa', 'vermelho', 'verde', 'cinza', 'dourado', 'prata', 'mini', 'micro', 'novo', 'produto', 'wireless',
 }
 _KNOWN_BRANDS = (
-    'H\'MASTON', 'HMASTON', 'H\'MASTON', 'KAIDI', 'KNUP', 'KAPBOM', 'INOVA', 'ALTOMEX', 'LEHMOX', 'IT-BLUE',
+    'H\'MASTON', 'HMASTON', 'KAIDI', 'KNUP', 'KAPBOM', 'INOVA', 'ALTOMEX', 'LEHMOX', 'IT-BLUE',
     'ITBLUE', 'X-CELL', 'XCELL', 'SUMEXR', 'EXBOM', 'JBL', 'SAMSUNG', 'MOTOROLA', 'XIAOMI', 'APPLE', 'LENOVO',
     'MULTILASER', 'POSITIVO', 'INTELBRAS', 'ELGIN', 'BRITANIA', 'MONDIAL', 'PHILCO', 'GEONAV', 'BASEUS', 'BOROFONE',
     'HOCO', 'AWEI', 'TREQA', 'REMAX', 'ORICO', 'UGREEN', 'LDNIO', 'MCDODO', 'XO', 'KZ', 'EDIFIER', 'LOGITECH',
@@ -34,7 +35,7 @@ def _clean(value: object) -> str:
 
 
 def _norm_brand(value: str) -> str:
-    return re.sub(r'\s+', ' ', str(value or '').replace('’', "'").strip()).strip(" -_/|.,;:")
+    return re.sub(r'\s+', ' ', str(value or '').replace('’', "'").strip()).strip(' -_/|.,;:')
 
 
 def _brand_is_valid(value: str) -> bool:
@@ -83,10 +84,10 @@ def infer_brand_from_title(title: str) -> str:
     for brand in _KNOWN_BRANDS:
         pattern = r'(?<![A-Z0-9])' + re.escape(brand.upper()) + r'(?![A-Z0-9])'
         if re.search(pattern, upper_text):
-            normalized = brand.replace('H\\\'MASTON', "H'maston").replace('H\'MASTON', "H'maston")
-            return _norm_brand(normalized.title() if normalized.isupper() and len(normalized) > 3 else normalized)
+            if brand.upper() in {'H\'MASTON', 'HMASTON'}:
+                return "H'maston"
+            return _norm_brand(brand.title() if brand.isupper() and len(brand) > 3 else brand)
 
-    # Padrões comuns: "... marca X", "... X modelo", "... - X ..."
     patterns = [
         r'\bmarca\s+([A-Za-z0-9\'\-]{2,30})\b',
         r'\bmodelo\s+([A-Za-z]{2,30})\b',
@@ -107,10 +108,8 @@ def infer_brand_from_title(title: str) -> str:
         low = candidate.lower()
         if low in _STOPWORDS:
             continue
-        # Marcas em títulos de fornecedores costumam aparecer com caixa especial ou no fim do nome.
-        if candidate.isupper() or "'" in candidate or '-' in candidate or candidate.lower() not in _STOPWORDS:
-            if low not in _STOPWORDS:
-                return candidate
+        if candidate.isupper() or "'" in candidate or '-' in candidate:
+            return candidate
     return ''
 
 
@@ -138,18 +137,32 @@ def apply_product_send_defaults(row: Any) -> dict[str, Any]:
 
     if not _brand_is_valid(marca):
         inferred = infer_brand_from_title(nome or descricao)
-        if _brand_is_valid(inferred):
-            key = _target_key(data, 'marca', _BRAND_FIELDS)
-            data[key] = inferred
+        key = _target_key(data, 'marca', _BRAND_FIELDS)
+        data[key] = inferred if _brand_is_valid(inferred) else DEFAULT_BRAND
 
     return data
+
+
+def _ordered_columns(original_columns: list[str], rows: list[dict[str, Any]]) -> list[str]:
+    out = list(original_columns)
+    seen = {str(column) for column in out}
+    for row in rows:
+        for key in row.keys():
+            text_key = str(key)
+            if text_key not in seen:
+                out.append(text_key)
+                seen.add(text_key)
+    return out
 
 
 def apply_dataframe_send_defaults(df: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return df
     rows = [apply_product_send_defaults(row) for _idx, row in df.fillna('').iterrows()]
-    return pd.DataFrame(rows, columns=list(df.columns)).fillna('') if rows else df
+    if not rows:
+        return df
+    columns = _ordered_columns(list(df.columns), rows)
+    return pd.DataFrame(rows, columns=columns).fillna('')
 
 
-__all__ = ['RESPONSIBLE_FILE', 'apply_dataframe_send_defaults', 'apply_product_send_defaults', 'infer_brand_from_title']
+__all__ = ['RESPONSIBLE_FILE', 'DEFAULT_BRAND', 'apply_dataframe_send_defaults', 'apply_product_send_defaults', 'infer_brand_from_title']
