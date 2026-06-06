@@ -76,17 +76,11 @@ def _candidate_indices_from_payload(download_df: pd.DataFrame, result_payload: d
     failed = _safe_int(result_payload.get('failed'))
     skipped = _safe_int(result_payload.get('skipped'))
 
-    # BLINGFIX: nunca transformar envio parcial com sucesso em lista completa de nao confirmados.
-    # Antes, quando havia skipped/failed sem indice detalhado, todas as linhas eram marcadas como
-    # FALHA_NAO_CLASSIFICADA. Foi isso que gerou 338 nao confirmados mesmo com 312 enviados.
     if sent > 0:
         return []
-
-    # Se nada foi enviado e nao ha indice por linha, entao o lote inteiro realmente ficou sem confirmacao.
     if attempted > 0 and sent == 0 and (failed > 0 or skipped > 0):
         limit = min(len(download_df), attempted)
         return list(range(limit))
-
     return []
 
 
@@ -231,6 +225,32 @@ def render_stock_pending_panel(download_df: pd.DataFrame, result_payload: dict[s
 
 
 def render_autocadastro_panel(download_df: pd.DataFrame, result_payload: dict[str, Any], *, key: str) -> None:
+    """Renderiza AutoCadastro usando o motor novo via API.
+
+    BLINGFIX: este wrapper mantém compatibilidade com o import antigo usado no
+    painel principal, mas remove o fluxo contraditório que mandava o usuário de
+    volta para o mapeamento. Agora produtos elegíveis são cadastrados direto no
+    Bling e, quando houver quantidade/depósito, o estoque é atualizado em seguida.
+    """
+    try:
+        from bling_app_zero.core.blingsmartcore_autocadastro_api_panel import render_autocadastro_panel as render_api_autocadastro_panel
+
+        render_api_autocadastro_panel(download_df, result_payload, key=key)
+        add_audit_event(
+            'blingsmartcore_autocadastro_delegated_to_api_panel',
+            area='AUTOCADASTRO',
+            status='OK',
+            details={'responsible_file': RESPONSIBLE_FILE, 'api_panel': 'bling_app_zero/core/blingsmartcore_autocadastro_api_panel.py'},
+        )
+        return
+    except Exception as exc:
+        add_audit_event(
+            'blingsmartcore_autocadastro_api_panel_fallback',
+            area='AUTOCADASTRO',
+            status='AVISO',
+            details={'error': str(exc)[:240], 'responsible_file': RESPONSIBLE_FILE},
+        )
+
     df_not_sent = build_not_sent_dataframe(download_df, result_payload)
     if df_not_sent.empty:
         _render_unclassified_partial_notice(result_payload, operation_label='cadastro')
@@ -250,12 +270,7 @@ def render_autocadastro_panel(download_df: pd.DataFrame, result_payload: dict[st
         key=f'autocadastro_download_not_sent_{key}_{len(df_not_sent)}',
     )
     st.dataframe(df_not_sent.head(100), use_container_width=True)
-
-    if eligible_count > 0:
-        if st.button('Usar produtos nao encontrados como origem de cadastro', use_container_width=True, key=f'autocadastro_use_as_origin_{key}_{eligible_count}'):
-            save_autocadastro_source(df_not_sent, reason='produto_nao_encontrado_no_bling')
-            st.success('Produtos nao encontrados foram preparados como origem de cadastro. Abrindo mapeamento...')
-            st.rerun()
+    st.error('AutoCadastro via API nao carregou. Corrija o erro acima antes de reenviar ao Bling.')
 
 
 __all__ = [
