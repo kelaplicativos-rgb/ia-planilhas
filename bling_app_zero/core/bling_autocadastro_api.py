@@ -19,12 +19,24 @@ API_STOCK_DEPOSIT_KEY = 'bling_api_stock_deposit_name'
 SEND_TIMEOUT = 30
 _FALLBACK_STATE: dict[str, Any] = {}
 
+DEFAULT_CONDICAO = 'Novo'
+DEFAULT_PRODUCAO = 'T'
+DEFAULT_PESO = 0.300
+DEFAULT_LARGURA = 11
+DEFAULT_ALTURA = 2
+DEFAULT_PROFUNDIDADE = 16
+DEFAULT_VOLUMES = 1
+DEFAULT_ITENS_CAIXA = 1
+DEFAULT_LINK_VIDEO = ''
+
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     'codigo': ('código', 'codigo', 'sku', 'ref', 'referencia', 'referência', 'cod produto', 'cod'),
     'nome': ('nome', 'produto', 'título', 'titulo', 'nome produto', 'descrição produto', 'descricao produto'),
     'descricao': ('descrição', 'descricao', 'descrição curta', 'descricao curta', 'detalhes'),
+    'descricao_complementar': ('descrição complementar', 'descricao complementar', 'complemento', 'descrição longa', 'descricao longa'),
     'preco': ('preço', 'preco', 'preço unitário', 'preco unitario', 'valor', 'valor venda'),
     'gtin': ('gtin', 'ean', 'codigo de barras', 'código de barras', 'gtin/ean'),
+    'gtin_tributario': ('gtin tributário', 'gtin tributario', 'gtin/ean tributário', 'gtin/ean tributario'),
     'marca': ('marca', 'fabricante'),
     'unidade': ('unidade', 'un'),
     'ncm': ('ncm',),
@@ -32,6 +44,17 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     'deposito': ('depósito', 'deposito', 'nome depósito', 'nome deposito'),
     'categoria': ('categoria', 'categoria produto', 'categoria do produto'),
     'imagens': ('imagens', 'imagem', 'url imagem', 'url imagens', 'fotos'),
+    'link_externo': ('link externo', 'url produto', 'url do produto', 'link produto', 'link real', 'url', 'origem url'),
+    'link_video': ('link vídeo', 'link video', 'video', 'vídeo', 'url video', 'url vídeo'),
+    'condicao': ('condição', 'condicao'),
+    'producao': ('produção', 'producao'),
+    'peso_liquido': ('peso líquido', 'peso liquido', 'peso'),
+    'peso_bruto': ('peso bruto',),
+    'largura': ('largura',),
+    'altura': ('altura',),
+    'profundidade': ('profundidade', 'comprimento'),
+    'volumes': ('volumes', 'volume'),
+    'itens_caixa': ('itens p/ caixa', 'itens por caixa', 'itens caixa', 'itens/caixa'),
 }
 
 
@@ -118,6 +141,14 @@ def _value(row: pd.Series, mapping: dict[str, str], field: str, default: str = '
     return str(value or default).strip()
 
 
+def _first_value(row: pd.Series, mapping: dict[str, str], fields: tuple[str, ...], default: str = '') -> str:
+    for field in fields:
+        value = _value(row, mapping, field)
+        if value:
+            return value
+    return default
+
+
 def _float_or_none(value: object) -> float | None:
     try:
         text = str(value or '').replace('R$', '').replace(' ', '').strip()
@@ -128,6 +159,18 @@ def _float_or_none(value: object) -> float | None:
         return float(text) if text else None
     except Exception:
         return None
+
+
+def _float_or_default(value: object, default: float) -> float:
+    number = _float_or_none(value)
+    return float(default if number is None else number)
+
+
+def _int_or_default(value: object, default: int) -> int:
+    number = _float_or_none(value)
+    if number is None:
+        return int(default)
+    return int(number)
 
 
 def _digits_only(value: object) -> str:
@@ -173,6 +216,25 @@ def _extract_product_id(payload: Any) -> str:
     return ''
 
 
+def _normalize_condicao(value: str) -> str:
+    text = str(value or '').strip().lower()
+    if text in {'usado', 'usada', 'u'}:
+        return 'Usado'
+    return DEFAULT_CONDICAO
+
+
+def _normalize_producao(value: str) -> str:
+    text = str(value or '').strip().lower()
+    if text in {'propria', 'própria', 'p'}:
+        return 'P'
+    return DEFAULT_PRODUCAO
+
+
+def _valid_gtin(value: str) -> str:
+    digits = _digits_only(value)
+    return digits if len(digits) in {8, 12, 13, 14} else ''
+
+
 def _product_payload(row: pd.Series, mapping: dict[str, str]) -> tuple[dict[str, Any] | None, str]:
     codigo = _value(row, mapping, 'codigo') or _value(row, mapping, 'gtin')
     nome = _value(row, mapping, 'nome') or _value(row, mapping, 'descricao') or codigo
@@ -180,21 +242,48 @@ def _product_payload(row: pd.Series, mapping: dict[str, str]) -> tuple[dict[str,
         return None, 'falta nome/descrição/código para cadastrar produto.'
     if not codigo:
         codigo = nome[:60]
+
+    descricao_curta = _first_value(row, mapping, ('descricao', 'descricao_complementar'), str(nome))
     preco = _float_or_none(_value(row, mapping, 'preco'))
+    peso_liquido = _float_or_default(_value(row, mapping, 'peso_liquido'), DEFAULT_PESO)
+    peso_bruto = _float_or_default(_value(row, mapping, 'peso_bruto'), DEFAULT_PESO)
+    largura = _float_or_default(_value(row, mapping, 'largura'), DEFAULT_LARGURA)
+    altura = _float_or_default(_value(row, mapping, 'altura'), DEFAULT_ALTURA)
+    profundidade = _float_or_default(_value(row, mapping, 'profundidade'), DEFAULT_PROFUNDIDADE)
+    volumes = _int_or_default(_value(row, mapping, 'volumes'), DEFAULT_VOLUMES)
+    itens_caixa = _int_or_default(_value(row, mapping, 'itens_caixa'), DEFAULT_ITENS_CAIXA)
+    link_externo = _value(row, mapping, 'link_externo')
+    link_video = _value(row, mapping, 'link_video', DEFAULT_LINK_VIDEO)
+
     payload: dict[str, Any] = {
         'nome': str(nome)[:120],
         'codigo': str(codigo)[:120],
         'tipo': 'P',
         'situacao': 'A',
         'unidade': _value(row, mapping, 'unidade', 'UN') or 'UN',
-        'descricaoCurta': _value(row, mapping, 'descricao'),
+        'condicao': _normalize_condicao(_value(row, mapping, 'condicao')),
+        'producao': _normalize_producao(_value(row, mapping, 'producao')),
+        'descricaoCurta': descricao_curta,
+        'descricaoComplementar': '',
         'marca': _value(row, mapping, 'marca'),
+        'pesoLiquido': _api_number(peso_liquido),
+        'pesoBruto': _api_number(peso_bruto),
+        'dimensoes': {
+            'largura': _api_number(largura),
+            'altura': _api_number(altura),
+            'profundidade': _api_number(profundidade),
+        },
+        'volumes': volumes,
+        'itensPorCaixa': itens_caixa,
+        'linkExterno': link_externo,
+        'linkVideo': link_video,
         'tributacao': {},
     }
-    gtin = _digits_only(_value(row, mapping, 'gtin'))
-    if len(gtin) in {8, 12, 13, 14}:
+
+    gtin = _valid_gtin(_value(row, mapping, 'gtin'))
+    if gtin:
         payload['gtin'] = gtin
-        payload['tributacao']['gtin'] = gtin
+        payload['tributacao']['gtin'] = _valid_gtin(_value(row, mapping, 'gtin_tributario')) or gtin
     if preco is not None:
         payload['preco'] = preco
     ncm = _digits_only(_value(row, mapping, 'ncm'))
