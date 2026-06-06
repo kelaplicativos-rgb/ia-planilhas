@@ -116,6 +116,10 @@ def _time_left(started: float, budget_seconds: float) -> float:
     return max(0.0, float(budget_seconds) - (time.perf_counter() - started))
 
 
+def _all_starts_are_product_pages(starts: list[str]) -> bool:
+    return bool(starts) and all(productish_url(url) for url in starts)
+
+
 def discover_deep_product_urls(
     raw_urls: str,
     *,
@@ -127,14 +131,54 @@ def discover_deep_product_urls(
 ) -> DeepCaptureResult:
     """Expande um domínio/categoria em links prováveis de produto sem travar o app.
 
-    A busca profunda agora tem orçamento real de tempo. Quando o orçamento acaba,
-    devolve os links parciais encontrados em vez de deixar o Streamlit cair.
+    BLINGFIX: se todos os links informados já forem páginas de produto, a busca
+    profunda não deve abrir o site inteiro. Nesse caso, preserva exatamente os
+    links informados e devolve varredura zerada.
     """
     started = time.perf_counter()
     starts = [norm_url(url) for url in split_urls(raw_urls) if norm_url(url)]
     starts = list(dict.fromkeys(starts))
     if not starts:
         return DeepCaptureResult([], 0, 0, 0, max_depth=0)
+
+    if _all_starts_are_product_pages(starts):
+        limited = starts[: max(1, int(max_products or len(starts)))]
+        _emit(progress_callback, {
+            'stage': 'Links diretos de produto',
+            'message': f'{len(limited)} link(s) direto(s) de produto recebido(s). Varredura profunda bloqueada para não abrir o site inteiro.',
+            'progress': 0.88,
+            'visited_pages': 0,
+            'found_products': len(limited),
+            'max_pages': 0,
+            'max_products': len(limited),
+            'max_depth': 0,
+            'safe_limited': True,
+            'flow_mode': 'product_detail_urls_only',
+            'stopped_by_budget': False,
+            'stop_reason': 'Entrada já era página de produto; deep crawler não executado.',
+        })
+        add_audit_event(
+            'site_deep_capture_product_url_scope_locked',
+            area='SITE',
+            step='entrada',
+            status='OK',
+            details={
+                'input_urls': len(starts),
+                'product_urls': len(limited),
+                'scan_mode': 'product_detail_urls_only',
+                'reason': 'URL direta de produto não deve virar varredura de site inteiro.',
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+        return DeepCaptureResult(
+            product_urls=limited,
+            visited_pages=0,
+            scanned_pages=0,
+            ignored_external_links=0,
+            max_depth=0,
+            stopped_by_budget=False,
+            stop_reason='Entrada já era página de produto; deep crawler não executado.',
+        )
 
     technical_pages = _technical_max_pages(max_pages)
     technical_products = _technical_max_products(max_products)
