@@ -38,7 +38,22 @@ def _patch_complete_product_update() -> bool:
     changed = False
     try:
         from bling_app_zero.core import bling_smart_product_diff
-        from bling_app_zero.core.bling_force_product_update import update_existing_product_complete
+        from bling_app_zero.core.bling_v3_product_client import BlingV3ProductClient
+
+        def update_existing_product_if_changed_v3(*, token, product_id, variants, url_builder, headers_builder, timeout, responsible_file):
+            client = BlingV3ProductClient(token=token, url_builder=url_builder, headers_builder=headers_builder, timeout=timeout)
+            attempts = []
+            for strategy, payload, meta in variants:
+                result = client.update_product(str(product_id), payload)
+                for attempt in result.attempts:
+                    item = dict(attempt)
+                    item['strategy'] = strategy
+                    item['confidence'] = meta.get('confidence') if isinstance(meta, dict) else None
+                    item['mode'] = 'bling_v3_product_client_rebuild'
+                    attempts.append(item)
+                if result.ok:
+                    return 'updated', attempts
+            return 'failed', attempts
 
         original = getattr(bling_smart_product_diff, '_blingfix_original_update_existing_product_if_changed', None)
         if original is None:
@@ -47,26 +62,14 @@ def _patch_complete_product_update() -> bool:
                 '_blingfix_original_update_existing_product_if_changed',
                 bling_smart_product_diff.update_existing_product_if_changed,
             )
-        bling_smart_product_diff.update_existing_product_if_changed = update_existing_product_complete
+        bling_smart_product_diff.update_existing_product_if_changed = update_existing_product_if_changed_v3
+        smart_diff = sys.modules.get('bling_app_zero.core.bling_direct_sender_smart_diff')
+        if smart_diff is not None:
+            setattr(smart_diff, 'update_existing_product_if_changed', update_existing_product_if_changed_v3)
         changed = True
     except Exception as exc:
         add_audit_event(
             'bling_complete_product_update_patch_failed',
-            area='BLING_ENVIO',
-            status='AVISO',
-            details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE},
-        )
-
-    try:
-        smart_diff = sys.modules.get('bling_app_zero.core.bling_direct_sender_smart_diff')
-        if smart_diff is not None:
-            from bling_app_zero.core.bling_force_product_update import update_existing_product_complete
-
-            setattr(smart_diff, 'update_existing_product_if_changed', update_existing_product_complete)
-            changed = True
-    except Exception as exc:
-        add_audit_event(
-            'bling_complete_product_update_alias_patch_failed',
             area='BLING_ENVIO',
             status='AVISO',
             details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE},
@@ -110,6 +113,7 @@ def patch_bling_api_base_urls() -> None:
                 'complete_product_update_patched': complete_update_patched,
                 'review_engine_patched': review_engine_patched,
                 'smart_diff_alias_patch': True,
+                'api_rebuild_client': 'bling_app_zero/core/bling_v3_product_client.py',
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
