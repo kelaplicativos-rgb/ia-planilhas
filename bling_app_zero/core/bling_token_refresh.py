@@ -12,7 +12,7 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_token_store import load_token, save_token
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_token_refresh.py'
-TOKEN_URL_DEFAULT = 'https://www.bling.com.br/Api/v3/oauth/token'
+TOKEN_URL_DEFAULT = 'https://api.bling.com.br/Api/v3/oauth/token'
 EXPIRY_FORMAT = '%Y-%m-%d %H:%M:%S'
 
 SECRET_ALIASES: dict[str, tuple[str, ...]] = {
@@ -75,8 +75,15 @@ def _secret(name: str, default: str = '') -> str:
     return str(default or '').strip()
 
 
+def _normalize_bling_url(value: str, fallback: str = TOKEN_URL_DEFAULT) -> str:
+    text = str(value or fallback or '').strip()
+    if text.startswith('https://www.bling.com.br/Api/v3'):
+        text = text.replace('https://www.bling.com.br/Api/v3', 'https://api.bling.com.br/Api/v3', 1)
+    return text or fallback
+
+
 def _token_url() -> str:
-    return _secret('token_url', TOKEN_URL_DEFAULT) or TOKEN_URL_DEFAULT
+    return _normalize_bling_url(_secret('token_url', TOKEN_URL_DEFAULT), TOKEN_URL_DEFAULT)
 
 
 def _client_id() -> str:
