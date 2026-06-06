@@ -111,7 +111,9 @@ def load_estoque_pipeline() -> Callable:
 
 @st.cache_resource(show_spinner=False)
 def load_site_pipeline() -> Callable:
-    from bling_app_zero.pipelines.site_pipeline import run_pipeline
+    # BLINGFIX: wrapper reforça nome/descrição/imagens por página individual
+    # antes do preview/envio ao Bling, principalmente em URL direta de produto.
+    from bling_app_zero.pipelines.site_pipeline_blingfix import run_pipeline
 
     return run_pipeline
 
@@ -218,31 +220,49 @@ def preview_df(title: str, df: pd.DataFrame | None) -> None:
         label = title
     else:
         label = f'{title} · {len(df)} linha(s) × {len(df.columns)} coluna(s)'
-
     with _preview_context(label):
         _render_preview_body(df)
 
 
+def render_download_section(df: pd.DataFrame, filename: str, *, operation: str | None = None) -> None:
+    if df is None or df.empty:
+        st.info('Nada para baixar ainda.')
+        return
+    download_final(df, filename, operation=operation)
+
+
+def update_final_download_snapshot(df: pd.DataFrame, filename: str, mime: str, file_bytes: bytes, *, operation: str | None = None) -> None:
+    st.session_state[FINAL_DOWNLOAD_DF_SNAPSHOT_KEY] = df
+    st.session_state[FINAL_DOWNLOAD_FILE_NAME_KEY] = filename
+    st.session_state[FINAL_DOWNLOAD_MIME_KEY] = mime
+    st.session_state[FINAL_DOWNLOAD_FILE_BYTES_KEY] = file_bytes
+    st.session_state[FINAL_DOWNLOAD_SIGNATURE_KEY] = df_signature(df)
+    st.session_state[FINAL_DOWNLOAD_RULES_SIGNATURE_KEY] = ''
+    st.session_state[FINAL_DOWNLOAD_OPERATION_KEY] = operation or ''
+    st.session_state[FINAL_DOWNLOAD_WIDGET_KEY] = filename
+
+
+def remember_destination_model(uploaded_file: Any | None) -> None:
+    if uploaded_file is None:
+        return
+    try:
+        st.session_state[DESTINATION_MODEL_UPLOAD_NAME_KEY] = getattr(uploaded_file, 'name', '')
+        st.session_state[DESTINATION_MODEL_UPLOAD_BYTES_KEY] = uploaded_file.getvalue()
+        st.session_state[DESTINATION_MODEL_UPLOAD_OBJECT_KEY] = uploaded_file
+    except Exception:
+        pass
+
+
 __all__ = [
-    'DESTINATION_MODEL_UPLOAD_BYTES_KEY',
-    'DESTINATION_MODEL_UPLOAD_NAME_KEY',
-    'DESTINATION_MODEL_UPLOAD_OBJECT_KEY',
-    'FINAL_DOWNLOAD_DF_SNAPSHOT_KEY',
-    'FINAL_DOWNLOAD_FILE_BYTES_KEY',
-    'FINAL_DOWNLOAD_FILE_NAME_KEY',
-    'FINAL_DOWNLOAD_MIME_KEY',
-    'FINAL_DOWNLOAD_OPERATION_KEY',
-    'FINAL_DOWNLOAD_RULES_SIGNATURE_KEY',
-    'FINAL_DOWNLOAD_SIGNATURE_KEY',
-    'FINAL_DOWNLOAD_WIDGET_KEY',
-    'df_signature',
-    'download_final',
     'load_cadastro_pipeline',
     'load_estoque_pipeline',
     'load_requested_columns_from_model',
     'load_site_pipeline',
     'preview_df',
     'read_upload_fast',
+    'remember_destination_model',
+    'render_download_section',
     'show_contract',
     'show_mapping',
+    'update_final_download_snapshot',
 ]
