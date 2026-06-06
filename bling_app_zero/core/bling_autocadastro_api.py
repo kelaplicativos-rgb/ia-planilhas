@@ -111,10 +111,8 @@ def _headers(token: dict[str, Any]) -> dict[str, str]:
 
 def _normalize_column_name(value: object) -> str:
     text = str(value or '').strip().lower()
-    text = text.replace('ã', 'a').replace('á', 'a').replace('à', 'a').replace('â', 'a')
-    text = text.replace('é', 'e').replace('ê', 'e').replace('í', 'i')
-    text = text.replace('ó', 'o').replace('ô', 'o').replace('õ', 'o')
-    text = text.replace('ú', 'u').replace('ç', 'c')
+    for old, new in (('ã', 'a'), ('á', 'a'), ('à', 'a'), ('â', 'a'), ('é', 'e'), ('ê', 'e'), ('í', 'i'), ('ó', 'o'), ('ô', 'o'), ('õ', 'o'), ('ú', 'u'), ('ç', 'c')):
+        text = text.replace(old, new)
     text = re.sub(r'[^a-z0-9]+', ' ', text)
     return re.sub(r'\s+', ' ', text).strip()
 
@@ -168,13 +166,11 @@ def _float_or_default(value: object, default: float) -> float:
 
 def _int_or_default(value: object, default: int) -> int:
     number = _float_or_none(value)
-    if number is None:
-        return int(default)
-    return int(number)
+    return int(default if number is None else number)
 
 
 def _digits_only(value: object) -> str:
-    return re.sub(r'\D+', '', str(value or ''))
+    return ''.join(ch for ch in str(value or '') if ch.isdigit())
 
 
 def _api_number(value: float) -> int | float:
@@ -207,8 +203,7 @@ def _extract_product_id(payload: Any) -> str:
             if value:
                 return value
         for key in ('data', 'dados', 'produto', 'result'):
-            value = payload.get(key)
-            found = _extract_product_id(value)
+            found = _extract_product_id(payload.get(key))
             if found:
                 return found
     if isinstance(payload, list) and payload:
@@ -216,88 +211,106 @@ def _extract_product_id(payload: Any) -> str:
     return ''
 
 
-def _normalize_condicao(value: str) -> str:
-    text = str(value or '').strip().lower()
-    if text in {'usado', 'usada', 'u'}:
-        return 'Usado'
-    return DEFAULT_CONDICAO
-
-
-def _normalize_producao(value: str) -> str:
-    text = str(value or '').strip().lower()
-    if text in {'propria', 'própria', 'p'}:
-        return 'P'
-    return DEFAULT_PRODUCAO
-
-
-def _valid_gtin(value: str) -> str:
+def _valid_gtin(value: object) -> str:
     digits = _digits_only(value)
     return digits if len(digits) in {8, 12, 13, 14} else ''
 
 
-def _product_payload(row: pd.Series, mapping: dict[str, str]) -> tuple[dict[str, Any] | None, str]:
+def _identity_engine(row: pd.Series, mapping: dict[str, str]) -> tuple[dict[str, Any] | None, str]:
     codigo = _value(row, mapping, 'codigo') or _value(row, mapping, 'gtin')
     nome = _value(row, mapping, 'nome') or _value(row, mapping, 'descricao') or codigo
     if not nome:
         return None, 'falta nome/descrição/código para cadastrar produto.'
     if not codigo:
         codigo = nome[:60]
-
-    descricao_curta = _first_value(row, mapping, ('descricao', 'descricao_complementar'), str(nome))
-    preco = _float_or_none(_value(row, mapping, 'preco'))
-    peso_liquido = _float_or_default(_value(row, mapping, 'peso_liquido'), DEFAULT_PESO)
-    peso_bruto = _float_or_default(_value(row, mapping, 'peso_bruto'), DEFAULT_PESO)
-    largura = _float_or_default(_value(row, mapping, 'largura'), DEFAULT_LARGURA)
-    altura = _float_or_default(_value(row, mapping, 'altura'), DEFAULT_ALTURA)
-    profundidade = _float_or_default(_value(row, mapping, 'profundidade'), DEFAULT_PROFUNDIDADE)
-    volumes = _int_or_default(_value(row, mapping, 'volumes'), DEFAULT_VOLUMES)
-    itens_caixa = _int_or_default(_value(row, mapping, 'itens_caixa'), DEFAULT_ITENS_CAIXA)
-    link_externo = _value(row, mapping, 'link_externo')
-    link_video = _value(row, mapping, 'link_video', DEFAULT_LINK_VIDEO)
-
-    payload: dict[str, Any] = {
-        'nome': str(nome)[:120],
-        'codigo': str(codigo)[:120],
-        'tipo': 'P',
-        'situacao': 'A',
-        'unidade': _value(row, mapping, 'unidade', 'UN') or 'UN',
-        'condicao': _normalize_condicao(_value(row, mapping, 'condicao')),
-        'producao': _normalize_producao(_value(row, mapping, 'producao')),
-        'descricaoCurta': descricao_curta,
-        'descricaoComplementar': '',
-        'marca': _value(row, mapping, 'marca'),
-        'pesoLiquido': _api_number(peso_liquido),
-        'pesoBruto': _api_number(peso_bruto),
-        'dimensoes': {
-            'largura': _api_number(largura),
-            'altura': _api_number(altura),
-            'profundidade': _api_number(profundidade),
-        },
-        'volumes': volumes,
-        'itensPorCaixa': itens_caixa,
-        'linkExterno': link_externo,
-        'linkVideo': link_video,
-        'tributacao': {},
-    }
-
+    payload: dict[str, Any] = {'nome': str(nome)[:120], 'codigo': str(codigo)[:120], 'tipo': 'P', 'situacao': 'A'}
     gtin = _valid_gtin(_value(row, mapping, 'gtin'))
     if gtin:
         payload['gtin'] = gtin
-        payload['tributacao']['gtin'] = _valid_gtin(_value(row, mapping, 'gtin_tributario')) or gtin
-    if preco is not None:
-        payload['preco'] = preco
-    ncm = _digits_only(_value(row, mapping, 'ncm'))
-    if ncm:
-        payload['tributacao']['ncm'] = ncm
+        payload['tributacao'] = {'gtin': _valid_gtin(_value(row, mapping, 'gtin_tributario')) or gtin}
+    return payload, ''
+
+
+def _description_engine(row: pd.Series, mapping: dict[str, str], fallback_name: str) -> dict[str, Any]:
+    descricao = _first_value(row, mapping, ('descricao', 'descricao_complementar'), fallback_name)
+    return {'descricaoCurta': descricao, 'descricaoComplementar': ''}
+
+
+def _price_engine(row: pd.Series, mapping: dict[str, str]) -> dict[str, Any]:
+    preco = _float_or_none(_value(row, mapping, 'preco'))
+    return {'preco': preco} if preco is not None else {}
+
+
+def _defaults_engine(row: pd.Series, mapping: dict[str, str]) -> dict[str, Any]:
+    producao_raw = str(_value(row, mapping, 'producao') or '').strip().lower()
+    condicao_raw = str(_value(row, mapping, 'condicao') or '').strip().lower()
+    return {
+        'condicao': 'Usado' if condicao_raw in {'usado', 'usada', 'u'} else DEFAULT_CONDICAO,
+        'producao': 'P' if producao_raw in {'propria', 'própria', 'p'} else DEFAULT_PRODUCAO,
+        'unidade': _value(row, mapping, 'unidade', 'UN') or 'UN',
+        'pesoLiquido': _api_number(_float_or_default(_value(row, mapping, 'peso_liquido'), DEFAULT_PESO)),
+        'pesoBruto': _api_number(_float_or_default(_value(row, mapping, 'peso_bruto'), DEFAULT_PESO)),
+        'dimensoes': {
+            'largura': _api_number(_float_or_default(_value(row, mapping, 'largura'), DEFAULT_LARGURA)),
+            'altura': _api_number(_float_or_default(_value(row, mapping, 'altura'), DEFAULT_ALTURA)),
+            'profundidade': _api_number(_float_or_default(_value(row, mapping, 'profundidade'), DEFAULT_PROFUNDIDADE)),
+        },
+        'volumes': _int_or_default(_value(row, mapping, 'volumes'), DEFAULT_VOLUMES),
+        'itensPorCaixa': _int_or_default(_value(row, mapping, 'itens_caixa'), DEFAULT_ITENS_CAIXA),
+    }
+
+
+def _taxonomy_engine(row: pd.Series, mapping: dict[str, str]) -> dict[str, Any]:
+    payload: dict[str, Any] = {'marca': _value(row, mapping, 'marca')}
     categoria = _value(row, mapping, 'categoria')
     if categoria:
         payload['categoria'] = {'descricao': categoria}
+    return payload
+
+
+def _media_engine(row: pd.Series, mapping: dict[str, str]) -> dict[str, Any]:
+    payload = {'linkExterno': _value(row, mapping, 'link_externo'), 'linkVideo': _value(row, mapping, 'link_video', DEFAULT_LINK_VIDEO)}
     imagens = _value(row, mapping, 'imagens')
     if imagens:
         urls = [u.strip() for u in re.split(r'[|,;\n]+', imagens) if u.strip().lower().startswith(('http://', 'https://'))]
         if urls:
             payload['midia'] = {'imagens': [{'link': url} for url in urls[:10]]}
-    return _clean(payload), ''
+    return payload
+
+
+def _tax_engine(row: pd.Series, mapping: dict[str, str], current_payload: dict[str, Any]) -> dict[str, Any]:
+    tributacao = dict(current_payload.get('tributacao') or {})
+    ncm = _digits_only(_value(row, mapping, 'ncm'))
+    if ncm:
+        tributacao['ncm'] = ncm
+    return {'tributacao': tributacao} if tributacao else {}
+
+
+def _validate_payload(payload: dict[str, Any]) -> str:
+    if not str(payload.get('nome') or '').strip():
+        return 'payload sem nome.'
+    if not str(payload.get('codigo') or '').strip():
+        return 'payload sem código/SKU.'
+    return ''
+
+
+def _product_payload(row: pd.Series, mapping: dict[str, str]) -> tuple[dict[str, Any] | None, str]:
+    identity, reason = _identity_engine(row, mapping)
+    if identity is None:
+        return None, reason
+    payload: dict[str, Any] = {}
+    payload.update(identity)
+    payload.update(_defaults_engine(row, mapping))
+    payload.update(_description_engine(row, mapping, str(payload.get('nome') or '')))
+    payload.update(_price_engine(row, mapping))
+    payload.update(_taxonomy_engine(row, mapping))
+    payload.update(_media_engine(row, mapping))
+    payload.update(_tax_engine(row, mapping, payload))
+    clean = _clean(payload)
+    validation_error = _validate_payload(clean)
+    if validation_error:
+        return None, validation_error
+    return clean, ''
 
 
 def _deposit_id(token: dict[str, Any], row: pd.Series, mapping: dict[str, str]) -> str:
