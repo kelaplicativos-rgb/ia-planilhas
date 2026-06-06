@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -81,7 +82,14 @@ def _image_links(payload: dict[str, Any]) -> list[str]:
     imagens = midia.get('imagens') if isinstance(midia.get('imagens'), (list, dict)) else payload.get('imagens') or payload.get('images') or []
     raw: list[Any]
     if isinstance(imagens, dict):
-        raw = list(imagens.get('externas') or imagens.get('externos') or imagens.get('links') or imagens.get('urls') or [])
+        raw = list(
+            imagens.get('imagensURL')
+            or imagens.get('externas')
+            or imagens.get('externos')
+            or imagens.get('links')
+            or imagens.get('urls')
+            or []
+        )
     elif isinstance(imagens, list):
         raw = imagens
     else:
@@ -108,6 +116,16 @@ def _fields(payload: dict[str, Any]) -> list[str]:
     return sorted(fields)
 
 
+def _infer_brand(nome: str) -> str:
+    text = str(nome or '').strip()
+    known = ('Kdpan', 'Kapbom', 'Kaidi', 'Knup', 'Inova', 'Kimaster', 'Kemei', 'Lelong', 'X-Cell', 'Mox', 'Hoco', 'Baseus')
+    low = f' {text.lower()} '
+    for brand in known:
+        if re.search(rf'(?<![a-z0-9]){re.escape(brand.lower())}(?![a-z0-9])', low):
+            return brand
+    return ''
+
+
 def _force_defaults(payload: dict[str, Any]) -> dict[str, Any]:
     out = deepcopy(payload)
     nome = str(out.get('nome') or '').strip()
@@ -117,6 +135,10 @@ def _force_defaults(payload: dict[str, Any]) -> dict[str, Any]:
     if descricao:
         out['descricaoCurta'] = descricao
         out.setdefault('descricaoComplementar', descricao)
+    if not str(out.get('marca') or '').strip():
+        brand = _infer_brand(nome)
+        if brand:
+            out['marca'] = brand
     out.setdefault('tipo', 'P')
     out.setdefault('situacao', 'A')
     out.setdefault('formato', 'S')
@@ -140,7 +162,12 @@ def _media_payloads(payload: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]
     by_link = [{'link': link} for link in links]
     by_url = [{'url': link} for link in links]
     by_both = [{'link': link, 'url': link} for link in links]
+    as_strings = list(links)
     return [
+        ('media.midia.imagens.imagensURL.link', {'midia': {'imagens': {'imagensURL': by_link}}}),
+        ('media.midia.imagens.imagensURL.url', {'midia': {'imagens': {'imagensURL': by_url}}}),
+        ('media.midia.imagens.imagensURL.link_url', {'midia': {'imagens': {'imagensURL': by_both}}}),
+        ('media.midia.imagens.imagensURL.strings', {'midia': {'imagens': {'imagensURL': as_strings}}}),
         ('media.midia.imagens.link', {'midia': {'imagens': by_link}}),
         ('media.midia.imagens.url', {'midia': {'imagens': by_url}}),
         ('media.midia.imagens.link_url', {'midia': {'imagens': by_both}}),
@@ -162,6 +189,14 @@ def _description_payloads(payload: dict[str, Any]) -> list[tuple[str, dict[str, 
     ]
 
 
+def _has_non_empty_images(imagens: Any) -> bool:
+    if isinstance(imagens, list):
+        return any(bool(item) for item in imagens)
+    if isinstance(imagens, dict):
+        return any(_has_non_empty_images(value) for value in imagens.values())
+    return bool(imagens)
+
+
 def _persistence_report(saved: dict[str, Any]) -> dict[str, Any]:
     midia = saved.get('midia') if isinstance(saved.get('midia'), dict) else {}
     imagens = saved.get('imagens') or midia.get('imagens')
@@ -176,15 +211,15 @@ def _persistence_report(saved: dict[str, Any]) -> dict[str, Any]:
         'marca': bool(saved.get('marca')),
         'categoria': bool(saved.get('categoria')),
         'midia': bool(midia),
-        'imagens': bool(imagens),
+        'imagens': _has_non_empty_images(imagens),
         'pesoLiquido': saved.get('pesoLiquido') not in (None, '', 0, 0.0),
         'pesoBruto': saved.get('pesoBruto') not in (None, '', 0, 0.0),
         'dimensoes': bool(dimensoes),
         'dimensoes_keys': sorted(dimensoes.keys()) if isinstance(dimensoes, dict) else [],
         'midia_type': type(midia).__name__,
         'imagens_type': type(imagens).__name__,
-        'midia_preview': str(midia)[:500],
-        'imagens_preview': str(imagens)[:500],
+        'midia_preview': str(midia)[:700],
+        'imagens_preview': str(imagens)[:700],
     }
 
 
@@ -308,7 +343,8 @@ class BlingV3ProductClient:
             status='OK' if report.get('nome') and report.get('codigo') else 'AVISO',
             details={
                 'product_id': product_id,
-                'attempts': attempts[-12:],
+                'attempts': attempts[-16:],
+                'expected_image_links': _image_links(payload),
                 'expected_fields': _fields(payload),
                 'persistence': report,
                 'responsible_file': RESPONSIBLE_FILE,
