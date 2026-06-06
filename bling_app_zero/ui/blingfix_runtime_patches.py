@@ -164,6 +164,48 @@ def _patch_home_wizard_navigation() -> None:
     home_wizard._render_safe_step_nav = guarded_render_safe_step_nav
 
 
+def _patch_site_operation_guard() -> None:
+    from bling_app_zero.ui import site_panel, site_panel_state
+
+    original: Callable[..., Any] | None = getattr(site_panel_state, '_blingfix_original_get_site_df', None)
+    if original is None:
+        original = site_panel_state.get_site_df
+        setattr(site_panel_state, '_blingfix_original_get_site_df', original)
+
+    def guarded_get_site_df(operation: str):
+        requested = _normalize_operation(operation)
+        captured = _normalize_operation(st.session_state.get('site_capture_operation'))
+        if requested and captured and requested != captured:
+            add_audit_event(
+                'site_panel_ignored_df_from_other_operation',
+                area='SITE',
+                step='entrada',
+                status='INFO',
+                details={
+                    'requested_operation': requested,
+                    'site_capture_operation': captured,
+                    'reason': 'evitar_estoque_usar_captura_de_cadastro',
+                    'responsible_file': RESPONSIBLE_FILE,
+                },
+            )
+            return None
+        return original(operation)
+
+    site_panel_state.get_site_df = guarded_get_site_df
+    site_panel.get_site_df = guarded_get_site_df
+
+
+def _normalize_operation(value: object) -> str:
+    text = str(value or '').strip().lower()
+    if text in {'cadastro', 'produtos', 'produto', 'cadastrar'}:
+        return 'cadastro'
+    if text in {'estoque', 'stock', 'atualizacao_estoque', 'atualização de estoque', 'saldo'}:
+        return 'estoque'
+    if text in {'atualizacao_preco', 'atualização de preço', 'preco', 'preço'}:
+        return 'atualizacao_preco'
+    return text
+
+
 def _render_persistent_process_bar(home_wizard_module: Any, steps: list[str], active_step: str, *, locked: bool) -> None:
     if active_step not in steps:
         return
@@ -229,6 +271,7 @@ def install_blingfix_runtime_patches() -> None:
     _patch_oauth_callback()
     _patch_disconnect()
     _patch_home_wizard_navigation()
+    _patch_site_operation_guard()
     st.session_state[_PATCH_INSTALLED_KEY] = True
     add_audit_event(
         'blingfix_runtime_patches_installed',
