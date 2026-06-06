@@ -9,7 +9,7 @@ from bling_app_zero.core.bling_api_base_patch import patch_bling_api_base_urls
 from bling_app_zero.core.bling_direct_sender import DirectSendResult
 from bling_app_zero.core.bling_direct_sender_smart_diff import send_dataframe_to_bling as _smart_diff_send_dataframe_to_bling
 from bling_app_zero.core.bling_pre_send_defaults import apply_dataframe_send_defaults, apply_product_send_defaults
-from bling_app_zero.core.bling_product_update_intelligence import ACTION_PENDING, analyze_product_update_need, analyze_stock_update_need
+from bling_app_zero.core.bling_product_update_intelligence import ACTION_PENDING, analyze_stock_update_need
 from bling_app_zero.core.operation_contract import OP_ESTOQUE, normalize_operation
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_intelligent_update_sender.py'
@@ -88,7 +88,7 @@ def _decision_for_operation(row: Any, operation: str):
     prepared_row = apply_product_send_defaults(row)
     if op == OP_ESTOQUE:
         return analyze_stock_update_need(prepared_row)
-    return analyze_product_update_need(prepared_row, None)
+    return None
 
 
 def split_intelligent_update_rows(df: pd.DataFrame, operation: str = '') -> tuple[pd.DataFrame, list[dict[str, Any]]]:
@@ -97,11 +97,36 @@ def split_intelligent_update_rows(df: pd.DataFrame, operation: str = '') -> tupl
 
     op = normalize_operation(operation)
     prepared_df = apply_dataframe_send_defaults(df)
+
+    # BLINGFIX FREE API MODE:
+    # Cadastro/atualização de produto não deve ser bloqueado por score interno,
+    # imagem ausente, nome curto ou qualidade. O papel do sistema é enviar o
+    # máximo de dados possível; o Bling aceita/recusa e o usuário decide manter,
+    # excluir ou corrigir depois. Mantemos retenção apenas para estoque, porque
+    # estoque sem produto/depósito pode gerar movimentação errada.
+    if op != OP_ESTOQUE:
+        add_audit_event(
+            'bling_intelligent_update_free_api_mode_enabled',
+            area='BLING_ENVIO',
+            status='OK',
+            details={
+                'operation': op,
+                'rows': len(prepared_df),
+                'reason': 'Cadastro/atualizacao liberados sem bloqueio de qualidade antes da API.',
+                'pre_send_defaults_applied': True,
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+        return prepared_df.copy().fillna(''), []
+
     allowed_indices: list[Any] = []
     pending: list[dict[str, Any]] = []
     for position, (index, row) in enumerate(prepared_df.fillna('').iterrows(), start=1):
         line = int(index) + 1 if isinstance(index, int) else position
         decision = _decision_for_operation(row, op)
+        if decision is None:
+            allowed_indices.append(index)
+            continue
         payload = decision.to_dict()
         payload['line'] = line
         payload['operation'] = op
@@ -122,12 +147,11 @@ def send_dataframe_to_bling_intelligent(
     limit: int | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> DirectSendResult:
-    """Envio com pré-decisão inteligente antes do sender atual.
+    """Envio para o Bling com modo livre para cadastro/atualização.
 
-    BLINGFIX: antes de qualquer chamada API, corrige em runtime os módulos que
-    ainda carregaram o default legado www.bling.com.br/Api/v3 e aplica defaults
-    mínimos antes da pré-decisão para evitar bloqueio indevido por nome ausente
-    quando há descrição/código confiável.
+    BLINGFIX: para cadastro e atualização de produto, a pré-decisão não bloqueia
+    mais por score/qualidade/imagem. Ela apenas aplica defaults mínimos e envia
+    ao motor API. Estoque continua protegido.
     """
     patch_bling_api_base_urls()
 
@@ -148,7 +172,7 @@ def send_dataframe_to_bling_intelligent(
     _emit(
         progress_callback,
         {
-            'stage': 'Pré-decisão inteligente de atualização',
+            'stage': 'Preparando envio livre para API Bling' if op != OP_ESTOQUE else 'Pré-decisão inteligente de estoque',
             'operation': op,
             'processed': 0,
             'total': len(df),
@@ -159,6 +183,7 @@ def send_dataframe_to_bling_intelligent(
             'allowed_rows': len(allowed_df),
             'progress': 0.02,
             'stock_quality_mode': op == OP_ESTOQUE,
+            'free_api_mode': op != OP_ESTOQUE,
             'pre_send_defaults_applied': True,
         },
     )
@@ -166,12 +191,12 @@ def send_dataframe_to_bling_intelligent(
     pending_errors = _pending_errors_by_line(pending)
 
     if allowed_df.empty:
-        message = 'Todas as linhas viraram pendência inteligente antes da API; nada foi enviado ao Bling.'
+        message = 'Todas as linhas ficaram pendentes antes da API; nada foi enviado ao Bling.'
         add_audit_event(
             'bling_intelligent_update_all_pending_before_api',
             area='BLING_ENVIO',
             status='BLOQUEADO',
-            details={'operation': op, 'total': len(df), 'pending': skipped_before_api, 'stock_quality_mode': op == OP_ESTOQUE, 'pre_send_defaults_applied': True, 'responsible_file': RESPONSIBLE_FILE},
+            details={'operation': op, 'total': len(df), 'pending': skipped_before_api, 'stock_quality_mode': op == OP_ESTOQUE, 'free_api_mode': op != OP_ESTOQUE, 'pre_send_defaults_applied': True, 'responsible_file': RESPONSIBLE_FILE},
         )
         return DirectSendResult(len(df), 0, 0, skipped_before_api, tuple([message] + pending_errors), tuple())
 
@@ -193,7 +218,7 @@ def send_dataframe_to_bling_intelligent(
     errors = list(_safe_tuple_attr(result, 'errors'))
     if skipped_before_api:
         errors.extend(pending_errors)
-        errors.append(f'{skipped_before_api} linha(s) ficaram como pendência inteligente antes da API.')
+        errors.append(f'{skipped_before_api} linha(s) ficaram como pendência antes da API.')
 
     not_found_indices = _safe_tuple_attr(result, 'not_found_indices')
 
@@ -213,6 +238,7 @@ def send_dataframe_to_bling_intelligent(
             'skipped_after_api': skipped_after_api,
             'skipped_total': skipped_total,
             'stock_quality_mode': op == OP_ESTOQUE,
+            'free_api_mode': op != OP_ESTOQUE,
             'api_base_patch_enabled': True,
             'pre_send_defaults_applied': True,
             'responsible_file': RESPONSIBLE_FILE,
