@@ -17,13 +17,24 @@ from bling_app_zero.ui.startup_guard import ensure_app_ready
 
 def _install_bling_api_verified_media_checkpoint(stage: str = 'startup') -> None:
     try:
+        from bling_app_zero.core.existing_product_media_patch_runtime import install_existing_product_media_patch_runtime
+        existing_installed = install_existing_product_media_patch_runtime()
+    except Exception as exc:
+        existing_installed = False
+        add_audit_event(
+            'app_existing_product_media_patch_startup_failed',
+            area='BLING_IMAGEM',
+            status='AVISO',
+            details={'error': str(exc)[:220], 'stage': stage, 'responsible_file': 'app.py'},
+        )
+    try:
         from bling_app_zero.core.verified_image_checkpoint_runtime import install_verified_image_checkpoint_runtime
         installed = install_verified_image_checkpoint_runtime()
         add_audit_event(
             'app_verified_media_checkpoint_startup',
             area='BLING_IMAGEM',
             status='OK',
-            details={'installed_now': installed, 'stage': stage, 'responsible_file': 'app.py'},
+            details={'installed_now': installed, 'existing_media_patch': existing_installed, 'stage': stage, 'responsible_file': 'app.py'},
         )
     except Exception as exc:
         add_audit_event(
