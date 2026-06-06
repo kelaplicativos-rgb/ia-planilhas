@@ -5,6 +5,7 @@ from typing import Any, Callable
 import pandas as pd
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.bling_api_base_patch import patch_bling_api_base_urls
 from bling_app_zero.core.bling_direct_sender import DirectSendResult
 from bling_app_zero.core.bling_direct_sender_smart_diff import send_dataframe_to_bling as _smart_diff_send_dataframe_to_bling
 from bling_app_zero.core.bling_product_update_intelligence import ACTION_PENDING, analyze_product_update_need, analyze_stock_update_need
@@ -119,13 +120,11 @@ def send_dataframe_to_bling_intelligent(
 ) -> DirectSendResult:
     """Envio com pré-decisão inteligente antes do sender atual.
 
-    BLINGFIX: a pré-decisão agora é sensível à operação.
-    - cadastro/preço de produto: usa qualidade rica de produto.
-    - estoque: exige apenas identificação + quantidade/saldo, sem cobrar nome,
-      preço, descrição, imagem, marca ou categoria.
-    O sender smart_diff continua fazendo a comparação profunda contra o Bling e
-    atualiza somente produtos com mudança real.
+    BLINGFIX: antes de qualquer chamada API, corrige em runtime os módulos que
+    ainda carregaram o default legado www.bling.com.br/Api/v3.
     """
+    patch_bling_api_base_urls()
+
     if not isinstance(df, pd.DataFrame) or df.empty:
         return DirectSendResult(0, 0, 0, 0, tuple(), tuple())
 
@@ -207,6 +206,7 @@ def send_dataframe_to_bling_intelligent(
             'skipped_after_api': skipped_after_api,
             'skipped_total': skipped_total,
             'stock_quality_mode': op == OP_ESTOQUE,
+            'api_base_patch_enabled': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
