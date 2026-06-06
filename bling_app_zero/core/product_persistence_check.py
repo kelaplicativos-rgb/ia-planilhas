@@ -2,8 +2,21 @@ from __future__ import annotations
 
 from typing import Any
 
-REQUIRED_PRODUCT_FIELDS = ('nome', 'codigo', 'preco', 'descricaoCurta')
-IMPORTANT_PRODUCT_FIELDS = ('marca', 'categoria', 'pesoLiquido', 'pesoBruto', 'dimensoes', 'volumes', 'itensPorCaixa')
+REQUIRED_PRODUCT_FIELDS = (
+    'nome',
+    'codigo',
+    'preco',
+    'descricaoCurta',
+    'marca',
+    'categoria',
+    'pesoLiquido',
+    'pesoBruto',
+    'dimensoes',
+    'volumes',
+    'itensPorCaixa',
+    'imagens',
+)
+IMPORTANT_PRODUCT_FIELDS = REQUIRED_PRODUCT_FIELDS
 
 
 def _filled(value: Any) -> bool:
@@ -22,12 +35,22 @@ def _nonzero(value: Any) -> bool:
 
 
 def _has_images(saved: dict[str, Any]) -> bool:
+    if not isinstance(saved, dict):
+        return False
     midia = saved.get('midia') if isinstance(saved.get('midia'), dict) else {}
-    imagens = saved.get('imagens') or midia.get('imagens')
+    imagens = (
+        saved.get('imagens')
+        or midia.get('imagens')
+        or midia.get('externas')
+        or midia.get('internas')
+        or midia.get('imagensURL')
+    )
     return _filled(imagens)
 
 
 def product_persistence_flags(saved: dict[str, Any]) -> dict[str, bool]:
+    if not isinstance(saved, dict):
+        saved = {}
     dims = saved.get('dimensoes') if isinstance(saved.get('dimensoes'), dict) else {}
     return {
         'nome': _filled(saved.get('nome')),
