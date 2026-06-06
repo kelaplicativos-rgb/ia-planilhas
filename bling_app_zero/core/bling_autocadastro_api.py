@@ -13,7 +13,7 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_token_store import load_token
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_autocadastro_api.py'
-DEFAULT_API_BASE_URL = 'https://www.bling.com.br/Api/v3'
+DEFAULT_API_BASE_URL = 'https://api.bling.com.br/Api/v3'
 API_STOCK_DEPOSIT_ID_KEY = 'bling_api_stock_deposit_id'
 API_STOCK_DEPOSIT_KEY = 'bling_api_stock_deposit_name'
 SEND_TIMEOUT = 30
@@ -100,6 +100,8 @@ def _secret(name: str, default: str = '') -> str:
 
 def _url(path: str) -> str:
     base = (_secret('api_base_url', DEFAULT_API_BASE_URL) or DEFAULT_API_BASE_URL).rstrip('/')
+    if base == 'https://www.bling.com.br/Api/v3':
+        base = DEFAULT_API_BASE_URL
     if str(path or '').startswith(('http://', 'https://')):
         return str(path)
     return base + '/' + str(path or '').lstrip('/')
