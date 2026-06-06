@@ -15,7 +15,7 @@ from bling_app_zero.ui.sidebar_tools import render_sidebar_tools
 from bling_app_zero.ui.startup_guard import ensure_app_ready
 
 
-def _install_bling_api_verified_media_checkpoint() -> None:
+def _install_bling_api_verified_media_checkpoint(stage: str = 'startup') -> None:
     try:
         from bling_app_zero.core.verified_image_checkpoint_runtime import install_verified_image_checkpoint_runtime
         installed = install_verified_image_checkpoint_runtime()
@@ -23,14 +23,14 @@ def _install_bling_api_verified_media_checkpoint() -> None:
             'app_verified_media_checkpoint_startup',
             area='BLING_IMAGEM',
             status='OK',
-            details={'installed_now': installed, 'responsible_file': 'app.py'},
+            details={'installed_now': installed, 'stage': stage, 'responsible_file': 'app.py'},
         )
     except Exception as exc:
         add_audit_event(
             'app_verified_media_checkpoint_startup_failed',
             area='BLING_IMAGEM',
             status='AVISO',
-            details={'error': str(exc)[:220], 'responsible_file': 'app.py'},
+            details={'error': str(exc)[:220], 'stage': stage, 'responsible_file': 'app.py'},
         )
 
 
@@ -44,8 +44,9 @@ def main() -> None:
         return
 
     restore_mapping_widget_state_from_snapshot()
-    _install_bling_api_verified_media_checkpoint()
+    _install_bling_api_verified_media_checkpoint('before_runtime_patches')
     install_blingfix_runtime_patches()
+    _install_bling_api_verified_media_checkpoint('after_runtime_patches')
     bling_oauth.process_oauth_callback()
     add_audit_event('app_started', area='APP', details={'version': APP_VERSION, 'mode': 'session_guarded_start'})
 
