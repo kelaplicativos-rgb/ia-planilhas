@@ -15,13 +15,14 @@ OP_CADASTRO = 'cadastro'
 OP_ESTOQUE = 'estoque'
 OP_ATUALIZACAO_PRECO = 'atualizacao_preco'
 
-# BLINGFIX: lotes menores para evitar timeout/queda no Streamlit.
-# O envio direto roda dentro do ciclo de renderização; lotes grandes deixam a tela
-# presa por muito tempo, principalmente quando há comparação inteligente e consulta
-# ao Bling antes de criar/atualizar.
-CADASTRO_BATCH_SIZE = 10
-ESTOQUE_BATCH_SIZE = 20
-PRECO_BATCH_SIZE = 20
+# BLINGFIX:
+# O envio automático deve ser um por um, mas sem exigir clique manual entre linhas.
+# Assim, cada ciclo processa exatamente 1 linha, valida/checkpointa e o painel dá rerun
+# sozinho para a próxima linha até terminar tudo. Isso evita pular linhas quando um item
+# falha dentro de um lote maior e evita a sensação de que precisa recomeçar.
+CADASTRO_BATCH_SIZE = 1
+ESTOQUE_BATCH_SIZE = 1
+PRECO_BATCH_SIZE = 1
 
 
 def normalize_operation(value: object) -> str:
