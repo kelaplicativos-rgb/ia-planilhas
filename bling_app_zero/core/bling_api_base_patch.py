@@ -56,6 +56,22 @@ def _patch_complete_product_update() -> bool:
             status='AVISO',
             details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE},
         )
+
+    try:
+        smart_diff = sys.modules.get('bling_app_zero.core.bling_direct_sender_smart_diff')
+        if smart_diff is not None:
+            from bling_app_zero.core.bling_force_product_update import update_existing_product_complete
+
+            setattr(smart_diff, 'update_existing_product_if_changed', update_existing_product_complete)
+            changed = True
+    except Exception as exc:
+        add_audit_event(
+            'bling_complete_product_update_alias_patch_failed',
+            area='BLING_ENVIO',
+            status='AVISO',
+            details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE},
+        )
+
     _FORCE_UPDATE_PATCH_DONE = True
     return changed
 
@@ -93,6 +109,7 @@ def patch_bling_api_base_urls() -> None:
                 'correct_api_base_url': CORRECT_API_BASE_URL,
                 'complete_product_update_patched': complete_update_patched,
                 'review_engine_patched': review_engine_patched,
+                'smart_diff_alias_patch': True,
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
