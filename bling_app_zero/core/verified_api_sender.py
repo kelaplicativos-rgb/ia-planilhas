@@ -12,6 +12,8 @@ from bling_app_zero.core.bling_v3_product_client import BlingV3ProductClient
 from bling_app_zero.core.product_persistence_check import IMPORTANT_PRODUCT_FIELDS, missing_product_fields, product_persistence_flags
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/verified_api_sender.py'
+DEFAULT_BRAND = 'Genérico'
+BAD_BRANDS = {'', 'mega center', 'mega center eletronicos', 'mega center eletrônicos', 'stoqui', 'stoqui shop'}
 
 
 def _emit(callback: Callable[[dict[str, Any]], None] | None, payload: dict[str, Any]) -> None:
@@ -22,7 +24,22 @@ def _emit(callback: Callable[[dict[str, Any]], None] | None, payload: dict[str, 
             pass
 
 
+def _brand_ok(value: Any) -> bool:
+    text = str(value or '').strip()
+    return bool(text) and text.lower() not in BAD_BRANDS
+
+
+def _force_default_brand(payload: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return payload
+    if not _brand_ok(payload.get('marca')):
+        payload = dict(payload)
+        payload['marca'] = DEFAULT_BRAND
+    return payload
+
+
 def _essential(payload: dict[str, Any]) -> dict[str, Any]:
+    payload = _force_default_brand(payload)
     keys = ('nome', 'codigo', 'preco', 'descricaoCurta', 'descricaoComplementar', 'marca', 'unidade', 'tipo', 'situacao', 'formato', 'gtin', 'tributacao', 'categoria', 'pesoLiquido', 'pesoBruto', 'dimensoes', 'volumes', 'itensPorCaixa')
     return {key: payload[key] for key in keys if payload.get(key) not in (None, '', {}, [])}
 
@@ -40,7 +57,7 @@ def send_verified_products(df: pd.DataFrame, *, limit: int | None = None, progre
     total = len(rows)
     sent = failed = skipped = 0
     errors: list[str] = []
-    add_audit_event('verified_api_sender_started', area='BLING_ENVIO', status='OK', details={'total': total, 'mode': 'one_product_verify_before_next', 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('verified_api_sender_started', area='BLING_ENVIO', status='OK', details={'total': total, 'mode': 'one_product_verify_before_next', 'default_brand_guard': DEFAULT_BRAND, 'responsible_file': RESPONSIBLE_FILE})
 
     for pos, (index, row) in enumerate(rows.iterrows(), start=1):
         line = int(index) + 1 if isinstance(index, int) else pos
@@ -52,6 +69,7 @@ def send_verified_products(df: pd.DataFrame, *, limit: int | None = None, progre
 
         _emit(progress_callback, {'stage': f'Verificando produto {pos}/{total}', 'processed': pos - 1, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': (pos - 1) / max(total, 1)})
         _label, payload, meta = variants[0]
+        payload = _force_default_brand(payload)
         candidates = [meta.get('code'), meta.get('gtin'), meta.get('raw_code')]
         product_id = _resolve_product_id(token, candidates)
         attempts: list[dict[str, Any]] = []
@@ -78,7 +96,7 @@ def send_verified_products(df: pd.DataFrame, *, limit: int | None = None, progre
 
         flags = product_persistence_flags(saved)
         missing_important = missing_product_fields(saved, IMPORTANT_PRODUCT_FIELDS)
-        add_audit_event('verified_api_product_checkpoint', area='BLING_ENVIO', status='OK' if not missing else 'ERRO', details={'line': line, 'product_id': product_id, 'persisted_flags': flags, 'missing_required': missing, 'missing_important': missing_important, 'image_pending': not flags.get('imagens'), 'next_product_allowed': not bool(missing), 'attempts': attempts[-6:], 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('verified_api_product_checkpoint', area='BLING_ENVIO', status='OK' if not missing else 'ERRO', details={'line': line, 'product_id': product_id, 'persisted_flags': flags, 'missing_required': missing, 'missing_important': missing_important, 'image_pending': not flags.get('imagens'), 'next_product_allowed': not bool(missing), 'default_brand_guard': DEFAULT_BRAND, 'attempts': attempts[-6:], 'responsible_file': RESPONSIBLE_FILE})
 
         if missing:
             failed += 1
@@ -91,7 +109,7 @@ def send_verified_products(df: pd.DataFrame, *, limit: int | None = None, progre
 
         _emit(progress_callback, {'stage': 'Produto aprovado; seguindo para o proximo' if not missing else 'Produto reprovado; seguindo com erro registrado', 'processed': pos, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': pos / max(total, 1)})
 
-    add_audit_event('verified_api_sender_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('verified_api_sender_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'default_brand_guard': DEFAULT_BRAND, 'responsible_file': RESPONSIBLE_FILE})
     return DirectSendResult(total, sent, failed, skipped, tuple(errors), tuple())
 
 
