@@ -6,6 +6,7 @@ import pandas as pd
 import requests
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.bling_api_base_patch import patch_bling_api_base_urls
 from bling_app_zero.core.bling_direct_sender import DirectSendResult
 from bling_app_zero.core.bling_direct_sender_smart import (
     RESPONSIBLE_FILE as BASE_RESPONSIBLE_FILE,
@@ -147,6 +148,7 @@ def _send_cadastro_smart_diff(
     limit: int | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> DirectSendResult:
+    patch_bling_api_base_urls()
     schema_error = _cadastro_schema_error(df)
     if schema_error:
         total = len(df) if isinstance(df, pd.DataFrame) else 0
@@ -254,7 +256,7 @@ def _send_cadastro_smart_diff(
         _emit_progress(progress_callback, {'stage': 'Cadastrando no Bling com comparação', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
 
     _emit_progress(progress_callback, {'stage': 'Cadastro inteligente com comparação concluído', 'processed': total, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': 1.0})
-    add_audit_event('bling_smart_diff_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'attempted': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'mode': 'diff_update_only_changed_create_new_skip_unchanged_no_duplicate_recreate_no_double_count_field_acceptance_audit', 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('bling_smart_diff_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'attempted': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'mode': 'diff_update_only_changed_create_new_skip_unchanged_no_duplicate_recreate_no_double_count_field_acceptance_audit_api_base_clean', 'responsible_file': RESPONSIBLE_FILE})
     return DirectSendResult(total, sent, failed, skipped, tuple(errors), tuple())
 
 
@@ -265,6 +267,7 @@ def send_dataframe_to_bling(
     limit: int | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> DirectSendResult:
+    patch_bling_api_base_urls()
     if normalize_operation(operation) == OP_CADASTRO:
         return _send_cadastro_smart_diff(df, limit=limit, progress_callback=progress_callback)
     return _safe_send_dataframe_to_bling(df, operation, limit=limit, progress_callback=progress_callback)
