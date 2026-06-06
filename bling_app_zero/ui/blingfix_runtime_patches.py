@@ -58,12 +58,7 @@ def _patch_disconnect() -> None:
         finally:
             disconnect_backend_token()
             activate_logout_guard('manual_disconnect_after_clear')
-            add_audit_event(
-                'bling_disconnect_guarded_runtime',
-                area='BLING_OAUTH',
-                status='OK',
-                details={'responsible_file': RESPONSIBLE_FILE},
-            )
+            add_audit_event('bling_disconnect_guarded_runtime', area='BLING_OAUTH', status='OK', details={'responsible_file': RESPONSIBLE_FILE})
 
     bling_oauth.disconnect = guarded_disconnect
     home_bling_api_flow.disconnect = guarded_disconnect
@@ -99,23 +94,12 @@ def _patch_home_wizard_navigation() -> None:
 
         if contract.is_api and can_go_next and not locked:
             home_wizard._go_to_step(next_step)
-            add_audit_event(
-                'wizard_api_auto_next_applied',
-                area='WIZARD',
-                step=next_step,
-                details={'from': active_step, 'to': next_step, 'flow_spine': plan.to_dict(), 'responsible_file': RESPONSIBLE_FILE},
-            )
+            add_audit_event('wizard_api_auto_next_applied', area='WIZARD', step=next_step, details={'from': active_step, 'to': next_step, 'flow_spine': plan.to_dict(), 'responsible_file': RESPONSIBLE_FILE})
             home_wizard.safe_rerun('wizard_api_auto_next', target_step=next_step)
             return
 
         if contract.is_api and can_go_next and locked:
-            add_audit_event(
-                'wizard_api_auto_next_blocked_by_manual_back',
-                area='WIZARD',
-                step=active_step,
-                status='OK',
-                details={'active_step': active_step, 'next_step': next_step, 'responsible_file': RESPONSIBLE_FILE},
-            )
+            add_audit_event('wizard_api_auto_next_blocked_by_manual_back', area='WIZARD', step=active_step, status='OK', details={'active_step': active_step, 'next_step': next_step, 'responsible_file': RESPONSIBLE_FILE})
 
         st.markdown('---')
         col_back, col_status, col_next = st.columns([1, 1.4, 1])
@@ -123,12 +107,7 @@ def _patch_home_wizard_navigation() -> None:
             if previous_step and st.button('⬅️ Voltar', use_container_width=True, key=f'wizard_local_back_{active_step}'):
                 activate_manual_back_lock(active_step, previous_step)
                 home_wizard._go_to_step(previous_step)
-                add_audit_event(
-                    'wizard_local_back_clicked',
-                    area='WIZARD',
-                    step=previous_step,
-                    details={'from': active_step, 'to': previous_step, 'state_preserved': True, 'flow_spine': plan.to_dict(), 'responsible_file': RESPONSIBLE_FILE},
-                )
+                add_audit_event('wizard_local_back_clicked', area='WIZARD', step=previous_step, details={'from': active_step, 'to': previous_step, 'state_preserved': True, 'flow_spine': plan.to_dict(), 'responsible_file': RESPONSIBLE_FILE})
                 home_wizard.safe_rerun('wizard_back_clicked', target_step=previous_step)
             elif not previous_step:
                 st.caption('Início do fluxo')
@@ -149,12 +128,7 @@ def _patch_home_wizard_navigation() -> None:
                     if st.button(f'Próximo: {home_wizard._label_for(next_step)}', use_container_width=True, key=f'wizard_local_next_{active_step}'):
                         clear_manual_back_lock('manual_next_clicked')
                         home_wizard._go_to_step(next_step)
-                        add_audit_event(
-                            'wizard_local_next_clicked',
-                            area='WIZARD',
-                            step=next_step,
-                            details={'from': active_step, 'to': next_step, 'prerequisite_ok': True, 'state_preserved': True, 'flow_spine': plan.to_dict(), 'responsible_file': RESPONSIBLE_FILE},
-                        )
+                        add_audit_event('wizard_local_next_clicked', area='WIZARD', step=next_step, details={'from': active_step, 'to': next_step, 'prerequisite_ok': True, 'state_preserved': True, 'flow_spine': plan.to_dict(), 'responsible_file': RESPONSIBLE_FILE})
                         home_wizard.safe_rerun('wizard_next_clicked', target_step=next_step)
                 else:
                     home_wizard._render_blocked_next_state(next_step)
@@ -176,18 +150,7 @@ def _patch_site_operation_guard() -> None:
         requested = _normalize_operation(operation)
         captured = _normalize_operation(st.session_state.get('site_capture_operation'))
         if requested and captured and requested != captured:
-            add_audit_event(
-                'site_panel_ignored_df_from_other_operation',
-                area='SITE',
-                step='entrada',
-                status='INFO',
-                details={
-                    'requested_operation': requested,
-                    'site_capture_operation': captured,
-                    'reason': 'evitar_estoque_usar_captura_de_cadastro',
-                    'responsible_file': RESPONSIBLE_FILE,
-                },
-            )
+            add_audit_event('site_panel_ignored_df_from_other_operation', area='SITE', step='entrada', status='INFO', details={'requested_operation': requested, 'site_capture_operation': captured, 'reason': 'evitar_estoque_usar_captura_de_cadastro', 'responsible_file': RESPONSIBLE_FILE})
             return None
         return original(operation)
 
@@ -195,9 +158,60 @@ def _patch_site_operation_guard() -> None:
     site_panel.get_site_df = guarded_get_site_df
 
 
+def _looks_like_product_catalog_df(df: Any) -> bool:
+    try:
+        columns = {str(col or '').strip().lower() for col in getattr(df, 'columns', [])}
+    except Exception:
+        return False
+    product_markers = {'nome', 'produto', 'titulo', 'título', 'descricao', 'descrição', 'descricao_curta', 'preco', 'preço', 'marca', 'categoria', 'imagens', 'imagem', 'url', 'link'}
+    stock_only = {'quantidade', 'id', 'codigo', 'código', 'gtin', 'deposito', 'depósito'}
+    if columns and columns.issubset(stock_only):
+        return False
+    return len(columns.intersection(product_markers)) >= 2
+
+
+def _forced_api_operation(download_df: Any, operation: object) -> str:
+    requested = _normalize_operation(operation)
+    explicit = _normalize_operation(st.session_state.get('operation') or st.session_state.get('selected_operation') or st.session_state.get('bling_operation') or st.session_state.get('flow_operation'))
+    if requested == 'cadastro' or explicit == 'cadastro':
+        return 'cadastro'
+    if _looks_like_product_catalog_df(download_df):
+        return 'cadastro'
+    return requested or explicit or 'cadastro'
+
+
+def _patch_api_batch_operation_guard() -> None:
+    from bling_app_zero.ui import bling_api_batch_panel
+
+    original_render: Callable[..., Any] | None = getattr(bling_api_batch_panel, '_blingfix_original_render_bling_api_batch_panel', None)
+    if original_render is None:
+        original_render = bling_api_batch_panel.render_bling_api_batch_panel
+        setattr(bling_api_batch_panel, '_blingfix_original_render_bling_api_batch_panel', original_render)
+
+    original_spine: Callable[..., Any] | None = getattr(bling_api_batch_panel, '_blingfix_original_spine_operation_or', None)
+    if original_spine is None:
+        original_spine = bling_api_batch_panel._spine_operation_or
+        setattr(bling_api_batch_panel, '_blingfix_original_spine_operation_or', original_spine)
+
+    def guarded_spine_operation_or(operation: str) -> str:
+        requested = _normalize_operation(operation)
+        if requested == 'cadastro':
+            return 'cadastro'
+        return original_spine(operation)
+
+    def guarded_render_bling_api_batch_panel(download_df, operation: str, key: str, signature: str, rules_sig: str) -> None:
+        forced = _forced_api_operation(download_df, operation)
+        if forced != _normalize_operation(operation):
+            add_audit_event('bling_api_batch_operation_forced_to_cadastro', area='BLING_ENVIO', status='OK', details={'original_operation': operation, 'forced_operation': forced, 'columns': [str(c) for c in getattr(download_df, 'columns', [])], 'reason': 'evitar_site_produto_ser_enviado_como_estoque_api', 'responsible_file': RESPONSIBLE_FILE})
+        return original_render(download_df, forced, key, signature, rules_sig)
+
+    bling_api_batch_panel._spine_operation_or = guarded_spine_operation_or
+    bling_api_batch_panel.render_bling_api_batch_panel = guarded_render_bling_api_batch_panel
+
+
 def _normalize_operation(value: object) -> str:
     text = str(value or '').strip().lower()
-    if text in {'cadastro', 'produtos', 'produto', 'cadastrar'}:
+    if text in {'cadastro', 'produtos', 'produto', 'cadastrar', 'cadastro de produtos'}:
         return 'cadastro'
     if text in {'estoque', 'stock', 'atualizacao_estoque', 'atualização de estoque', 'saldo'}:
         return 'estoque'
@@ -214,47 +228,22 @@ def _render_persistent_process_bar(home_wizard_module: Any, steps: list[str], ac
     percent = int(((index + 1) / total) * 100)
     current_label = _label_for_home_wizard(home_wizard_module, active_step)
 
-    st.markdown(
-        '''
+    st.markdown('''
 <style>
-.blingfix-progress-card{
-    border:1px solid rgba(15,23,42,.10);
-    background:linear-gradient(135deg,#ffffff 0%,#f8fafc 100%);
-    border-radius:16px;
-    padding:.72rem .82rem;
-    margin:.55rem 0 .85rem 0;
-    box-shadow:0 8px 22px rgba(15,23,42,.05);
-}
-.blingfix-progress-title{
-    font-size:.82rem;
-    font-weight:900;
-    color:#0f172a;
-    margin-bottom:.22rem;
-}
-.blingfix-progress-subtitle{
-    font-size:.78rem;
-    color:#475569;
-    line-height:1.25;
-}
-.blingfix-progress-locked{
-    color:#9a3412;
-    font-weight:850;
-}
+.blingfix-progress-card{border:1px solid rgba(15,23,42,.10);background:linear-gradient(135deg,#ffffff 0%,#f8fafc 100%);border-radius:16px;padding:.72rem .82rem;margin:.55rem 0 .85rem 0;box-shadow:0 8px 22px rgba(15,23,42,.05);}
+.blingfix-progress-title{font-size:.82rem;font-weight:900;color:#0f172a;margin-bottom:.22rem;}
+.blingfix-progress-subtitle{font-size:.78rem;color:#475569;line-height:1.25;}
+.blingfix-progress-locked{color:#9a3412;font-weight:850;}
 </style>
-''',
-        unsafe_allow_html=True,
-    )
+''', unsafe_allow_html=True)
     lock_text = ' · avanço automático pausado' if locked else ''
     lock_class = ' blingfix-progress-locked' if locked else ''
-    st.markdown(
-        f'''
+    st.markdown(f'''
 <div class="blingfix-progress-card">
   <div class="blingfix-progress-title">Acompanhamento do processo</div>
   <div class="blingfix-progress-subtitle{lock_class}">Etapa {index + 1} de {total} · {current_label}{lock_text}</div>
 </div>
-''',
-        unsafe_allow_html=True,
-    )
+''', unsafe_allow_html=True)
     st.progress(max(1, min(100, percent)))
 
 
@@ -272,13 +261,9 @@ def install_blingfix_runtime_patches() -> None:
     _patch_disconnect()
     _patch_home_wizard_navigation()
     _patch_site_operation_guard()
+    _patch_api_batch_operation_guard()
     st.session_state[_PATCH_INSTALLED_KEY] = True
-    add_audit_event(
-        'blingfix_runtime_patches_installed',
-        area='APP',
-        status='OK',
-        details={'logout_guard_active': logout_guard_active(), 'responsible_file': RESPONSIBLE_FILE},
-    )
+    add_audit_event('blingfix_runtime_patches_installed', area='APP', status='OK', details={'logout_guard_active': logout_guard_active(), 'api_operation_guard': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_blingfix_runtime_patches']
