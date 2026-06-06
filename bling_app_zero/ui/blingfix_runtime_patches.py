@@ -95,6 +95,8 @@ def _patch_home_wizard_navigation() -> None:
         contract = home_wizard.active_contract()
         locked = manual_back_lock_active(active_step)
 
+        _render_persistent_process_bar(home_wizard, steps, active_step, locked=locked)
+
         if contract.is_api and can_go_next and not locked:
             home_wizard._go_to_step(next_step)
             add_audit_event(
@@ -160,6 +162,58 @@ def _patch_home_wizard_navigation() -> None:
                 st.caption('Final')
 
     home_wizard._render_safe_step_nav = guarded_render_safe_step_nav
+
+
+def _render_persistent_process_bar(home_wizard_module: Any, steps: list[str], active_step: str, *, locked: bool) -> None:
+    if active_step not in steps:
+        return
+    index = steps.index(active_step)
+    total = max(1, len(steps))
+    percent = int(((index + 1) / total) * 100)
+    current_label = _label_for_home_wizard(home_wizard_module, active_step)
+
+    st.markdown(
+        '''
+<style>
+.blingfix-progress-card{
+    border:1px solid rgba(15,23,42,.10);
+    background:linear-gradient(135deg,#ffffff 0%,#f8fafc 100%);
+    border-radius:16px;
+    padding:.72rem .82rem;
+    margin:.55rem 0 .85rem 0;
+    box-shadow:0 8px 22px rgba(15,23,42,.05);
+}
+.blingfix-progress-title{
+    font-size:.82rem;
+    font-weight:900;
+    color:#0f172a;
+    margin-bottom:.22rem;
+}
+.blingfix-progress-subtitle{
+    font-size:.78rem;
+    color:#475569;
+    line-height:1.25;
+}
+.blingfix-progress-locked{
+    color:#9a3412;
+    font-weight:850;
+}
+</style>
+''',
+        unsafe_allow_html=True,
+    )
+    lock_text = ' · avanço automático pausado' if locked else ''
+    lock_class = ' blingfix-progress-locked' if locked else ''
+    st.markdown(
+        f'''
+<div class="blingfix-progress-card">
+  <div class="blingfix-progress-title">Acompanhamento do processo</div>
+  <div class="blingfix-progress-subtitle{lock_class}">Etapa {index + 1} de {total} · {current_label}{lock_text}</div>
+</div>
+''',
+        unsafe_allow_html=True,
+    )
+    st.progress(max(1, min(100, percent)))
 
 
 def _label_for_home_wizard(home_wizard_module: Any, step: str) -> str:
