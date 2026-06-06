@@ -44,6 +44,58 @@ def _minimal(payload: dict[str, Any]) -> dict[str, Any]:
     return _clean(out)
 
 
+def _image_links(payload: dict[str, Any]) -> list[str]:
+    midia = payload.get('midia') if isinstance(payload.get('midia'), dict) else {}
+    imagens = midia.get('imagens') if isinstance(midia.get('imagens'), (list, dict)) else payload.get('imagens') or payload.get('images') or []
+    raw: list[Any]
+    if isinstance(imagens, dict):
+        raw = list(imagens.get('externas') or imagens.get('externos') or imagens.get('links') or [])
+    elif isinstance(imagens, list):
+        raw = imagens
+    else:
+        raw = []
+    links: list[str] = []
+    for item in raw:
+        if isinstance(item, dict):
+            link = str(item.get('link') or item.get('url') or '').strip()
+        else:
+            link = str(item or '').strip()
+        if link.startswith(('http://', 'https://')) and link not in links:
+            links.append(link)
+    return links[:10]
+
+
+def _media_variants(payload: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    links = _image_links(payload)
+    if not links:
+        return []
+    external = [{'link': link} for link in links]
+    return [
+        ('midia_imagens_lista_legado', {'midia': {'imagens': external}}),
+        ('midia_imagens_externas', {'midia': {'imagens': {'externas': external}}}),
+        ('midia_imagens_externos', {'midia': {'imagens': {'externos': external}}}),
+        ('imagens_raiz', {'imagens': external}),
+    ]
+
+
+def _description_variants(payload: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    value = str(payload.get('descricaoCurta') or payload.get('descricao') or '').strip()
+    if not value:
+        return []
+    return [
+        ('descricao_curta', {'descricaoCurta': value}),
+        ('descricao_complementar', {'descricaoComplementar': value}),
+        ('descricao_dupla', {'descricaoCurta': value, 'descricaoComplementar': value}),
+    ]
+
+
+def _post_success_reinforcement(payload: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    out: list[tuple[str, dict[str, Any]]] = []
+    out.extend(_media_variants(payload))
+    out.extend(_description_variants(payload))
+    return [(label, _clean(item)) for label, item in out if _clean(item)]
+
+
 def _fields(payload: dict[str, Any]) -> list[str]:
     names: set[str] = set(payload.keys())
     if 'midia' in payload:
@@ -72,6 +124,31 @@ def _payload_options(payload: dict[str, Any]) -> list[tuple[str, dict[str, Any]]
             out.append((label, item))
             seen.add(marker)
     return out
+
+
+def _reinforce_after_success(*, endpoint: str, headers: dict[str, str], payload: dict[str, Any], timeout: int, attempts: list[dict[str, Any]], product_id: str) -> None:
+    for label, patch_payload in _post_success_reinforcement(payload):
+        try:
+            response = requests.patch(endpoint, headers=headers, json=patch_payload, timeout=timeout)
+            attempts.append({
+                'mode': 'post_success_reinforcement',
+                'method': 'PATCH',
+                'product_id': product_id,
+                'payload_label': label,
+                'status': int(response.status_code),
+                'payload_keys': sorted(patch_payload.keys()),
+                'changed_fields': _fields(patch_payload),
+                'response_preview': str(response.text or '')[:500],
+            })
+            if response.status_code < 400:
+                add_audit_event(
+                    'bling_product_post_success_reinforcement_ok',
+                    area='BLING_ENVIO',
+                    status='OK',
+                    details={'product_id': product_id, 'payload_label': label, 'payload_keys': sorted(patch_payload.keys()), 'fields': _fields(patch_payload), 'responsible_file': RESPONSIBLE_FILE},
+                )
+        except Exception as exc:
+            attempts.append({'mode': 'post_success_reinforcement', 'method': 'PATCH', 'product_id': product_id, 'payload_label': label, 'status': 'EXCEPTION', 'error': str(exc)[:240]})
 
 
 def update_existing_product_complete(
@@ -108,6 +185,7 @@ def update_existing_product_complete(
                     }
                     attempts.append(item)
                     if response.status_code < 400:
+                        _reinforce_after_success(endpoint=endpoint, headers=headers, payload=update_payload, timeout=timeout, attempts=attempts, product_id=product_id)
                         add_audit_event(
                             'bling_product_complete_updated',
                             area='BLING_ENVIO',
@@ -119,6 +197,7 @@ def update_existing_product_complete(
                                 'payload_label': label,
                                 'payload_keys': item['payload_keys'],
                                 'fields': item['changed_fields'],
+                                'post_success_reinforcement': True,
                                 'responsible_file': responsible_file,
                             },
                         )
