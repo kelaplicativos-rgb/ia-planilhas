@@ -279,12 +279,16 @@ def _render_final_result(download_df: pd.DataFrame, state: dict[str, Any], key: 
 
 
 def _pause_after_slow_batch(state: dict[str, Any], elapsed: float) -> dict[str, Any]:
+    operation = normalize_operation(str(state.get('operation') or ''))
+    if operation == OP_ESTOQUE:
+        add_audit_event('bling_api_batch_auto_pause_ignored_for_stock', area='BLING_ENVIO', status='OK', details={'elapsed_seconds': round(float(elapsed), 2), 'operation': operation, 'reason': 'estoque deve continuar lote a lote no envio automatico', 'responsible_file': RESPONSIBLE_FILE})
+        return state
     if elapsed <= MAX_AUTO_BATCH_SECONDS or bool(state.get('done')) or not bool(state.get('auto_running')):
         return state
     result = pause_send(_state_obj_from_legacy(state))
     paused = _sync_state(result.state)
     st.warning('Envio automático pausado por segurança: o último lote demorou demais. O checkpoint foi salvo; toque em continuar para processar o próximo lote.')
-    add_audit_event('bling_api_batch_auto_paused_slow_batch', area='BLING_ENVIO', status='PAUSADO', details={'elapsed_seconds': round(float(elapsed), 2), 'limit_seconds': MAX_AUTO_BATCH_SECONDS, 'operation': state.get('operation'), 'flow_spine': output_diagnostics(), 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('bling_api_batch_auto_paused_slow_batch', area='BLING_ENVIO', status='PAUSADO', details={'elapsed_seconds': round(float(elapsed), 2), 'limit_seconds': MAX_AUTO_BATCH_SECONDS, 'operation': operation, 'flow_spine': output_diagnostics(), 'responsible_file': RESPONSIBLE_FILE})
     return paused
 
 
