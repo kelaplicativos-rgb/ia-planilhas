@@ -39,7 +39,7 @@ from bling_app_zero.ui.site_panel_state import (
     query_urls_default,
     recover_stale_capture_if_needed,
 )
-from bling_app_zero.ui.site_progress import render_site_progress_history
+from bling_app_zero.ui.site_progress import render_live_site_operation_panel, render_site_progress_history
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/site_panel.py'
 SCAN_TOTAL_MAX_PAGES = SAFE_CAPTURE_MAX_PAGES
@@ -157,14 +157,16 @@ def _render_running_state(operation: str) -> None:
     profile = capture_profile(operation, stock_balance_only=_is_stock_api_balance_mode(operation))
     st.markdown(f'### {profile.running_title}')
     orange_warning(profile.running_notice)
-    render_site_progress_history()
-    st.info('A tela está em modo seguro: campos, botões e módulos pesados ficam ocultos enquanto a busca roda.')
+    render_live_site_operation_panel()
+    with st.expander('Plano e histórico detalhado da busca', expanded=False):
+        render_site_progress_history()
+    st.info('A tela está em modo seguro: campos, botões e módulos pesados ficam ocultos enquanto a busca roda. O painel vivo acima continua mostrando sinal, tempo e progresso.')
     with st.expander('Busca parece travada?', expanded=False):
-        st.caption('Use esta opção apenas se a busca parou por muito tempo ou se a conexão caiu.')
+        st.caption('Use esta opção apenas se a busca ficou sem sinal vivo por muito tempo ou se a conexão caiu.')
         if st.button('🧹 Limpar busca travada e tentar novamente', use_container_width=True, key=f'limpar_captura_travada_{operation}'):
             clear_stuck_capture(operation)
             safe_rerun('site_capture_stuck_cleared', target_step=STEP_ENTRADA)
-    add_audit_event('site_panel_running_guard_rendered', area='SITE', step='entrada', status='INFO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE, 'capture_spine': 'site_capture_spine_v1'})
+    add_audit_event('site_panel_running_guard_rendered', area='SITE', step='entrada', status='INFO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE, 'capture_spine': 'site_capture_spine_v1', 'live_panel': True})
 
 
 def _render_last_error(error: str, operation: str) -> None:
