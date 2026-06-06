@@ -10,7 +10,7 @@ from bling_app_zero.core.bling_direct_sender import DirectSendResult
 from bling_app_zero.core.bling_direct_sender_smart_diff import send_dataframe_to_bling as _smart_diff_send_dataframe_to_bling
 from bling_app_zero.core.bling_pre_send_defaults import apply_dataframe_send_defaults, apply_product_send_defaults
 from bling_app_zero.core.bling_product_update_intelligence import ACTION_PENDING, analyze_stock_update_need
-from bling_app_zero.core.operation_contract import OP_ESTOQUE, normalize_operation
+from bling_app_zero.core.operation_contract import OP_CADASTRO, OP_ESTOQUE, normalize_operation
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_intelligent_update_sender.py'
 
@@ -42,7 +42,6 @@ def _safe_tuple_attr(obj: object, name: str) -> tuple[Any, ...]:
         value = getattr(obj, name)
     except Exception:
         return tuple()
-
     if value is None:
         return tuple()
     if isinstance(value, tuple):
@@ -94,25 +93,17 @@ def _decision_for_operation(row: Any, operation: str):
 def split_intelligent_update_rows(df: pd.DataFrame, operation: str = '') -> tuple[pd.DataFrame, list[dict[str, Any]]]:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame(), []
-
     op = normalize_operation(operation)
     prepared_df = apply_dataframe_send_defaults(df)
-
-    # BLINGFIX FREE API MODE:
-    # Cadastro/atualização de produto não deve ser bloqueado por score interno,
-    # imagem ausente, nome curto ou qualidade. O papel do sistema é enviar o
-    # máximo de dados possível; o Bling aceita/recusa e o usuário decide manter,
-    # excluir ou corrigir depois. Mantemos retenção apenas para estoque, porque
-    # estoque sem produto/depósito pode gerar movimentação errada.
     if op != OP_ESTOQUE:
         add_audit_event(
-            'bling_intelligent_update_free_api_mode_enabled',
+            'bling_intelligent_update_verified_api_mode_enabled',
             area='BLING_ENVIO',
             status='OK',
             details={
                 'operation': op,
                 'rows': len(prepared_df),
-                'reason': 'Cadastro/atualizacao liberados sem bloqueio de qualidade antes da API.',
+                'reason': 'Cadastro/atualizacao seguem para sender verificado, com GET final e bloqueio em campo pendente.',
                 'pre_send_defaults_applied': True,
                 'responsible_file': RESPONSIBLE_FILE,
             },
@@ -147,14 +138,7 @@ def send_dataframe_to_bling_intelligent(
     limit: int | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> DirectSendResult:
-    """Envio para o Bling com modo livre para cadastro/atualização.
-
-    BLINGFIX: para cadastro e atualização de produto, a pré-decisão não bloqueia
-    mais por score/qualidade/imagem. Ela apenas aplica defaults mínimos e envia
-    ao motor API. Estoque continua protegido.
-    """
     patch_bling_api_base_urls()
-
     if not isinstance(df, pd.DataFrame) or df.empty:
         return DirectSendResult(0, 0, 0, 0, tuple(), tuple())
 
@@ -172,7 +156,7 @@ def send_dataframe_to_bling_intelligent(
     _emit(
         progress_callback,
         {
-            'stage': 'Preparando envio livre para API Bling' if op != OP_ESTOQUE else 'Pré-decisão inteligente de estoque',
+            'stage': 'Preparando envio verificado para API Bling' if op != OP_ESTOQUE else 'Pré-decisão inteligente de estoque',
             'operation': op,
             'processed': 0,
             'total': len(df),
@@ -183,43 +167,49 @@ def send_dataframe_to_bling_intelligent(
             'allowed_rows': len(allowed_df),
             'progress': 0.02,
             'stock_quality_mode': op == OP_ESTOQUE,
-            'free_api_mode': op != OP_ESTOQUE,
+            'verified_product_mode': op != OP_ESTOQUE,
             'pre_send_defaults_applied': True,
         },
     )
 
     pending_errors = _pending_errors_by_line(pending)
-
     if allowed_df.empty:
         message = 'Todas as linhas ficaram pendentes antes da API; nada foi enviado ao Bling.'
         add_audit_event(
             'bling_intelligent_update_all_pending_before_api',
             area='BLING_ENVIO',
             status='BLOQUEADO',
-            details={'operation': op, 'total': len(df), 'pending': skipped_before_api, 'stock_quality_mode': op == OP_ESTOQUE, 'free_api_mode': op != OP_ESTOQUE, 'pre_send_defaults_applied': True, 'responsible_file': RESPONSIBLE_FILE},
+            details={'operation': op, 'total': len(df), 'pending': skipped_before_api, 'stock_quality_mode': op == OP_ESTOQUE, 'verified_product_mode': op != OP_ESTOQUE, 'pre_send_defaults_applied': True, 'responsible_file': RESPONSIBLE_FILE},
         )
         return DirectSendResult(len(df), 0, 0, skipped_before_api, tuple([message] + pending_errors), tuple())
 
-    result = _smart_diff_send_dataframe_to_bling(
-        allowed_df,
-        op,
-        limit=limit,
-        progress_callback=progress_callback,
-    )
+    if op == OP_CADASTRO:
+        from bling_app_zero.core.verified_api_sender import send_verified_products
+        add_audit_event(
+            'bling_intelligent_update_routed_to_verified_sender',
+            area='BLING_ENVIO',
+            status='OK',
+            details={'operation': op, 'rows': len(allowed_df), 'responsible_file': RESPONSIBLE_FILE},
+        )
+        result = send_verified_products(allowed_df, limit=limit, progress_callback=progress_callback)
+    else:
+        result = _smart_diff_send_dataframe_to_bling(
+            allowed_df,
+            op,
+            limit=limit,
+            progress_callback=progress_callback,
+        )
 
     attempted_after_api = _safe_int_attr(result, 'attempted', 'total', default=len(allowed_df))
     sent = _safe_int_attr(result, 'sent', default=0)
     failed = _safe_int_attr(result, 'failed', default=0)
     skipped_after_api = _safe_int_attr(result, 'skipped', default=0)
-
     attempted_total = attempted_after_api + skipped_before_api
     skipped_total = skipped_after_api + skipped_before_api
-
     errors = list(_safe_tuple_attr(result, 'errors'))
     if skipped_before_api:
         errors.extend(pending_errors)
         errors.append(f'{skipped_before_api} linha(s) ficaram como pendência antes da API.')
-
     not_found_indices = _safe_tuple_attr(result, 'not_found_indices')
 
     add_audit_event(
@@ -238,7 +228,7 @@ def send_dataframe_to_bling_intelligent(
             'skipped_after_api': skipped_after_api,
             'skipped_total': skipped_total,
             'stock_quality_mode': op == OP_ESTOQUE,
-            'free_api_mode': op != OP_ESTOQUE,
+            'verified_product_mode': op != OP_ESTOQUE,
             'api_base_patch_enabled': True,
             'pre_send_defaults_applied': True,
             'responsible_file': RESPONSIBLE_FILE,
