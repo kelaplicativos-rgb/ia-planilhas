@@ -25,7 +25,7 @@ def _clean(value: Any) -> Any:
     if isinstance(value, dict):
         out: dict[str, Any] = {}
         for key, item in value.items():
-            if str(key).startswith('_'):
+            if str(key).startswith('_') or str(key).startswith('bling_review_'):
                 continue
             cleaned = _clean(item)
             if cleaned not in ('', None, {}, []):
@@ -113,6 +113,8 @@ def _fields(payload: dict[str, Any]) -> list[str]:
         if isinstance(payload.get(parent), dict):
             for key in payload[parent].keys():
                 fields.add(f'{parent}_{key}')
+    if isinstance(payload.get('midia'), dict) and isinstance(payload['midia'].get('video'), dict):
+        fields.add('video_url')
     return sorted(fields)
 
 
@@ -123,6 +125,14 @@ def _infer_brand(nome: str) -> str:
     for brand in known:
         if re.search(rf'(?<![a-z0-9]){re.escape(brand.lower())}(?![a-z0-9])', low):
             return brand
+    return ''
+
+
+def _first_text(payload: dict[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = str(payload.get(key) or '').strip()
+        if value:
+            return value
     return ''
 
 
@@ -147,11 +157,24 @@ def _force_defaults(payload: dict[str, Any]) -> dict[str, Any]:
     out.setdefault('pesoBruto', 0.300)
     out.setdefault('volumes', 1)
     out.setdefault('itensPorCaixa', 1)
+    if not isinstance(out.get('categoria'), dict):
+        categoria = str(out.get('categoria') or '').strip()
+        if categoria:
+            out['categoria'] = {'descricao': categoria}
     dimensoes = out.get('dimensoes') if isinstance(out.get('dimensoes'), dict) else {}
     dimensoes.setdefault('largura', 11)
     dimensoes.setdefault('altura', 2)
     dimensoes.setdefault('profundidade', 16)
     out['dimensoes'] = dimensoes
+    link_externo = _first_text(out, ('linkExterno', 'urlProduto', 'url', 'link'))
+    if link_externo.startswith(('http://', 'https://')):
+        out.setdefault('linkExterno', link_externo)
+    link_video = _first_text(out, ('linkVideo', 'video', 'urlVideo'))
+    if link_video:
+        out.setdefault('linkVideo', link_video)
+        midia = out.get('midia') if isinstance(out.get('midia'), dict) else {}
+        midia.setdefault('video', {'url': link_video})
+        out['midia'] = midia
     return _clean(out)
 
 
@@ -189,6 +212,37 @@ def _description_payloads(payload: dict[str, Any]) -> list[tuple[str, dict[str, 
     ]
 
 
+def _detail_payloads(payload: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    out: list[tuple[str, dict[str, Any]]] = []
+    if payload.get('marca'):
+        out.append(('field.marca', {'marca': payload['marca']}))
+    if payload.get('categoria'):
+        out.append(('field.categoria', {'categoria': payload['categoria']}))
+    if payload.get('linkExterno'):
+        out.append(('field.linkExterno', {'linkExterno': payload['linkExterno']}))
+        out.append(('field.urlProduto', {'urlProduto': payload['linkExterno']}))
+    if payload.get('linkVideo'):
+        out.append(('field.linkVideo', {'linkVideo': payload['linkVideo']}))
+        out.append(('field.midia.video', {'midia': {'video': {'url': payload['linkVideo']}}}))
+    physical = _clean({
+        'pesoLiquido': payload.get('pesoLiquido'),
+        'pesoBruto': payload.get('pesoBruto'),
+        'dimensoes': payload.get('dimensoes'),
+        'volumes': payload.get('volumes'),
+        'itensPorCaixa': payload.get('itensPorCaixa'),
+    })
+    if physical:
+        out.append(('field.physical.all', physical))
+    for key in ('pesoLiquido', 'pesoBruto', 'volumes', 'itensPorCaixa'):
+        if payload.get(key) not in ('', None, {}, []):
+            out.append((f'field.{key}', {key: payload[key]}))
+    if isinstance(payload.get('dimensoes'), dict):
+        out.append(('field.dimensoes', {'dimensoes': payload['dimensoes']}))
+        for key, value in payload['dimensoes'].items():
+            out.append((f'field.dimensoes.{key}', {'dimensoes': {key: value}}))
+    return [(label, _clean(item)) for label, item in out if _clean(item)]
+
+
 def _has_non_empty_images(imagens: Any) -> bool:
     if isinstance(imagens, list):
         return any(bool(item) for item in imagens)
@@ -197,10 +251,18 @@ def _has_non_empty_images(imagens: Any) -> bool:
     return bool(imagens)
 
 
+def _nonzero(value: Any) -> bool:
+    try:
+        return float(value) != 0.0
+    except Exception:
+        return value not in (None, '', 0, 0.0)
+
+
 def _persistence_report(saved: dict[str, Any]) -> dict[str, Any]:
     midia = saved.get('midia') if isinstance(saved.get('midia'), dict) else {}
     imagens = saved.get('imagens') or midia.get('imagens')
     dimensoes = saved.get('dimensoes') if isinstance(saved.get('dimensoes'), dict) else {}
+    video = midia.get('video') if isinstance(midia.get('video'), dict) else {}
     return {
         'saved_keys': sorted(saved.keys()),
         'nome': bool(saved.get('nome')),
@@ -209,12 +271,18 @@ def _persistence_report(saved: dict[str, Any]) -> dict[str, Any]:
         'descricaoCurta': bool(saved.get('descricaoCurta')),
         'descricaoComplementar': bool(saved.get('descricaoComplementar')),
         'marca': bool(saved.get('marca')),
+        'marca_value': str(saved.get('marca') or '')[:120],
         'categoria': bool(saved.get('categoria')),
+        'categoria_preview': str(saved.get('categoria') or '')[:300],
+        'linkExterno': bool(saved.get('linkExterno') or saved.get('urlProduto')),
+        'linkVideo': bool(saved.get('linkVideo') or video.get('url')),
         'midia': bool(midia),
         'imagens': _has_non_empty_images(imagens),
-        'pesoLiquido': saved.get('pesoLiquido') not in (None, '', 0, 0.0),
-        'pesoBruto': saved.get('pesoBruto') not in (None, '', 0, 0.0),
-        'dimensoes': bool(dimensoes),
+        'pesoLiquido': _nonzero(saved.get('pesoLiquido')),
+        'pesoBruto': _nonzero(saved.get('pesoBruto')),
+        'volumes': _nonzero(saved.get('volumes')),
+        'itensPorCaixa': _nonzero(saved.get('itensPorCaixa')),
+        'dimensoes': bool(dimensoes) and any(_nonzero(value) for value in dimensoes.values()),
         'dimensoes_keys': sorted(dimensoes.keys()) if isinstance(dimensoes, dict) else [],
         'midia_type': type(midia).__name__,
         'imagens_type': type(imagens).__name__,
@@ -311,8 +379,9 @@ class BlingV3ProductClient:
         no_media.pop('imagens', None)
         if no_media != final_payload:
             options.append(('product.no_media.patch', _clean(no_media)))
-        options.extend(_media_payloads(final_payload))
         options.extend(_description_payloads(final_payload))
+        options.extend(_detail_payloads(final_payload))
+        options.extend(_media_payloads(final_payload))
 
         for label, item in options:
             method = 'PUT' if label.endswith('.put') else 'PATCH'
@@ -337,16 +406,18 @@ class BlingV3ProductClient:
     def _after_write(self, product_id: str, payload: dict[str, Any], attempts: list[dict[str, Any]]) -> dict[str, Any]:
         saved = self.get_product(product_id)
         report = _persistence_report(saved)
+        expected = _fields(payload)
         add_audit_event(
             'bling_v3_product_write_verified',
             area='BLING_API_V3',
             status='OK' if report.get('nome') and report.get('codigo') else 'AVISO',
             details={
                 'product_id': product_id,
-                'attempts': attempts[-16:],
+                'attempts': attempts[-24:],
                 'expected_image_links': _image_links(payload),
-                'expected_fields': _fields(payload),
+                'expected_fields': expected,
                 'persistence': report,
+                'not_persisted_expected_flags': [field for field in ('descricaoCurta', 'descricaoComplementar', 'marca', 'categoria', 'linkExterno', 'linkVideo', 'imagens', 'pesoLiquido', 'pesoBruto', 'dimensoes', 'volumes', 'itensPorCaixa') if field in expected or field in ('imagens', 'dimensoes') and report.get(field) is False],
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
