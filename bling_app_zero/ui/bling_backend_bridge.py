@@ -9,6 +9,7 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_token_store import load_token, save_token
+from bling_app_zero.core.interaction_guard import logout_guard_active
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/bling_backend_bridge.py'
 
@@ -45,7 +46,27 @@ def backend_base_url() -> str:
     return f'{parsed.scheme}://{parsed.netloc}'.rstrip('/')
 
 
+def _disconnected_status(source: str = 'logout_guard') -> dict[str, Any]:
+    return {
+        'enabled': bool(backend_base_url()),
+        'connected': False,
+        'error': '',
+        'source': source,
+        'logout_guard_active': True,
+        'message': 'Bling desconectado manualmente nesta sessão.',
+    }
+
+
 def backend_connection_status() -> dict[str, Any]:
+    if logout_guard_active():
+        add_audit_event(
+            'bling_backend_status_blocked_by_logout_guard',
+            area='BLING_OAUTH',
+            status='INFO',
+            details={'responsible_file': RESPONSIBLE_FILE},
+        )
+        return _disconnected_status()
+
     base = backend_base_url()
     if not base:
         return {'enabled': False, 'connected': False, 'error': '', 'source': 'streamlit'}
@@ -65,6 +86,15 @@ def backend_connection_status() -> dict[str, Any]:
 
 
 def sync_backend_token_to_streamlit() -> bool:
+    if logout_guard_active():
+        add_audit_event(
+            'bling_backend_token_bridge_blocked_by_logout_guard',
+            area='BLING_OAUTH',
+            status='INFO',
+            details={'responsible_file': RESPONSIBLE_FILE},
+        )
+        return False
+
     local_token, _meta = load_token()
     if isinstance(local_token, dict) and local_token.get('access_token'):
         return True
@@ -86,6 +116,14 @@ def sync_backend_token_to_streamlit() -> bool:
                 area='BLING_OAUTH',
                 status='ERRO',
                 details={'status_code': response.status_code, 'responsible_file': RESPONSIBLE_FILE},
+            )
+            return False
+        if logout_guard_active():
+            add_audit_event(
+                'bling_backend_token_bridge_cancelled_after_response',
+                area='BLING_OAUTH',
+                status='INFO',
+                details={'responsible_file': RESPONSIBLE_FILE},
             )
             return False
         payload = response.json() if response.content else {}
