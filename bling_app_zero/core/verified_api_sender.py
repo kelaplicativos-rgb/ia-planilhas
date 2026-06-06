@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
 import pandas as pd
@@ -14,7 +15,11 @@ from bling_app_zero.core.product_persistence_check import IMPORTANT_PRODUCT_FIEL
 RESPONSIBLE_FILE = 'bling_app_zero/core/verified_api_sender.py'
 DEFAULT_BRAND = 'Genérico'
 DEFAULT_CONDITION = 'Novo'
+DEFAULT_PRODUCTION = 'Terceiros'
+DEFAULT_UNIT = 'Centímetros'
+DEFAULT_DEPARTMENT = 'Adulto Unissex'
 BAD_BRANDS = {'', 'mega center', 'mega center eletronicos', 'mega center eletrônicos', 'stoqui', 'stoqui shop'}
+URL_COLUMN_HINTS = ('linkexterno', 'link externo', 'url', 'link', 'url produto', 'link produto', 'produto_url', 'source_url')
 
 
 def _emit(callback: Callable[[dict[str, Any]], None] | None, payload: dict[str, Any]) -> None:
@@ -30,24 +35,81 @@ def _brand_ok(value: Any) -> bool:
     return bool(text) and text.lower() not in BAD_BRANDS
 
 
-def _force_default_fields(payload: dict[str, Any]) -> dict[str, Any]:
+def _digits(value: Any) -> str:
+    return re.sub(r'\D+', '', str(value or ''))
+
+
+def _norm_col(value: Any) -> str:
+    text = str(value or '').lower().strip()
+    text = text.replace('ã', 'a').replace('á', 'a').replace('à', 'a').replace('â', 'a')
+    text = text.replace('é', 'e').replace('ê', 'e').replace('í', 'i')
+    text = text.replace('ó', 'o').replace('ô', 'o').replace('õ', 'o')
+    text = text.replace('ú', 'u').replace('ç', 'c')
+    return re.sub(r'[^a-z0-9]+', ' ', text).strip()
+
+
+def _row_link(row: Any) -> str:
+    try:
+        items = row.items()
+    except Exception:
+        return ''
+    fallback = ''
+    for key, value in items:
+        text = str(value or '').strip()
+        if not text.startswith(('http://', 'https://')):
+            continue
+        normalized = _norm_col(key)
+        if normalized in {_norm_col(item) for item in URL_COLUMN_HINTS} or 'url' in normalized or 'link' in normalized:
+            return text
+        fallback = fallback or text
+    return fallback
+
+
+def _force_default_fields(payload: dict[str, Any], row: Any | None = None) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return payload
-    changed = False
     updated = dict(payload)
     if not _brand_ok(updated.get('marca')):
         updated['marca'] = DEFAULT_BRAND
-        changed = True
     if not str(updated.get('condicao') or updated.get('condição') or '').strip():
         updated['condicao'] = DEFAULT_CONDITION
-        changed = True
-    return updated if changed else payload
+    if not str(updated.get('producao') or updated.get('produção') or '').strip():
+        updated['producao'] = DEFAULT_PRODUCTION
+    if not str(updated.get('unidade') or '').strip():
+        updated['unidade'] = DEFAULT_UNIT
+    else:
+        current_unit = str(updated.get('unidade') or '').strip().upper()
+        if current_unit in {'UN', 'UND', 'UNID', 'UNIDADE'}:
+            updated['unidade'] = DEFAULT_UNIT
+    if not str(updated.get('departamento') or '').strip():
+        updated['departamento'] = DEFAULT_DEPARTMENT
+    updated['descricaoComplementar'] = ''
+
+    gtin = _digits(updated.get('gtin') or updated.get('ean') or updated.get('codigo'))
+    tributacao = dict(updated.get('tributacao') or {}) if isinstance(updated.get('tributacao'), dict) else {}
+    if len(gtin) in {8, 12, 13, 14}:
+        updated['gtin'] = gtin
+        if not _digits(tributacao.get('gtin') or tributacao.get('ean')):
+            tributacao['gtin'] = gtin
+    if tributacao:
+        updated['tributacao'] = tributacao
+
+    link = str(updated.get('linkExterno') or '').strip()
+    if not link and row is not None:
+        link = _row_link(row)
+    if link.startswith(('http://', 'https://')):
+        updated['linkExterno'] = link
+    return updated
 
 
 def _essential(payload: dict[str, Any]) -> dict[str, Any]:
     payload = _force_default_fields(payload)
-    keys = ('nome', 'codigo', 'preco', 'descricaoCurta', 'descricaoComplementar', 'marca', 'condicao', 'condição', 'unidade', 'tipo', 'situacao', 'formato', 'gtin', 'tributacao', 'categoria', 'pesoLiquido', 'pesoBruto', 'dimensoes', 'volumes', 'itensPorCaixa')
-    return {key: payload[key] for key in keys if payload.get(key) not in (None, '', {}, [])}
+    keys = (
+        'nome', 'codigo', 'preco', 'descricaoCurta', 'descricaoComplementar', 'marca', 'condicao', 'condição',
+        'producao', 'produção', 'unidade', 'departamento', 'linkExterno', 'tipo', 'situacao', 'formato',
+        'gtin', 'ean', 'tributacao', 'categoria', 'pesoLiquido', 'pesoBruto', 'dimensoes', 'volumes', 'itensPorCaixa'
+    )
+    return {key: payload[key] for key in keys if key in payload and payload.get(key) not in (None, {}, [])}
 
 
 def send_verified_products(df: pd.DataFrame, *, limit: int | None = None, progress_callback: Callable[[dict[str, Any]], None] | None = None) -> DirectSendResult:
@@ -63,7 +125,7 @@ def send_verified_products(df: pd.DataFrame, *, limit: int | None = None, progre
     total = len(rows)
     sent = failed = skipped = 0
     errors: list[str] = []
-    add_audit_event('verified_api_sender_started', area='BLING_ENVIO', status='OK', details={'total': total, 'mode': 'one_product_verify_before_next', 'default_brand_guard': DEFAULT_BRAND, 'default_condition_guard': DEFAULT_CONDITION, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('verified_api_sender_started', area='BLING_ENVIO', status='OK', details={'total': total, 'mode': 'one_product_verify_before_next', 'default_brand_guard': DEFAULT_BRAND, 'default_condition_guard': DEFAULT_CONDITION, 'default_production_guard': DEFAULT_PRODUCTION, 'default_unit_guard': DEFAULT_UNIT, 'default_department_guard': DEFAULT_DEPARTMENT, 'descricao_complementar_forced_empty': True, 'responsible_file': RESPONSIBLE_FILE})
 
     for pos, (index, row) in enumerate(rows.iterrows(), start=1):
         line = int(index) + 1 if isinstance(index, int) else pos
@@ -75,7 +137,7 @@ def send_verified_products(df: pd.DataFrame, *, limit: int | None = None, progre
 
         _emit(progress_callback, {'stage': f'Verificando produto {pos}/{total}', 'processed': pos - 1, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': (pos - 1) / max(total, 1)})
         _label, payload, meta = variants[0]
-        payload = _force_default_fields(payload)
+        payload = _force_default_fields(payload, row)
         candidates = [meta.get('code'), meta.get('gtin'), meta.get('raw_code')]
         product_id = _resolve_product_id(token, candidates)
         attempts: list[dict[str, Any]] = []
@@ -102,7 +164,7 @@ def send_verified_products(df: pd.DataFrame, *, limit: int | None = None, progre
 
         flags = product_persistence_flags(saved)
         missing_important = missing_product_fields(saved, IMPORTANT_PRODUCT_FIELDS)
-        add_audit_event('verified_api_product_checkpoint', area='BLING_ENVIO', status='OK' if not missing else 'ERRO', details={'line': line, 'product_id': product_id, 'persisted_flags': flags, 'missing_required': missing, 'missing_important': missing_important, 'image_pending': not flags.get('imagens'), 'next_product_allowed': not bool(missing), 'default_brand_guard': DEFAULT_BRAND, 'default_condition_guard': DEFAULT_CONDITION, 'attempts': attempts[-6:], 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('verified_api_product_checkpoint', area='BLING_ENVIO', status='OK' if not missing else 'ERRO', details={'line': line, 'product_id': product_id, 'persisted_flags': flags, 'missing_required': missing, 'missing_important': missing_important, 'image_pending': not flags.get('imagens'), 'next_product_allowed': not bool(missing), 'default_brand_guard': DEFAULT_BRAND, 'default_condition_guard': DEFAULT_CONDITION, 'default_production_guard': DEFAULT_PRODUCTION, 'default_unit_guard': DEFAULT_UNIT, 'default_department_guard': DEFAULT_DEPARTMENT, 'descricao_complementar_forced_empty': True, 'link_externo_forced': bool(payload.get('linkExterno')), 'attempts': attempts[-6:], 'responsible_file': RESPONSIBLE_FILE})
 
         if missing:
             failed += 1
@@ -115,7 +177,7 @@ def send_verified_products(df: pd.DataFrame, *, limit: int | None = None, progre
 
         _emit(progress_callback, {'stage': 'Produto aprovado; seguindo para o proximo' if not missing else 'Produto reprovado; seguindo com erro registrado', 'processed': pos, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': pos / max(total, 1)})
 
-    add_audit_event('verified_api_sender_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'default_brand_guard': DEFAULT_BRAND, 'default_condition_guard': DEFAULT_CONDITION, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('verified_api_sender_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'default_brand_guard': DEFAULT_BRAND, 'default_condition_guard': DEFAULT_CONDITION, 'default_production_guard': DEFAULT_PRODUCTION, 'default_unit_guard': DEFAULT_UNIT, 'default_department_guard': DEFAULT_DEPARTMENT, 'descricao_complementar_forced_empty': True, 'responsible_file': RESPONSIBLE_FILE})
     return DirectSendResult(total, sent, failed, skipped, tuple(errors), tuple())
 
 
