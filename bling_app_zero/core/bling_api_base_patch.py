@@ -1,0 +1,50 @@
+from __future__ import annotations
+
+import sys
+from typing import Any
+
+from bling_app_zero.core.audit import add_audit_event
+
+RESPONSIBLE_FILE = 'bling_app_zero/core/bling_api_base_patch.py'
+CORRECT_API_BASE_URL = 'https://api.bling.com.br/Api/v3'
+LEGACY_API_BASE_URL = 'https://www.bling.com.br/Api/v3'
+PATCHED_MODULES = (
+    'bling_app_zero.core.bling_direct_sender',
+    'bling_app_zero.core.bling_direct_sender_safe',
+    'bling_app_zero.core.bling_direct_sender_smart',
+    'bling_app_zero.core.bling_autocadastro_api',
+    'bling_app_zero.ui.home_bling_api_flow',
+)
+_PATCH_DONE = False
+
+
+def _patch_module(module: Any, module_name: str) -> bool:
+    changed = False
+    try:
+        current = str(getattr(module, 'DEFAULT_API_BASE_URL', '') or '').rstrip('/')
+        if current == LEGACY_API_BASE_URL:
+            setattr(module, 'DEFAULT_API_BASE_URL', CORRECT_API_BASE_URL)
+            changed = True
+    except Exception:
+        pass
+    return changed
+
+
+def patch_bling_api_base_urls() -> None:
+    global _PATCH_DONE
+    changed_modules: list[str] = []
+    for module_name in PATCHED_MODULES:
+        module = sys.modules.get(module_name)
+        if module is not None and _patch_module(module, module_name):
+            changed_modules.append(module_name)
+    if changed_modules or not _PATCH_DONE:
+        add_audit_event(
+            'bling_api_base_runtime_patch_applied',
+            area='BLING_ENVIO',
+            status='OK' if changed_modules else 'SEM_ALTERACAO',
+            details={'changed_modules': changed_modules, 'correct_api_base_url': CORRECT_API_BASE_URL, 'responsible_file': RESPONSIBLE_FILE},
+        )
+    _PATCH_DONE = True
+
+
+__all__ = ['CORRECT_API_BASE_URL', 'patch_bling_api_base_urls']
