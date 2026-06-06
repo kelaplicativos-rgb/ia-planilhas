@@ -11,6 +11,8 @@ PROGRESS_LOG_KEY = 'site_progress_log'
 PROGRESS_LAST_KEY = 'site_progress_last'
 PROGRESS_LAST_SEEN_AT_KEY = 'site_progress_last_seen_at'
 NEUTRAL_PROGRESS_STATE_KEY = 'neutral_site_progress_state_v1'
+LIVE_WARNING_SECONDS = 180
+LIVE_HARD_STALE_SECONDS = 900
 
 
 def _progress_state_from_streamlit() -> SiteProgressState:
@@ -55,6 +57,13 @@ def _elapsed_seconds() -> int:
     return max(0, int(time.time() - started_at))
 
 
+def _last_seen_delta() -> int:
+    last_seen_at = last_site_progress_seen_at()
+    if last_seen_at <= 0:
+        return 0
+    return max(0, int(time.time() - last_seen_at))
+
+
 def _safe_progress_dataframe(rows: list[dict]) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     if df.empty:
@@ -66,6 +75,26 @@ def _safe_progress_dataframe(rows: list[dict]) -> pd.DataFrame:
 
 def progress_rows(log: list[dict]) -> list[dict]:
     return SiteProgressState.from_log(log).rows()
+
+
+def _payload_progress(payload: dict) -> int:
+    try:
+        value = float((payload or {}).get('progress') or 0.0)
+    except Exception:
+        value = 0.0
+    if value <= 1:
+        value = value * 100
+    return max(0, min(100, int(value)))
+
+
+def _payload_text(payload: dict, fallback: str = 'Busca em andamento.') -> str:
+    if not isinstance(payload, dict):
+        return fallback
+    message = safe_text(payload.get('message') or '')
+    stage = safe_text(payload.get('stage') or '')
+    if stage and message:
+        return f'{stage}: {message}'
+    return message or stage or fallback
 
 
 def _render_progress_metrics(payload: dict) -> None:
@@ -93,6 +122,63 @@ def _render_execution_plan() -> None:
     st.caption('3. Abrindo os produtos encontrados em lote seguro.')
     st.caption('4. Extraindo código/SKU/GTIN/ID e saldo disponível.')
     st.caption('5. Validando depósito, preparando tabela e salvando para envio ao Bling.')
+
+
+def _render_live_alerts(last_delta: int, has_payload: bool) -> None:
+    if not has_payload:
+        st.warning('A operação já começou, mas ainda não gravou o primeiro evento detalhado. Acompanhe o tempo decorrido abaixo.')
+        return
+    if last_delta >= LIVE_HARD_STALE_SECONDS:
+        st.error('Sem sinal vivo há muito tempo. A busca provavelmente travou; use o botão de destravar com segurança.')
+    elif last_delta >= LIVE_WARNING_SECONDS:
+        st.warning('A busca está sem atualização recente. Ela pode estar processando um lote pesado; se permanecer assim, destrave e rode novamente com lote menor.')
+    else:
+        st.success('Operação com sinal vivo registrado. O sistema está trabalhando.')
+
+
+def render_live_site_operation_panel() -> None:
+    """Painel fixo para nunca deixar o usuário cego durante captura por site/API.
+
+    BLINGFIX: a barra criada dentro da execução pode sumir após rerun do Streamlit.
+    Este painel reconstrói a barra a partir do estado persistido em session_state.
+    """
+    state = _progress_state_from_streamlit()
+    data = state.to_dict()
+    log = data.get('events', []) or []
+    last = data.get('last', {}) or {}
+    elapsed = _elapsed_seconds()
+    last_delta = _last_seen_delta()
+    has_payload = isinstance(last, dict) and bool(last)
+    percent = _payload_progress(last) if has_payload else 3
+    status_text = _payload_text(last, 'Preparando captura inteligente...')
+
+    st.markdown('### Painel vivo da operação')
+    st.progress(percent, text=f'{status_text} · {percent}%')
+    _render_live_alerts(last_delta, has_payload)
+
+    col_a, col_b = st.columns(2)
+    col_a.metric('Tempo rodando', f'{elapsed}s')
+    col_b.metric('Último sinal vivo', f'{last_delta}s' if has_payload else 'aguardando')
+
+    if has_payload:
+        _render_progress_metrics(last)
+    else:
+        col_c, col_d = st.columns(2)
+        col_c.metric('Links/produtos localizados', 0)
+        col_d.metric('Itens processados', 0)
+
+    with st.expander('Histórico técnico da operação', expanded=True):
+        if log:
+            _render_progress_table(log, height=320)
+        else:
+            st.caption('Nenhum evento detalhado foi gravado ainda. A primeira atualização aparece assim que o motor localizar ou processar dados.')
+
+    with st.sidebar:
+        st.markdown('##### Operação viva')
+        st.progress(percent, text=f'{percent}%')
+        st.caption(status_text)
+        st.caption(f'Tempo rodando: {elapsed}s')
+        st.caption(f'Último sinal: {last_delta}s' if has_payload else 'Aguardando primeiro sinal detalhado')
 
 
 def render_sidebar_progress_details(payload: dict) -> None:
@@ -164,6 +250,7 @@ __all__ = [
     'last_site_progress_seen_at',
     'make_site_progress_callback',
     'progress_rows',
+    'render_live_site_operation_panel',
     'render_sidebar_progress_details',
     'render_site_progress_history',
     'reset_site_progress',
