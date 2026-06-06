@@ -17,20 +17,13 @@ def _payload_has_images(payload: dict) -> bool:
 
 
 def install_verified_image_checkpoint_runtime() -> bool:
-    """Instala checkpoint de imagem de forma reentrante.
-
-    Alguns BLINGFIX de performance trocam BlingV3ProductClient.update_product
-    depois do startup. Por isso este instalador não pode retornar cedo só porque
-    já rodou antes; ele precisa conferir se o método atual ainda é o wrapper.
-    """
     try:
-        from bling_app_zero.core.bling_product_image_client import push_product_images
         from bling_app_zero.core.bling_v3_product_client import BlingV3ProductClient
 
         current_update = BlingV3ProductClient.update_product
         current_create = BlingV3ProductClient.create_product
         if getattr(current_update, '_verified_image_checkpoint_wrapper', False) and getattr(current_create, '_verified_image_checkpoint_wrapper', False):
-            add_audit_event('verified_image_checkpoint_runtime_already_active', area='BLING_IMAGEM', status='OK', details={'responsible_file': RESPONSIBLE_FILE})
+            add_audit_event('verified_image_checkpoint_runtime_already_active', area='BLING_IMAGEM', status='OK', details={'dynamic_push_lookup': True, 'responsible_file': RESPONSIBLE_FILE})
             return False
 
         original_update = current_update
@@ -39,14 +32,45 @@ def install_verified_image_checkpoint_runtime() -> bool:
         def _check_image(self, product_id: str, payload: dict, attempts: list, persisted: dict) -> dict:
             flags = product_persistence_flags(persisted or {})
             if flags.get('imagens') or not product_id or not _payload_has_images(payload):
-                add_audit_event('verified_image_checkpoint_skipped', area='BLING_IMAGEM', status='OK', details={'product_id': str(product_id), 'already_has_image': flags.get('imagens'), 'payload_has_images': _payload_has_images(payload), 'responsible_file': RESPONSIBLE_FILE})
+                add_audit_event(
+                    'verified_image_checkpoint_skipped',
+                    area='BLING_IMAGEM',
+                    status='OK',
+                    details={
+                        'product_id': str(product_id),
+                        'already_has_image': flags.get('imagens'),
+                        'payload_has_images': _payload_has_images(payload),
+                        'responsible_file': RESPONSIBLE_FILE,
+                    },
+                )
                 return persisted or {}
-            ok, image_attempts = push_product_images(product_id=str(product_id), payload=payload, url_builder=self.url_builder, headers=self.headers, get_product=self.get_product)
+
+            from bling_app_zero.core import bling_product_image_client
+
+            ok, image_attempts = bling_product_image_client.push_product_images(
+                product_id=str(product_id),
+                payload=payload,
+                url_builder=self.url_builder,
+                headers=self.headers,
+                get_product=self.get_product,
+            )
             if image_attempts:
                 attempts.extend(dict(item) for item in image_attempts[-10:])
             refreshed = self.get_product(str(product_id))
             after = product_persistence_flags(refreshed or {})
-            add_audit_event('verified_image_checkpoint_finished', area='BLING_IMAGEM', status='OK' if after.get('imagens') else 'PENDENTE', details={'product_id': str(product_id), 'image_client_ok': ok, 'image_persisted': after.get('imagens'), 'attempts': image_attempts[-8:], 'responsible_file': RESPONSIBLE_FILE})
+            add_audit_event(
+                'verified_image_checkpoint_finished',
+                area='BLING_IMAGEM',
+                status='OK' if after.get('imagens') else 'PENDENTE',
+                details={
+                    'product_id': str(product_id),
+                    'image_client_ok': ok,
+                    'image_persisted': after.get('imagens'),
+                    'dynamic_push_lookup': True,
+                    'attempts': image_attempts[-8:],
+                    'responsible_file': RESPONSIBLE_FILE,
+                },
+            )
             return refreshed or persisted or {}
 
         def update_product_with_image_checkpoint(self, product_id: str, payload: dict):
@@ -67,7 +91,7 @@ def install_verified_image_checkpoint_runtime() -> bool:
         create_product_with_image_checkpoint._verified_image_checkpoint_wrapper = True
         BlingV3ProductClient.update_product = update_product_with_image_checkpoint
         BlingV3ProductClient.create_product = create_product_with_image_checkpoint
-        add_audit_event('verified_image_checkpoint_runtime_installed', area='BLING_IMAGEM', status='OK', details={'reentrant': True, 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('verified_image_checkpoint_runtime_installed', area='BLING_IMAGEM', status='OK', details={'reentrant': True, 'dynamic_push_lookup': True, 'responsible_file': RESPONSIBLE_FILE})
         return True
     except Exception as exc:
         add_audit_event('verified_image_checkpoint_runtime_install_failed', area='BLING_IMAGEM', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
