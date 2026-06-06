@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.estoque_wizard_state import (
     ESTOQUE_CONFIDENCE_KEY,
     ESTOQUE_FINAL_KEY,
@@ -82,6 +83,32 @@ CADASTRO_OUTPUT_KEYS = [
     CADASTRO_MAPPING_SIGNATURE_KEY,
 ]
 
+API_OPERATION_KEYS = (
+    'active_feature_operation',
+    'direct_bling_operation_applied',
+    'direct_bling_operation_choice',
+    'home_slim_flow_operation',
+    'home_detected_operation',
+    'flow_spine_operation',
+    'flow_spine_sender_operation',
+    'operacao_final',
+    'tipo_operacao_final',
+)
+API_STALE_FINAL_KEYS = (
+    'df_final_bling_api',
+    'df_final_bling_csv',
+    'df_final_download_operation',
+    'df_final_download_signature',
+    'df_final_preview_signature',
+    'flow_spine_api_batch_operation',
+    'mapping_bling_api',
+    'mapping_confidence_bling_api',
+    'mapping_cadastro',
+    'mapping_confidence_cadastro',
+    CADASTRO_MAPPING_CONFIRMED_KEY,
+    CADASTRO_MAPPING_SIGNATURE_KEY,
+)
+
 
 def _entry_context() -> str:
     value = str(st.session_state.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower()
@@ -104,6 +131,81 @@ def _context_mapping_key() -> str:
 
 def _smartscan_manual_continue_pending() -> bool:
     return any(bool(st.session_state.get(key)) for key in SMARTSCAN_MANUAL_KEYS)
+
+
+def _normalize_operation(value: object) -> str:
+    text = str(value or '').strip().lower()
+    if text in {'cadastro', 'produtos', 'produto', 'cadastrar'}:
+        return 'cadastro'
+    if text in {'estoque', 'stock', 'atualizacao_estoque', 'atualização de estoque', 'saldo'}:
+        return 'estoque'
+    if text in {'atualizacao_preco', 'atualização de preço', 'preco', 'preço'}:
+        return 'atualizacao_preco'
+    return text
+
+
+def _current_api_operation() -> str:
+    for key in API_OPERATION_KEYS:
+        normalized = _normalize_operation(st.session_state.get(key))
+        if normalized in {'cadastro', 'estoque', 'atualizacao_preco'}:
+            return normalized
+    return ''
+
+
+def _source_site_operation() -> str:
+    for key in ('site_capture_operation', 'operation_site', 'tipo_operacao_site', 'site_operation_como_planilha'):
+        normalized = _normalize_operation(st.session_state.get(key))
+        if normalized in {'cadastro', 'estoque', 'atualizacao_preco'}:
+            return normalized
+    return ''
+
+
+def _looks_like_stock_source(df: pd.DataFrame | None) -> bool:
+    if not valid_df(df):
+        return False
+    columns = {str(column).strip().lower() for column in df.columns}
+    has_identifier = bool(columns & {'id produto', 'id_produto', 'idproduto', 'id', 'codigo', 'código', 'sku'})
+    has_quantity = bool(columns & {'quantidade', 'saldo', 'estoque', 'balance', 'stock', 'qtd', 'qtde'})
+    return has_identifier and has_quantity
+
+
+def _source_matches_current_operation(df: pd.DataFrame | None = None) -> bool:
+    if not _is_api_context():
+        return True
+    current_operation = _current_api_operation()
+    if not current_operation:
+        return True
+    if not is_site_origin():
+        return True
+
+    captured_operation = _source_site_operation()
+    if captured_operation and captured_operation != current_operation:
+        return False
+    if current_operation == 'estoque' and valid_df(df) and not _looks_like_stock_source(df):
+        return False
+    return True
+
+
+def _clear_stale_api_outputs(reason: str) -> None:
+    removed: list[str] = []
+    for key in API_STALE_FINAL_KEYS:
+        if key in st.session_state:
+            st.session_state.pop(key, None)
+            removed.append(key)
+    if removed:
+        add_audit_event(
+            'api_direct_stale_outputs_cleared',
+            area='WIZARD',
+            step='entrada',
+            status='OK',
+            details={
+                'reason': reason,
+                'removed_keys': removed,
+                'current_operation': _current_api_operation(),
+                'source_site_operation': _source_site_operation(),
+                'responsible_file': 'bling_app_zero/ui/cadastro_wizard_state.py',
+            },
+        )
 
 
 def valid_df(df: object) -> bool:
@@ -231,6 +333,9 @@ def enforce_cadastro_model_columns(df_final: pd.DataFrame | None = None) -> pd.D
     if df_final is None:
         df_final = get_context_final_df()
     if _is_api_context():
+        if not _source_matches_current_operation(df_final):
+            _clear_stale_api_outputs('api_direct_final_operation_mismatch')
+            return None
         fixed = enforce_supplier_price_master_filter(df_final)
         if isinstance(fixed, pd.DataFrame):
             set_context_final_df(fixed)
@@ -281,6 +386,8 @@ def expected_source_rows() -> int:
 
 
 def row_count_matches_source(df_final: pd.DataFrame | None) -> bool:
+    if not _source_matches_current_operation(df_final):
+        return False
     df_final = enforce_supplier_price_master_filter(df_final)
     expected = expected_source_rows()
     if expected <= 0:
@@ -336,6 +443,9 @@ def cadastro_context_ready() -> bool:
         return False
     df_origem = st.session_state.get(CADASTRO_ORIGEM_KEY)
     df_modelo = st.session_state.get(CADASTRO_MODELO_KEY)
+    if not _source_matches_current_operation(df_origem):
+        _clear_stale_api_outputs('api_direct_source_operation_mismatch')
+        return False
     return valid_df(df_origem) and valid_model(df_modelo)
 
 
@@ -343,7 +453,9 @@ def _api_direct_source_df() -> pd.DataFrame | None:
     for key in (CADASTRO_ORIGEM_PRICED_KEY, CADASTRO_ORIGEM_KEY, 'df_origem_planilha', 'df_site_bruto'):
         df = st.session_state.get(key)
         if valid_df(df):
-            return df.copy().fillna('')
+            candidate = df.copy().fillna('')
+            if _source_matches_current_operation(candidate):
+                return candidate
     return None
 
 
@@ -352,6 +464,9 @@ def ensure_api_direct_final_df() -> pd.DataFrame | None:
         return get_context_final_df()
     current = get_context_final_df()
     if valid_df(current):
+        if not _source_matches_current_operation(current):
+            _clear_stale_api_outputs('api_direct_current_final_operation_mismatch')
+            return None
         return enforce_supplier_price_master_filter(current)
     source = _api_direct_source_df()
     if valid_df(source):
