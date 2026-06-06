@@ -8,12 +8,21 @@ import pandas as pd
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_pre_send_defaults.py'
 DEFAULT_BRAND = 'Genérico'
 DEFAULT_CONDITION = 'Novo'
+DEFAULT_PRODUCTION = 'Terceiros'
+DEFAULT_UNIT = 'Centímetros'
+DEFAULT_DEPARTMENT = 'Adulto Unissex'
 
 _NAME_FIELDS = ('nome', 'Nome', 'produto', 'Produto', 'titulo', 'Título', 'título', 'descricao produto', 'Descrição produto', 'descricao_produto')
 _DESC_FIELDS = ('descricao', 'Descrição', 'descrição', 'descricao_curta', 'Descrição Curta', 'descrição curta', 'detalhes', 'Detalhes')
 _CODE_FIELDS = ('codigo', 'Código', 'código', 'sku', 'SKU', 'gtin', 'GTIN', 'ean', 'EAN')
 _BRAND_FIELDS = ('marca', 'Marca', 'fabricante', 'Fabricante')
 _CONDITION_FIELDS = ('condicao', 'condição', 'Condição', 'Condicao', 'condicao_produto', 'condição_produto', 'estado', 'Estado')
+_PRODUCTION_FIELDS = ('producao', 'produção', 'Produção', 'Producao', 'tipo_producao', 'tipo produção')
+_UNIT_FIELDS = ('unidade', 'Unidade', 'unidade de medida', 'Unidade de medida', 'unidade_medida')
+_LINK_FIELDS = ('linkExterno', 'link externo', 'Link Externo', 'url', 'URL', 'link', 'Link', 'url produto', 'URL produto', 'link produto', 'Link produto', 'produto_url', 'source_url')
+_TAX_GTIN_FIELDS = ('gtinTributario', 'gtin tributário', 'GTIN/EAN tributário', 'gtin/ean tributário', 'eanTributario', 'ean tributário')
+_DEPARTMENT_FIELDS = ('departamento', 'Departamento')
+_COMPLEMENT_FIELDS = ('descricaoComplementar', 'descrição complementar', 'descricao complementar', 'Descrição complementar', 'complementar')
 _STORE_BRANDS = {'mega center', 'mega center eletronicos', 'mega center eletrônicos', 'stoqui', 'stoqui shop'}
 _STOPWORDS = {
     'fone', 'ouvido', 'estereo', 'estéreo', 'sem', 'fio', 'bluetooth', 'bt', 'power', 'bank', 'carregador', 'cabo',
@@ -34,6 +43,15 @@ def _clean(value: object) -> str:
     if text.lower() in {'nan', 'none', 'null'}:
         return ''
     return ' '.join(text.split())
+
+
+def _digits(value: object) -> str:
+    return re.sub(r'\D+', '', str(value or ''))
+
+
+def _valid_url(value: object) -> str:
+    text = _clean(value)
+    return text if text.startswith(('http://', 'https://')) else ''
 
 
 def _norm_brand(value: str) -> str:
@@ -126,6 +144,12 @@ def apply_product_send_defaults(row: Any) -> dict[str, Any]:
     codigo = _first(data, _CODE_FIELDS)
     marca = _first(data, _BRAND_FIELDS)
     condicao = _first(data, _CONDITION_FIELDS)
+    producao = _first(data, _PRODUCTION_FIELDS)
+    unidade = _first(data, _UNIT_FIELDS)
+    departamento = _first(data, _DEPARTMENT_FIELDS)
+    link_externo = _first(data, _LINK_FIELDS)
+    gtin = _digits(_first(data, _CODE_FIELDS))
+    gtin_tributario = _digits(_first(data, _TAX_GTIN_FIELDS))
 
     if not nome:
         fallback = descricao or codigo
@@ -144,8 +168,20 @@ def apply_product_send_defaults(row: Any) -> dict[str, Any]:
         data[key] = inferred if _brand_is_valid(inferred) else DEFAULT_BRAND
 
     if not condicao:
-        key = _target_key(data, 'condicao', _CONDITION_FIELDS)
-        data[key] = DEFAULT_CONDITION
+        data[_target_key(data, 'condicao', _CONDITION_FIELDS)] = DEFAULT_CONDITION
+    if not producao:
+        data[_target_key(data, 'producao', _PRODUCTION_FIELDS)] = DEFAULT_PRODUCTION
+    if not unidade:
+        data[_target_key(data, 'unidade', _UNIT_FIELDS)] = DEFAULT_UNIT
+    if not departamento:
+        data[_target_key(data, 'departamento', _DEPARTMENT_FIELDS)] = DEFAULT_DEPARTMENT
+    if not gtin_tributario and len(gtin) in {8, 12, 13, 14}:
+        data[_target_key(data, 'gtinTributario', _TAX_GTIN_FIELDS)] = gtin
+    if _valid_url(link_externo):
+        data[_target_key(data, 'linkExterno', _LINK_FIELDS)] = link_externo
+
+    # Regra fixa solicitada: descrição complementar sempre limpa/vazia.
+    data[_target_key(data, 'descricaoComplementar', _COMPLEMENT_FIELDS)] = ''
 
     return data
 
@@ -172,4 +208,14 @@ def apply_dataframe_send_defaults(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=columns).fillna('')
 
 
-__all__ = ['RESPONSIBLE_FILE', 'DEFAULT_BRAND', 'DEFAULT_CONDITION', 'apply_dataframe_send_defaults', 'apply_product_send_defaults', 'infer_brand_from_title']
+__all__ = [
+    'RESPONSIBLE_FILE',
+    'DEFAULT_BRAND',
+    'DEFAULT_CONDITION',
+    'DEFAULT_PRODUCTION',
+    'DEFAULT_UNIT',
+    'DEFAULT_DEPARTMENT',
+    'apply_dataframe_send_defaults',
+    'apply_product_send_defaults',
+    'infer_brand_from_title',
+]
