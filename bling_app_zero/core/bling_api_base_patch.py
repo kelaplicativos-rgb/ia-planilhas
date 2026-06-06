@@ -16,6 +16,7 @@ PATCHED_MODULES = (
     'bling_app_zero.ui.home_bling_api_flow',
 )
 _PATCH_DONE = False
+_FORCE_UPDATE_PATCH_DONE = False
 
 
 def _patch_module(module: Any, module_name: str) -> bool:
@@ -30,6 +31,35 @@ def _patch_module(module: Any, module_name: str) -> bool:
     return changed
 
 
+def _patch_complete_product_update() -> bool:
+    global _FORCE_UPDATE_PATCH_DONE
+    if _FORCE_UPDATE_PATCH_DONE:
+        return False
+    changed = False
+    try:
+        from bling_app_zero.core import bling_smart_product_diff
+        from bling_app_zero.core.bling_force_product_update import update_existing_product_complete
+
+        original = getattr(bling_smart_product_diff, '_blingfix_original_update_existing_product_if_changed', None)
+        if original is None:
+            setattr(
+                bling_smart_product_diff,
+                '_blingfix_original_update_existing_product_if_changed',
+                bling_smart_product_diff.update_existing_product_if_changed,
+            )
+        bling_smart_product_diff.update_existing_product_if_changed = update_existing_product_complete
+        changed = True
+    except Exception as exc:
+        add_audit_event(
+            'bling_complete_product_update_patch_failed',
+            area='BLING_ENVIO',
+            status='AVISO',
+            details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE},
+        )
+    _FORCE_UPDATE_PATCH_DONE = True
+    return changed
+
+
 def patch_bling_api_base_urls() -> None:
     global _PATCH_DONE
     changed_modules: list[str] = []
@@ -37,12 +67,18 @@ def patch_bling_api_base_urls() -> None:
         module = sys.modules.get(module_name)
         if module is not None and _patch_module(module, module_name):
             changed_modules.append(module_name)
-    if changed_modules or not _PATCH_DONE:
+    complete_update_patched = _patch_complete_product_update()
+    if changed_modules or complete_update_patched or not _PATCH_DONE:
         add_audit_event(
             'bling_api_base_runtime_patch_applied',
             area='BLING_ENVIO',
-            status='OK' if changed_modules else 'SEM_ALTERACAO',
-            details={'changed_modules': changed_modules, 'correct_api_base_url': CORRECT_API_BASE_URL, 'responsible_file': RESPONSIBLE_FILE},
+            status='OK' if changed_modules or complete_update_patched else 'SEM_ALTERACAO',
+            details={
+                'changed_modules': changed_modules,
+                'correct_api_base_url': CORRECT_API_BASE_URL,
+                'complete_product_update_patched': complete_update_patched,
+                'responsible_file': RESPONSIBLE_FILE,
+            },
         )
     _PATCH_DONE = True
 
