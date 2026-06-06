@@ -9,6 +9,7 @@ from bling_app_zero.core.site_progress_model import SiteProgressMetrics, SitePro
 
 PROGRESS_LOG_KEY = 'site_progress_log'
 PROGRESS_LAST_KEY = 'site_progress_last'
+PROGRESS_LAST_SEEN_AT_KEY = 'site_progress_last_seen_at'
 NEUTRAL_PROGRESS_STATE_KEY = 'neutral_site_progress_state_v1'
 
 
@@ -28,11 +29,20 @@ def _sync_progress_state(state: SiteProgressState) -> None:
 
 def reset_site_progress() -> None:
     _sync_progress_state(SiteProgressState())
+    st.session_state[PROGRESS_LAST_SEEN_AT_KEY] = time.time()
 
 
 def append_site_progress(payload: dict) -> None:
     state = _progress_state_from_streamlit().append(payload or {})
     _sync_progress_state(state)
+    st.session_state[PROGRESS_LAST_SEEN_AT_KEY] = time.time()
+
+
+def last_site_progress_seen_at() -> float:
+    try:
+        return float(st.session_state.get(PROGRESS_LAST_SEEN_AT_KEY) or 0.0)
+    except Exception:
+        return 0.0
 
 
 def _elapsed_seconds() -> int:
@@ -117,10 +127,14 @@ def render_site_progress_history() -> None:
 
     st.markdown('### Detalhes da busca')
     elapsed = _elapsed_seconds()
+    last_seen_at = last_site_progress_seen_at()
+    last_seen_delta = int(time.time() - last_seen_at) if last_seen_at > 0 else 0
     if isinstance(last, dict) and last:
         metrics = SiteProgressMetrics.from_event(state.last, elapsed_seconds=elapsed)
         message = metrics.message or 'Busca em andamento.'
         st.info(f'Última atividade registrada: {message}')
+        if last_seen_at > 0:
+            st.caption(f'Último sinal vivo há {last_seen_delta}s.')
         _render_progress_metrics(last)
     else:
         st.info(f'A captura foi iniciada há {elapsed}s. O sistema está trabalhando em modo seguro; algumas etapas só aparecem quando um lote termina.')
@@ -134,7 +148,7 @@ def render_site_progress_history() -> None:
         with st.expander('Últimos eventos da busca', expanded=True):
             _render_progress_table(log, height=320)
     else:
-        st.warning('Ainda não houve evento detalhado gravado nesta execução. Se ficar mais de 2 minutos sem mudança, use “Limpar busca travada e tentar novamente”.')
+        st.warning('Ainda não houve evento detalhado gravado nesta execução. Se ficar muito tempo sem mudança, use “Limpar busca travada e tentar novamente”.')
 
     with st.sidebar:
         st.markdown('##### Histórico da busca')
@@ -142,3 +156,15 @@ def render_site_progress_history() -> None:
             _render_progress_table(log, height=280)
         else:
             st.caption(f'Busca iniciada há {elapsed}s. Aguardando primeiro evento detalhado.')
+
+
+__all__ = [
+    'PROGRESS_LAST_SEEN_AT_KEY',
+    'append_site_progress',
+    'last_site_progress_seen_at',
+    'make_site_progress_callback',
+    'progress_rows',
+    'render_sidebar_progress_details',
+    'render_site_progress_history',
+    'reset_site_progress',
+]
