@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from typing import Any, Mapping
+from urllib.parse import urlparse
 
 import pandas as pd
 
@@ -9,17 +10,20 @@ RESPONSIBLE_FILE = 'bling_app_zero/core/bling_pre_send_defaults.py'
 DEFAULT_BRAND = 'Genérico'
 DEFAULT_CONDITION = 'Novo'
 DEFAULT_PRODUCTION = 'Terceiros'
-DEFAULT_UNIT = 'Centímetros'
+DEFAULT_UNIT = 'UN'
+DEFAULT_MEASURE_UNIT = 'Centímetros'
 DEFAULT_DEPARTMENT = 'Adulto Unissex'
 
 _NAME_FIELDS = ('nome', 'Nome', 'produto', 'Produto', 'titulo', 'Título', 'título', 'descricao produto', 'Descrição produto', 'descricao_produto')
 _DESC_FIELDS = ('descricao', 'Descrição', 'descrição', 'descricao_curta', 'Descrição Curta', 'descrição curta', 'detalhes', 'Detalhes')
-_CODE_FIELDS = ('codigo', 'Código', 'código', 'sku', 'SKU', 'gtin', 'GTIN', 'ean', 'EAN')
+_CODE_FIELDS = ('codigo', 'Código', 'código', 'sku', 'SKU', 'codigo produto', 'Código produto', 'código produto')
+_GTIN_FIELDS = ('gtin', 'GTIN', 'ean', 'EAN', 'GTIN/EAN', 'gtin/ean', 'codigo de barras', 'Código de barras', 'código de barras')
 _BRAND_FIELDS = ('marca', 'Marca', 'fabricante', 'Fabricante')
 _CONDITION_FIELDS = ('condicao', 'condição', 'Condição', 'Condicao', 'condicao_produto', 'condição_produto', 'estado', 'Estado')
 _PRODUCTION_FIELDS = ('producao', 'produção', 'Produção', 'Producao', 'tipo_producao', 'tipo produção')
-_UNIT_FIELDS = ('unidade', 'Unidade', 'unidade de medida', 'Unidade de medida', 'unidade_medida')
-_LINK_FIELDS = ('linkExterno', 'link externo', 'Link Externo', 'url', 'URL', 'link', 'Link', 'url produto', 'URL produto', 'link produto', 'Link produto', 'produto_url', 'source_url')
+_UNIT_FIELDS = ('unidade', 'Unidade')
+_MEASURE_UNIT_FIELDS = ('unidade de medida', 'Unidade de medida', 'unidade das medidas', 'Unidade das medidas', 'unidade medida', 'Unidade medida', 'unidade_medida')
+_LINK_FIELDS = ('linkExterno', 'link externo', 'Link Externo', 'url produto', 'URL produto', 'link produto', 'Link produto', 'produto_url', 'source_url', 'url_origem', 'link_origem')
 _TAX_GTIN_FIELDS = ('gtinTributario', 'gtin tributário', 'GTIN/EAN tributário', 'gtin/ean tributário', 'eanTributario', 'ean tributário')
 _DEPARTMENT_FIELDS = ('departamento', 'Departamento')
 _COMPLEMENT_FIELDS = ('descricaoComplementar', 'descrição complementar', 'descricao complementar', 'Descrição complementar', 'complementar')
@@ -36,6 +40,12 @@ _KNOWN_BRANDS = (
     'MULTILASER', 'POSITIVO', 'INTELBRAS', 'ELGIN', 'BRITANIA', 'MONDIAL', 'PHILCO', 'GEONAV', 'BASEUS', 'BOROFONE',
     'HOCO', 'AWEI', 'TREQA', 'REMAX', 'ORICO', 'UGREEN', 'LDNIO', 'MCDODO', 'XO', 'KZ', 'EDIFIER', 'LOGITECH',
 )
+_IMAGE_URL_MARKERS = (
+    '/storage/', 'product_images', 'product-images', '/images/', '/image/', '/img/', '/fotos/', '/foto/',
+    'supabase.co/storage', 'cdn.', 'cloudinary.', 'googleusercontent.com', 'fbcdn.', 'static.', 'assets.',
+)
+_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.svg', '.avif')
+_PRODUCT_PATH_MARKERS = ('/produto/', '/produtos/', '/product/', '/products/', '/p/', '/item/', '/itens/')
 
 
 def _clean(value: object) -> str:
@@ -49,9 +59,34 @@ def _digits(value: object) -> str:
     return re.sub(r'\D+', '', str(value or ''))
 
 
-def _valid_url(value: object) -> str:
+def _valid_gtin(value: object) -> str:
+    digits = _digits(value)
+    return digits if len(digits) in {8, 12, 13, 14} else ''
+
+
+def _looks_like_image_or_storage_url(url: object) -> bool:
+    text = _clean(url).lower()
+    if not text.startswith(('http://', 'https://')):
+        return False
+    parsed = urlparse(text)
+    path = parsed.path.lower()
+    return any(marker in text for marker in _IMAGE_URL_MARKERS) or path.endswith(_IMAGE_EXTENSIONS)
+
+
+def _is_real_product_url(url: object) -> bool:
+    text = _clean(url)
+    if not text.startswith(('http://', 'https://')):
+        return False
+    if _looks_like_image_or_storage_url(text):
+        return False
+    parsed = urlparse(text)
+    path = parsed.path.lower()
+    return bool(parsed.netloc) and any(marker in path for marker in _PRODUCT_PATH_MARKERS)
+
+
+def _valid_product_url(value: object) -> str:
     text = _clean(value)
-    return text if text.startswith(('http://', 'https://')) else ''
+    return text if _is_real_product_url(text) else ''
 
 
 def _norm_brand(value: str) -> str:
@@ -94,6 +129,25 @@ def _target_key(data: Mapping[str, Any], preferred: str, aliases: tuple[str, ...
         if key:
             return key
     return preferred
+
+
+def _first_real_product_url(data: Mapping[str, Any]) -> str:
+    lowered = {str(k).lower(): k for k in data.keys()}
+    for field in _LINK_FIELDS:
+        key = field if field in data else lowered.get(field.lower())
+        if key is None:
+            continue
+        value = _valid_product_url(data.get(key))
+        if value:
+            return value
+    for key, value in data.items():
+        normalized_key = str(key or '').lower()
+        if any(marker in normalized_key for marker in ('imagem', 'image', 'foto', 'picture', 'thumbnail')):
+            continue
+        value = _valid_product_url(value)
+        if value:
+            return value
+    return ''
 
 
 def infer_brand_from_title(title: str) -> str:
@@ -143,13 +197,8 @@ def apply_product_send_defaults(row: Any) -> dict[str, Any]:
     descricao = _first(data, _DESC_FIELDS)
     codigo = _first(data, _CODE_FIELDS)
     marca = _first(data, _BRAND_FIELDS)
-    condicao = _first(data, _CONDITION_FIELDS)
-    producao = _first(data, _PRODUCTION_FIELDS)
-    unidade = _first(data, _UNIT_FIELDS)
-    departamento = _first(data, _DEPARTMENT_FIELDS)
-    link_externo = _first(data, _LINK_FIELDS)
-    gtin = _digits(_first(data, _CODE_FIELDS))
-    gtin_tributario = _digits(_first(data, _TAX_GTIN_FIELDS))
+    gtin = _valid_gtin(_first(data, _GTIN_FIELDS) or codigo)
+    link_externo = _first_real_product_url(data)
 
     if not nome:
         fallback = descricao or codigo
@@ -167,18 +216,23 @@ def apply_product_send_defaults(row: Any) -> dict[str, Any]:
         key = _target_key(data, 'marca', _BRAND_FIELDS)
         data[key] = inferred if _brand_is_valid(inferred) else DEFAULT_BRAND
 
-    if not condicao:
-        data[_target_key(data, 'condicao', _CONDITION_FIELDS)] = DEFAULT_CONDITION
-    if not producao:
-        data[_target_key(data, 'producao', _PRODUCTION_FIELDS)] = DEFAULT_PRODUCTION
-    if not unidade:
-        data[_target_key(data, 'unidade', _UNIT_FIELDS)] = DEFAULT_UNIT
-    if not departamento:
+    data[_target_key(data, 'condicao', _CONDITION_FIELDS)] = DEFAULT_CONDITION
+    data[_target_key(data, 'producao', _PRODUCTION_FIELDS)] = DEFAULT_PRODUCTION
+    data[_target_key(data, 'unidade', _UNIT_FIELDS)] = DEFAULT_UNIT
+    data[_target_key(data, 'unidade de medida', _MEASURE_UNIT_FIELDS)] = DEFAULT_MEASURE_UNIT
+
+    if not _first(data, _DEPARTMENT_FIELDS):
         data[_target_key(data, 'departamento', _DEPARTMENT_FIELDS)] = DEFAULT_DEPARTMENT
-    if not gtin_tributario and len(gtin) in {8, 12, 13, 14}:
-        data[_target_key(data, 'gtinTributario', _TAX_GTIN_FIELDS)] = gtin
-    if _valid_url(link_externo):
-        data[_target_key(data, 'linkExterno', _LINK_FIELDS)] = link_externo
+
+    tax_key = _target_key(data, 'gtinTributario', _TAX_GTIN_FIELDS)
+    data[tax_key] = gtin
+    for field in _GTIN_FIELDS:
+        key = _target_key(data, field, (field,))
+        if key in data and _digits(data.get(key)) and not gtin:
+            data[key] = ''
+
+    link_key = _target_key(data, 'linkExterno', _LINK_FIELDS)
+    data[link_key] = link_externo
 
     # Regra fixa solicitada: descrição complementar sempre limpa/vazia.
     data[_target_key(data, 'descricaoComplementar', _COMPLEMENT_FIELDS)] = ''
@@ -214,6 +268,7 @@ __all__ = [
     'DEFAULT_CONDITION',
     'DEFAULT_PRODUCTION',
     'DEFAULT_UNIT',
+    'DEFAULT_MEASURE_UNIT',
     'DEFAULT_DEPARTMENT',
     'apply_dataframe_send_defaults',
     'apply_product_send_defaults',
