@@ -6,10 +6,9 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
-from bling_app_zero.core.bling_oauth import connection_status
 from bling_app_zero.core.exporter import enforce_export_contract, filename_for_operation, to_bling_csv_bytes
 from bling_app_zero.core.files import read_uploaded_file
-from bling_app_zero.core.flow_spine_output import output_diagnostics, output_is_api, output_operation, output_plan
+from bling_app_zero.core.flow_spine_output import output_diagnostics, output_is_api, output_operation
 from bling_app_zero.core.operation_contract import (
     OP_ATUALIZACAO_PRECO,
     OP_CADASTRO,
@@ -19,12 +18,6 @@ from bling_app_zero.core.operation_contract import (
     operation_badge,
 )
 from bling_app_zero.core.rules_signature import rules_signature
-from bling_app_zero.core.template_download_exporter import (
-    build_template_download_bytes,
-    can_export_from_template,
-    mime_for_template_output,
-    output_name_for_template,
-)
 from bling_app_zero.core.text import normalize_key
 from bling_app_zero.core.validators import validate_final_df
 from bling_app_zero.ui.bling_api_batch_panel import render_bling_api_batch_panel
@@ -72,7 +65,7 @@ def df_signature(df: pd.DataFrame) -> str:
 
 
 def download_label() -> str:
-    return '⬇️ Baixar CSV pronto'
+    return '⬇️ Baixar arquivo final para o Bling'
 
 
 def _is_api_context() -> bool:
@@ -271,23 +264,6 @@ def download_dataframe_for_contract(df: pd.DataFrame, operation: str) -> tuple[p
     return adapted, applied, model_columns
 
 
-def build_template_download(df: pd.DataFrame) -> tuple[bytes, str, str] | None:
-    template = get_template_upload()
-    if template is None:
-        add_audit_event('template_download_original_missing_optional', area='DOWNLOAD', status='SEM_MODELO_ORIGINAL')
-        return None
-    template_name, template_bytes = template
-    if not can_export_from_template(template_name, template_bytes):
-        add_audit_event('template_download_not_supported_optional', area='DOWNLOAD', status='MODELO_NAO_SUPORTADO', details={'template_name': template_name})
-        return None
-    try:
-        data = build_template_download_bytes(template_bytes=template_bytes, template_name=template_name, df=df)
-        return data, output_name_for_template(template_name), mime_for_template_output(template_name)
-    except Exception as exc:
-        add_audit_event('template_download_not_ready_optional', area='DOWNLOAD', status='AGUARDANDO_AJUSTE_CONTRATO', details={'template_name': template_name, 'error': str(exc)})
-        return None
-
-
 def save_download_snapshot(
     *,
     download_df: pd.DataFrame,
@@ -307,24 +283,6 @@ def save_download_snapshot(
     st.session_state[FINAL_DOWNLOAD_WIDGET_KEY] = widget_key
     st.session_state['flow_spine_sender_operation'] = normalize_operation(operation)
     st.session_state['flow_spine_sender_destination'] = 'api_bling' if _is_api_context() else 'csv_download'
-
-
-def _render_optional_template_download(download_df: pd.DataFrame, key: str, signature: str, rules_sig: str) -> None:
-    template_export = build_template_download(download_df.copy())
-    if template_export is None:
-        st.caption('Opcional: modelo preenchido fiel ao arquivo original não disponível agora.')
-        return
-    template_bytes, template_file_name, template_mime = template_export
-    st.markdown('##### Opcional · Baixar também no formato do modelo anexado')
-    st.caption('Use esta opção apenas se quiser manter o formato original do modelo.')
-    st.download_button(
-        '⬇️ Baixar modelo preenchido',
-        data=template_bytes,
-        file_name=template_file_name,
-        mime=template_mime,
-        use_container_width=True,
-        key=f'download_template_optional_{key}_{signature}_{rules_sig}',
-    )
 
 
 def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: str, signature: str, rules_sig: str) -> None:
@@ -392,7 +350,6 @@ def render_download(df_final: pd.DataFrame, operation: str, key: str = 'final') 
         )
         return
     st.download_button(download_label(), data=csv_bytes, file_name=file_name, mime='text/csv; charset=utf-8', use_container_width=True, key=f'download_csv_{key}_{signature}_{rules_sig}', on_click=after_final_download, args=(operation, signature, rules_sig))
-    _render_optional_template_download(download_df, key, signature, rules_sig)
 
 
 def download_final(df_final: pd.DataFrame, operation: str, key: str = 'final') -> None:
