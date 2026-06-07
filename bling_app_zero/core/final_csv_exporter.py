@@ -6,7 +6,7 @@ from typing import Sequence
 
 import pandas as pd
 
-from bling_app_zero.core.final_download_resources import normalize_image_urls
+from bling_app_zero.core.final_download_resources import looks_like_image_column, normalize_image_urls
 
 try:
     from bling_app_zero.features.runtime import run_features_for_stage
@@ -108,6 +108,22 @@ def normalize_dataframe(df: pd.DataFrame | None, *, keep_internal: bool = False)
     return out.fillna('')
 
 
+def normalize_image_columns(df: pd.DataFrame | None) -> pd.DataFrame:
+    """Aplica a regra global do Bling antes do preview, download e envio.
+
+    O Bling bloqueia produtos com mais de 6 imagens. Por isso a mesma trava que
+    existe na chamada API também precisa existir na planilha final: o usuário já
+    vê no preview exatamente o que será baixado/enviado.
+    """
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame() if df is None else df
+    out = df.copy().fillna('')
+    for column in out.columns:
+        if looks_like_image_column(column):
+            out[column] = out[column].map(normalize_image_urls)
+    return out
+
+
 def contract_from_df(df: pd.DataFrame | None, contract_columns: Sequence[object] | None = None) -> list[str]:
     explicit = exact_contract_columns(contract_columns)
     if explicit:
@@ -173,7 +189,7 @@ def sanitize_final_dataframe(
     if df is None:
         return enforce_contract(None, contract_columns)
 
-    input_df = normalize_dataframe(df, keep_internal=False)
+    input_df = normalize_image_columns(normalize_dataframe(df, keep_internal=False))
     contract = contract_from_df(input_df, contract_columns)
     protected_empty = clean_explicit_empty_columns(explicit_empty_columns)
     input_df = force_empty_columns(input_df, protected_empty)
@@ -191,7 +207,7 @@ def sanitize_final_dataframe(
         )
         safe = context.final_df if isinstance(getattr(context, 'final_df', None), pd.DataFrame) else input_df
 
-    safe = force_empty_columns(normalize_dataframe(safe, keep_internal=False), protected_empty)
+    safe = normalize_image_columns(force_empty_columns(normalize_dataframe(safe, keep_internal=False), protected_empty))
     return enforce_contract(safe, contract)
 
 
@@ -276,6 +292,7 @@ __all__ = [
     'final_csv_bytes',
     'force_empty_columns',
     'normalize_dataframe',
+    'normalize_image_columns',
     'normalize_image_urls',
     'sanitize_final_dataframe',
     'validate_contract_identity',
