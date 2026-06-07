@@ -94,7 +94,7 @@ def render_pricing_step(
     if is_price_update and not is_api_direct and not is_universal_entry:
         section_title(section_number, title)
         render_price_update_notice()
-        st.caption('A planilha de atualização de preços já contém a estrutura e a origem. Use a calculadora somente se quiser recalcular os valores antes do mapeamento.')
+        st.caption('Use a calculadora somente se quiser recalcular os valores antes do mapeamento.')
     else:
         section_title(section_number, title)
 
@@ -112,10 +112,9 @@ def render_pricing_step(
     current_config = get_home_pricing_config()
     use_pricing = st.toggle('Usar calculadora', value=bool(current_config.get('enabled', False)), key='home_pricing_enabled_toggle')
     if use_pricing:
-        with st.container(border=True):
-            config = render_home_pricing_config_form(source_df=df_origem)
-            set_home_pricing_config(config)
-            apply_pricing_step_result()
+        config = render_home_pricing_config_form(source_df=df_origem)
+        set_home_pricing_config(config)
+        apply_pricing_step_result()
     else:
         disable_home_pricing()
         if not is_price_update:
