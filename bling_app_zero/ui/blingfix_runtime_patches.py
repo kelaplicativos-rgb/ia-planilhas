@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Callable
 
 import streamlit as st
@@ -17,7 +18,9 @@ from bling_app_zero.core.interaction_guard import (
 )
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/blingfix_runtime_patches.py'
-_PATCH_INSTALLED_KEY = 'blingfix_runtime_patches_installed_v1'
+_PATCH_INSTALLED_KEY = 'blingfix_runtime_patches_installed_v2'
+MAX_BLING_IMAGES_PER_PRODUCT = 6
+_IMAGE_LIST_KEYS = {'imagens', 'images', 'imagensurl', 'externas', 'externos', 'fotos'}
 
 
 def _patch_oauth_callback() -> None:
@@ -209,6 +212,90 @@ def _patch_api_batch_operation_guard() -> None:
     bling_api_batch_panel.render_bling_api_batch_panel = guarded_render_bling_api_batch_panel
 
 
+def _is_bling_api_url(url: object) -> bool:
+    text = str(url or '').lower()
+    return 'bling.com.br' in text and '/produtos' in text
+
+
+def _image_key(key: object) -> bool:
+    normalized = str(key or '').strip().lower().replace('_', '').replace('-', '')
+    return normalized in _IMAGE_LIST_KEYS
+
+
+def _sanitize_bling_images(value: Any, *, parent_key: str = '') -> tuple[Any, int]:
+    if isinstance(value, dict):
+        changed = 0
+        out: dict[Any, Any] = {}
+        for key, item in value.items():
+            sanitized, item_changed = _sanitize_bling_images(item, parent_key=str(key))
+            out[key] = sanitized
+            changed += item_changed
+        return out, changed
+
+    if isinstance(value, list):
+        changed = 0
+        out = []
+        for item in value:
+            sanitized, item_changed = _sanitize_bling_images(item, parent_key=parent_key)
+            out.append(sanitized)
+            changed += item_changed
+        if _image_key(parent_key) and len(out) > MAX_BLING_IMAGES_PER_PRODUCT:
+            changed += len(out) - MAX_BLING_IMAGES_PER_PRODUCT
+            out = out[:MAX_BLING_IMAGES_PER_PRODUCT]
+        return out, changed
+
+    return value, 0
+
+
+def _sanitize_bling_request_json(url: object, payload: Any) -> tuple[Any, int]:
+    if not isinstance(payload, (dict, list)) or not _is_bling_api_url(url):
+        return payload, 0
+    try:
+        return _sanitize_bling_images(deepcopy(payload))
+    except Exception:
+        return payload, 0
+
+
+def _patch_bling_image_limit_guard() -> None:
+    import requests
+
+    original_request: Callable[..., Any] | None = getattr(requests, '_blingfix_original_request', None)
+    if original_request is None:
+        original_request = requests.request
+        setattr(requests, '_blingfix_original_request', original_request)
+
+    def guarded_request(method: str | bytes, url: object, **kwargs: Any):
+        payload = kwargs.get('json')
+        sanitized, removed = _sanitize_bling_request_json(url, payload)
+        if removed:
+            kwargs['json'] = sanitized
+            add_audit_event(
+                'bling_image_limit_guard_applied',
+                area='BLING_ENVIO',
+                status='CORRIGIDO',
+                details={
+                    'method': str(method).upper(),
+                    'url_preview': str(url)[:160],
+                    'max_images_per_product': MAX_BLING_IMAGES_PER_PRODUCT,
+                    'removed_images': removed,
+                    'reason': 'Bling bloqueia produto com mais de 6 imagens. Payload limitado antes do envio.',
+                    'responsible_file': RESPONSIBLE_FILE,
+                },
+            )
+        return original_request(method, url, **kwargs)
+
+    requests.request = guarded_request
+
+    def _method_wrapper(method_name: str):
+        def wrapped(url: object, **kwargs: Any):
+            return guarded_request(method_name.upper(), url, **kwargs)
+        return wrapped
+
+    requests.post = _method_wrapper('POST')
+    requests.put = _method_wrapper('PUT')
+    requests.patch = _method_wrapper('PATCH')
+
+
 def _normalize_operation(value: object) -> str:
     text = str(value or '').strip().lower()
     if text in {'cadastro', 'produtos', 'produto', 'cadastrar', 'cadastro de produtos'}:
@@ -257,13 +344,14 @@ def _label_for_home_wizard(home_wizard_module: Any, step: str) -> str:
 def install_blingfix_runtime_patches() -> None:
     if st.session_state.get(_PATCH_INSTALLED_KEY):
         return
+    _patch_bling_image_limit_guard()
     _patch_oauth_callback()
     _patch_disconnect()
     _patch_home_wizard_navigation()
     _patch_site_operation_guard()
     _patch_api_batch_operation_guard()
     st.session_state[_PATCH_INSTALLED_KEY] = True
-    add_audit_event('blingfix_runtime_patches_installed', area='APP', status='OK', details={'logout_guard_active': logout_guard_active(), 'api_operation_guard': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('blingfix_runtime_patches_installed', area='APP', status='OK', details={'logout_guard_active': logout_guard_active(), 'api_operation_guard': True, 'bling_image_limit_guard': True, 'max_images_per_product': MAX_BLING_IMAGES_PER_PRODUCT, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_blingfix_runtime_patches']
