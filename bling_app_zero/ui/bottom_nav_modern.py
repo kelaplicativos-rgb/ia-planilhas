@@ -11,6 +11,7 @@ from bling_app_zero.ui.support_diagnostic_panel import render_support_diagnostic
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/bottom_nav_modern.py'
 BLING_IMPORTADOR_PRODUTOS_URL = 'https://www.bling.com.br/' + 'importador.produtos.php'
+BLING_IMPORTADOR_ESTOQUE_URL = 'https://www.bling.com.br/' + 'importador.saldos.estoque.php'
 
 
 def _run_sidebar_action(action: object) -> None:
@@ -25,6 +26,7 @@ def _render_sidebar_action_buttons() -> None:
         if st.button(action.title, use_container_width=True, key=f'sidebar_system_action_{action.key}'):
             _run_sidebar_action(action.key)
     st.link_button('📥 Importar produtos no Bling', BLING_IMPORTADOR_PRODUTOS_URL, use_container_width=True)
+    st.link_button('📦 Importar saldos de estoque no Bling', BLING_IMPORTADOR_ESTOQUE_URL, use_container_width=True)
 
 
 def _render_shortcuts_menu() -> None:
@@ -79,4 +81,4 @@ def render_bottom_nav() -> None:
         _render_diagnostic_menu()
 
 
-__all__ = ['BLING_IMPORTADOR_PRODUTOS_URL', 'render_bottom_nav']
+__all__ = ['BLING_IMPORTADOR_ESTOQUE_URL', 'BLING_IMPORTADOR_PRODUTOS_URL', 'render_bottom_nav']
