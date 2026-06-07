@@ -105,7 +105,7 @@ def split_intelligent_update_rows(df: pd.DataFrame, operation: str = '') -> tupl
                 'rows': len(prepared_df),
                 'reason': 'Cadastro/atualizacao seguem para sender verificado corrigido, com GET final e bloqueio em campo pendente.',
                 'pre_send_defaults_applied': True,
-                'blingfix_sender': 'verified_api_sender_blingfix.py',
+                'sender_guard': 'verified_api_sender_guarded.py',
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
@@ -170,7 +170,7 @@ def send_dataframe_to_bling_intelligent(
             'stock_quality_mode': op == OP_ESTOQUE,
             'verified_product_mode': op != OP_ESTOQUE,
             'pre_send_defaults_applied': True,
-            'blingfix_sender': 'verified_api_sender_blingfix.py',
+            'sender_guard': 'verified_api_sender_guarded.py',
         },
     )
 
@@ -186,9 +186,9 @@ def send_dataframe_to_bling_intelligent(
         return DirectSendResult(len(df), 0, 0, skipped_before_api, tuple([message] + pending_errors), tuple())
 
     if op == OP_CADASTRO:
-        from bling_app_zero.core.verified_api_sender_blingfix import send_verified_products
+        from bling_app_zero.core.verified_api_sender_guarded import send_verified_products
         add_audit_event(
-            'bling_intelligent_update_routed_to_verified_sender_blingfix',
+            'bling_intelligent_update_routed_to_verified_sender_guarded',
             area='BLING_ENVIO',
             status='OK',
             details={
@@ -199,7 +199,7 @@ def send_dataframe_to_bling_intelligent(
                 'production_forced': 'Terceiros',
                 'gtin_tax_equals_gtin': True,
                 'link_externo_product_page_only': True,
-                'blingfix_sender': 'verified_api_sender_blingfix.py',
+                'sender_guard': 'verified_api_sender_guarded.py',
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
@@ -243,7 +243,7 @@ def send_dataframe_to_bling_intelligent(
             'verified_product_mode': op != OP_ESTOQUE,
             'api_base_patch_enabled': True,
             'pre_send_defaults_applied': True,
-            'blingfix_sender': 'verified_api_sender_blingfix.py',
+            'sender_guard': 'verified_api_sender_guarded.py',
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
