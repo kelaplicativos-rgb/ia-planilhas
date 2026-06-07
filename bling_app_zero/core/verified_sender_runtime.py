@@ -13,7 +13,7 @@ def install_verified_sender_runtime() -> bool:
         return False
     try:
         from bling_app_zero.core import bling_intelligent_update_sender as sender
-        from bling_app_zero.core.verified_api_sender_blingfix import send_verified_products
+        from bling_app_zero.core.verified_api_sender_guarded import send_verified_products
 
         original = getattr(sender, '_verified_original_send_dataframe_to_bling_intelligent', None)
         if original is None:
@@ -30,7 +30,7 @@ def install_verified_sender_runtime() -> bool:
                     details={
                         'operation': op,
                         'mode': 'produto_por_produto_com_check',
-                        'blingfix_sender': 'verified_api_sender_blingfix.py',
+                        'sender_guard': 'verified_api_sender_guarded.py',
                         'responsible_file': RESPONSIBLE_FILE,
                     },
                 )
@@ -59,7 +59,7 @@ def install_verified_sender_runtime() -> bool:
             status='OK',
             details={
                 'panel_reference_patched': panel_patched,
-                'blingfix_sender': 'verified_api_sender_blingfix.py',
+                'sender_guard': 'verified_api_sender_guarded.py',
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
