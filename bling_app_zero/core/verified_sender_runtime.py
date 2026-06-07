@@ -13,7 +13,7 @@ def install_verified_sender_runtime() -> bool:
         return False
     try:
         from bling_app_zero.core import bling_intelligent_update_sender as sender
-        from bling_app_zero.core.verified_api_sender import send_verified_products
+        from bling_app_zero.core.verified_api_sender_blingfix import send_verified_products
 
         original = getattr(sender, '_verified_original_send_dataframe_to_bling_intelligent', None)
         if original is None:
@@ -27,16 +27,18 @@ def install_verified_sender_runtime() -> bool:
                     'verified_sender_runtime_route_applied',
                     area='BLING_ENVIO',
                     status='OK',
-                    details={'operation': op, 'mode': 'produto_por_produto_com_check', 'responsible_file': RESPONSIBLE_FILE},
+                    details={
+                        'operation': op,
+                        'mode': 'produto_por_produto_com_check',
+                        'blingfix_sender': 'verified_api_sender_blingfix.py',
+                        'responsible_file': RESPONSIBLE_FILE,
+                    },
                 )
                 return send_verified_products(df, limit=limit, progress_callback=progress_callback)
             return original(df, operation, limit=limit, progress_callback=progress_callback)
 
         sender.send_dataframe_to_bling_intelligent = guarded_send_dataframe_to_bling_intelligent
 
-        # O painel UI importa a função diretamente no carregamento do módulo.
-        # Por isso também precisamos trocar a referência local já importada;
-        # caso contrário o painel continua chamando o sender antigo.
         try:
             from bling_app_zero.ui import bling_api_batch_panel
             setattr(bling_api_batch_panel, 'send_dataframe_to_bling_intelligent', guarded_send_dataframe_to_bling_intelligent)
@@ -55,7 +57,11 @@ def install_verified_sender_runtime() -> bool:
             'verified_sender_runtime_installed',
             area='BLING_ENVIO',
             status='OK',
-            details={'panel_reference_patched': panel_patched, 'responsible_file': RESPONSIBLE_FILE},
+            details={
+                'panel_reference_patched': panel_patched,
+                'blingfix_sender': 'verified_api_sender_blingfix.py',
+                'responsible_file': RESPONSIBLE_FILE,
+            },
         )
         return True
     except Exception as exc:
