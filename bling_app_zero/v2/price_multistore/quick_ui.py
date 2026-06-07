@@ -55,9 +55,9 @@ CALCULATION_MODE_LABELS = {value: key for key, value in CALCULATION_MODE_MAP.ite
 def _metric_card(label: str, value: str, extra: str = '') -> None:
     st.markdown(
         f'''
-<div style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:16px;padding:1.05rem 1.15rem;margin:.35rem 0;">
-  <div style="font-size:.9rem;color:#64748b;font-weight:900;letter-spacing:.01em;">{label}</div>
-  <div style="font-size:1.55rem;color:#334155;font-weight:950;line-height:1.2;margin-top:.35rem;">{value} <span style="font-size:1rem;font-weight:700;color:#64748b;">{extra}</span></div>
+<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:.78rem .9rem;margin:.25rem 0;">
+  <div style="font-size:.82rem;color:#64748b;font-weight:850;letter-spacing:.01em;">{label}</div>
+  <div style="font-size:1.22rem;color:#334155;font-weight:950;line-height:1.18;margin-top:.25rem;">{value} <span style="font-size:.9rem;font-weight:700;color:#64748b;">{extra}</span></div>
 </div>
 ''',
         unsafe_allow_html=True,
@@ -67,20 +67,19 @@ def _metric_card(label: str, value: str, extra: str = '') -> None:
 def _primary_result_card(result: GlobalPriceResult, *, has_source: bool, calculation_mode: str, cost_column: str = '') -> None:
     mode_label = CALCULATION_MODE_LABELS.get(calculation_mode, calculation_mode or 'Não definido')
     if has_source and calculation_mode == 'nominal_profit':
-        detail = f'Esta amostra definiu lucro de {money(result.profit)}. O próximo fluxo usa a coluna {cost_column or "selecionada"} e aplica o cálculo produto por produto.'
+        detail = f'Linha a linha pela coluna {cost_column or "selecionada"}.'
     elif has_source and calculation_mode == 'contribution_margin':
-        detail = f'Esta amostra definiu margem de {percent(result.margin)}. O próximo fluxo usa a coluna {cost_column or "selecionada"} e aplica o cálculo produto por produto.'
+        detail = f'Margem aplicada linha a linha pela coluna {cost_column or "selecionada"}.'
     elif has_source:
-        detail = 'Preço fixo: este valor será aplicado como referência para todos os produtos da origem.'
+        detail = 'Mesmo preço aplicado em todos os produtos.'
     else:
-        detail = 'Simulação rápida sem origem: este é apenas o resultado da amostra informada manualmente.'
+        detail = 'Simulação avulsa, sem planilha carregada.'
     st.markdown(
         f'''
-<div style="background:#ecfdf5;border:1px solid #86efac;border-radius:20px;padding:1.2rem 1.25rem;margin:.8rem 0;color:#14532d;">
-  <div style="font-size:.9rem;font-weight:950;letter-spacing:.02em;text-transform:uppercase;">Resultado principal da calculadora</div>
-  <div style="font-size:2.05rem;font-weight:1000;line-height:1.15;margin:.35rem 0;">{money(result.sale_price)}</div>
-  <div style="font-weight:850;margin-bottom:.35rem;">Preço de venda final da amostra · {mode_label}</div>
-  <div style="line-height:1.5;">{detail}</div>
+<div style="background:#ecfdf5;border:1px solid #86efac;border-radius:18px;padding:1rem 1.05rem;margin:.7rem 0;color:#14532d;">
+  <div style="font-size:.84rem;font-weight:950;letter-spacing:.02em;text-transform:uppercase;">Preço calculado</div>
+  <div style="font-size:1.78rem;font-weight:1000;line-height:1.1;margin:.25rem 0;">{money(result.sale_price)}</div>
+  <div style="font-weight:800;line-height:1.35;">{mode_label} · {detail}</div>
 </div>
 ''',
         unsafe_allow_html=True,
@@ -91,10 +90,10 @@ def _profit_card(profit: Decimal, margin: Decimal) -> None:
     color = '#22c55e' if profit >= 0 else '#ef4444'
     st.markdown(
         f'''
-<div style="background:{color};border-radius:18px;padding:1.45rem 1rem;margin:.75rem 0;color:white;text-align:center;">
-  <div style="font-size:1.08rem;font-weight:850;">Lucro Líquido da amostra</div>
-  <div style="font-size:1.85rem;font-weight:950;margin:.35rem 0;">{money(profit)}</div>
-  <div style="font-size:1rem;font-weight:650;">Margem da amostra: {percent(margin)}</div>
+<div style="background:{color};border-radius:16px;padding:1rem .9rem;margin:.55rem 0;color:white;text-align:center;">
+  <div style="font-size:.95rem;font-weight:850;">Lucro líquido da amostra</div>
+  <div style="font-size:1.45rem;font-weight:950;margin:.22rem 0;">{money(profit)}</div>
+  <div style="font-size:.92rem;font-weight:650;">Margem: {percent(margin)}</div>
 </div>
 ''',
         unsafe_allow_html=True,
@@ -155,16 +154,9 @@ def _render_calculation_mode_selector(*, has_source: bool) -> str:
         default_index = list(CALCULATION_MODE_OPTIONS).index(default_label)
     except ValueError:
         default_index = 0 if has_source else 2
-    st.markdown('#### Modo de cálculo')
-    selected_label = st.selectbox('Como calcular o preço de venda?', CALCULATION_MODE_OPTIONS, index=default_index, key=PRICE_CALCULATOR_MODE_WIDGET_KEY)
+    selected_label = st.selectbox('Modo de cálculo', CALCULATION_MODE_OPTIONS, index=default_index, key=PRICE_CALCULATOR_MODE_WIDGET_KEY)
     mode = CALCULATION_MODE_MAP[selected_label]
     st.session_state[PRICE_CALCULATOR_MODE_KEY] = mode
-    if mode == 'nominal_profit':
-        st.caption('A amostra define o lucro em R$. Depois, cada linha usa o custo da origem + esse lucro e as taxas.')
-    elif mode == 'contribution_margin':
-        st.caption('A amostra define a margem em %. Depois, cada linha usa o custo da origem e busca essa margem.')
-    else:
-        st.caption('Usa o preço de venda informado na amostra. Com origem, esse modo aplica o mesmo preço em todas as linhas.')
     return mode
 
 
@@ -179,15 +171,11 @@ def _render_source_cost_selector(source_df: pd.DataFrame | None) -> tuple[str, D
         default_index = columns.index(selected_default) if selected_default in columns else 0
     except Exception:
         default_index = 0
-    st.markdown('#### Fonte de custo da planilha')
-    st.caption('Escolha qual coluna da origem será usada como custo para calcular todos os produtos.')
-    selected = st.selectbox('Coluna de custo detectada', columns, index=default_index, key=PRICE_CALCULATOR_SOURCE_COST_COLUMN_KEY)
+    selected = st.selectbox('Coluna de custo', columns, index=default_index, key=PRICE_CALCULATOR_SOURCE_COST_COLUMN_KEY)
     st.session_state[GLOBAL_PRICE_SOURCE_COST_COLUMN_KEY] = selected
     sample_cost = _first_valid_decimal_from_column(source_df, selected)
-    if selected:
-        st.success(f'Coluna de custo usada para cálculo linha a linha: {selected}')
-    if sample_cost > 0:
-        st.caption(f'Amostra enviada para a calculadora: {money(sample_cost)}')
+    if selected and sample_cost > 0:
+        st.caption(f'Custo da amostra: {money(sample_cost)}')
     return selected, sample_cost
 
 
@@ -206,58 +194,27 @@ def _sync_cost_sample_widget(*, selected_cost_column: str, detected_sample_cost:
 
 def _sale_price_sample_label(*, has_source: bool, calculation_mode: str) -> str:
     if has_source and calculation_mode == 'nominal_profit':
-        return 'Preço de venda da amostra (define o lucro em R$)'
+        return 'Preço da amostra'
     if has_source and calculation_mode == 'contribution_margin':
-        return 'Preço de venda da amostra (define a margem %)'
+        return 'Preço da amostra'
     if has_source:
-        return 'Preço fixo para aplicar nos produtos (R$)'
-    return 'Preço de venda desejado para cálculo rápido (R$)'
+        return 'Preço fixo'
+    return 'Preço de venda'
 
 
 def _render_mode_notice(has_source: bool, calculation_mode: str) -> None:
-    if has_source:
-        extra = (
-            'Este modo calcula linha a linha.'
-            if calculation_mode != 'fixed_sale_price'
-            else 'Atenção: Preço fixo aplica o mesmo preço em todas as linhas e pode resultar em prejuízo se algum custo for maior que o preço.'
-        )
-        st.markdown(
-            f'''
-<div style="background:#ecfdf5;border:1px solid #bbf7d0;border-radius:16px;padding:1rem 1.2rem;color:#14532d;margin:.8rem 0;">
-  <div style="font-weight:950;margin-bottom:.4rem;">✅ Modo com origem de produtos</div>
-  <div style="line-height:1.55;">A calculadora usa a coluna de custo da origem e grava o resultado em <b>Preço de venda</b>. {extra}</div>
-</div>
-''',
-            unsafe_allow_html=True,
-        )
-        return
-    st.markdown(
-        f'''
-<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:16px;padding:1rem 1.2rem;color:#7c2d12;margin:.8rem 0;">
-  <div style="font-weight:950;margin-bottom:.4rem;">⚠️ Cálculo rápido sem origem</div>
-  <div style="line-height:1.55;">{GLOBAL_PRICE_WARNING_TEXT}</div>
-</div>
-''',
-        unsafe_allow_html=True,
-    )
+    if has_source and calculation_mode == 'fixed_sale_price':
+        st.warning('Preço fixo aplica o mesmo valor em todos os produtos. Confira se nenhum custo é maior que o preço.')
+    elif has_source:
+        st.caption('A planilha será calculada linha a linha pela coluna de custo.')
+    else:
+        st.caption('Sem planilha, este cálculo funciona apenas como simulação avulsa.')
 
 
 def _render_observations(result: GlobalPriceResult, *, has_source: bool, cost_column: str = '', calculation_mode: str = '') -> None:
     mode_label = CALCULATION_MODE_LABELS.get(calculation_mode, calculation_mode or 'Não definido')
-    source_text = f'Origem: coluna de custo <b>{cost_column}</b>. Resultado gerado na coluna <b>Preço de venda</b>.' if has_source and cost_column else 'Sem origem: resultado usado apenas como simulação rápida.'
-    st.markdown(
-        f'''
-<div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:16px;padding:1rem 1.2rem;color:#334155;margin-top:.8rem;">
-  <div style="font-weight:900;margin-bottom:.55rem;">Leitura da calculadora</div>
-  <ul style="margin:.2rem 0 0 1.15rem;padding:0;line-height:1.65;">
-    <li>Modo selecionado: <b>{mode_label}</b>.</li>
-    <li>Tipo/taxa selecionado: <b>{result.ad_type}</b> · <b>{percent(result.marketplace_fee_percent)}</b>.</li>
-    <li>{source_text}</li>
-  </ul>
-</div>
-''',
-        unsafe_allow_html=True,
-    )
+    source_text = f'Origem: {cost_column}. Resultado: Preço de venda.' if has_source and cost_column else 'Sem origem: simulação avulsa.'
+    st.caption(f'{mode_label} · {result.ad_type} · {percent(result.marketplace_fee_percent)} · {source_text}')
 
 
 def _save_global_result(result: GlobalPriceResult, *, has_source: bool, cost_column: str = '', calculation_mode: str = '') -> None:
@@ -290,42 +247,45 @@ def _render_saved_result_notice() -> None:
     if isinstance(result, GlobalPriceResult):
         if mode in {'source_cost_line_by_line', 'source_fixed_price_all_rows'}:
             cost_column = str(_legacy_or_new_state(PRICE_CALCULATOR_SOURCE_COST_COLUMN_KEY, GLOBAL_PRICE_SOURCE_COST_COLUMN_KEY, '') or '')
-            st.success(f'Calculadora pronta usando a coluna {cost_column}: preço da amostra {money(result.sale_price)}')
+            st.success(f'Calculadora pronta usando {cost_column}: {money(result.sale_price)}')
         else:
             st.info(f'Cálculo rápido disponível: {money(result.sale_price)}')
 
 
 def render_quick_price_calculator(*, embedded: bool = False, source_df: pd.DataFrame | None = None) -> None:
     has_source = _has_source_data(source_df)
-    title = 'Calculadora única de preço' if embedded else 'Calculadora rápida de preço'
-    st.markdown(f'### {title}')
-    st.caption('Com origem, calcula todos os produtos usando a coluna de custo. Sem origem, funciona como cálculo rápido avulso.')
+    if not embedded:
+        st.markdown('### Calculadora rápida de preço')
+        st.caption('Calcule preço, lucro e margem em uma tela simples.')
 
     with st.container(border=True):
-        st.markdown('## Configurações')
-        st.caption('Defina os parâmetros para o cálculo')
+        st.markdown('#### Configurações de preço')
         selected_cost_column, detected_sample_cost = _render_source_cost_selector(source_df)
         _sync_cost_sample_widget(selected_cost_column=selected_cost_column, detected_sample_cost=detected_sample_cost)
         calculation_mode = _render_calculation_mode_selector(has_source=has_source)
+        _render_mode_notice(has_source, calculation_mode)
 
-        st.markdown('#### Taxas do marketplace')
-        st.caption('Informe manualmente as porcentagens cobradas pelo canal, marketplace ou loja.')
         c_fee_1, c_fee_2 = st.columns(2)
         classic_fee = c_fee_1.number_input('Taxa Clássico (%)', min_value=0.0, value=11.5, step=0.5, key='quick_market_classic_fee')
         premium_fee = c_fee_2.number_input('Taxa Premium (%)', min_value=0.0, value=16.5, step=0.5, key='quick_market_premium_fee')
-        ad_type = st.selectbox('Tipo de taxa / anúncio', list(AD_TYPES), index=0, key='quick_market_ad_type')
-        cost = st.number_input('Custo do Produto / Amostra', min_value=0.0, step=1.0, key=QUICK_MARKET_COST_WIDGET_KEY)
-        sale_price = st.number_input(_sale_price_sample_label(has_source=has_source, calculation_mode=calculation_mode), min_value=0.0, value=130.0, step=1.0, key='quick_market_sale_price')
-        tax_percent = st.number_input('Imposto (%)', min_value=0.0, value=6.0, step=0.5, key='quick_market_tax')
-        freight = st.number_input('Custo do Frete (R$)', min_value=0.0, value=0.0, step=1.0, key='quick_market_freight')
-        fixed_fee = st.number_input('Taxa Fixa (R$)', min_value=0.0, value=0.0, step=0.5, key='quick_market_fixed_fee')
-        extra_cost = st.number_input('Outros Custos (R$)', min_value=0.0, value=0.0, step=0.5, key='quick_market_extra_cost')
-        _render_mode_notice(has_source, calculation_mode)
+
+        c_base_1, c_base_2 = st.columns(2)
+        ad_type = c_base_1.selectbox('Tipo de taxa', list(AD_TYPES), index=0, key='quick_market_ad_type')
+        cost = c_base_2.number_input('Custo / amostra', min_value=0.0, step=1.0, key=QUICK_MARKET_COST_WIDGET_KEY)
+
+        c_price_1, c_price_2 = st.columns(2)
+        sale_price = c_price_1.number_input(_sale_price_sample_label(has_source=has_source, calculation_mode=calculation_mode), min_value=0.0, value=130.0, step=1.0, key='quick_market_sale_price')
+        tax_percent = c_price_2.number_input('Imposto (%)', min_value=0.0, value=6.0, step=0.5, key='quick_market_tax')
+
+        c_cost_1, c_cost_2, c_cost_3 = st.columns(3)
+        freight = c_cost_1.number_input('Frete (R$)', min_value=0.0, value=0.0, step=1.0, key='quick_market_freight')
+        fixed_fee = c_cost_2.number_input('Taxa fixa (R$)', min_value=0.0, value=0.0, step=0.5, key='quick_market_fixed_fee')
+        extra_cost = c_cost_3.number_input('Outros (R$)', min_value=0.0, value=0.0, step=0.5, key='quick_market_extra_cost')
 
         data = build_input_from_values(ad_type=ad_type, classic_fee_percent=classic_fee, premium_fee_percent=premium_fee, cost=cost, sale_price=sale_price, tax_percent=tax_percent, freight=freight, fixed_fee=fixed_fee, extra_cost=extra_cost)
         result = calculate_global_price(data)
         auto_apply_source_calculation = bool(has_source and selected_cost_column)
-        button_label = '🧮 Recalcular e aplicar' if has_source else '🧮 Calcular simulação avulsa'
+        button_label = '🧮 Recalcular e aplicar' if has_source else '🧮 Calcular simulação'
         clicked = st.button(button_label, use_container_width=True, key='quick_market_calculate')
         if clicked or auto_apply_source_calculation:
             st.session_state[QUICK_MARKET_HAS_CALCULATED_KEY] = True
@@ -334,21 +294,26 @@ def render_quick_price_calculator(*, embedded: bool = False, source_df: pd.DataF
             _save_global_result(result, has_source=has_source, cost_column=selected_cost_column, calculation_mode=calculation_mode)
 
         if not st.session_state.get(QUICK_MARKET_HAS_CALCULATED_KEY):
-            st.info('Preencha os valores e toque em Calcular para ver a simulação.')
+            st.info('Preencha os valores e toque em Calcular.')
             _render_saved_result_notice()
             return
 
         st.session_state[PRICE_CALCULATOR_CONFIG_KEY] = data
         st.session_state[GLOBAL_PRICE_CONFIG_KEY] = data
         _save_global_result(result, has_source=has_source, cost_column=selected_cost_column, calculation_mode=calculation_mode)
-        st.markdown('## Resultado da Precificação')
+        st.markdown('#### Resultado')
         _primary_result_card(result, has_source=has_source, calculation_mode=calculation_mode, cost_column=selected_cost_column)
-        _metric_card('Taxa Marketplace', money(result.marketplace_fee), f'({percent(result.marketplace_fee_percent)})')
-        _metric_card('Taxa Fixa', money(result.fixed_fee))
-        _metric_card('Frete', money(result.freight))
-        _metric_card('Imposto', money(result.tax))
-        _metric_card('Outros Custos', money(result.extra_cost))
-        _metric_card('Custo Total da amostra', money(result.total_cost))
+
+        c_result_1, c_result_2 = st.columns(2)
+        with c_result_1:
+            _metric_card('Taxa marketplace', money(result.marketplace_fee), f'({percent(result.marketplace_fee_percent)})')
+            _metric_card('Imposto', money(result.tax))
+            _metric_card('Custo total', money(result.total_cost))
+        with c_result_2:
+            _metric_card('Taxa fixa', money(result.fixed_fee))
+            _metric_card('Frete', money(result.freight))
+            _metric_card('Outros custos', money(result.extra_cost))
+
         _profit_card(result.profit, result.margin)
         _render_observations(result, has_source=has_source, cost_column=selected_cost_column, calculation_mode=calculation_mode)
 
@@ -365,13 +330,13 @@ def render_quick_price_calculator(*, embedded: bool = False, source_df: pd.DataF
                 st.warning(f'O preço fixo informado ({money(sale_price_decimal)}) é inferior ao custo máximo ({money(max_cost)}). Alguns produtos terão prejuízo.')
 
         if sale_price_decimal <= 0:
-            st.warning('Informe o preço de venda da amostra para calcular lucro e margem.')
+            st.warning('Informe o preço de venda para calcular lucro e margem.')
         elif result.profit < 0 and calculation_mode != 'fixed_sale_price':
-            st.warning('Atenção: o lucro líquido ficou negativo. Revise custo, preço, frete, imposto ou taxas.')
+            st.warning('Lucro líquido negativo. Revise custo, preço, frete, imposto ou taxas.')
         elif has_source:
-            st.success('Precificação pronta. O resultado será gravado como Preço de venda e seguirá para o próximo fluxo.')
+            st.success('Precificação pronta para seguir no fluxo.')
         else:
-            st.success('Cálculo rápido concluído. Sem origem carregada, o resultado fica apenas como simulação avulsa.')
+            st.success('Cálculo concluído.')
 
 
 __all__ = [
