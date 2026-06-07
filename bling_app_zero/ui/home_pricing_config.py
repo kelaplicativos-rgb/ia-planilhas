@@ -171,17 +171,15 @@ def _config_from_global_result(*, source_df: pd.DataFrame | None = None) -> dict
 
 
 def render_home_pricing_config_form(source_df: pd.DataFrame | None = None) -> dict[str, Any]:
-    st.markdown('##### Calculadora única de preço')
-    st.caption('Com planilha, a calculadora localiza a coluna de custo e calcula linha por linha. Sem planilha, funciona como simulação avulsa na tela.')
     render_quick_price_calculator(embedded=True, source_df=source_df)
     config = _config_from_global_result(source_df=source_df)
     if bool(config.get('enabled', False)):
         if isinstance(source_df, pd.DataFrame) and not source_df.empty:
-            st.success(f'Calculadora pronta para aplicar preço. Modo: {_mode_label(config)}.')
+            st.success(f'Preço pronto. Modo: {_mode_label(config)}.')
         else:
-            st.success('Simulação avulsa concluída. O preço calculado aparece apenas na tela enquanto não houver fonte de dados.')
+            st.success('Simulação concluída.')
     else:
-        st.warning('Calcule um preço para liberar a referência de precificação.')
+        st.warning('Calcule um preço para liberar a precificação.')
     return config
 
 
