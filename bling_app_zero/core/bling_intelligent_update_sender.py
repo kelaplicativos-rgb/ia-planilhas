@@ -10,6 +10,7 @@ from bling_app_zero.core.bling_direct_sender import DirectSendResult
 from bling_app_zero.core.bling_direct_sender_smart_diff import send_dataframe_to_bling as _smart_diff_send_dataframe_to_bling
 from bling_app_zero.core.bling_pre_send_defaults import apply_dataframe_send_defaults, apply_product_send_defaults
 from bling_app_zero.core.bling_product_update_intelligence import ACTION_PENDING, analyze_stock_update_need
+from bling_app_zero.core.blingfix_verified_runtime_patch import apply_blingfix_to_verified_module
 from bling_app_zero.core.operation_contract import OP_CADASTRO, OP_ESTOQUE, normalize_operation
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_intelligent_update_sender.py'
@@ -184,12 +185,23 @@ def send_dataframe_to_bling_intelligent(
         return DirectSendResult(len(df), 0, 0, skipped_before_api, tuple([message] + pending_errors), tuple())
 
     if op == OP_CADASTRO:
-        from bling_app_zero.core.verified_api_sender import send_verified_products
+        from bling_app_zero.core import verified_api_sender
+        apply_blingfix_to_verified_module(verified_api_sender)
+        send_verified_products = verified_api_sender.send_verified_products
         add_audit_event(
             'bling_intelligent_update_routed_to_verified_sender',
             area='BLING_ENVIO',
             status='OK',
-            details={'operation': op, 'rows': len(allowed_df), 'responsible_file': RESPONSIBLE_FILE},
+            details={
+                'operation': op,
+                'rows': len(allowed_df),
+                'unit_forced': 'UN',
+                'measure_unit_forced': 'Centímetros',
+                'production_forced': 'Terceiros',
+                'gtin_tax_equals_gtin': True,
+                'link_externo_product_page_only': True,
+                'responsible_file': RESPONSIBLE_FILE,
+            },
         )
         result = send_verified_products(allowed_df, limit=limit, progress_callback=progress_callback)
     else:
