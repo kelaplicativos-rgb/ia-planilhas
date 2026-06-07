@@ -10,7 +10,7 @@ from bling_app_zero.core.gtin import clean_gtin, looks_like_gtin_column
 from bling_app_zero.core.text import clean_cell, normalize_key
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/final_download_resources.py'
-MAX_IMAGE_URLS_PER_PRODUCT = 12
+MAX_IMAGE_URLS_PER_PRODUCT = 6
 
 IMAGE_COLUMN_TERMS = (
     'imagem', 'imagens', 'image', 'images', 'foto', 'fotos',
