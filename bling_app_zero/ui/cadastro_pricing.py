@@ -15,6 +15,10 @@ from bling_app_zero.ui.home_shared import df_signature
 PRICED_SOURCE_KEY = 'df_origem_cadastro_precificada'
 PRICING_ACTIVE_KEY = 'cadastro_preco_calculado_ativo'
 PRICING_SOURCE_KEY = 'shared_price_calculator_source'
+
+# Esta chave também é usada por um widget da calculadora rápida.
+# Depois que o widget é instanciado, o Streamlit não permite alterar essa key manualmente.
+# Por isso este módulo apenas LÊ essa chave e grava a escolha consolidada na chave legacy/cache.
 PRICING_SELECTED_COST_COLUMN_KEY = 'price_calculator_source_cost_column'
 PRICING_SELECTED_COST_COLUMN_LEGACY_KEY = 'global_price_source_cost_column'
 CADASTRO_ORIGEM_PRICED_STATE_KEY = 'cadastro_wizard_df_para_mapear'
@@ -32,23 +36,27 @@ def _pricing_enabled() -> bool:
     return bool(_pricing_config().get('enabled', False))
 
 
+def _columns_as_text(df_origem: pd.DataFrame) -> list[str]:
+    return list(map(str, df_origem.columns))
+
+
 def _selected_cost_column(df_origem: pd.DataFrame) -> str:
+    columns = _columns_as_text(df_origem)
+
     selected = str(st.session_state.get(PRICING_SELECTED_COST_COLUMN_KEY) or '').strip()
-    if selected and selected in list(map(str, df_origem.columns)):
+    if selected and selected in columns:
         return selected
 
     legacy_selected = str(st.session_state.get(PRICING_SELECTED_COST_COLUMN_LEGACY_KEY) or '').strip()
-    if legacy_selected and legacy_selected in list(map(str, df_origem.columns)):
-        st.session_state[PRICING_SELECTED_COST_COLUMN_KEY] = legacy_selected
+    if legacy_selected and legacy_selected in columns:
         return legacy_selected
 
-    return best_cost_column(list(map(str, df_origem.columns)))
+    return best_cost_column(columns)
 
 
 def _store_pricing_state(signature: str, selected_cost_column: str) -> None:
     st.session_state[PRICING_ACTIVE_KEY] = True
     st.session_state[f'cadastro_coluna_custo_{signature}'] = selected_cost_column
-    st.session_state[PRICING_SELECTED_COST_COLUMN_KEY] = selected_cost_column
     st.session_state[PRICING_SELECTED_COST_COLUMN_LEGACY_KEY] = selected_cost_column
     st.session_state[PRICING_SOURCE_KEY] = 'price_step_plugin'
 
