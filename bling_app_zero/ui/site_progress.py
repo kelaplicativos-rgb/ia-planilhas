@@ -98,7 +98,10 @@ def _payload_text(payload: dict, fallback: str = 'Busca em andamento.') -> str:
 
 
 def _render_progress_metrics(payload: dict) -> None:
-    metrics = SiteProgressMetrics.from_event(SiteProgressState.from_log([payload] if payload else []).last, elapsed_seconds=_elapsed_seconds())
+    metrics = SiteProgressMetrics.from_event(
+        SiteProgressState.from_log([payload] if payload else []).last,
+        elapsed_seconds=_elapsed_seconds(),
+    )
     st.caption(metrics.stage)
     col_a, col_b = st.columns(2)
     col_a.metric('Links/produtos localizados', safe_int(metrics.urls_found))
@@ -215,6 +218,7 @@ def render_site_progress_history() -> None:
     elapsed = _elapsed_seconds()
     last_seen_at = last_site_progress_seen_at()
     last_seen_delta = int(time.time() - last_seen_at) if last_seen_at > 0 else 0
+
     if isinstance(last, dict) and last:
         metrics = SiteProgressMetrics.from_event(state.last, elapsed_seconds=elapsed)
         message = metrics.message or 'Busca em andamento.'
@@ -231,7 +235,8 @@ def render_site_progress_history() -> None:
     _render_execution_plan()
 
     if log:
-        with st.expander('Últimos eventos da busca', expanded=True):
+        st.markdown('#### Últimos eventos da busca')
+        with st.container():
             _render_progress_table(log, height=320)
     else:
         st.warning('Ainda não houve evento detalhado gravado nesta execução. Se ficar muito tempo sem mudança, use “Limpar busca travada e tentar novamente”.')
