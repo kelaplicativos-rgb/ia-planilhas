@@ -5,7 +5,8 @@ from bling_app_zero.core.final_csv_exporter import final_csv_bytes, physical_csv
 
 def test_final_csv_remove_ponto_virgula_e_preserva_contrato():
     contract = ['Codigo', 'Descricao', 'Fornecedor']
-    df = pd.DataFrame([{'Codigo': 'ABC123', 'Descricao': 'Produto com texto; e quebra\nde linha', 'Fornecedor': 'B2Drop', 'Extra': 'nao pode sair'}])
+    descricao = 'Produto com texto; e quebra' + chr(10) + 'de linha'
+    df = pd.DataFrame([{'Codigo': 'ABC123', 'Descricao': descricao, 'Fornecedor': 'B2Drop', 'Extra': 'nao pode sair'}])
     safe = sanitize_final_dataframe(df, contract_columns=contract, run_download_features=False)
     assert list(safe.columns) == contract
     assert 'Extra' not in safe.columns
