@@ -68,13 +68,23 @@ def build_final_output(
 
     output = sanitize_final_dataframe(output, operation=operation, contract_columns=list(contract_columns), run_download_features=True)
     output, smartcore_result = apply_blingsmartcore(output, origin='preview_final', operation=operation)
+    # BLINGFIX contrato final: o SmartCore pode ajustar valores, mas não pode
+    # criar/remover/reordenar colunas. O contrato do modelo anexado é reaplicado
+    # depois da IA e antes da validação/download.
+    output = sanitize_final_dataframe(output, operation=operation, contract_columns=list(contract_columns), run_download_features=False)
 
     identity_errors = tuple(str(item) for item in validate_contract_identity(output, list(contract_columns)) or ())
     if identity_errors:
         result = FinalOutputResult(status=STATUS_ERROR, file_name=file_name, errors=identity_errors, message='Saída final bloqueada por divergência de colunas.')
         return FinalOutputCommandResult(FinalOutputState(request=request, result=result), output=None, csv_bytes=b'', smartcore_result=smartcore_result, errors=identity_errors)
 
-    csv_data = final_csv_bytes(output, operation=operation, contract_columns=list(contract_columns), run_download_features=True)
+    try:
+        csv_data = final_csv_bytes(output, operation=operation, contract_columns=list(contract_columns), run_download_features=True)
+    except Exception as exc:
+        csv_error = (str(exc),)
+        result = FinalOutputResult(status=STATUS_ERROR, file_name=file_name, errors=csv_error, message='Saída final bloqueada por erro físico de CSV.')
+        return FinalOutputCommandResult(FinalOutputState(request=request, result=result), output=None, csv_bytes=b'', smartcore_result=smartcore_result, errors=csv_error)
+
     warnings: tuple[str, ...] = tuple()
     score = 0
     try:
