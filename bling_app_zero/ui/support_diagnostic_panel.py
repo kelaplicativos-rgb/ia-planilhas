@@ -15,7 +15,17 @@ DIAGNOSTIC_READY_KEY = 'support_diagnostic_zip_ready'
 DIAGNOSTIC_TIME_KEY = 'support_diagnostic_zip_generated_at'
 
 
-def _prepare_diagnostic_zip() -> None:
+def _normalize_namespace(namespace: str) -> str:
+    text = str(namespace or '').strip().lower()
+    safe = ''.join(char if char.isalnum() else '_' for char in text)
+    return safe.strip('_') or 'default'
+
+
+def _widget_key(namespace: str, name: str) -> str:
+    return f'support_diagnostic_{_normalize_namespace(namespace)}_{name}'
+
+
+def _prepare_diagnostic_zip(*, source: str = 'sidebar') -> None:
     logs = list(st.session_state.get(LOG_SESSION_KEY, []))
     audit_events = get_audit_events()
     data = _build_log_bundle_zip()
@@ -32,20 +42,27 @@ def _prepare_diagnostic_zip() -> None:
             'audit_events': len(audit_events),
             'session_state_keys': len(st.session_state.keys()),
             'zip_size_bytes': len(data),
+            'source': source,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
 
 
-def render_support_diagnostic_panel_content() -> None:
-    """Conteúdo reutilizável do diagnóstico, sem abrir outro bloco de sidebar."""
+def render_support_diagnostic_panel_content(*, namespace: str = 'default') -> None:
+    """Conteúdo reutilizável do diagnóstico, sem abrir outro bloco de sidebar.
+
+    BLINGSCAN: este painel pode aparecer em mais de uma área da sidebar no mesmo
+    ciclo de renderização. Por isso os widgets recebem namespace próprio para
+    evitar erro de chave duplicada no Streamlit.
+    """
+    widget_namespace = _normalize_namespace(namespace)
     if st.button(
         '⬇️ Gerar diagnóstico para correção',
         use_container_width=True,
-        key='support_diagnostic_generate_button',
+        key=_widget_key(widget_namespace, 'generate_button'),
     ):
-        _prepare_diagnostic_zip()
-        safe_rerun('support_diagnostic_zip_generated')
+        _prepare_diagnostic_zip(source=widget_namespace)
+        safe_rerun(f'support_diagnostic_zip_generated_{widget_namespace}')
 
     if not st.session_state.get(DIAGNOSTIC_READY_KEY):
         return
@@ -58,14 +75,14 @@ def render_support_diagnostic_panel_content() -> None:
         file_name=LOG_BUNDLE_FILENAME,
         mime='application/zip',
         use_container_width=True,
-        key='support_diagnostic_download_ready_button',
+        key=_widget_key(widget_namespace, 'download_ready_button'),
     )
 
 
 def render_support_diagnostic_panel() -> None:
     """Compatibilidade: mantém o render antigo quando chamado isoladamente."""
     with st.sidebar:
-        render_support_diagnostic_panel_content()
+        render_support_diagnostic_panel_content(namespace='sidebar_tools')
 
 
 __all__ = ['render_support_diagnostic_panel', 'render_support_diagnostic_panel_content']
