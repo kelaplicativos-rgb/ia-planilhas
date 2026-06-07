@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from io import BytesIO
+
 import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_oauth import connection_status
-from bling_app_zero.core.exporter import filename_for_operation, to_bling_csv_bytes
+from bling_app_zero.core.exporter import enforce_export_contract, filename_for_operation, to_bling_csv_bytes
+from bling_app_zero.core.files import read_uploaded_file
 from bling_app_zero.core.flow_spine_output import output_diagnostics, output_is_api, output_operation, output_plan
 from bling_app_zero.core.operation_contract import (
     OP_ATUALIZACAO_PRECO,
@@ -51,6 +54,12 @@ ESTOQUE_QTY_TERMS = ('quantidade', 'qtd', 'saldo', 'estoque', 'balanco', 'balan�
 ESTOQUE_DEPOSIT_TERMS = ('deposito', 'depósito')
 ESTOQUE_CODE_TERMS = ('codigo', 'código', 'sku', 'referencia', 'referência', 'id')
 STOCK_ONLY_STRICT_COLUMNS = {'quantidade', 'id', 'codigo', 'gtin', 'deposito'}
+
+
+class _NamedBytesIO(BytesIO):
+    def __init__(self, data: bytes, name: str):
+        super().__init__(data)
+        self.name = name
 
 
 def df_signature(df: pd.DataFrame) -> str:
@@ -197,14 +206,6 @@ def after_final_download(operation: str, signature: str, rules_sig: str) -> None
     )
 
 
-def download_dataframe_for_contract(df: pd.DataFrame, operation: str) -> tuple[pd.DataFrame, bool, list[str]]:
-    model = model_for_operation(operation)
-    adapted = adapt_dataframe_to_model_contract(df, model)
-    applied = isinstance(model, pd.DataFrame) and len(model.columns) > 0
-    model_columns = [str(column) for column in model.columns] if applied else []
-    return adapted, applied, model_columns
-
-
 def get_template_upload() -> tuple[str, bytes] | None:
     name = str(st.session_state.get(DESTINATION_MODEL_UPLOAD_NAME_KEY) or '').strip()
     data = st.session_state.get(DESTINATION_MODEL_UPLOAD_BYTES_KEY)
@@ -224,6 +225,50 @@ def get_template_upload() -> tuple[str, bytes] | None:
     st.session_state[DESTINATION_MODEL_UPLOAD_NAME_KEY] = name
     st.session_state[DESTINATION_MODEL_UPLOAD_BYTES_KEY] = data_bytes
     return name, data_bytes
+
+
+def _uploaded_model_contract_columns() -> list[str]:
+    template = get_template_upload()
+    if template is None:
+        return []
+    template_name, template_bytes = template
+    try:
+        model_df = read_uploaded_file(_NamedBytesIO(template_bytes, template_name))
+    except Exception as exc:
+        add_audit_event(
+            'uploaded_model_contract_read_failed',
+            area='DOWNLOAD',
+            status='IGNORADO',
+            details={'template_name': template_name, 'error': str(exc), 'responsible_file': RESPONSIBLE_FILE},
+        )
+        return []
+    if not isinstance(model_df, pd.DataFrame) or len(model_df.columns) <= 0:
+        return []
+    return [str(column).replace('\ufeff', '').replace('\r', ' ').replace('\n', ' ').strip() for column in model_df.columns]
+
+
+def download_dataframe_for_contract(df: pd.DataFrame, operation: str) -> tuple[pd.DataFrame, bool, list[str]]:
+    uploaded_columns = _uploaded_model_contract_columns()
+    if uploaded_columns:
+        adapted = enforce_export_contract(df, uploaded_columns)
+        add_audit_event(
+            'final_download_uses_uploaded_model_contract',
+            area='DOWNLOAD',
+            status='OK',
+            details={
+                'operation': normalize_operation(operation),
+                'columns': len(uploaded_columns),
+                'source': 'uploaded_model',
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+        return adapted, True, uploaded_columns
+
+    model = model_for_operation(operation)
+    adapted = adapt_dataframe_to_model_contract(df, model)
+    applied = isinstance(model, pd.DataFrame) and len(model.columns) > 0
+    model_columns = [str(column) for column in model.columns] if applied else []
+    return adapted, applied, model_columns
 
 
 def build_template_download(df: pd.DataFrame) -> tuple[bytes, str, str] | None:
@@ -258,8 +303,6 @@ def save_download_snapshot(
     st.session_state[FINAL_DOWNLOAD_FILE_BYTES_KEY] = bytes(file_bytes)
     st.session_state[FINAL_DOWNLOAD_FILE_NAME_KEY] = file_name
     st.session_state[FINAL_DOWNLOAD_MIME_KEY] = mime
-    st.session_state[FINAL_DOWNLOAD_OPERATION_KEY] = normalize_operation(operation)
-    st.session_state[FINAL_DOWNLOAD_SIGNATURE_KEY] = signature
     st.session_state[FINAL_DOWNLOAD_RULES_SIGNATURE_KEY] = rules_sig
     st.session_state[FINAL_DOWNLOAD_WIDGET_KEY] = widget_key
     st.session_state['flow_spine_sender_operation'] = normalize_operation(operation)
@@ -326,7 +369,12 @@ def render_download(df_final: pd.DataFrame, operation: str, key: str = 'final') 
 
     signature = df_signature(download_df)
     rules_sig = rules_signature()
-    csv_bytes = to_bling_csv_bytes(download_df, operation)
+    try:
+        csv_bytes = to_bling_csv_bytes(download_df, operation, contract_columns=model_columns if contract_applied else None)
+    except Exception as exc:
+        st.error('CSV final bloqueado: o arquivo perderia o contrato de colunas aceito pelo Bling.')
+        st.warning(str(exc))
+        return
     file_name = filename_for_operation(operation)
     save_download_snapshot(download_df=download_df, file_bytes=csv_bytes, file_name=file_name, mime='text/csv; charset=utf-8', operation=operation, signature=signature, rules_sig=rules_sig, widget_key=key)
     if contract_applied:
