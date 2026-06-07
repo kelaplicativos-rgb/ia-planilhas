@@ -216,7 +216,11 @@ def _sale_price_sample_label(*, has_source: bool, calculation_mode: str) -> str:
 
 def _render_mode_notice(has_source: bool, calculation_mode: str) -> None:
     if has_source:
-        extra = 'Este modo calcula linha a linha.' if calculation_mode != 'fixed_sale_price' else 'Atenção: preço fixo aplica o mesmo preço em todas as linhas.'
+        extra = (
+            'Este modo calcula linha a linha.'
+            if calculation_mode != 'fixed_sale_price'
+            else 'Atenção: Preço fixo aplica o mesmo preço em todas as linhas e pode resultar em prejuízo se algum custo for maior que o preço.'
+        )
         st.markdown(
             f'''
 <div style="background:#ecfdf5;border:1px solid #bbf7d0;border-radius:16px;padding:1rem 1.2rem;color:#14532d;margin:.8rem 0;">
@@ -348,7 +352,19 @@ def render_quick_price_calculator(*, embedded: bool = False, source_df: pd.DataF
         _profit_card(result.profit, result.margin)
         _render_observations(result, has_source=has_source, cost_column=selected_cost_column, calculation_mode=calculation_mode)
 
-        if to_decimal(sale_price) <= 0:
+        sale_price_decimal = to_decimal(sale_price)
+        if has_source and calculation_mode == 'fixed_sale_price' and selected_cost_column:
+            try:
+                cost_series = source_df[selected_cost_column].apply(to_decimal)
+                max_cost = cost_series.max()
+            except Exception:
+                max_cost = detected_sample_cost
+            if sale_price_decimal <= to_decimal(detected_sample_cost):
+                st.warning('Preço fixo é igual ou inferior ao custo da amostra; isso resultará em prejuízo.')
+            elif sale_price_decimal < max_cost:
+                st.warning(f'O preço fixo informado ({money(sale_price_decimal)}) é inferior ao custo máximo ({money(max_cost)}). Alguns produtos terão prejuízo.')
+
+        if sale_price_decimal <= 0:
             st.warning('Informe o preço de venda da amostra para calcular lucro e margem.')
         elif result.profit < 0 and calculation_mode != 'fixed_sale_price':
             st.warning('Atenção: o lucro líquido ficou negativo. Revise custo, preço, frete, imposto ou taxas.')
