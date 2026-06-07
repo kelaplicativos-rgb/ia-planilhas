@@ -10,7 +10,6 @@ from bling_app_zero.core.bling_direct_sender import DirectSendResult
 from bling_app_zero.core.bling_direct_sender_smart_diff import send_dataframe_to_bling as _smart_diff_send_dataframe_to_bling
 from bling_app_zero.core.bling_pre_send_defaults import apply_dataframe_send_defaults, apply_product_send_defaults
 from bling_app_zero.core.bling_product_update_intelligence import ACTION_PENDING, analyze_stock_update_need
-from bling_app_zero.core.blingfix_verified_runtime_patch import apply_blingfix_to_verified_module
 from bling_app_zero.core.operation_contract import OP_CADASTRO, OP_ESTOQUE, normalize_operation
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_intelligent_update_sender.py'
@@ -104,8 +103,9 @@ def split_intelligent_update_rows(df: pd.DataFrame, operation: str = '') -> tupl
             details={
                 'operation': op,
                 'rows': len(prepared_df),
-                'reason': 'Cadastro/atualizacao seguem para sender verificado, com GET final e bloqueio em campo pendente.',
+                'reason': 'Cadastro/atualizacao seguem para sender verificado corrigido, com GET final e bloqueio em campo pendente.',
                 'pre_send_defaults_applied': True,
+                'blingfix_sender': 'verified_api_sender_blingfix.py',
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
@@ -157,7 +157,7 @@ def send_dataframe_to_bling_intelligent(
     _emit(
         progress_callback,
         {
-            'stage': 'Preparando envio verificado para API Bling' if op != OP_ESTOQUE else 'Pré-decisão inteligente de estoque',
+            'stage': 'Preparando envio verificado corrigido para API Bling' if op != OP_ESTOQUE else 'Pré-decisão inteligente de estoque',
             'operation': op,
             'processed': 0,
             'total': len(df),
@@ -170,6 +170,7 @@ def send_dataframe_to_bling_intelligent(
             'stock_quality_mode': op == OP_ESTOQUE,
             'verified_product_mode': op != OP_ESTOQUE,
             'pre_send_defaults_applied': True,
+            'blingfix_sender': 'verified_api_sender_blingfix.py',
         },
     )
 
@@ -185,11 +186,9 @@ def send_dataframe_to_bling_intelligent(
         return DirectSendResult(len(df), 0, 0, skipped_before_api, tuple([message] + pending_errors), tuple())
 
     if op == OP_CADASTRO:
-        from bling_app_zero.core import verified_api_sender
-        apply_blingfix_to_verified_module(verified_api_sender)
-        send_verified_products = verified_api_sender.send_verified_products
+        from bling_app_zero.core.verified_api_sender_blingfix import send_verified_products
         add_audit_event(
-            'bling_intelligent_update_routed_to_verified_sender',
+            'bling_intelligent_update_routed_to_verified_sender_blingfix',
             area='BLING_ENVIO',
             status='OK',
             details={
@@ -200,6 +199,7 @@ def send_dataframe_to_bling_intelligent(
                 'production_forced': 'Terceiros',
                 'gtin_tax_equals_gtin': True,
                 'link_externo_product_page_only': True,
+                'blingfix_sender': 'verified_api_sender_blingfix.py',
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
@@ -243,6 +243,7 @@ def send_dataframe_to_bling_intelligent(
             'verified_product_mode': op != OP_ESTOQUE,
             'api_base_patch_enabled': True,
             'pre_send_defaults_applied': True,
+            'blingfix_sender': 'verified_api_sender_blingfix.py',
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
