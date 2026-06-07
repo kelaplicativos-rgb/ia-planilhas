@@ -241,7 +241,9 @@ def _save_global_result(result: GlobalPriceResult, *, has_source: bool, cost_col
     st.session_state['preco_global_aplicado_em_todos_produtos'] = bool(has_source and normalized_mode == 'fixed_sale_price')
     st.session_state['preco_global_alerta_texto'] = GLOBAL_PRICE_WARNING_TEXT
     if cost_column:
-        st.session_state[PRICE_CALCULATOR_SOURCE_COST_COLUMN_KEY] = cost_column
+        # Não sobrescreve PRICE_CALCULATOR_SOURCE_COST_COLUMN_KEY aqui.
+        # Essa chave pertence ao widget st.selectbox criado em _render_source_cost_selector.
+        # Alterá-la depois da criação do widget gera StreamlitAPIException.
         st.session_state[GLOBAL_PRICE_SOURCE_COST_COLUMN_KEY] = cost_column
 
 
