@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
-from io import BytesIO
+from io import BytesIO, StringIO
 from typing import Sequence
 
 import pandas as pd
@@ -17,6 +18,7 @@ RESPONSIBLE_FILE = 'bling_app_zero/core/final_csv_exporter.py'
 INTERNAL_COLUMN_PREFIXES = ('_v2_',)
 DEFAULT_SEPARATOR = ';'
 DEFAULT_ENCODING = 'utf-8-sig'
+CSV_DANGEROUS_CHARS = (';', '"', "'", '\t')
 
 
 @dataclass(frozen=True)
@@ -44,6 +46,24 @@ def clean_text(value: object) -> str:
     text = text.replace('\ufeff', '')
     text = text.replace('\x00', '')
     text = text.replace('\r\n', ' ').replace('\n', ' ').replace('\r', ' ')
+    return ' '.join(text.split()).strip()
+
+
+def clean_bling_cell_text(value: object, *, sep: str = DEFAULT_SEPARATOR) -> str:
+    """Texto seguro para CSV do Bling sem quebrar o contrato físico de colunas.
+
+    O importador do Bling é sensível a delimitadores dentro do conteúdo. Mesmo que
+    pandas gere CSV tecnicamente válido com aspas, o Bling pode contar `;` internos
+    como novas colunas. Por isso os valores das células são normalizados antes do
+    download final. O cabeçalho continua vindo do modelo anexado.
+    """
+    text = clean_text(value)
+    if not text:
+        return ''
+    for char in CSV_DANGEROUS_CHARS:
+        text = text.replace(char, ' ')
+    if sep:
+        text = text.replace(str(sep), ' ')
     return ' '.join(text.split()).strip()
 
 
@@ -104,7 +124,7 @@ def normalize_dataframe(df: pd.DataFrame | None, *, keep_internal: bool = False)
         out = drop_internal_columns(out)
     out.columns = [clean_text(column) for column in out.columns]
     for column in out.columns:
-        out[column] = out[column].map(clean_text)
+        out[column] = out[column].map(clean_bling_cell_text)
     return out.fillna('')
 
 
@@ -121,6 +141,7 @@ def normalize_image_columns(df: pd.DataFrame | None) -> pd.DataFrame:
     for column in out.columns:
         if looks_like_image_column(column):
             out[column] = out[column].map(normalize_image_urls)
+            out[column] = out[column].map(clean_bling_cell_text)
     return out
 
 
@@ -169,6 +190,49 @@ def validate_contract_identity(df: pd.DataFrame | None, contract_columns: Sequen
     if extra:
         errors.append('Colunas extras no download final: ' + ', '.join(extra))
     return errors
+
+
+def physical_csv_contract_errors(csv_bytes: bytes, expected_columns: int, *, sep: str = DEFAULT_SEPARATOR) -> list[str]:
+    """Valida a contagem física de separadores do CSV final.
+
+    A regra é propositalmente rígida: cada linha física deve ter exatamente
+    `expected_columns - 1` separadores. Assim o arquivo que sai do sistema é o
+    mesmo contrato que o Bling vai contar no importador.
+    """
+    if expected_columns <= 0:
+        return []
+    try:
+        text = csv_bytes.decode(DEFAULT_ENCODING)
+    except Exception:
+        text = csv_bytes.decode('utf-8-sig', errors='replace')
+    text = text.replace('\ufeff', '')
+    errors: list[str] = []
+    expected_separators = max(0, expected_columns - 1)
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        if not line:
+            continue
+        current = line.count(sep)
+        if current != expected_separators:
+            errors.append(
+                f'Linha física {line_number} possui {current} separador(es), esperado {expected_separators}. '
+                'Remova ponto e vírgula ou quebras internas antes de importar no Bling.'
+            )
+            if len(errors) >= 10:
+                break
+    return errors
+
+
+def _to_csv_bytes_strict(df: pd.DataFrame, *, sep: str = DEFAULT_SEPARATOR) -> bytes:
+    buffer = StringIO()
+    df.to_csv(
+        buffer,
+        sep=sep,
+        index=False,
+        encoding=DEFAULT_ENCODING,
+        quoting=csv.QUOTE_MINIMAL,
+        lineterminator='\n',
+    )
+    return buffer.getvalue().encode(DEFAULT_ENCODING)
 
 
 def sanitize_final_dataframe(
@@ -227,9 +291,11 @@ def final_csv_bytes(
         explicit_empty_columns=explicit_empty_columns,
         run_download_features=run_download_features,
     )
-    buffer = BytesIO()
-    safe.to_csv(buffer, sep=sep, index=False, encoding=DEFAULT_ENCODING)
-    return buffer.getvalue()
+    csv_bytes = _to_csv_bytes_strict(safe, sep=sep)
+    physical_errors = physical_csv_contract_errors(csv_bytes, len(safe.columns), sep=sep)
+    if physical_errors:
+        raise ValueError('CSV final bloqueado por divergência física de colunas: ' + ' | '.join(physical_errors))
+    return csv_bytes
 
 
 def filename_for_operation(operation: str) -> str:
@@ -260,12 +326,14 @@ def build_final_csv_export(
         explicit_empty_columns=explicit_empty_columns,
         run_download_features=run_download_features,
     )
-    buffer = BytesIO()
-    safe.to_csv(buffer, sep=sep, index=False, encoding=DEFAULT_ENCODING)
+    csv_bytes = _to_csv_bytes_strict(safe, sep=sep)
+    physical_errors = physical_csv_contract_errors(csv_bytes, len(safe.columns), sep=sep)
+    if physical_errors:
+        raise ValueError('CSV final bloqueado por divergência física de colunas: ' + ' | '.join(physical_errors))
     filename = file_name or filename_for_operation(operation)
     return FinalCsvExportResult(
         df=safe,
-        csv_bytes=buffer.getvalue(),
+        csv_bytes=csv_bytes,
         filename=filename,
         operation=str(operation or 'global'),
         columns=tuple(map(str, safe.columns)),
@@ -280,6 +348,7 @@ __all__ = [
     'INTERNAL_COLUMN_PREFIXES',
     'RESPONSIBLE_FILE',
     'build_final_csv_export',
+    'clean_bling_cell_text',
     'clean_columns',
     'clean_explicit_empty_columns',
     'clean_text',
@@ -294,6 +363,7 @@ __all__ = [
     'normalize_dataframe',
     'normalize_image_columns',
     'normalize_image_urls',
+    'physical_csv_contract_errors',
     'sanitize_final_dataframe',
     'validate_contract_identity',
 ]
