@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.final_download_resources import looks_like_image_column, normalize_image_urls
 from bling_app_zero.ui.layout import render_mapping_preview, render_mapping_title
 from bling_app_zero.ui.mapping_confidence_state import confidence_for_selection, manual_confidence
 from bling_app_zero.ui.mapping_constants import (
@@ -20,19 +21,33 @@ from bling_app_zero.ui.mapping_widget_state import (
 )
 
 
-def first_row_preview(df_source: pd.DataFrame, selected_column: str) -> str:
+IMAGE_SEPARATOR_HELP = ' | '
+
+
+def _should_normalize_image_preview(target: str, selected_column: str) -> bool:
+    return looks_like_image_column(target) or looks_like_image_column(selected_column)
+
+
+def first_row_preview(df_source: pd.DataFrame, selected_column: str, target: str = '') -> str:
     selected_column = option_value(selected_column)
     if not selected_column or selected_column not in df_source.columns or df_source.empty:
         return ''
     value = df_source[selected_column].iloc[0]
     text = str(value if value is not None else '').strip()
+    if _should_normalize_image_preview(target, selected_column):
+        normalized = normalize_image_urls(text)
+        if normalized:
+            text = normalized
     if len(text) > 160:
         text = text[:160] + '...'
     return text
 
 
-def render_selected_column_preview(df_source: pd.DataFrame, selected_column: str) -> None:
-    render_mapping_preview(first_row_preview(df_source, selected_column))
+def render_selected_column_preview(df_source: pd.DataFrame, selected_column: str, target: str = '') -> None:
+    preview = first_row_preview(df_source, selected_column, target)
+    render_mapping_preview(preview)
+    if preview and _should_normalize_image_preview(target, selected_column) and '|' in preview:
+        st.caption('Imagens separadas por | no padrão aceito pelo Bling.')
 
 
 def signal_label(target: str, info: dict[str, object]) -> str:
@@ -56,6 +71,12 @@ def render_manual_value_input(target: str, widget_key: str, mapping_key: str) ->
         placeholder='Digite o valor que será repetido no arquivo final',
     )
     manual_value = str(manual_value or '')
+    if looks_like_image_column(target):
+        normalized = normalize_image_urls(manual_value)
+        if normalized and normalized != manual_value:
+            manual_value = normalized
+            st.session_state[value_key] = normalized
+            st.caption('Valor de imagens normalizado com separador |.')
     st.session_state[stable_value_key] = manual_value
     return manual_value
 
@@ -119,7 +140,7 @@ def render_mapping_select(
                 'explicit_empty': True,
             }
         else:
-            render_selected_column_preview(df_source, selected)
+            render_selected_column_preview(df_source, selected, target)
 
     return selected, info_after
 
