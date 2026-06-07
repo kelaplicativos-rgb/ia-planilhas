@@ -121,15 +121,6 @@ def _install_image_client() -> bool:
         return False
 
 
-def _install_verified_sender() -> bool:
-    try:
-        from bling_app_zero.core.verified_sender_runtime import install_verified_sender_runtime
-        return bool(install_verified_sender_runtime())
-    except Exception as exc:
-        add_audit_event('verified_sender_runtime_call_failed', area='BLING_ENVIO', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
-        return False
-
-
 def patch_bling_api_base_urls() -> None:
     global _PATCH_DONE
     changed_modules: list[str] = []
@@ -140,9 +131,9 @@ def patch_bling_api_base_urls() -> None:
     image_client_patched = _install_image_client()
     complete_update_patched = _patch_complete_product_update()
     review_engine_patched = _install_review()
-    verified_sender_patched = _install_verified_sender()
+    verified_sender_patched = False
     if changed_modules or complete_update_patched or review_engine_patched or image_client_patched or verified_sender_patched or not _PATCH_DONE:
-        add_audit_event('bling_api_base_runtime_patch_applied', area='BLING_ENVIO', status='OK' if changed_modules or complete_update_patched or review_engine_patched or image_client_patched or verified_sender_patched else 'SEM_ALTERACAO', details={'changed_modules': changed_modules, 'correct_api_base_url': CORRECT_API_BASE_URL, 'complete_product_update_patched': complete_update_patched, 'review_engine_patched': review_engine_patched, 'image_client_patched': image_client_patched, 'verified_sender_patched': verified_sender_patched, 'create_after_stale_404_enabled': True, 'smart_diff_alias_patch': True, 'api_rebuild_client': 'bling_app_zero/core/bling_v3_product_client.py', 'verified_sender': 'bling_app_zero/core/verified_api_sender.py', 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('bling_api_base_runtime_patch_applied', area='BLING_ENVIO', status='OK' if changed_modules or complete_update_patched or review_engine_patched or image_client_patched or verified_sender_patched else 'SEM_ALTERACAO', details={'changed_modules': changed_modules, 'correct_api_base_url': CORRECT_API_BASE_URL, 'complete_product_update_patched': complete_update_patched, 'review_engine_patched': review_engine_patched, 'image_client_patched': image_client_patched, 'verified_sender_patched': verified_sender_patched, 'verified_sender_runtime_disabled_by_blingfix': True, 'create_after_stale_404_enabled': True, 'smart_diff_alias_patch': True, 'api_rebuild_client': 'bling_app_zero/core/bling_v3_product_client.py', 'verified_sender': 'bling_app_zero/core/bling_intelligent_update_sender.py', 'responsible_file': RESPONSIBLE_FILE})
     _PATCH_DONE = True
 
 
