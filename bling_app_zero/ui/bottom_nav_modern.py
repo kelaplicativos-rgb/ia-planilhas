@@ -47,7 +47,7 @@ def _render_diagnostic_menu() -> None:
     if not bool(st.session_state.get(LOG_MENU_KEY)):
         return
     with st.expander('🧪 Diagnóstico', expanded=True):
-        render_support_diagnostic_panel_content()
+        render_support_diagnostic_panel_content(namespace='bottom_nav')
         st.divider()
         snapshot = build_diagnostic_snapshot(dict(st.session_state))
         st.caption(
