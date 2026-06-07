@@ -28,6 +28,10 @@ PRICE_CALCULATOR_MODE_KEY = 'price_calculator_mode'
 PRICE_CALCULATOR_MODE_WIDGET_KEY = 'price_calculator_mode_select'
 PRICE_CALCULATOR_LEGACY_MODE_KEY = 'global_price_application_mode'
 
+QUICK_MARKET_COST_WIDGET_KEY = 'quick_market_cost'
+QUICK_MARKET_COST_SYNC_KEY = 'quick_market_cost_source_sync_signature'
+QUICK_MARKET_HAS_CALCULATED_KEY = 'quick_market_has_calculated'
+
 # Compatibilidade com estados antigos já salvos no Streamlit Cloud.
 GLOBAL_PRICE_RESULT_KEY = 'global_price_calculator_last_result'
 GLOBAL_PRICE_CONFIG_KEY = 'global_price_calculator_last_config'
@@ -171,6 +175,22 @@ def _render_source_cost_selector(source_df: pd.DataFrame | None) -> tuple[str, D
     return selected, sample_cost
 
 
+def _sync_cost_sample_widget(*, selected_cost_column: str, detected_sample_cost: Decimal) -> None:
+    """Sincroniza a amostra de custo com a coluna selecionada antes de renderizar o widget."""
+    next_cost = float(detected_sample_cost) if detected_sample_cost > 0 else 65.0
+    signature = f'{selected_cost_column}|{next_cost:.6f}'
+    previous_signature = str(st.session_state.get(QUICK_MARKET_COST_SYNC_KEY, '') or '')
+
+    if QUICK_MARKET_COST_WIDGET_KEY not in st.session_state:
+        st.session_state[QUICK_MARKET_COST_WIDGET_KEY] = next_cost
+        st.session_state[QUICK_MARKET_COST_SYNC_KEY] = signature
+        return
+
+    if signature != previous_signature:
+        st.session_state[QUICK_MARKET_COST_WIDGET_KEY] = next_cost
+        st.session_state[QUICK_MARKET_COST_SYNC_KEY] = signature
+
+
 def _render_mode_notice(has_source: bool, calculation_mode: str) -> None:
     if has_source:
         extra = 'Este modo calcula linha a linha.' if calculation_mode != 'fixed_sale_price' else 'Atenção: Preço fixo aplica o mesmo preço em todas as linhas.'
@@ -269,6 +289,7 @@ def render_quick_price_calculator(*, embedded: bool = False, source_df: pd.DataF
         st.caption('Defina os parâmetros para o cálculo')
 
         selected_cost_column, detected_sample_cost = _render_source_cost_selector(source_df)
+        _sync_cost_sample_widget(selected_cost_column=selected_cost_column, detected_sample_cost=detected_sample_cost)
         calculation_mode = _render_calculation_mode_selector(has_source=has_source)
 
         st.markdown('#### Taxas do marketplace')
@@ -278,8 +299,7 @@ def render_quick_price_calculator(*, embedded: bool = False, source_df: pd.DataF
         premium_fee = c_fee_2.number_input('Taxa Premium (%)', min_value=0.0, value=16.5, step=0.5, key='quick_market_premium_fee')
 
         ad_type = st.selectbox('Tipo de taxa / anúncio', list(AD_TYPES), index=0, key='quick_market_ad_type')
-        default_cost = float(detected_sample_cost) if detected_sample_cost > 0 else 65.0
-        cost = st.number_input('Custo do Produto / Amostra', min_value=0.0, value=default_cost, step=1.0, key='quick_market_cost')
+        cost = st.number_input('Custo do Produto / Amostra', min_value=0.0, step=1.0, key=QUICK_MARKET_COST_WIDGET_KEY)
         sale_price = st.number_input('Preço de Venda desejado para a amostra (R$)', min_value=0.0, value=130.0, step=1.0, key='quick_market_sale_price')
         tax_percent = st.number_input('Imposto (%)', min_value=0.0, value=6.0, step=0.5, key='quick_market_tax')
         freight = st.number_input('Custo do Frete (R$)', min_value=0.0, value=0.0, step=1.0, key='quick_market_freight')
@@ -301,15 +321,16 @@ def render_quick_price_calculator(*, embedded: bool = False, source_df: pd.DataF
         )
         result = calculate_global_price(data)
 
-        button_label = '🧮 Calcular e aplicar' if has_source else '🧮 Calcular simulação avulsa'
+        auto_apply_source_calculation = bool(has_source and selected_cost_column)
+        button_label = '🧮 Recalcular e aplicar' if has_source else '🧮 Calcular simulação avulsa'
         clicked = st.button(button_label, use_container_width=True, key='quick_market_calculate')
-        if clicked:
-            st.session_state['quick_market_has_calculated'] = True
+        if clicked or auto_apply_source_calculation:
+            st.session_state[QUICK_MARKET_HAS_CALCULATED_KEY] = True
             st.session_state[PRICE_CALCULATOR_CONFIG_KEY] = data
             st.session_state[GLOBAL_PRICE_CONFIG_KEY] = data
             _save_global_result(result, has_source=has_source, cost_column=selected_cost_column, calculation_mode=calculation_mode)
 
-        if not st.session_state.get('quick_market_has_calculated'):
+        if not st.session_state.get(QUICK_MARKET_HAS_CALCULATED_KEY):
             st.info('Preencha os valores e toque em Calcular para ver a simulação.')
             _render_saved_result_notice()
             return
@@ -333,7 +354,7 @@ def render_quick_price_calculator(*, embedded: bool = False, source_df: pd.DataF
         elif result.profit < 0 and calculation_mode != 'fixed_sale_price':
             st.warning('Atenção: o lucro líquido ficou negativo. Revise custo, preço, frete, imposto ou taxas.')
         elif has_source:
-            st.success('Simulação concluída. O cálculo será aplicado conforme o modo selecionado.')
+            st.success('Precificação pronta. A coluna selecionada já está sincronizada com a amostra e o cálculo seguirá linha a linha no próximo fluxo.')
         else:
             st.success('Simulação avulsa concluída. Quando houver fonte de dados, a calculadora poderá aplicar o preço linha a linha.')
 
@@ -357,5 +378,6 @@ __all__ = [
     'PRICE_CALCULATOR_SAMPLE_PROFIT_KEY',
     'PRICE_CALCULATOR_SAMPLE_SALE_PRICE_KEY',
     'PRICE_CALCULATOR_SOURCE_COST_COLUMN_KEY',
+    'QUICK_MARKET_COST_WIDGET_KEY',
     'render_quick_price_calculator',
 ]
