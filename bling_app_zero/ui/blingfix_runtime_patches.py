@@ -18,7 +18,7 @@ from bling_app_zero.core.interaction_guard import (
 )
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/blingfix_runtime_patches.py'
-_PATCH_INSTALLED_KEY = 'blingfix_runtime_patches_installed_v2'
+_PATCH_INSTALLED_KEY = 'blingfix_runtime_patches_installed_v3'
 MAX_BLING_IMAGES_PER_PRODUCT = 6
 _IMAGE_LIST_KEYS = {'imagens', 'images', 'imagensurl', 'externas', 'externos', 'fotos'}
 
@@ -264,7 +264,7 @@ def _patch_bling_image_limit_guard() -> None:
         original_request = requests.request
         setattr(requests, '_blingfix_original_request', original_request)
 
-    def guarded_request(method: str | bytes, url: object, **kwargs: Any):
+    def guarded_request(method: str | bytes, url: object, *args: Any, **kwargs: Any):
         payload = kwargs.get('json')
         sanitized, removed = _sanitize_bling_request_json(url, payload)
         if removed:
@@ -282,13 +282,13 @@ def _patch_bling_image_limit_guard() -> None:
                     'responsible_file': RESPONSIBLE_FILE,
                 },
             )
-        return original_request(method, url, **kwargs)
+        return original_request(method, url, *args, **kwargs)
 
     requests.request = guarded_request
 
     def _method_wrapper(method_name: str):
-        def wrapped(url: object, **kwargs: Any):
-            return guarded_request(method_name.upper(), url, **kwargs)
+        def wrapped(url: object, *args: Any, **kwargs: Any):
+            return guarded_request(method_name.upper(), url, *args, **kwargs)
         return wrapped
 
     requests.post = _method_wrapper('POST')
@@ -351,7 +351,7 @@ def install_blingfix_runtime_patches() -> None:
     _patch_site_operation_guard()
     _patch_api_batch_operation_guard()
     st.session_state[_PATCH_INSTALLED_KEY] = True
-    add_audit_event('blingfix_runtime_patches_installed', area='APP', status='OK', details={'logout_guard_active': logout_guard_active(), 'api_operation_guard': True, 'bling_image_limit_guard': True, 'max_images_per_product': MAX_BLING_IMAGES_PER_PRODUCT, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('blingfix_runtime_patches_installed', area='APP', status='OK', details={'logout_guard_active': logout_guard_active(), 'api_operation_guard': True, 'bling_image_limit_guard': True, 'max_images_per_product': MAX_BLING_IMAGES_PER_PRODUCT, 'request_wrapper_accepts_args': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_blingfix_runtime_patches']
