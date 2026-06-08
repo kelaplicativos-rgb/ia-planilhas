@@ -8,9 +8,9 @@ import streamlit as st
 
 from bling_app_zero.ui.home_shared import preview_df, read_upload_fast
 
-SUPPORTED_TYPES = ['xlsx', 'xls', 'csv', 'xml', 'pdf', 'xlsm', 'xlsb', 'txt', 'html', 'htm', 'mht', 'mhtml']
+SUPPORTED_TYPES = ['xlsx', 'xls', 'csv', 'xml', 'pdf', 'xlsm', 'xlsb', 'zip', 'txt', 'html', 'htm', 'mht', 'mhtml']
 MODEL_HINTS = ['modelo', 'bling', 'cadastro', 'estoque', 'layout', 'importacao', 'importação']
-SOURCE_HINTS = ['origem', 'fornecedor', 'produtos', 'produto', 'lista', 'base', 'catalogo', 'catálogo', 'xml', 'pdf', 'export', 'html', 'mht', 'mhtml']
+SOURCE_HINTS = ['origem', 'fornecedor', 'produtos', 'produto', 'lista', 'base', 'catalogo', 'catálogo', 'xml', 'pdf', 'export', 'html', 'mht', 'mhtml', 'zip', 'multiloja', 'preco', 'preço']
 SOURCE_MULTI_EXTS = set(SUPPORTED_TYPES)
 
 
@@ -39,7 +39,10 @@ def _file_ext(file: Any) -> str:
 
 def _normalize_types(accepted_types: list[str] | None) -> list[str]:
     values = accepted_types or SUPPORTED_TYPES
-    return [str(value).lower().lstrip('.') for value in values]
+    normalized = [str(value).lower().lstrip('.') for value in values]
+    if 'zip' not in normalized:
+        normalized.append('zip')
+    return normalized
 
 
 def _accepted_label(accepted_types: list[str] | None) -> str:
@@ -89,7 +92,7 @@ def _score_cadastro_model(file: Any, df: pd.DataFrame | None) -> int:
         score += 45
     if any(term in columns for term in ['depósito', 'deposito', 'balanço', 'balanco']):
         score -= 40
-    if _file_ext(file) in ['xml', 'pdf', 'mht', 'mhtml', 'html', 'htm']:
+    if _file_ext(file) in ['xml', 'pdf', 'mht', 'mhtml', 'html', 'htm', 'zip']:
         score -= 80
     return score
 
@@ -110,7 +113,7 @@ def _score_estoque_model(file: Any, df: pd.DataFrame | None) -> int:
         score += 60
     if any(term in columns for term in ['gtin', 'ean', 'ncm', 'marca', 'categoria']):
         score -= 25
-    if _file_ext(file) in ['xml', 'pdf', 'mht', 'mhtml', 'html', 'htm']:
+    if _file_ext(file) in ['xml', 'pdf', 'mht', 'mhtml', 'html', 'htm', 'zip']:
         score -= 80
     return score
 
@@ -123,11 +126,11 @@ def _score_source(file: Any, df: pd.DataFrame | None, operation: str) -> int:
 
     if any(hint in name for hint in SOURCE_HINTS):
         score += 35
-    if ext in ['xml', 'pdf', 'mht', 'mhtml', 'html', 'htm']:
+    if ext in ['xml', 'pdf', 'mht', 'mhtml', 'html', 'htm', 'zip']:
         score += 80
     if operation == 'estoque' and any(term in columns for term in ['quantidade', 'saldo', 'estoque', 'sku', 'codigo', 'código']):
         score += 25
-    if operation == 'cadastro' and any(term in columns for term in ['produto', 'nome', 'descricao', 'descrição', 'preco', 'preço']):
+    if operation in {'cadastro', 'fornecedor', 'atualizacao_preco'} and any(term in columns for term in ['produto', 'nome', 'descricao', 'descrição', 'preco', 'preço', 'idproduto', 'id na loja', 'multiloja']):
         score += 25
     if any(hint in name for hint in MODEL_HINTS):
         score -= 30
@@ -300,8 +303,6 @@ def render_smart_upload_box(
         if result.estoque_model_df is not None:
             with st.expander('Ver modelo de estoque', expanded=False):
                 preview_df('Modelo de estoque', result.estoque_model_df)
-        if required_model and result.model_df is None:
-            st.warning('Ainda não identifiquei o modelo de destino desta operação.')
 
     return result
 
