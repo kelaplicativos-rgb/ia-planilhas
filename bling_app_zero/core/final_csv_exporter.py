@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass
-from io import BytesIO, StringIO
+from io import StringIO
 from typing import Sequence
 
 import pandas as pd
@@ -32,7 +32,6 @@ class FinalCsvExportResult:
 
 
 def _as_list(values: Sequence[object] | None) -> list[object]:
-    """Converte sequências em lista sem avaliar truth value de pandas.Index."""
     if values is None:
         return []
     try:
@@ -50,13 +49,6 @@ def clean_text(value: object) -> str:
 
 
 def clean_bling_cell_text(value: object, *, sep: str = DEFAULT_SEPARATOR) -> str:
-    """Texto seguro para CSV do Bling sem quebrar o contrato físico de colunas.
-
-    O importador do Bling é sensível a delimitadores dentro do conteúdo. Mesmo que
-    pandas gere CSV tecnicamente válido com aspas, o Bling pode contar `;` internos
-    como novas colunas. Por isso os valores das células são normalizados antes do
-    download final. O cabeçalho continua vindo do modelo anexado.
-    """
     text = clean_text(value)
     if not text:
         return ''
@@ -80,13 +72,11 @@ def clean_columns(columns: Sequence[object] | None) -> list[str]:
 
 
 def exact_contract_columns(columns: Sequence[object] | None) -> list[str]:
-    """Preserva o contrato do modelo anexado na ordem exata recebida.
+    """Preserva o cabeçalho do modelo anexado sem deduplicar ou renomear.
 
-    BLINGFIX contrato bytes:
-    - o download final não deve criar, remover nem reordenar colunas;
-    - quando o fluxo fornece colunas do modelo anexado, elas são a fonte da verdade;
-    - não aplicamos deduplicação nem normalização agressiva no cabeçalho explícito,
-      porque o contrato precisa acompanhar o modelo usado pelo usuário.
+    Esta função é a fonte da verdade para o lema do sistema: o modelo anexado
+    define o contrato de saída. Apenas caracteres físicos impossíveis para CSV
+    são removidos; espaços internos e nomes do usuário são preservados.
     """
     if columns is None:
         return []
@@ -116,25 +106,26 @@ def drop_internal_columns(df: pd.DataFrame, prefixes: Sequence[str] = INTERNAL_C
     return df.drop(columns=internal, errors='ignore') if internal else df
 
 
-def normalize_dataframe(df: pd.DataFrame | None, *, keep_internal: bool = False) -> pd.DataFrame:
+def normalize_dataframe(df: pd.DataFrame | None, *, keep_internal: bool = False, preserve_columns: bool = False) -> pd.DataFrame:
+    """Normaliza valores sem quebrar o cabeçalho contratado.
+
+    Quando `preserve_columns=True`, os nomes das colunas não são limpos nem
+    deduplicados. Isso evita que um modelo de marketplace com cabeçalho próprio
+    perca autenticidade no download final.
+    """
     if not isinstance(df, pd.DataFrame):
         return pd.DataFrame()
     out = df.copy().fillna('')
     if not keep_internal:
         out = drop_internal_columns(out)
-    out.columns = [clean_text(column) for column in out.columns]
+    if not preserve_columns:
+        out.columns = [clean_text(column) for column in out.columns]
     for column in out.columns:
         out[column] = out[column].map(clean_bling_cell_text)
     return out.fillna('')
 
 
 def normalize_image_columns(df: pd.DataFrame | None) -> pd.DataFrame:
-    """Aplica a regra global do Bling antes do preview, download e envio.
-
-    O Bling bloqueia produtos com mais de 6 imagens. Por isso a mesma trava que
-    existe na chamada API também precisa existir na planilha final: o usuário já
-    vê no preview exatamente o que será baixado/enviado.
-    """
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame() if df is None else df
     out = df.copy().fillna('')
@@ -167,7 +158,8 @@ def enforce_contract(df: pd.DataFrame | None, contract_columns: Sequence[object]
     columns = contract_from_df(None, contract_columns)
     if not isinstance(df, pd.DataFrame):
         return pd.DataFrame(columns=columns)
-    out = normalize_dataframe(df, keep_internal=False)
+    preserve = bool(columns)
+    out = normalize_dataframe(df, keep_internal=False, preserve_columns=preserve)
     if not columns:
         return out
     return out.reindex(columns=columns, fill_value='').fillna('')
@@ -182,7 +174,7 @@ def validate_contract_identity(df: pd.DataFrame | None, contract_columns: Sequen
     output_columns = exact_contract_columns(df.columns)
     errors: list[str] = []
     if output_columns != contract:
-        errors.append('A planilha final não está byte-a-byte fiel ao contrato de colunas do modelo anexado.')
+        errors.append('A planilha final não está fiel ao contrato de colunas do modelo anexado.')
     missing = [column for column in contract if column not in output_columns]
     extra = [column for column in output_columns if column not in contract]
     if missing:
@@ -193,12 +185,6 @@ def validate_contract_identity(df: pd.DataFrame | None, contract_columns: Sequen
 
 
 def physical_csv_contract_errors(csv_bytes: bytes, expected_columns: int, *, sep: str = DEFAULT_SEPARATOR) -> list[str]:
-    """Valida a contagem física de separadores do CSV final.
-
-    A regra é propositalmente rígida: cada linha física deve ter exatamente
-    `expected_columns - 1` separadores. Assim o arquivo que sai do sistema é o
-    mesmo contrato que o Bling vai contar no importador.
-    """
     if expected_columns <= 0:
         return []
     try:
@@ -215,7 +201,7 @@ def physical_csv_contract_errors(csv_bytes: bytes, expected_columns: int, *, sep
         if current != expected_separators:
             errors.append(
                 f'Linha física {line_number} possui {current} separador(es), esperado {expected_separators}. '
-                'Remova ponto e vírgula ou quebras internas antes de importar no Bling.'
+                'Remova ponto e vírgula ou quebras internas antes de importar.'
             )
             if len(errors) >= 10:
                 break
@@ -224,14 +210,7 @@ def physical_csv_contract_errors(csv_bytes: bytes, expected_columns: int, *, sep
 
 def _to_csv_bytes_strict(df: pd.DataFrame, *, sep: str = DEFAULT_SEPARATOR) -> bytes:
     buffer = StringIO()
-    df.to_csv(
-        buffer,
-        sep=sep,
-        index=False,
-        encoding=DEFAULT_ENCODING,
-        quoting=csv.QUOTE_MINIMAL,
-        lineterminator='\n',
-    )
+    df.to_csv(buffer, sep=sep, index=False, encoding=DEFAULT_ENCODING, quoting=csv.QUOTE_MINIMAL, lineterminator='\n')
     return buffer.getvalue().encode(DEFAULT_ENCODING)
 
 
@@ -243,18 +222,12 @@ def sanitize_final_dataframe(
     explicit_empty_columns: Sequence[object] | None = None,
     run_download_features: bool = True,
 ) -> pd.DataFrame:
-    """Blindagem única antes do CSV final dos fluxos Bling.
-
-    Quando `contract_columns` é informado, esse contrato vem do modelo usado no
-    fluxo e passa a mandar no download final: mesmas colunas, mesma ordem e sem
-    colunas extras. As features de download podem limpar valores, mas ao final o
-    contrato é reaplicado obrigatoriamente.
-    """
     if df is None:
         return enforce_contract(None, contract_columns)
 
-    input_df = normalize_image_columns(normalize_dataframe(df, keep_internal=False))
-    contract = contract_from_df(input_df, contract_columns)
+    contract = contract_from_df(df, contract_columns)
+    preserve = bool(contract)
+    input_df = normalize_image_columns(normalize_dataframe(df, keep_internal=False, preserve_columns=preserve))
     protected_empty = clean_explicit_empty_columns(explicit_empty_columns)
     input_df = force_empty_columns(input_df, protected_empty)
 
@@ -264,14 +237,11 @@ def sanitize_final_dataframe(
             operation=str(operation or 'global').strip().lower() or 'global',
             stage='download',
             final_df=input_df.copy().fillna(''),
-            config={
-                'contract_columns': list(contract),
-                'explicit_empty_columns': sorted(protected_empty),
-            },
+            config={'contract_columns': list(contract), 'explicit_empty_columns': sorted(protected_empty)},
         )
         safe = context.final_df if isinstance(getattr(context, 'final_df', None), pd.DataFrame) else input_df
 
-    safe = normalize_image_columns(force_empty_columns(normalize_dataframe(safe, keep_internal=False), protected_empty))
+    safe = normalize_image_columns(force_empty_columns(normalize_dataframe(safe, keep_internal=False, preserve_columns=preserve), protected_empty))
     return enforce_contract(safe, contract)
 
 
@@ -284,13 +254,7 @@ def final_csv_bytes(
     sep: str = DEFAULT_SEPARATOR,
     run_download_features: bool = True,
 ) -> bytes:
-    safe = sanitize_final_dataframe(
-        df,
-        operation=operation,
-        contract_columns=contract_columns,
-        explicit_empty_columns=explicit_empty_columns,
-        run_download_features=run_download_features,
-    )
+    safe = sanitize_final_dataframe(df, operation=operation, contract_columns=contract_columns, explicit_empty_columns=explicit_empty_columns, run_download_features=run_download_features)
     csv_bytes = _to_csv_bytes_strict(safe, sep=sep)
     physical_errors = physical_csv_contract_errors(csv_bytes, len(safe.columns), sep=sep)
     if physical_errors:
@@ -319,50 +283,29 @@ def build_final_csv_export(
     sep: str = DEFAULT_SEPARATOR,
     run_download_features: bool = True,
 ) -> FinalCsvExportResult:
-    safe = sanitize_final_dataframe(
-        df,
-        operation=operation,
-        contract_columns=contract_columns,
-        explicit_empty_columns=explicit_empty_columns,
-        run_download_features=run_download_features,
-    )
+    safe = sanitize_final_dataframe(df, operation=operation, contract_columns=contract_columns, explicit_empty_columns=explicit_empty_columns, run_download_features=run_download_features)
     csv_bytes = _to_csv_bytes_strict(safe, sep=sep)
     physical_errors = physical_csv_contract_errors(csv_bytes, len(safe.columns), sep=sep)
     if physical_errors:
         raise ValueError('CSV final bloqueado por divergência física de colunas: ' + ' | '.join(physical_errors))
     filename = file_name or filename_for_operation(operation)
-    return FinalCsvExportResult(
-        df=safe,
-        csv_bytes=csv_bytes,
-        filename=filename,
-        operation=str(operation or 'global'),
-        columns=tuple(map(str, safe.columns)),
-        rows=len(safe),
-    )
+    return FinalCsvExportResult(df=safe, csv_bytes=csv_bytes, filename=filename, operation=str(operation or 'global'), columns=tuple(map(str, safe.columns)), rows=int(len(safe)))
 
 
 __all__ = [
     'DEFAULT_ENCODING',
     'DEFAULT_SEPARATOR',
     'FinalCsvExportResult',
-    'INTERNAL_COLUMN_PREFIXES',
-    'RESPONSIBLE_FILE',
     'build_final_csv_export',
     'clean_bling_cell_text',
     'clean_columns',
-    'clean_explicit_empty_columns',
     'clean_text',
     'contract_columns_from_model',
     'contract_from_df',
-    'drop_internal_columns',
     'enforce_contract',
     'exact_contract_columns',
-    'filename_for_operation',
     'final_csv_bytes',
-    'force_empty_columns',
-    'normalize_dataframe',
-    'normalize_image_columns',
-    'normalize_image_urls',
+    'filename_for_operation',
     'physical_csv_contract_errors',
     'sanitize_final_dataframe',
     'validate_contract_identity',
