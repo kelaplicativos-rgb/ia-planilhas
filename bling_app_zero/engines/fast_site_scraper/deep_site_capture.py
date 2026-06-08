@@ -116,6 +116,61 @@ def _time_left(started: float, budget_seconds: float) -> float:
     return max(0.0, float(budget_seconds) - (time.perf_counter() - started))
 
 
+def _elapsed_seconds(started: float) -> int:
+    return max(0, int(time.perf_counter() - started))
+
+
+def _discovery_progress(*, visited: int, products: int, max_pages: int, max_products: int) -> float:
+    page_ratio = min(1.0, float(visited) / max(max_pages, 1))
+    product_ratio = min(1.0, float(products) / max(max_products, 1))
+    return min(0.86, 0.12 + (0.50 * page_ratio) + (0.24 * product_ratio))
+
+
+def _build_progress_payload(
+    *,
+    started: float,
+    stage: str,
+    message: str,
+    visited: int,
+    scanned_pages: int,
+    products: list[str],
+    queue_size: int,
+    max_pages: int,
+    max_products: int,
+    max_depth: int,
+    budget_seconds: float,
+    flow_mode: bool,
+    current_url: str = '',
+    progress: float | None = None,
+    links_found_on_page: int = 0,
+    ignored_external: int = 0,
+) -> dict:
+    percent = _discovery_progress(visited=visited, products=len(products), max_pages=max_pages, max_products=max_products)
+    return {
+        'stage': stage,
+        'message': message,
+        'progress': percent if progress is None else progress,
+        'visited_pages': visited,
+        'scanned_pages': scanned_pages,
+        'processed': scanned_pages,
+        'found_products': len(products),
+        'urls_found': len(products),
+        'rows': len(products),
+        'queued_pages': queue_size,
+        'current_url': current_url,
+        'max_pages': max_pages,
+        'max_products': max_products,
+        'max_depth': max_depth,
+        'safe_limited': True,
+        'flow_mode': flow_mode,
+        'seconds_left': round(_time_left(started, budget_seconds), 1),
+        'elapsed_seconds': _elapsed_seconds(started),
+        'links_found_on_page': links_found_on_page,
+        'ignored_external_links': ignored_external,
+        'responsible_file': RESPONSIBLE_FILE,
+    }
+
+
 def _all_starts_are_product_pages(starts: list[str]) -> bool:
     return bool(starts) and all(productish_url(url) for url in starts)
 
@@ -131,9 +186,8 @@ def discover_deep_product_urls(
 ) -> DeepCaptureResult:
     """Expande um domínio/categoria em links prováveis de produto sem travar o app.
 
-    BLINGFIX: se todos os links informados já forem páginas de produto, a busca
-    profunda não deve abrir o site inteiro. Nesse caso, preserva exatamente os
-    links informados e devolve varredura zerada.
+    BLINGFIX: emite progresso minucioso antes e depois de cada página aberta,
+    para a tela não ficar parada durante varreduras profundas ou lotes pesados.
     """
     started = time.perf_counter()
     starts = [norm_url(url) for url in split_urls(raw_urls) if norm_url(url)]
@@ -148,7 +202,11 @@ def discover_deep_product_urls(
             'message': f'{len(limited)} link(s) direto(s) de produto recebido(s). Varredura profunda bloqueada para não abrir o site inteiro.',
             'progress': 0.88,
             'visited_pages': 0,
+            'scanned_pages': 0,
+            'processed': 0,
             'found_products': len(limited),
+            'urls_found': len(limited),
+            'rows': len(limited),
             'max_pages': 0,
             'max_products': len(limited),
             'max_depth': 0,
@@ -156,6 +214,8 @@ def discover_deep_product_urls(
             'flow_mode': 'product_detail_urls_only',
             'stopped_by_budget': False,
             'stop_reason': 'Entrada já era página de produto; deep crawler não executado.',
+            'elapsed_seconds': _elapsed_seconds(started),
+            'responsible_file': RESPONSIBLE_FILE,
         })
         add_audit_event(
             'site_deep_capture_product_url_scope_locked',
@@ -193,12 +253,21 @@ def discover_deep_product_urls(
         'stage': 'Captura profunda controlada',
         'message': f'Expandindo site com limite seguro de {max_pages} página(s), {max_products} produto(s), profundidade {max_depth} e orçamento de {int(budget_seconds)}s.',
         'progress': 0.10,
+        'visited_pages': 0,
+        'scanned_pages': 0,
+        'processed': 0,
+        'found_products': 0,
+        'urls_found': 0,
+        'rows': 0,
+        'queued_pages': len(starts),
         'max_pages': max_pages,
         'max_products': max_products,
         'max_depth': max_depth,
         'safe_limited': True,
         'flow_mode': flow_mode,
         'budget_seconds': int(budget_seconds),
+        'elapsed_seconds': 0,
+        'responsible_file': RESPONSIBLE_FILE,
     })
 
     queue: deque[tuple[str, int]] = deque((url, 0) for url in starts)
@@ -221,8 +290,39 @@ def discover_deep_product_urls(
             continue
         visited.add(url)
 
+        _emit(progress_callback, _build_progress_payload(
+            started=started,
+            stage='Lendo página do site',
+            message=f'Abrindo página {len(visited)}/{max_pages}. Produtos localizados até agora: {len(products)}.',
+            visited=len(visited),
+            scanned_pages=scanned_pages,
+            products=products,
+            queue_size=len(queue),
+            max_pages=max_pages,
+            max_products=max_products,
+            max_depth=max_depth,
+            budget_seconds=budget_seconds,
+            flow_mode=flow_mode,
+            current_url=url,
+        ))
+
         if productish_url(url) and url not in products:
             products.append(url)
+            _emit(progress_callback, _build_progress_payload(
+                started=started,
+                stage='Produto localizado',
+                message=f'Produto provável localizado: {len(products)}/{max_products}.',
+                visited=len(visited),
+                scanned_pages=scanned_pages,
+                products=products,
+                queue_size=len(queue),
+                max_pages=max_pages,
+                max_products=max_products,
+                max_depth=max_depth,
+                budget_seconds=budget_seconds,
+                flow_mode=flow_mode,
+                current_url=url,
+            ))
             if len(products) >= max_products:
                 break
 
@@ -233,10 +333,26 @@ def discover_deep_product_urls(
         html = fetch_live(url, timeout=fetch_timeout)
         scanned_pages += 1
         if not html:
+            _emit(progress_callback, _build_progress_payload(
+                started=started,
+                stage='Página sem resposta útil',
+                message=f'Página {len(visited)}/{max_pages} não retornou conteúdo aproveitável. Continuando.',
+                visited=len(visited),
+                scanned_pages=scanned_pages,
+                products=products,
+                queue_size=len(queue),
+                max_pages=max_pages,
+                max_products=max_products,
+                max_depth=max_depth,
+                budget_seconds=budget_seconds,
+                flow_mode=flow_mode,
+                current_url=url,
+            ))
             continue
 
         links, ignored = _links_from_html(url, html)
         ignored_external += ignored
+        found_before = len(products)
         for link in links:
             if len(products) >= max_products:
                 break
@@ -250,29 +366,69 @@ def discover_deep_product_urls(
                 queued.add(link)
                 queue.append((link, depth + 1))
 
-        if scanned_pages % 8 == 0 or len(products) >= max_products:
-            ratio = min(0.82, 0.12 + (0.70 * (len(visited) / max(max_pages, 1))))
-            _emit(progress_callback, {
-                'stage': 'Captura profunda controlada',
-                'message': f'{len(visited)} página(s) varrida(s), {len(products)} produto(s) provável(is) encontrado(s).',
-                'progress': ratio,
-                'visited_pages': len(visited),
-                'found_products': len(products),
-                'queued_pages': len(queue),
-                'safe_limited': True,
-                'flow_mode': flow_mode,
-                'seconds_left': round(_time_left(started, budget_seconds), 1),
-            })
+        found_on_page = max(0, len(products) - found_before)
+        _emit(progress_callback, _build_progress_payload(
+            started=started,
+            stage='Página analisada',
+            message=(
+                f'Página {len(visited)}/{max_pages} analisada. '
+                f'{len(products)}/{max_products} produto(s), {len(queue)} página(s) na fila.'
+            ),
+            visited=len(visited),
+            scanned_pages=scanned_pages,
+            products=products,
+            queue_size=len(queue),
+            max_pages=max_pages,
+            max_products=max_products,
+            max_depth=max_depth,
+            budget_seconds=budget_seconds,
+            flow_mode=flow_mode,
+            current_url=url,
+            links_found_on_page=found_on_page,
+            ignored_external=ignored_external,
+        ))
 
     if len(products) < max_products and _time_left(started, budget_seconds) > 5:
         feed_budget = min(max_products - len(products), 250)
+        _emit(progress_callback, _build_progress_payload(
+            started=started,
+            stage='Busca em feeds do site',
+            message=f'Complementando com feeds/sitemap. Restam até {feed_budget} produto(s).',
+            visited=len(visited),
+            scanned_pages=scanned_pages,
+            products=products,
+            queue_size=len(queue),
+            max_pages=max_pages,
+            max_products=max_products,
+            max_depth=max_depth,
+            budget_seconds=budget_seconds,
+            flow_mode=flow_mode,
+            progress=0.87,
+        ))
         try:
             feed_urls = discover_from_feeds(starts, max_products=feed_budget)
         except Exception:
             feed_urls = []
-        for link in feed_urls:
+        for index, link in enumerate(feed_urls, start=1):
             if link not in products:
                 products.append(link)
+                if index == 1 or index % 25 == 0 or len(products) >= max_products:
+                    _emit(progress_callback, _build_progress_payload(
+                        started=started,
+                        stage='Feeds/sitemap analisados',
+                        message=f'{len(products)}/{max_products} produto(s) preparado(s) após feeds/sitemap.',
+                        visited=len(visited),
+                        scanned_pages=scanned_pages,
+                        products=products,
+                        queue_size=len(queue),
+                        max_pages=max_pages,
+                        max_products=max_products,
+                        max_depth=max_depth,
+                        budget_seconds=budget_seconds,
+                        flow_mode=flow_mode,
+                        current_url=link,
+                        progress=0.87,
+                    ))
                 if len(products) >= max_products:
                     break
 
@@ -299,7 +455,12 @@ def discover_deep_product_urls(
         'message': f'{len(products)} link(s) de produto preparado(s). {stop_reason}'.strip(),
         'progress': 0.88,
         'visited_pages': len(visited),
+        'scanned_pages': scanned_pages,
+        'processed': scanned_pages,
         'found_products': len(products),
+        'urls_found': len(products),
+        'rows': len(products),
+        'queued_pages': len(queue),
         'max_pages': max_pages,
         'max_products': max_products,
         'max_depth': max_depth,
@@ -307,6 +468,8 @@ def discover_deep_product_urls(
         'flow_mode': flow_mode,
         'stopped_by_budget': stopped_by_budget,
         'stop_reason': stop_reason,
+        'elapsed_seconds': _elapsed_seconds(started),
+        'responsible_file': RESPONSIBLE_FILE,
     })
 
     return DeepCaptureResult(
