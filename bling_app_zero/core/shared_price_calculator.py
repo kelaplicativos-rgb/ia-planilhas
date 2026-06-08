@@ -18,6 +18,8 @@ from bling_app_zero.v2.marketplace_calculator import (
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/shared_price_calculator.py'
 DEFAULT_CHANNEL = 'cadastro_estoque_compartilhado'
+PRICE_OUTPUT_COLUMN = 'Preço de venda'
+PROMO_PRICE_OUTPUT_COLUMN = 'Preço promocional'
 
 
 @dataclass(frozen=True)
@@ -75,7 +77,7 @@ def normalize_shared_price_config(raw: dict[str, Any] | None) -> dict[str, Any]:
         desired_sale_price=_float(raw.get('desired_sale_price', 0.0)),
         supplier_term_days=_float(raw.get('supplier_term_days', 0.0)),
         stock_turnover_days=_float(raw.get('stock_turnover_days', 0.0)),
-        promo_discount_percent=_float(raw.get('promo_discount_percent', 0.0)),
+        promo_discount_percent=max(0.0, _float(raw.get('promo_discount_percent', 0.0))),
         marketplace_rule_type=str(raw.get('marketplace_rule_type') or 'standard'),
         marketplace_threshold=_float(raw.get('marketplace_threshold', 0.0)),
         marketplace_fixed_fee=_float(raw.get('marketplace_fixed_fee', 0.0)),
@@ -127,28 +129,46 @@ def _rule(config: dict[str, Any], channel: str = DEFAULT_CHANNEL) -> Marketplace
     )
 
 
-def calculate_shared_price(cost: Any, config: dict[str, Any] | None, channel: str = DEFAULT_CHANNEL) -> str:
+def calculate_shared_price_decimal(cost: Any, config: dict[str, Any] | None, channel: str = DEFAULT_CHANNEL) -> Decimal:
     normalized = normalize_shared_price_config(config)
     inputs = _inputs(cost, normalized)
     rule = _rule(normalized, channel)
     mode = str(normalized.get('calculator_mode') or 'nominal_profit')
     if inputs.product_cost <= Decimal('0') and mode != 'fixed_sale_price':
-        return ''
+        return Decimal('0')
     if mode == 'contribution_margin':
         result = price_by_contribution_margin(inputs, rule)
     elif mode == 'fixed_sale_price':
         result = simulate_by_fixed_sale_price(inputs, rule)
     else:
         result = price_by_nominal_profit(inputs, rule)
-    return money(result.sale_price)
+    return result.sale_price
+
+
+def calculate_shared_price(cost: Any, config: dict[str, Any] | None, channel: str = DEFAULT_CHANNEL) -> str:
+    value = calculate_shared_price_decimal(cost, config, channel)
+    return money(value) if value > Decimal('0') else ''
+
+
+def calculate_promotional_price_from_sale(sale_price: Any, config: dict[str, Any] | None) -> str:
+    normalized = normalize_shared_price_config(config)
+    discount = D(normalized.get('promo_discount_percent', 0))
+    sale = D(sale_price)
+    if sale <= Decimal('0') or discount <= Decimal('0'):
+        return ''
+    promo = sale * (Decimal('1') - (discount / Decimal('100')))
+    if promo <= Decimal('0'):
+        return ''
+    return money(promo)
 
 
 def apply_shared_pricing(
     df: pd.DataFrame,
     cost_column: str,
-    output_column: str = 'Preço de venda',
+    output_column: str = PRICE_OUTPUT_COLUMN,
     config: dict[str, Any] | None = None,
     channel: str = DEFAULT_CHANNEL,
+    promo_output_column: str = PROMO_PRICE_OUTPUT_COLUMN,
 ) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame):
         return pd.DataFrame()
@@ -156,14 +176,24 @@ def apply_shared_pricing(
         return df.copy().fillna('')
     normalized = normalize_shared_price_config(config)
     out = df.copy().fillna('')
-    out[output_column] = out[cost_column].apply(lambda value: calculate_shared_price(value, normalized, channel))
+    sale_values = out[cost_column].apply(lambda value: calculate_shared_price_decimal(value, normalized, channel))
+    out[output_column] = sale_values.apply(lambda value: money(value) if value > Decimal('0') else '')
+    promo_discount = D(normalized.get('promo_discount_percent', 0))
+    if promo_discount > Decimal('0'):
+        out[promo_output_column] = sale_values.apply(lambda value: calculate_promotional_price_from_sale(value, normalized))
+    else:
+        out[promo_output_column] = ''
     return out
 
 
 __all__ = [
     'DEFAULT_CHANNEL',
+    'PRICE_OUTPUT_COLUMN',
+    'PROMO_PRICE_OUTPUT_COLUMN',
     'SharedPriceConfig',
     'apply_shared_pricing',
+    'calculate_promotional_price_from_sale',
     'calculate_shared_price',
+    'calculate_shared_price_decimal',
     'normalize_shared_price_config',
 ]
