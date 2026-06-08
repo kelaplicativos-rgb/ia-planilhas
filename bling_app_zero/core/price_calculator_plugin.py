@@ -5,6 +5,7 @@ from typing import Any, Iterable
 
 import pandas as pd
 
+from bling_app_zero.core.easy_reprice import calc_easy_promo_price, calc_easy_sale_price, money_or_empty
 from bling_app_zero.core.shared_price_calculator import (
     PRICE_OUTPUT_COLUMN,
     PROMO_PRICE_OUTPUT_COLUMN,
@@ -29,16 +30,7 @@ PROMO_PRICE_TARGET_ALIASES = [
     'preço_promocional',
 ]
 
-COST_STRONG_TERMS = [
-    'preço custo',
-    'preco custo',
-    'valor custo',
-    'custo',
-    'cost',
-    'preco compra',
-    'preço compra',
-    'valor compra',
-]
+COST_STRONG_TERMS = ['preço custo', 'preco custo', 'valor custo', 'custo', 'cost', 'preco compra', 'preço compra', 'valor compra']
 COST_WEAK_TERMS = ['valor produto', 'valor', 'preço', 'preco', 'price']
 BAD_COST_TERMS = ['venda', 'unitario', 'unitário', 'marketplace', 'comissao', 'comissão', 'taxa', 'lucro', 'promocional']
 
@@ -87,17 +79,22 @@ def apply_price_aliases(df: pd.DataFrame, calculated_column: str = PRICE_OUTPUT_
     return out
 
 
-def apply_promotional_price_aliases(
-    df: pd.DataFrame,
-    calculated_column: str = PROMO_PRICE_OUTPUT_COLUMN,
-    aliases: Iterable[str] | None = None,
-) -> pd.DataFrame:
+def apply_promotional_price_aliases(df: pd.DataFrame, calculated_column: str = PROMO_PRICE_OUTPUT_COLUMN, aliases: Iterable[str] | None = None) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame) or df.empty or calculated_column not in df.columns:
         return df
     out = df.copy().fillna('')
     calculated_values = out[calculated_column]
     for column in list(aliases or PROMO_PRICE_TARGET_ALIASES):
         out[str(column)] = calculated_values
+    return out
+
+
+def _apply_easy_pricing(df: pd.DataFrame, cost_column: str, output_column: str, promo_output_column: str, config: dict[str, Any]) -> pd.DataFrame:
+    out = df.copy().fillna('')
+    sale_values = out[cost_column].apply(lambda value: calc_easy_sale_price(value, config))
+    promo_percent = config.get('promo_discount_percent', 0)
+    out[output_column] = sale_values.apply(money_or_empty)
+    out[promo_output_column] = sale_values.apply(lambda value: money_or_empty(calc_easy_promo_price(value, promo_percent))) if float(promo_percent or 0) > 0 else ''
     return out
 
 
@@ -113,15 +110,6 @@ def apply_price_calculator_plugin(
     promo_output_column: str = PROMO_PRICE_OUTPUT_COLUMN,
     promo_aliases: Iterable[str] | None = None,
 ) -> PricePluginResult:
-    """Aplica a calculadora como plugin universal.
-
-    Contrato do plugin:
-    - não pertence a cadastro, estoque ou atualização de preços;
-    - recebe DataFrame, configuração, coluna de custo e canal lógico;
-    - se `enabled` for falso, devolve a origem intacta;
-    - se `cost_column` não vier, detecta a melhor coluna de custo;
-    - cria uma coluna de preço de venda, uma de preço promocional e aliases opcionais para facilitar mapeamento.
-    """
     if not isinstance(df, pd.DataFrame) or df.empty:
         return PricePluginResult(df=df, applied=False, message='Origem vazia ou inválida.')
 
@@ -135,24 +123,13 @@ def apply_price_calculator_plugin(
     if not selected_cost_column or selected_cost_column not in out.columns:
         return PricePluginResult(df=out, applied=False, message='Coluna de custo não encontrada.')
 
-    priced = apply_shared_pricing(
-        out,
-        cost_column=selected_cost_column,
-        output_column=output_column,
-        config=normalized_config,
-        channel=channel,
-        promo_output_column=promo_output_column,
-    )
+    if str(normalized_config.get('quick_reprice_mode') or '') in {'markup', 'net_margin'}:
+        priced = _apply_easy_pricing(out, selected_cost_column, output_column, promo_output_column, normalized_config)
+    else:
+        priced = apply_shared_pricing(out, cost_column=selected_cost_column, output_column=output_column, config=normalized_config, channel=channel, promo_output_column=promo_output_column)
     priced = apply_price_aliases(priced, output_column, aliases)
     priced = apply_promotional_price_aliases(priced, promo_output_column, promo_aliases)
-    return PricePluginResult(
-        df=priced,
-        applied=True,
-        source_column=selected_cost_column,
-        output_column=output_column,
-        promo_output_column=promo_output_column,
-        message=f'Calculadora aplicada usando a coluna "{selected_cost_column}".',
-    )
+    return PricePluginResult(df=priced, applied=True, source_column=selected_cost_column, output_column=output_column, promo_output_column=promo_output_column, message=f'Calculadora aplicada usando a coluna "{selected_cost_column}".')
 
 
 __all__ = [
