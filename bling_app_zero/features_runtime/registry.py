@@ -135,28 +135,69 @@ CONTRACTS: dict[tuple[str, str], FeatureContract] = {
 }
 
 OPERATION_ALIASES = {
-    'produto': 'cadastro',
-    'produtos': 'cadastro',
-    'stock': 'estoque',
-    'atualizacao_estoque': 'estoque',
-    'atualização de estoque': 'estoque',
-    'preco': 'atualizacao_preco',
-    'preço': 'atualizacao_preco',
-    'price': 'atualizacao_preco',
-    'atualizacao_preco': 'atualizacao_preco',
-    'atualização de preço': 'atualizacao_preco',
-    'atualização de preços': 'atualizacao_preco',
+    '': 'universal',
     'modelo': 'universal',
+    'modelo final': 'universal',
+    'modelo_final': 'universal',
     'modelo_destino': 'universal',
     'planilha': 'universal',
-    '': 'universal',
+    'csv': 'universal',
+    'universal': 'universal',
+    'wizard_cadastro_estoque': 'universal',
+
+    'cadastro': 'cadastro',
+    'cadastrar': 'cadastro',
+    'produto': 'cadastro',
+    'produtos': 'cadastro',
+    'new_product': 'cadastro',
+    'create_product': 'cadastro',
+    'cadastro_produto': 'cadastro',
+    'cadastro_produtos': 'cadastro',
+    'cadastro de produto': 'cadastro',
+    'cadastro de produtos': 'cadastro',
+
+    'estoque': 'estoque',
+    'stock': 'estoque',
+    'saldo': 'estoque',
+    'saldos': 'estoque',
+    'quantidade': 'estoque',
+    'quantidades': 'estoque',
+    'atualizacao_estoque': 'estoque',
+    'atualização_estoque': 'estoque',
+    'atualizar_estoque': 'estoque',
+    'atualizar estoque': 'estoque',
+    'atualização de estoque': 'estoque',
+    'atualizacao de estoque': 'estoque',
+
+    'atualizacao_preco': 'atualizacao_preco',
+    'atualizacao_precos': 'atualizacao_preco',
+    'atualização_preço': 'atualizacao_preco',
+    'atualização_preços': 'atualizacao_preco',
+    'atualização_precos': 'atualizacao_preco',
+    'atualizar_preco': 'atualizacao_preco',
+    'atualizar_precos': 'atualizacao_preco',
+    'atualizar preço': 'atualizacao_preco',
+    'atualizar preços': 'atualizacao_preco',
+    'atualizacao de preco': 'atualizacao_preco',
+    'atualizacao de precos': 'atualizacao_preco',
+    'atualização de preço': 'atualizacao_preco',
+    'atualização de preços': 'atualizacao_preco',
+    'preco': 'atualizacao_preco',
+    'preço': 'atualizacao_preco',
+    'precos': 'atualizacao_preco',
+    'preços': 'atualizacao_preco',
+    'price': 'atualizacao_preco',
+    'prices': 'atualizacao_preco',
 }
 
 MODE_ALIASES = {
     'api_direct': 'api',
     'api': 'api',
+    'bling': 'api',
     'bling_api': 'api',
+    'api_bling': 'api',
     'csv_download': 'csv',
+    'download': 'csv',
     'csv': 'csv',
     'planilha': 'csv',
     'universal': 'csv',
@@ -166,7 +207,7 @@ MODE_ALIASES = {
 
 def normalize_operation(value: object) -> str:
     text = str(value or '').strip().lower()
-    if text in {'cadastro', 'estoque', 'universal'}:
+    if text in {'cadastro', 'estoque', 'atualizacao_preco', 'universal'}:
         return text
     return OPERATION_ALIASES.get(text, 'universal')
 
@@ -196,6 +237,8 @@ __all__ = [
     'CSV_PRODUCT_STEPS',
     'CSV_STOCK_STEPS',
     'CONTRACTS',
+    'MODE_ALIASES',
+    'OPERATION_ALIASES',
     'STEP_DOWNLOAD',
     'STEP_ENTRADA',
     'STEP_MAPEAMENTO',
