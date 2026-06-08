@@ -11,6 +11,7 @@ from bling_app_zero.v2.price_multistore.quick_ui import (
     GLOBAL_PRICE_READY_KEY,
     GLOBAL_PRICE_RESULT_KEY,
     PRICE_CALCULATOR_MODE_KEY,
+    PRICE_CALCULATOR_PROMO_DISCOUNT_KEY,
     PRICE_CALCULATOR_READY_KEY,
     PRICE_CALCULATOR_RESULT_KEY,
     render_quick_price_calculator,
@@ -118,11 +119,19 @@ def _calculator_ready() -> bool:
     return bool(st.session_state.get(PRICE_CALCULATOR_READY_KEY, st.session_state.get(GLOBAL_PRICE_READY_KEY, False)))
 
 
+def _promo_discount_from_state() -> float:
+    try:
+        return max(0.0, float(st.session_state.get(PRICE_CALCULATOR_PROMO_DISCOUNT_KEY, 0.0) or 0.0))
+    except Exception:
+        return 0.0
+
+
 def _config_from_global_result(*, source_df: pd.DataFrame | None = None) -> dict[str, Any]:
     result = _calculator_result()
     if result is None:
         current = get_home_pricing_config()
         current['enabled'] = _calculator_ready()
+        current['promo_discount_percent'] = _promo_discount_from_state()
         return current
 
     sale_price = float(getattr(result, 'sale_price', 0.0) or 0.0)
@@ -164,7 +173,7 @@ def _config_from_global_result(*, source_df: pd.DataFrame | None = None) -> dict
             'desired_sale_price': desired_sale_price,
             'supplier_term_days': 0.0,
             'stock_turnover_days': 0.0,
-            'promo_discount_percent': 0.0,
+            'promo_discount_percent': _promo_discount_from_state(),
             'source_sample_cost': cost,
         }
     )
@@ -175,7 +184,11 @@ def render_home_pricing_config_form(source_df: pd.DataFrame | None = None) -> di
     config = _config_from_global_result(source_df=source_df)
     if bool(config.get('enabled', False)):
         if isinstance(source_df, pd.DataFrame) and not source_df.empty:
-            st.success(f'Preço pronto. Modo: {_mode_label(config)}.')
+            promo = float(config.get('promo_discount_percent', 0.0) or 0.0)
+            if promo > 0:
+                st.success(f'Preço pronto. Modo: {_mode_label(config)}. Promocional: -{promo:.2f}%.')
+            else:
+                st.success(f'Preço pronto. Modo: {_mode_label(config)}.')
         else:
             st.success('Simulação concluída.')
     else:
