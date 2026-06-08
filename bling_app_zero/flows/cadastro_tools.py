@@ -17,11 +17,30 @@ from bling_app_zero.ui.home_shared import df_signature, load_apply_pricing, prev
 
 PRICE_TARGET_ALIASES = [
     'Preço de venda',
+    'Preco de venda',
     'Preço unitário (OBRIGATÓRIO)',
     'Preço unitário',
+    'Preco unitario',
     'Preço',
+    'Preco',
     'Valor',
 ]
+PROMO_PRICE_TARGET_ALIASES = [
+    'Preço promocional',
+    'Preco Promocional',
+    'Preço Promocional',
+    'preco_promocional',
+    'preço_promocional',
+]
+
+
+def _norm(value: object) -> str:
+    return normalize_key(str(value or '')).replace(' ', '_').strip()
+
+
+def _has_any(value: object, terms: tuple[str, ...]) -> bool:
+    text = _norm(value)
+    return any(_norm(term) in text for term in terms)
 
 
 def sync_detected_discount(df_origem: pd.DataFrame, signature: str) -> float:
@@ -72,9 +91,29 @@ def show_first_row_preview(df_source: pd.DataFrame, selected_column: str) -> Non
     st.markdown(f'<div class="bling-inline-preview">{safe_text}</div>', unsafe_allow_html=True)
 
 
+def _source_has(source_columns: list[str], column_name: str) -> bool:
+    return column_name in source_columns
+
+
 def force_price_suggestion(target: str, source_columns: list[str], suggested: str) -> str:
-    if target in PRICE_TARGET_ALIASES and 'Preço de venda' in source_columns:
+    """Garante que os campos de preço usem o resultado da calculadora.
+
+    O modelo do Bling multiloja possui colunas chamadas `Preco` e
+    `Preco Promocional`. A origem também pode ter essas colunas antigas. Depois
+    da calculadora, a fonte correta passa a ser `Preço de venda` e
+    `Preço promocional`; por isso o mapeamento manual e automático precisam ser
+    forçados para essas colunas calculadas quando elas existirem.
+    """
+    if _has_any(target, ('promocional',)) and _source_has(source_columns, 'Preço promocional'):
+        return 'Preço promocional'
+    if _has_any(target, ('preco_promocional', 'preço_promocional', 'preco promocional', 'preço promocional')) and _source_has(source_columns, 'Preço promocional'):
+        return 'Preço promocional'
+    if _has_any(target, ('preco', 'preço', 'valor')) and not _has_any(target, ('promocional',)) and _source_has(source_columns, 'Preço de venda'):
         return 'Preço de venda'
+    if target in PRICE_TARGET_ALIASES and _source_has(source_columns, 'Preço de venda'):
+        return 'Preço de venda'
+    if target in PROMO_PRICE_TARGET_ALIASES and _source_has(source_columns, 'Preço promocional'):
+        return 'Preço promocional'
     return suggested
 
 
@@ -147,9 +186,12 @@ def build_manual_mapping_result(
     edited_mapping: dict[str, str] = {}
     for target in target_columns:
         suggested = current_mapping.get(target, '')
+        if force_price:
+            suggested = force_price_suggestion(target, source_columns, suggested)
         widget_key = f'{mapping_key}_{target}'
         if widget_key in st.session_state:
-            suggested = st.session_state.get(widget_key, suggested)
+            existing_widget_value = st.session_state.get(widget_key, suggested)
+            suggested = force_price_suggestion(target, source_columns, existing_widget_value) if force_price else existing_widget_value
         selected = st.selectbox(target, options, index=default_index(options, suggested), key=widget_key, help=f'Campo de destino no Bling: {target}')
         show_first_row_preview(df_source, selected)
         edited_mapping[target] = selected
@@ -159,6 +201,7 @@ def build_manual_mapping_result(
 
     used_values = [value for value in edited_mapping.values() if value]
     duplicated = sorted({value for value in used_values if used_values.count(value) > 1})
+    duplicated = [value for value in duplicated if value not in {'Preço de venda', 'Preço promocional'}]
     if duplicated:
         st.warning('A mesma coluna da origem foi usada mais de uma vez: ' + ', '.join(duplicated))
 
