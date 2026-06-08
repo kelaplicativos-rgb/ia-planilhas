@@ -11,7 +11,8 @@ from bling_app_zero.universal.universal_contract import UniversalContract, build
 KEY_TERMS = (
     'codigo', 'código', 'sku', 'referencia', 'referência', 'id_na_loja', 'id loja', 'id_produto', 'id produto', 'idproduto'
 )
-PRICE_TERMS = ('preco', 'preço', 'valor', 'preco_promocional', 'preço_promocional', 'preco promocional', 'preço promocional')
+PRICE_TERMS = ('preco', 'preço', 'valor')
+PROMO_PRICE_TERMS = ('preco_promocional', 'preço_promocional', 'preco promocional', 'preço promocional', 'promocional')
 NAME_TERMS = ('nome', 'descricao', 'descrição', 'produto', 'titulo', 'título')
 EMPTY_MARKERS = {'', 'nan', 'none', 'null', '<na>'}
 
@@ -59,6 +60,16 @@ def _key_columns(df: pd.DataFrame) -> list[str]:
     return preferred + [column for column in secondary if column not in preferred]
 
 
+def _append_columns(out: list[str], columns: list[str], terms: tuple[str, ...], *, exclude_terms: tuple[str, ...] = ()) -> None:
+    for column in columns:
+        if column in out:
+            continue
+        if exclude_terms and _has_term(column, exclude_terms):
+            continue
+        if _has_term(column, terms):
+            out.append(column)
+
+
 def _candidate_source_columns(df_source: pd.DataFrame, mapped_column: str, target_column: str) -> list[str]:
     columns = [str(column) for column in df_source.columns]
     out: list[str] = []
@@ -68,10 +79,14 @@ def _candidate_source_columns(df_source: pd.DataFrame, mapped_column: str, targe
     for column in columns:
         if column not in out and _norm_column(column) == target_key:
             out.append(column)
-    if _has_term(target_column, PRICE_TERMS):
-        for column in columns:
-            if column not in out and _has_term(column, PRICE_TERMS):
-                out.append(column)
+
+    if _has_term(target_column, PROMO_PRICE_TERMS):
+        _append_columns(out, columns, PROMO_PRICE_TERMS)
+        _append_columns(out, columns, PRICE_TERMS, exclude_terms=PROMO_PRICE_TERMS)
+    elif _has_term(target_column, PRICE_TERMS):
+        _append_columns(out, columns, PRICE_TERMS, exclude_terms=PROMO_PRICE_TERMS)
+        _append_columns(out, columns, PROMO_PRICE_TERMS)
+
     if _has_term(target_column, NAME_TERMS):
         for column in columns:
             if column not in out and _has_term(column, NAME_TERMS):
