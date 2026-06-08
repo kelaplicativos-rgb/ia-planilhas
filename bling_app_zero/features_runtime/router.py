@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import streamlit as st
+from streamlit.errors import StreamlitAPIException
 
 from bling_app_zero.features_runtime.contracts import FeatureContract
 from bling_app_zero.features_runtime.registry import get_feature_contract, normalize_operation
@@ -54,6 +55,23 @@ def _clean(value: object) -> str:
     return str(value or '').strip().lower()
 
 
+def _safe_state_set(key: str, value: object) -> None:
+    """Atualiza session_state sem quebrar quando a chave pertence a widget já criado.
+
+    Streamlit não permite modificar st.session_state de um widget depois que ele
+    foi instanciado na mesma execução. Isso acontecia com
+    direct_bling_operation_choice. A regra aqui é: chaves internas podem ser
+    forçadas; chaves de widget devem ser preservadas quando já estiverem
+    bloqueadas pelo ciclo atual da tela.
+    """
+    try:
+        st.session_state[key] = value
+    except StreamlitAPIException:
+        st.session_state.setdefault('flow_spine_widget_state_warnings', {})[key] = str(value)
+    except Exception:
+        pass
+
+
 def active_mode() -> str:
     context = _clean(st.session_state.get(HOME_ENTRY_CONTEXT_KEY))
     finish = _clean(st.session_state.get(FINISH_MODE_KEY))
@@ -78,23 +96,22 @@ def active_operation() -> str:
 
 
 def _apply_runtime_state(contract: FeatureContract) -> None:
-    st.session_state['active_feature_contract_key'] = contract.key
-    st.session_state['active_feature_operation'] = contract.operation
-    st.session_state['active_feature_mode'] = contract.mode
-    st.session_state['active_feature_steps'] = list(contract.steps)
-    st.session_state['flow_spine_contract_key'] = contract.key
-    st.session_state['flow_spine_operation'] = contract.operation
-    st.session_state['flow_spine_primary_action_label'] = contract.primary_action_label
+    _safe_state_set('active_feature_contract_key', contract.key)
+    _safe_state_set('active_feature_operation', contract.operation)
+    _safe_state_set('active_feature_mode', contract.mode)
+    _safe_state_set('active_feature_steps', list(contract.steps))
+    _safe_state_set('flow_spine_contract_key', contract.key)
+    _safe_state_set('flow_spine_operation', contract.operation)
+    _safe_state_set('flow_spine_primary_action_label', contract.primary_action_label)
     if contract.mode == 'api':
-        st.session_state['flow_spine_final_destination'] = 'api_bling'
-        st.session_state['flow_spine_final_title'] = 'Enviar para o Bling'
-        st.session_state['direct_bling_operation_choice'] = contract.operation
-        st.session_state['direct_bling_operation_applied'] = contract.operation
-        st.session_state['bling_finish_mode'] = 'api_direct'
-        st.session_state['home_entry_context'] = 'bling_api'
+        _safe_state_set('flow_spine_final_destination', 'api_bling')
+        _safe_state_set('flow_spine_final_title', 'Enviar para o Bling')
+        _safe_state_set('direct_bling_operation_applied', contract.operation)
+        _safe_state_set('bling_finish_mode', 'api_direct')
+        _safe_state_set('home_entry_context', 'bling_api')
     else:
-        st.session_state['flow_spine_final_destination'] = 'download'
-        st.session_state['flow_spine_final_title'] = 'Baixar arquivo final'
+        _safe_state_set('flow_spine_final_destination', 'download')
+        _safe_state_set('flow_spine_final_title', 'Baixar arquivo final')
 
 
 def active_contract() -> FeatureContract:
