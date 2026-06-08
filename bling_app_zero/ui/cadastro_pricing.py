@@ -5,8 +5,10 @@ import streamlit as st
 
 from bling_app_zero.core.price_calculator_plugin import (
     PRICE_TARGET_ALIASES,
+    PROMO_PRICE_TARGET_ALIASES,
     apply_price_aliases,
     apply_price_calculator_plugin,
+    apply_promotional_price_aliases,
     best_cost_column,
 )
 from bling_app_zero.ui.home_pricing_config import get_home_pricing_config
@@ -25,7 +27,8 @@ CADASTRO_ORIGEM_PRICED_STATE_KEY = 'cadastro_wizard_df_para_mapear'
 
 
 def apply_calculated_price_aliases(df: pd.DataFrame, calculated_column: str = 'Preço de venda') -> pd.DataFrame:
-    return apply_price_aliases(df, calculated_column, PRICE_TARGET_ALIASES)
+    out = apply_price_aliases(df, calculated_column, PRICE_TARGET_ALIASES)
+    return apply_promotional_price_aliases(out, 'Preço promocional', PROMO_PRICE_TARGET_ALIASES)
 
 
 def _pricing_config() -> dict:
@@ -89,6 +92,8 @@ def apply_cadastro_pricing(df_origem: pd.DataFrame, *, channel: str = 'etapa_pre
         output_column='Preço de venda',
         channel=channel,
         aliases=PRICE_TARGET_ALIASES,
+        promo_output_column='Preço promocional',
+        promo_aliases=PROMO_PRICE_TARGET_ALIASES,
     )
 
     if not result.applied:
@@ -113,6 +118,7 @@ def render_cadastro_pricing(df_origem: pd.DataFrame, *, channel: str = 'compatib
 
 __all__ = [
     'PRICE_TARGET_ALIASES',
+    'PROMO_PRICE_TARGET_ALIASES',
     'PRICED_SOURCE_KEY',
     'PRICING_ACTIVE_KEY',
     'PRICING_SELECTED_COST_COLUMN_KEY',
