@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import re
 import xml.etree.ElementTree as ET
+import zipfile
 from io import BytesIO, StringIO
 from typing import Any
 
@@ -25,7 +26,8 @@ SPREADSHEET_EXTENSIONS = ('.xlsx', '.xls', '.xlsm', '.xlsb')
 TEXT_EXTENSIONS = ('.txt', '.tsv')
 HTML_EXTENSIONS = ('.html', '.htm')
 MHTML_EXTENSIONS = ('.mht', '.mhtml')
-SUPPORTED_SUPPLIER_EXTENSIONS = SPREADSHEET_EXTENSIONS + ('.csv', '.xml', '.pdf') + TEXT_EXTENSIONS + HTML_EXTENSIONS + MHTML_EXTENSIONS
+ZIP_EXTENSIONS = ('.zip',)
+SUPPORTED_SUPPLIER_EXTENSIONS = SPREADSHEET_EXTENSIONS + ('.csv', '.xml', '.pdf') + TEXT_EXTENSIONS + HTML_EXTENSIONS + MHTML_EXTENSIONS + ZIP_EXTENSIONS
 
 NFE_ITEM_TAGS = {'det'}
 NFE_PRODUCT_TAGS = {'prod'}
@@ -251,6 +253,51 @@ def _read_pdf_bytes(data: bytes, file_name: str = 'pdf') -> pd.DataFrame:
     return pd.DataFrame([{'Arquivo PDF': file_name, 'Status': 'PDF sem texto extraível. Pode ser imagem/scan.'}])
 
 
+def _read_inner_file_bytes(data: bytes, file_name: str) -> pd.DataFrame:
+    lower = str(file_name or '').lower()
+    if lower.endswith('.csv'):
+        return _read_csv_bytes(data)
+    if lower.endswith(TEXT_EXTENSIONS):
+        return _read_text_bytes(data)
+    if lower.endswith(SPREADSHEET_EXTENSIONS):
+        return _read_excel_bytes(data, file_name)
+    if lower.endswith(HTML_EXTENSIONS):
+        return _read_html_bytes(data)
+    if lower.endswith(MHTML_EXTENSIONS):
+        return _read_mhtml_bytes(data)
+    if lower.endswith('.xml'):
+        return _read_xml_bytes(data, file_name)
+    return pd.DataFrame()
+
+
+def _read_zip_bytes(data: bytes, file_name: str = 'arquivo.zip') -> pd.DataFrame:
+    """Lê ZIP exportado pelo Bling quando ele contém CSV/XLSX interno.
+
+    O importador/modelo do Bling pode baixar arquivos compactados, como o
+    modelo de preços multiloja. O sistema precisa abrir o ZIP e usar a planilha
+    interna como contrato final, em vez de descartar o arquivo pelo `.zip`.
+    """
+    frames: list[pd.DataFrame] = []
+    try:
+        with zipfile.ZipFile(BytesIO(data)) as archive:
+            for info in archive.infolist():
+                if info.is_dir():
+                    continue
+                inner_name = str(info.filename or '')
+                lower = inner_name.lower()
+                if not lower.endswith(('.csv', '.xlsx', '.xls', '.xlsm', '.xlsb', '.txt', '.tsv', '.html', '.htm', '.mht', '.mhtml', '.xml')):
+                    continue
+                try:
+                    frame = _read_inner_file_bytes(archive.read(info), inner_name)
+                except Exception:
+                    frame = pd.DataFrame()
+                if isinstance(frame, pd.DataFrame) and len(frame.columns) > 0:
+                    frames.append(frame)
+    except Exception:
+        return pd.DataFrame()
+    return _best_frame(frames)
+
+
 def read_uploaded_file(uploaded_file: Any) -> pd.DataFrame:
     if uploaded_file is None:
         return pd.DataFrame()
@@ -273,6 +320,8 @@ def read_uploaded_file(uploaded_file: Any) -> pd.DataFrame:
         return _read_xml_bytes(data, name_original)
     if name.endswith('.pdf'):
         return _read_pdf_bytes(data, name_original)
+    if name.endswith(ZIP_EXTENSIONS):
+        return _read_zip_bytes(data, name_original)
     return pd.DataFrame()
 
 
