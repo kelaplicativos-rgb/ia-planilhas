@@ -11,10 +11,10 @@ from bling_app_zero.core.bling_direct_sender_smart_diff import is_direct_send_av
 from bling_app_zero.core.bling_intelligent_update_sender import send_dataframe_to_bling_intelligent
 from bling_app_zero.core.bling_oauth import connection_status
 from bling_app_zero.core.bling_preflight_scan import build_bling_preflight_report, build_pending_rows_dataframe, filter_sendable_dataframe
+from bling_app_zero.core.bling_send_auto_tuner import intelligent_batch_size, progress_caption
 from bling_app_zero.core.bling_send_engine import (
     append_batch_result,
     ensure_send_state,
-    mark_manual_batch_mode,
     pause_send,
     reset_send,
     result_payload,
@@ -34,6 +34,7 @@ PREFLIGHT_CACHE_KEY = 'bling_api_preflight_cache_v1'
 PAYLOAD_PREVIEW_CACHE_KEY = 'bling_api_payload_preview_cache_v2'
 LAST_BATCH_SECONDS_KEY = 'bling_api_last_batch_seconds_v1'
 LIVE_PROGRESS_KEY = 'bling_api_live_progress_v2'
+INTELLIGENT_BATCH_PLAN_KEY = 'bling_api_intelligent_batch_plan_v1'
 MAX_AUTO_BATCH_SECONDS = 22.0
 
 DIRECT_SEND_TEXT = {
@@ -101,6 +102,7 @@ def _reset_state(identity: str, total: int, operation: str) -> dict[str, Any]:
     result = reset_send(identity=identity, total=total, operation=operation)
     st.session_state.pop(LAST_BATCH_SECONDS_KEY, None)
     st.session_state.pop(LIVE_PROGRESS_KEY, None)
+    st.session_state.pop(INTELLIGENT_BATCH_PLAN_KEY, None)
     return _sync_state(result.state)
 
 
@@ -200,6 +202,34 @@ def _render_payload_preview(download_df: pd.DataFrame, operation: str, identity:
     return ''
 
 
+def _current_plan(operation: str, state: dict[str, Any] | None = None):
+    state = state or {}
+    stored = st.session_state.get(INTELLIGENT_BATCH_PLAN_KEY)
+    current_batch_size = None
+    if isinstance(stored, dict) and stored.get('operation') == normalize_operation(operation):
+        current_batch_size = int(stored.get('batch_size') or 0)
+    if not current_batch_size:
+        current_batch_size = _batch_size_for_operation(operation)
+    return intelligent_batch_size(
+        operation,
+        current_batch_size=current_batch_size,
+        last_batch_seconds=st.session_state.get(LAST_BATCH_SECONDS_KEY),
+        last_failed=int(state.get('last_batch_failed') or 0),
+        last_skipped=int(state.get('last_batch_skipped') or 0),
+    )
+
+
+def _store_plan_after_batch(operation: str, *, batch_size: int, elapsed: float, failed: int, skipped: int) -> None:
+    plan = intelligent_batch_size(
+        operation,
+        current_batch_size=batch_size,
+        last_batch_seconds=elapsed,
+        last_failed=failed,
+        last_skipped=skipped,
+    )
+    st.session_state[INTELLIGENT_BATCH_PLAN_KEY] = plan.to_dict()
+
+
 def _render_live_progress(identity: str) -> None:
     live = st.session_state.get(LIVE_PROGRESS_KEY)
     if not isinstance(live, dict) or live.get('identity') != identity:
@@ -222,19 +252,21 @@ def _render_progress(state: dict[str, Any]) -> None:
     failed = int(state.get('failed') or 0)
     skipped = int(state.get('skipped') or 0)
     operation = normalize_operation(str(state.get('operation') or ''))
-    batch_size = _batch_size_for_operation(operation)
+    plan = _current_plan(operation, state)
     progress = attempted / max(total, 1)
-    label = 'Envio automático inteligente em andamento' if state.get('auto_running') and not state.get('done') else 'Progresso'
+    label = 'Envio inteligente em andamento' if state.get('auto_running') and not state.get('done') else 'Progresso'
     st.progress(min(100, int(progress * 100)), text=f'{label}: {attempted}/{total} · enviados {sent} · falhas {failed} · ignorados {skipped}')
     _render_live_progress(str(state.get('identity') or ''))
     cols = st.columns(4)
     cols[0].metric('Processados', attempted)
     cols[1].metric('Enviados', sent)
     cols[2].metric('Falhas', failed)
-    cols[3].metric('Lote atual', batch_size)
+    cols[3].metric('Lote inteligente', plan.batch_size)
     elapsed = st.session_state.get(LAST_BATCH_SECONDS_KEY)
     if isinstance(elapsed, (int, float)) and elapsed > 0:
-        st.caption(f'Último lote: {elapsed:.1f}s · checkpoint salvo.')
+        st.caption(f'Último lote: {elapsed:.1f}s · checkpoint salvo · {progress_caption(plan)}')
+    else:
+        st.caption(progress_caption(plan))
 
 
 def _state_obj_from_legacy(state: dict[str, Any]):
@@ -280,39 +312,35 @@ def _render_final_result(download_df: pd.DataFrame, state: dict[str, Any], key: 
 
 def _pause_after_slow_batch(state: dict[str, Any], elapsed: float) -> dict[str, Any]:
     operation = normalize_operation(str(state.get('operation') or ''))
-    if operation == OP_ESTOQUE:
-        add_audit_event('bling_api_batch_auto_pause_ignored_for_stock', area='BLING_ENVIO', status='OK', details={'elapsed_seconds': round(float(elapsed), 2), 'operation': operation, 'reason': 'estoque deve continuar lote a lote no envio automatico', 'responsible_file': RESPONSIBLE_FILE})
-        return state
     if elapsed <= MAX_AUTO_BATCH_SECONDS or bool(state.get('done')) or not bool(state.get('auto_running')):
         return state
-    result = pause_send(_state_obj_from_legacy(state))
-    paused = _sync_state(result.state)
-    st.warning('Envio automático pausado por segurança: o último lote demorou demais. O checkpoint foi salvo; toque em continuar para processar o próximo lote.')
-    add_audit_event('bling_api_batch_auto_paused_slow_batch', area='BLING_ENVIO', status='PAUSADO', details={'elapsed_seconds': round(float(elapsed), 2), 'limit_seconds': MAX_AUTO_BATCH_SECONDS, 'operation': operation, 'flow_spine': output_diagnostics(), 'responsible_file': RESPONSIBLE_FILE})
-    return paused
+    add_audit_event('bling_api_batch_slow_batch_kept_running_intelligent_mode', area='BLING_ENVIO', status='OK', details={'elapsed_seconds': round(float(elapsed), 2), 'operation': operation, 'reason': 'modo inteligente reduz o lote automaticamente sem exigir escolha do usuario', 'responsible_file': RESPONSIBLE_FILE})
+    return state
 
 
 def _send_one_batch(download_df: pd.DataFrame, operation: str, state: dict[str, Any]) -> dict[str, Any]:
     total = int(state.get('total') or len(download_df))
     batch_start = int(state.get('offset') or 0)
-    batch_size = _batch_size_for_operation(operation)
+    plan = _current_plan(operation, state)
+    batch_size = int(plan.batch_size)
     batch_end = min(batch_start + batch_size, total)
     batch_df = download_df.iloc[batch_start:batch_end].copy().fillna('')
     identity = str(state.get('identity') or '')
 
-    progress_bar = st.progress(1, text=f'Iniciando lote {batch_start + 1}-{batch_end} de {total} no Bling...')
+    progress_bar = st.progress(1, text=f'Iniciando envio inteligente {batch_start + 1}-{batch_end} de {total} no Bling...')
     status_box = st.empty()
-    status_box.info('Conectando com a API do Bling e preparando o primeiro item do lote...')
+    status_box.info(progress_caption(plan))
+    st.session_state[INTELLIGENT_BATCH_PLAN_KEY] = plan.to_dict()
     st.session_state[LIVE_PROGRESS_KEY] = {
         'identity': identity,
-        'stage': 'Iniciando lote via API Bling',
+        'stage': 'Iniciando envio inteligente via API Bling',
         'processed': 0,
         'total': len(batch_df),
         'sent': 0,
         'failed': 0,
         'skipped': 0,
         'progress': 0.01,
-        'detail': f'Lote {batch_start + 1}-{batch_end} de {total} · operação {operation}',
+        'detail': f'Lote inteligente {batch_start + 1}-{batch_end} de {total} · operação {operation}',
     }
     started_at = time.monotonic()
 
@@ -323,8 +351,8 @@ def _send_one_batch(download_df: pd.DataFrame, operation: str, state: dict[str, 
         failed = int(payload.get('failed') or 0)
         skipped = int(payload.get('skipped') or 0)
         ratio = max(0.01, min(1.0, float(payload.get('progress') or 0.0)))
-        stage = str(payload.get('stage') or 'Processando lote via API Bling')
-        detail = f'Lote {batch_start + 1}-{batch_end} de {total} · tamanho {batch_size} · operação {operation}'
+        stage = str(payload.get('stage') or 'Processando envio inteligente via API Bling')
+        detail = f'Lote inteligente {batch_start + 1}-{batch_end} de {total} · tamanho {batch_size} · operação {operation}'
         st.session_state[LIVE_PROGRESS_KEY] = {
             'identity': identity,
             'stage': stage,
@@ -342,6 +370,7 @@ def _send_one_batch(download_df: pd.DataFrame, operation: str, state: dict[str, 
     result = send_dataframe_to_bling_intelligent(batch_df, operation, progress_callback=_progress)
     elapsed = max(0.0, time.monotonic() - started_at)
     st.session_state[LAST_BATCH_SECONDS_KEY] = elapsed
+    _store_plan_after_batch(operation, batch_size=batch_size, elapsed=elapsed, failed=int(result.failed), skipped=int(result.skipped))
 
     state_obj = _state_obj_from_legacy(state)
     merged = append_batch_result(state_obj, result, batch_start=batch_start, batch_end=batch_end).state
@@ -351,7 +380,7 @@ def _send_one_batch(download_df: pd.DataFrame, operation: str, state: dict[str, 
     final_total = max(int(result.attempted or len(batch_df)), 1)
     final_processed = min(final_total, int(result.attempted or final_total))
     final_progress = final_processed / max(final_total, 1)
-    final_stage = 'Lote concluído' if int(result.failed) == 0 else 'Lote concluído com falhas'
+    final_stage = 'Lote inteligente concluído' if int(result.failed) == 0 else 'Lote inteligente concluído com falhas'
     st.session_state[LIVE_PROGRESS_KEY] = {
         'identity': identity,
         'stage': final_stage,
@@ -365,11 +394,11 @@ def _send_one_batch(download_df: pd.DataFrame, operation: str, state: dict[str, 
     }
     progress_bar.progress(min(100, int(final_progress * 100)), text=f'{final_stage}: {final_processed}/{final_total} · enviados {int(result.sent)} · falhas {int(result.failed)} · ignorados {int(result.skipped)}')
     if int(result.failed) == 0:
-        status_box.success(f'Lote finalizado em {elapsed:.1f}s. Checkpoint salvo.')
+        status_box.success(f'Lote inteligente finalizado em {elapsed:.1f}s. Checkpoint salvo.')
     else:
-        status_box.warning(f'Lote finalizado com falhas em {elapsed:.1f}s. Checkpoint salvo; revise o erro antes de continuar.')
+        status_box.warning(f'Lote inteligente finalizado com falhas em {elapsed:.1f}s. Checkpoint salvo; o sistema ajusta a velocidade automaticamente.')
 
-    add_audit_event('bling_api_batch_sent', area='BLING_ENVIO', status='OK' if int(result.failed) == 0 else 'PARCIAL', details={'operation': operation, 'batch_start': batch_start, 'batch_end': batch_end, 'batch_size': batch_size, 'total': total, 'sent': int(result.sent), 'failed': int(result.failed), 'skipped': int(result.skipped), 'elapsed_seconds': round(float(elapsed), 2), 'auto_running': bool(state.get('auto_running')), 'live_progress_enabled': True, 'intelligent_update_sender': True, 'neutral_bling_send_state': True, 'flow_spine': output_diagnostics(), 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('bling_api_batch_sent', area='BLING_ENVIO', status='OK' if int(result.failed) == 0 else 'PARCIAL', details={'operation': operation, 'batch_start': batch_start, 'batch_end': batch_end, 'batch_size': batch_size, 'total': total, 'sent': int(result.sent), 'failed': int(result.failed), 'skipped': int(result.skipped), 'elapsed_seconds': round(float(elapsed), 2), 'auto_running': bool(state.get('auto_running')), 'live_progress_enabled': True, 'intelligent_update_sender': True, 'intelligent_batch_plan': st.session_state.get(INTELLIGENT_BATCH_PLAN_KEY), 'neutral_bling_send_state': True, 'flow_spine': output_diagnostics(), 'responsible_file': RESPONSIBLE_FILE})
     return state
 
 
@@ -420,33 +449,25 @@ def render_bling_api_batch_panel(download_df: pd.DataFrame, operation: str, key:
     auto_running = bool(state.get('auto_running')) and not done and not bool(state.get('paused'))
 
     if auto_running:
-        batch_size = _batch_size_for_operation(operation)
-        st.info(f'Envio automático inteligente ativo. O sistema mostra o progresso real e envia até {batch_size} item(ns) por lote apto.')
+        plan = _current_plan(operation, state)
+        st.info(f'Envio inteligente ativo. {progress_caption(plan)}')
         _send_one_batch(send_df, operation, state)
+        st.rerun()
+
+    button_label = _operation_action_label(operation) if not started else 'Continuar envio inteligente'
+    if not done and st.button(button_label, use_container_width=True, key=f'batch_send_auto_{identity}'):
+        result = start_auto_send(_state_obj_from_legacy(state))
+        _sync_state(result.state)
         st.rerun()
 
     col1, col2 = st.columns(2)
     with col1:
-        auto_label = 'Iniciar envio automático inteligente' if not started else 'Continuar automaticamente'
-        if not done and st.button(auto_label, use_container_width=True, key=f'batch_send_auto_{identity}'):
-            result = start_auto_send(_state_obj_from_legacy(state))
-            _sync_state(result.state)
-            st.rerun()
-    with col2:
-        if not done and st.button('Enviar apenas 1 lote seguro', use_container_width=True, key=f'batch_send_one_{identity}'):
-            result = mark_manual_batch_mode(_state_obj_from_legacy(state))
-            state = _sync_state(result.state)
-            _send_one_batch(send_df, operation, state)
-            st.rerun()
-
-    col3, col4 = st.columns(2)
-    with col3:
-        if not done and started and st.button('Pausar envio automático', use_container_width=True, key=f'batch_send_pause_{identity}'):
+        if not done and started and st.button('Pausar envio', use_container_width=True, key=f'batch_send_pause_{identity}'):
             result = pause_send(_state_obj_from_legacy(state))
             _sync_state(result.state)
             st.rerun()
-    with col4:
-        if st.button('Reiniciar envio em lotes', use_container_width=True, key=f'batch_send_reset_{identity}'):
+    with col2:
+        if st.button('Reiniciar envio', use_container_width=True, key=f'batch_send_reset_{identity}'):
             _reset_state(identity, total, operation)
             st.rerun()
 
