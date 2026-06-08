@@ -36,6 +36,9 @@ class SharedPriceConfig:
     supplier_term_days: float = 0.0
     stock_turnover_days: float = 0.0
     promo_discount_percent: float = 0.0
+    quick_reprice_mode: str = ''
+    quick_markup_percent: float = 0.0
+    quick_fixed_addition: float = 0.0
     marketplace_rule_type: str = 'standard'
     marketplace_threshold: float = 0.0
     marketplace_fixed_fee: float = 0.0
@@ -50,11 +53,6 @@ def _float(value: Any, default: float = 0.0) -> float:
 
 
 def normalize_shared_price_config(raw: dict[str, Any] | None) -> dict[str, Any]:
-    """Normaliza a configuração única de preço para cadastro, estoque e multiloja.
-
-    Entrada compatível: aceita chaves antigas da calculadora de cadastro.
-    Saída limpa: devolve somente o contrato novo da calculadora compartilhada.
-    """
     raw = dict(raw or {})
     mode = str(raw.get('calculator_mode') or 'nominal_profit').strip().lower()
     if mode not in {'nominal_profit', 'contribution_margin', 'fixed_sale_price'}:
@@ -64,6 +62,7 @@ def normalize_shared_price_config(raw: dict[str, Any] | None) -> dict[str, Any]:
     contribution_margin = raw.get('desired_contribution_margin_percent', raw.get('profit_percent', 0.0))
     marketplace_fee = raw.get('marketplace_fee_percent', raw.get('commission_percent', raw.get('discount_percent', 0.0)))
     other_fees = raw.get('other_sale_fees_percent', raw.get('fee_percent', 0.0))
+    quick_mode = str(raw.get('quick_reprice_mode') or '').strip().lower()
 
     config = SharedPriceConfig(
         enabled=bool(raw.get('enabled', False)),
@@ -78,6 +77,9 @@ def normalize_shared_price_config(raw: dict[str, Any] | None) -> dict[str, Any]:
         supplier_term_days=_float(raw.get('supplier_term_days', 0.0)),
         stock_turnover_days=_float(raw.get('stock_turnover_days', 0.0)),
         promo_discount_percent=max(0.0, _float(raw.get('promo_discount_percent', 0.0))),
+        quick_reprice_mode=quick_mode,
+        quick_markup_percent=_float(raw.get('quick_markup_percent', raw.get('tax_percent', 0.0))),
+        quick_fixed_addition=_float(raw.get('quick_fixed_addition', 0.0)),
         marketplace_rule_type=str(raw.get('marketplace_rule_type') or 'standard'),
         marketplace_threshold=_float(raw.get('marketplace_threshold', 0.0)),
         marketplace_fixed_fee=_float(raw.get('marketplace_fixed_fee', 0.0)),
@@ -96,6 +98,9 @@ def normalize_shared_price_config(raw: dict[str, Any] | None) -> dict[str, Any]:
         'supplier_term_days': config.supplier_term_days,
         'stock_turnover_days': config.stock_turnover_days,
         'promo_discount_percent': config.promo_discount_percent,
+        'quick_reprice_mode': config.quick_reprice_mode,
+        'quick_markup_percent': config.quick_markup_percent,
+        'quick_fixed_addition': config.quick_fixed_addition,
         'marketplace_rule_type': config.marketplace_rule_type,
         'marketplace_threshold': config.marketplace_threshold,
         'marketplace_fixed_fee': config.marketplace_fixed_fee,
@@ -129,8 +134,20 @@ def _rule(config: dict[str, Any], channel: str = DEFAULT_CHANNEL) -> Marketplace
     )
 
 
+def calculate_quick_reprice_decimal(cost: Any, config: dict[str, Any] | None) -> Decimal:
+    normalized = normalize_shared_price_config(config)
+    base = D(cost)
+    if base <= Decimal('0'):
+        return Decimal('0')
+    percent_total = D(normalized.get('quick_markup_percent', 0)) + D(normalized.get('marketplace_fee_percent', 0)) + D(normalized.get('other_sale_fees_percent', 0))
+    fixed_total = D(normalized.get('quick_fixed_addition', 0)) + D(normalized.get('freight_cost', 0)) + D(normalized.get('marketplace_fixed_fee', 0))
+    return (base * (Decimal('1') + (percent_total / Decimal('100')))) + fixed_total
+
+
 def calculate_shared_price_decimal(cost: Any, config: dict[str, Any] | None, channel: str = DEFAULT_CHANNEL) -> Decimal:
     normalized = normalize_shared_price_config(config)
+    if str(normalized.get('quick_reprice_mode') or '') == 'markup':
+        return calculate_quick_reprice_decimal(cost, normalized)
     inputs = _inputs(cost, normalized)
     rule = _rule(normalized, channel)
     mode = str(normalized.get('calculator_mode') or 'nominal_profit')
@@ -157,9 +174,7 @@ def calculate_promotional_price_from_sale(sale_price: Any, config: dict[str, Any
     if sale <= Decimal('0') or discount <= Decimal('0'):
         return ''
     promo = sale * (Decimal('1') - (discount / Decimal('100')))
-    if promo <= Decimal('0'):
-        return ''
-    return money(promo)
+    return money(promo) if promo > Decimal('0') else ''
 
 
 def apply_shared_pricing(
@@ -179,10 +194,7 @@ def apply_shared_pricing(
     sale_values = out[cost_column].apply(lambda value: calculate_shared_price_decimal(value, normalized, channel))
     out[output_column] = sale_values.apply(lambda value: money(value) if value > Decimal('0') else '')
     promo_discount = D(normalized.get('promo_discount_percent', 0))
-    if promo_discount > Decimal('0'):
-        out[promo_output_column] = sale_values.apply(lambda value: calculate_promotional_price_from_sale(value, normalized))
-    else:
-        out[promo_output_column] = ''
+    out[promo_output_column] = sale_values.apply(lambda value: calculate_promotional_price_from_sale(value, normalized)) if promo_discount > Decimal('0') else ''
     return out
 
 
@@ -193,6 +205,7 @@ __all__ = [
     'SharedPriceConfig',
     'apply_shared_pricing',
     'calculate_promotional_price_from_sale',
+    'calculate_quick_reprice_decimal',
     'calculate_shared_price',
     'calculate_shared_price_decimal',
     'normalize_shared_price_config',
