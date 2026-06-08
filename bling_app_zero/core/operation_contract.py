@@ -29,9 +29,14 @@ LEGACY_OPERATION_ALIASES: Final[dict[str, str]] = {
     'precos': OP_ATUALIZACAO_PRECO,
     'atualizar_precos': OP_ATUALIZACAO_PRECO,
     'atualizacao_precos': OP_ATUALIZACAO_PRECO,
-    'atualização_preço': OP_ATUALIZACAO_PRECO,
-    'atualização_precos': OP_ATUALIZACAO_PRECO,
-    'atualização_preços': OP_ATUALIZACAO_PRECO,
+    'atualizacao_preco': OP_ATUALIZACAO_PRECO,
+    'produto': OP_CADASTRO,
+    'produtos': OP_CADASTRO,
+    'cadastro_produtos': OP_CADASTRO,
+    'stock': OP_ESTOQUE,
+    'saldo': OP_ESTOQUE,
+    'quantidade': OP_ESTOQUE,
+    'atualizacao_estoque': OP_ESTOQUE,
 }
 
 MODEL_OPERATION_BY_TYPE: Final[dict[str, str]] = {
@@ -73,7 +78,9 @@ def normalize_operation(value: object, *, default: str = OP_UNIVERSAL) -> str:
 
 def operation_from_model_type(model_type: object, *, default: str = OP_UNIVERSAL) -> str:
     text = str(model_type or '').strip().lower()
-    return MODEL_OPERATION_BY_TYPE.get(text, default)
+    if text in MODEL_OPERATION_BY_TYPE:
+        return MODEL_OPERATION_BY_TYPE[text]
+    return normalize_operation(text, default=default)
 
 
 def operation_label(operation: object) -> str:
