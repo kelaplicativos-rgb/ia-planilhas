@@ -25,13 +25,13 @@ PRICE_CALCULATOR_SAMPLE_SALE_PRICE_KEY = 'price_calculator_sample_sale_price'
 PRICE_CALCULATOR_SAMPLE_PROMO_PRICE_KEY = 'price_calculator_sample_promo_price'
 PRICE_CALCULATOR_SAMPLE_PROFIT_KEY = 'price_calculator_sample_profit'
 PRICE_CALCULATOR_SAMPLE_MARGIN_KEY = 'price_calculator_sample_margin'
-PRICE_CALCULATOR_PROMO_DISCOUNT_KEY = 'price_calculator_promo_discount_percent'
+PRICE_CALCULATOR_PROMO_DISCOUNT_KEY = 'price_calculator_promo_discount_percent_v2_zero_default'
 PRICE_CALCULATOR_PROMO_DISCOUNT_STATE_KEY = 'price_calculator_promo_discount_percent_value'
 PRICE_CALCULATOR_MODE_KEY = 'price_calculator_mode'
 PRICE_CALCULATOR_MODE_WIDGET_KEY = 'price_calculator_mode_select'
 PRICE_CALCULATOR_LEGACY_MODE_KEY = 'global_price_application_mode'
 
-QUICK_MARKET_COST_WIDGET_KEY = 'quick_market_cost'
+QUICK_MARKET_COST_WIDGET_KEY = 'quick_market_cost_v2_zero_default'
 QUICK_MARKET_COST_SYNC_KEY = 'quick_market_cost_source_sync_signature'
 QUICK_MARKET_HAS_CALCULATED_KEY = 'quick_market_has_calculated'
 
@@ -53,6 +53,7 @@ CALCULATION_MODE_MAP = {
     'Preço fixo': 'fixed_sale_price',
 }
 CALCULATION_MODE_LABELS = {value: key for key, value in CALCULATION_MODE_MAP.items()}
+ZERO = 0.0
 
 
 def _metric_card(label: str, value: str, extra: str = '') -> None:
@@ -196,21 +197,21 @@ def _render_source_cost_selector(source_df: pd.DataFrame | None) -> tuple[str, D
     st.session_state[GLOBAL_PRICE_SOURCE_COST_COLUMN_KEY] = selected
     sample_cost = _first_valid_decimal_from_column(source_df, selected)
     if selected and sample_cost > 0:
-        st.caption(f'Custo da amostra: {money(sample_cost)}')
+        st.caption(f'Custo detectado na origem: {money(sample_cost)}. O campo Custo / amostra começa zerado para você decidir quando aplicar.')
     return selected, sample_cost
 
 
 def _sync_cost_sample_widget(*, selected_cost_column: str, detected_sample_cost: Decimal) -> None:
-    next_cost = float(detected_sample_cost) if detected_sample_cost > 0 else 65.0
-    signature = f'{selected_cost_column}|{next_cost:.6f}'
-    previous_signature = str(st.session_state.get(QUICK_MARKET_COST_SYNC_KEY, '') or '')
+    """Mantém o campo de custo zerado ao abrir a calculadora.
+
+    Antes o sistema preenchia automaticamente o custo/amostra com o primeiro valor
+    detectado na origem, como 56,00. Isso confundia o usuário porque parecia que a
+    calculadora já estava configurada. Agora o valor detectado aparece só como
+    legenda, e o input nasce 0,00.
+    """
     if QUICK_MARKET_COST_WIDGET_KEY not in st.session_state:
-        st.session_state[QUICK_MARKET_COST_WIDGET_KEY] = next_cost
-        st.session_state[QUICK_MARKET_COST_SYNC_KEY] = signature
-        return
-    if signature != previous_signature:
-        st.session_state[QUICK_MARKET_COST_WIDGET_KEY] = next_cost
-        st.session_state[QUICK_MARKET_COST_SYNC_KEY] = signature
+        st.session_state[QUICK_MARKET_COST_WIDGET_KEY] = ZERO
+    st.session_state[QUICK_MARKET_COST_SYNC_KEY] = f'{selected_cost_column}|zero-default'
 
 
 def _sale_price_sample_label(*, has_source: bool, calculation_mode: str) -> str:
@@ -227,7 +228,7 @@ def _render_mode_notice(has_source: bool, calculation_mode: str) -> None:
     if has_source and calculation_mode == 'fixed_sale_price':
         st.warning('Preço fixo aplica o mesmo valor em todos os produtos. Confira se nenhum custo é maior que o preço.')
     elif has_source:
-        st.caption('A planilha será calculada linha a linha pela coluna de custo.')
+        st.caption('A planilha será calculada linha a linha pela coluna de custo somente depois que você preencher os valores da calculadora.')
     else:
         st.caption('Sem planilha, este cálculo funciona apenas como simulação avulsa.')
 
@@ -309,29 +310,29 @@ def render_quick_price_calculator(*, embedded: bool = False, source_df: pd.DataF
         _render_mode_notice(has_source, calculation_mode)
 
         c_fee_1, c_fee_2 = st.columns(2)
-        classic_fee = c_fee_1.number_input('Taxa Clássico (%)', min_value=0.0, value=11.5, step=0.5, key='quick_market_classic_fee')
-        premium_fee = c_fee_2.number_input('Taxa Premium (%)', min_value=0.0, value=16.5, step=0.5, key='quick_market_premium_fee')
+        classic_fee = c_fee_1.number_input('Taxa Clássico (%)', min_value=0.0, value=ZERO, step=0.5, key='quick_market_classic_fee_v2_zero_default')
+        premium_fee = c_fee_2.number_input('Taxa Premium (%)', min_value=0.0, value=ZERO, step=0.5, key='quick_market_premium_fee_v2_zero_default')
 
         c_base_1, c_base_2 = st.columns(2)
         ad_type = c_base_1.selectbox('Tipo de taxa', list(AD_TYPES), index=0, key='quick_market_ad_type')
-        cost = c_base_2.number_input('Custo / amostra', min_value=0.0, step=1.0, key=QUICK_MARKET_COST_WIDGET_KEY)
+        cost = c_base_2.number_input('Custo / amostra', min_value=0.0, value=ZERO, step=1.0, key=QUICK_MARKET_COST_WIDGET_KEY)
 
         c_price_1, c_price_2 = st.columns(2)
-        sale_price = c_price_1.number_input(_sale_price_sample_label(has_source=has_source, calculation_mode=calculation_mode), min_value=0.0, value=130.0, step=1.0, key='quick_market_sale_price')
-        tax_percent = c_price_2.number_input('Imposto (%)', min_value=0.0, value=6.0, step=0.5, key='quick_market_tax')
+        sale_price = c_price_1.number_input(_sale_price_sample_label(has_source=has_source, calculation_mode=calculation_mode), min_value=0.0, value=ZERO, step=1.0, key='quick_market_sale_price_v2_zero_default')
+        tax_percent = c_price_2.number_input('Imposto (%)', min_value=0.0, value=ZERO, step=0.5, key='quick_market_tax_v2_zero_default')
 
         c_cost_1, c_cost_2, c_cost_3 = st.columns(3)
-        freight = c_cost_1.number_input('Frete (R$)', min_value=0.0, value=0.0, step=1.0, key='quick_market_freight')
-        fixed_fee = c_cost_2.number_input('Taxa fixa (R$)', min_value=0.0, value=0.0, step=0.5, key='quick_market_fixed_fee')
-        extra_cost = c_cost_3.number_input('Outros (R$)', min_value=0.0, value=0.0, step=0.5, key='quick_market_extra_cost')
+        freight = c_cost_1.number_input('Frete (R$)', min_value=0.0, value=ZERO, step=1.0, key='quick_market_freight_v2_zero_default')
+        fixed_fee = c_cost_2.number_input('Taxa fixa (R$)', min_value=0.0, value=ZERO, step=0.5, key='quick_market_fixed_fee_v2_zero_default')
+        extra_cost = c_cost_3.number_input('Outros (R$)', min_value=0.0, value=ZERO, step=0.5, key='quick_market_extra_cost_v2_zero_default')
 
-        promo_default = float(st.session_state.get(PRICE_CALCULATOR_PROMO_DISCOUNT_STATE_KEY, st.session_state.get(PRICE_CALCULATOR_PROMO_DISCOUNT_KEY, 0.0)) or 0.0)
+        promo_default = float(st.session_state.get(PRICE_CALCULATOR_PROMO_DISCOUNT_STATE_KEY, ZERO) or ZERO)
         promo_discount = st.number_input('Desconto promocional (%)', min_value=0.0, max_value=100.0, value=promo_default, step=1.0, key=PRICE_CALCULATOR_PROMO_DISCOUNT_KEY)
         promo_discount_decimal = to_decimal(promo_discount)
 
         data = build_input_from_values(ad_type=ad_type, classic_fee_percent=classic_fee, premium_fee_percent=premium_fee, cost=cost, sale_price=sale_price, tax_percent=tax_percent, freight=freight, fixed_fee=fixed_fee, extra_cost=extra_cost)
         result = calculate_global_price(data)
-        auto_apply_source_calculation = bool(has_source and selected_cost_column)
+        auto_apply_source_calculation = bool(has_source and selected_cost_column and (to_decimal(cost) > 0 or to_decimal(sale_price) > 0))
         button_label = '🧮 Recalcular e aplicar' if has_source else '🧮 Calcular simulação'
         clicked = st.button(button_label, use_container_width=True, key='quick_market_calculate')
         if clicked or auto_apply_source_calculation:
@@ -374,9 +375,9 @@ def render_quick_price_calculator(*, embedded: bool = False, source_df: pd.DataF
                 max_cost = cost_series.max()
             except Exception:
                 max_cost = detected_sample_cost
-            if sale_price_decimal <= to_decimal(detected_sample_cost):
+            if sale_price_decimal <= to_decimal(detected_sample_cost) and sale_price_decimal > 0:
                 st.warning('Preço fixo é igual ou inferior ao custo da amostra; isso resultará em prejuízo.')
-            elif sale_price_decimal < max_cost:
+            elif sale_price_decimal < max_cost and sale_price_decimal > 0:
                 st.warning(f'O preço fixo informado ({money(sale_price_decimal)}) é inferior ao custo máximo ({money(max_cost)}). Alguns produtos terão prejuízo.')
 
         if sale_price_decimal <= 0:
