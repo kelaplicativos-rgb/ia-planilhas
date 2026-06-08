@@ -22,8 +22,10 @@ PRICE_CALCULATOR_READY_KEY = 'price_calculator_ready'
 PRICE_CALCULATOR_CONTEXT_KEY = 'price_calculator_context'
 PRICE_CALCULATOR_SOURCE_COST_COLUMN_KEY = 'price_calculator_source_cost_column'
 PRICE_CALCULATOR_SAMPLE_SALE_PRICE_KEY = 'price_calculator_sample_sale_price'
+PRICE_CALCULATOR_SAMPLE_PROMO_PRICE_KEY = 'price_calculator_sample_promo_price'
 PRICE_CALCULATOR_SAMPLE_PROFIT_KEY = 'price_calculator_sample_profit'
 PRICE_CALCULATOR_SAMPLE_MARGIN_KEY = 'price_calculator_sample_margin'
+PRICE_CALCULATOR_PROMO_DISCOUNT_KEY = 'price_calculator_promo_discount_percent'
 PRICE_CALCULATOR_MODE_KEY = 'price_calculator_mode'
 PRICE_CALCULATOR_MODE_WIDGET_KEY = 'price_calculator_mode_select'
 PRICE_CALCULATOR_LEGACY_MODE_KEY = 'global_price_application_mode'
@@ -64,7 +66,20 @@ def _metric_card(label: str, value: str, extra: str = '') -> None:
     )
 
 
-def _primary_result_card(result: GlobalPriceResult, *, has_source: bool, calculation_mode: str, cost_column: str = '') -> None:
+def _promo_price(sale_price: Decimal, promo_discount_percent: Decimal) -> Decimal:
+    if sale_price <= 0 or promo_discount_percent <= 0:
+        return Decimal('0')
+    return sale_price * (Decimal('1') - (promo_discount_percent / Decimal('100')))
+
+
+def _primary_result_card(
+    result: GlobalPriceResult,
+    *,
+    has_source: bool,
+    calculation_mode: str,
+    cost_column: str = '',
+    promo_discount_percent: Decimal = Decimal('0'),
+) -> None:
     mode_label = CALCULATION_MODE_LABELS.get(calculation_mode, calculation_mode or 'Não definido')
     if has_source and calculation_mode == 'nominal_profit':
         detail = f'Linha a linha pela coluna {cost_column or "selecionada"}.'
@@ -74,12 +89,17 @@ def _primary_result_card(result: GlobalPriceResult, *, has_source: bool, calcula
         detail = 'Mesmo preço aplicado em todos os produtos.'
     else:
         detail = 'Simulação avulsa, sem planilha carregada.'
+    promo = _promo_price(result.sale_price, promo_discount_percent)
+    promo_html = ''
+    if promo > 0:
+        promo_html = f'<div style="font-size:1.1rem;font-weight:950;margin-top:.38rem;">Preço promocional: {money(promo)} <span style="font-size:.85rem;font-weight:800;">(-{percent(promo_discount_percent)})</span></div>'
     st.markdown(
         f'''
 <div style="background:#ecfdf5;border:1px solid #86efac;border-radius:18px;padding:1rem 1.05rem;margin:.7rem 0;color:#14532d;">
-  <div style="font-size:.84rem;font-weight:950;letter-spacing:.02em;text-transform:uppercase;">Preço calculado</div>
+  <div style="font-size:.84rem;font-weight:950;letter-spacing:.02em;text-transform:uppercase;">Preço calculado para venda</div>
   <div style="font-size:1.78rem;font-weight:1000;line-height:1.1;margin:.25rem 0;">{money(result.sale_price)}</div>
-  <div style="font-weight:800;line-height:1.35;">{mode_label} · {detail}</div>
+  {promo_html}
+  <div style="font-weight:800;line-height:1.35;margin-top:.35rem;">{mode_label} · {detail}</div>
 </div>
 ''',
         unsafe_allow_html=True,
@@ -213,27 +233,40 @@ def _render_mode_notice(has_source: bool, calculation_mode: str) -> None:
 
 def _render_observations(result: GlobalPriceResult, *, has_source: bool, cost_column: str = '', calculation_mode: str = '') -> None:
     mode_label = CALCULATION_MODE_LABELS.get(calculation_mode, calculation_mode or 'Não definido')
-    source_text = f'Origem: {cost_column}. Resultado: Preço de venda.' if has_source and cost_column else 'Sem origem: simulação avulsa.'
+    source_text = f'Origem: {cost_column}. Resultado: Preço de venda + Preço promocional.' if has_source and cost_column else 'Sem origem: simulação avulsa.'
     st.caption(f'{mode_label} · {result.ad_type} · {percent(result.marketplace_fee_percent)} · {source_text}')
 
 
-def _save_global_result(result: GlobalPriceResult, *, has_source: bool, cost_column: str = '', calculation_mode: str = '') -> None:
+def _save_global_result(
+    result: GlobalPriceResult,
+    *,
+    has_source: bool,
+    cost_column: str = '',
+    calculation_mode: str = '',
+    promo_discount_percent: Decimal = Decimal('0'),
+) -> None:
     normalized_mode = _normalize_calculation_mode(calculation_mode, has_source=has_source)
     context = 'source_cost_line_by_line' if has_source and normalized_mode != 'fixed_sale_price' else 'source_fixed_price_all_rows' if has_source else 'standalone_simulation'
+    promo = _promo_price(result.sale_price, promo_discount_percent)
     st.session_state[PRICE_CALCULATOR_RESULT_KEY] = result
     st.session_state[PRICE_CALCULATOR_READY_KEY] = True
     st.session_state[PRICE_CALCULATOR_CONTEXT_KEY] = context
     st.session_state[PRICE_CALCULATOR_MODE_KEY] = normalized_mode
+    st.session_state[PRICE_CALCULATOR_PROMO_DISCOUNT_KEY] = float(promo_discount_percent)
     st.session_state[PRICE_CALCULATOR_SAMPLE_SALE_PRICE_KEY] = float(result.sale_price)
+    st.session_state[PRICE_CALCULATOR_SAMPLE_PROMO_PRICE_KEY] = float(promo)
     st.session_state[PRICE_CALCULATOR_SAMPLE_PROFIT_KEY] = float(result.profit)
     st.session_state[PRICE_CALCULATOR_SAMPLE_MARGIN_KEY] = float(result.margin)
     st.session_state[GLOBAL_PRICE_RESULT_KEY] = result
     st.session_state[GLOBAL_PRICE_READY_KEY] = True
     st.session_state[GLOBAL_PRICE_MODE_KEY] = context
     st.session_state['global_price_calculator_sale_price'] = float(result.sale_price)
+    st.session_state['global_price_calculator_promo_price'] = float(promo)
+    st.session_state['global_price_calculator_promo_discount_percent'] = float(promo_discount_percent)
     st.session_state['global_price_calculator_profit'] = float(result.profit)
     st.session_state['global_price_calculator_margin'] = float(result.margin)
     st.session_state['preco_calculado_global'] = float(result.sale_price)
+    st.session_state['preco_promocional_calculado_global'] = float(promo)
     st.session_state['preco_unitario_calculado'] = float(result.sale_price)
     st.session_state['preco_global_aplicado_em_todos_produtos'] = bool(has_source and normalized_mode == 'fixed_sale_price')
     st.session_state['preco_global_alerta_texto'] = GLOBAL_PRICE_WARNING_TEXT
@@ -244,19 +277,22 @@ def _save_global_result(result: GlobalPriceResult, *, has_source: bool, cost_col
 def _render_saved_result_notice() -> None:
     result = _result_from_state()
     mode = str(_legacy_or_new_state(PRICE_CALCULATOR_CONTEXT_KEY, GLOBAL_PRICE_MODE_KEY, '') or '')
+    promo_discount = to_decimal(st.session_state.get(PRICE_CALCULATOR_PROMO_DISCOUNT_KEY, 0))
     if isinstance(result, GlobalPriceResult):
+        promo = _promo_price(result.sale_price, promo_discount)
+        promo_text = f' · promocional {money(promo)}' if promo > 0 else ''
         if mode in {'source_cost_line_by_line', 'source_fixed_price_all_rows'}:
             cost_column = str(_legacy_or_new_state(PRICE_CALCULATOR_SOURCE_COST_COLUMN_KEY, GLOBAL_PRICE_SOURCE_COST_COLUMN_KEY, '') or '')
-            st.success(f'Calculadora pronta usando {cost_column}: {money(result.sale_price)}')
+            st.success(f'Calculadora pronta usando {cost_column}: venda {money(result.sale_price)}{promo_text}')
         else:
-            st.info(f'Cálculo rápido disponível: {money(result.sale_price)}')
+            st.info(f'Cálculo rápido disponível: venda {money(result.sale_price)}{promo_text}')
 
 
 def render_quick_price_calculator(*, embedded: bool = False, source_df: pd.DataFrame | None = None) -> None:
     has_source = _has_source_data(source_df)
     if not embedded:
         st.markdown('### Calculadora rápida de preço')
-        st.caption('Calcule preço, lucro e margem em uma tela simples.')
+        st.caption('Calcule preço de venda, preço promocional, lucro e margem em uma tela simples.')
 
     with st.container(border=True):
         st.markdown('#### Configurações de preço')
@@ -282,6 +318,9 @@ def render_quick_price_calculator(*, embedded: bool = False, source_df: pd.DataF
         fixed_fee = c_cost_2.number_input('Taxa fixa (R$)', min_value=0.0, value=0.0, step=0.5, key='quick_market_fixed_fee')
         extra_cost = c_cost_3.number_input('Outros (R$)', min_value=0.0, value=0.0, step=0.5, key='quick_market_extra_cost')
 
+        promo_discount = st.number_input('Desconto promocional (%)', min_value=0.0, max_value=100.0, value=float(st.session_state.get(PRICE_CALCULATOR_PROMO_DISCOUNT_KEY, 0.0) or 0.0), step=1.0, key=PRICE_CALCULATOR_PROMO_DISCOUNT_KEY)
+        promo_discount_decimal = to_decimal(promo_discount)
+
         data = build_input_from_values(ad_type=ad_type, classic_fee_percent=classic_fee, premium_fee_percent=premium_fee, cost=cost, sale_price=sale_price, tax_percent=tax_percent, freight=freight, fixed_fee=fixed_fee, extra_cost=extra_cost)
         result = calculate_global_price(data)
         auto_apply_source_calculation = bool(has_source and selected_cost_column)
@@ -291,7 +330,7 @@ def render_quick_price_calculator(*, embedded: bool = False, source_df: pd.DataF
             st.session_state[QUICK_MARKET_HAS_CALCULATED_KEY] = True
             st.session_state[PRICE_CALCULATOR_CONFIG_KEY] = data
             st.session_state[GLOBAL_PRICE_CONFIG_KEY] = data
-            _save_global_result(result, has_source=has_source, cost_column=selected_cost_column, calculation_mode=calculation_mode)
+            _save_global_result(result, has_source=has_source, cost_column=selected_cost_column, calculation_mode=calculation_mode, promo_discount_percent=promo_discount_decimal)
 
         if not st.session_state.get(QUICK_MARKET_HAS_CALCULATED_KEY):
             st.info('Preencha os valores e toque em Calcular.')
@@ -300,9 +339,9 @@ def render_quick_price_calculator(*, embedded: bool = False, source_df: pd.DataF
 
         st.session_state[PRICE_CALCULATOR_CONFIG_KEY] = data
         st.session_state[GLOBAL_PRICE_CONFIG_KEY] = data
-        _save_global_result(result, has_source=has_source, cost_column=selected_cost_column, calculation_mode=calculation_mode)
+        _save_global_result(result, has_source=has_source, cost_column=selected_cost_column, calculation_mode=calculation_mode, promo_discount_percent=promo_discount_decimal)
         st.markdown('#### Resultado')
-        _primary_result_card(result, has_source=has_source, calculation_mode=calculation_mode, cost_column=selected_cost_column)
+        _primary_result_card(result, has_source=has_source, calculation_mode=calculation_mode, cost_column=selected_cost_column, promo_discount_percent=promo_discount_decimal)
 
         c_result_1, c_result_2 = st.columns(2)
         with c_result_1:
@@ -313,6 +352,9 @@ def render_quick_price_calculator(*, embedded: bool = False, source_df: pd.DataF
             _metric_card('Taxa fixa', money(result.fixed_fee))
             _metric_card('Frete', money(result.freight))
             _metric_card('Outros custos', money(result.extra_cost))
+            promo_value = _promo_price(result.sale_price, promo_discount_decimal)
+            if promo_value > 0:
+                _metric_card('Preço promocional', money(promo_value), f'(-{percent(promo_discount_decimal)})')
 
         _profit_card(result.profit, result.margin)
         _render_observations(result, has_source=has_source, cost_column=selected_cost_column, calculation_mode=calculation_mode)
@@ -334,7 +376,7 @@ def render_quick_price_calculator(*, embedded: bool = False, source_df: pd.DataF
         elif result.profit < 0 and calculation_mode != 'fixed_sale_price':
             st.warning('Lucro líquido negativo. Revise custo, preço, frete, imposto ou taxas.')
         elif has_source:
-            st.success('Precificação pronta para seguir no fluxo.')
+            st.success('Precificação pronta para seguir no fluxo com Preço de venda e Preço promocional.')
         else:
             st.success('Cálculo concluído.')
 
@@ -352,10 +394,12 @@ __all__ = [
     'PRICE_CALCULATOR_CONFIG_KEY',
     'PRICE_CALCULATOR_CONTEXT_KEY',
     'PRICE_CALCULATOR_MODE_KEY',
+    'PRICE_CALCULATOR_PROMO_DISCOUNT_KEY',
     'PRICE_CALCULATOR_READY_KEY',
     'PRICE_CALCULATOR_RESULT_KEY',
     'PRICE_CALCULATOR_SAMPLE_MARGIN_KEY',
     'PRICE_CALCULATOR_SAMPLE_PROFIT_KEY',
+    'PRICE_CALCULATOR_SAMPLE_PROMO_PRICE_KEY',
     'PRICE_CALCULATOR_SAMPLE_SALE_PRICE_KEY',
     'PRICE_CALCULATOR_SOURCE_COST_COLUMN_KEY',
     'QUICK_MARKET_COST_WIDGET_KEY',
