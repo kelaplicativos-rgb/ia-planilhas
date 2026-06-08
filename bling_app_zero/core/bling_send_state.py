@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
 
+from bling_app_zero.core.bling_send_auto_tuner import initial_batch_size
+
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_send_state.py'
 
 STATUS_IDLE = 'idle'
@@ -15,14 +17,13 @@ OP_CADASTRO = 'cadastro'
 OP_ESTOQUE = 'estoque'
 OP_ATUALIZACAO_PRECO = 'atualizacao_preco'
 
-# BLINGFIX:
-# O envio automático deve ser um por um, mas sem exigir clique manual entre linhas.
-# Assim, cada ciclo processa exatamente 1 linha, valida/checkpointa e o painel dá rerun
-# sozinho para a próxima linha até terminar tudo. Isso evita pular linhas quando um item
-# falha dentro de um lote maior e evita a sensação de que precisa recomeçar.
-CADASTRO_BATCH_SIZE = 1
-ESTOQUE_BATCH_SIZE = 1
-PRECO_BATCH_SIZE = 1
+# BLINGFIX/BLINGPERF:
+# O usuário não escolhe modo seguro/rápido/turbo. O envio nasce sempre em modo
+# inteligente automático. O lote inicial é moderado e o painel ajusta sozinho
+# conforme tempo de resposta, falhas e estabilidade do Bling.
+CADASTRO_BATCH_SIZE = initial_batch_size(OP_CADASTRO)
+ESTOQUE_BATCH_SIZE = initial_batch_size(OP_ESTOQUE)
+PRECO_BATCH_SIZE = initial_batch_size(OP_ATUALIZACAO_PRECO)
 
 
 def normalize_operation(value: object) -> str:
