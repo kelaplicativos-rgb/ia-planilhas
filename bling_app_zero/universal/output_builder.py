@@ -6,6 +6,7 @@ from typing import Any
 import pandas as pd
 
 from bling_app_zero.core.text import normalize_key
+from bling_app_zero.universal.model_fidelity import enforce_same_model_contract, reindex_exact_model_columns
 from bling_app_zero.universal.universal_contract import UniversalContract, build_universal_contract, validate_universal_output
 
 KEY_TERMS = (
@@ -87,9 +88,6 @@ def _candidate_source_columns(df_source: pd.DataFrame, mapped_column: str, targe
     is_promo_target = _has_term(target_column, PROMO_PRICE_TERMS)
     is_price_target = _has_term(target_column, PRICE_TERMS) and not is_promo_target
 
-    # BLINGFIX: quando a calculadora criou resultados, eles precisam ganhar do
-    # nome igual do modelo/origem (`Preco` e `Preco Promocional`). Caso contrário
-    # o output final usa o valor antigo do ZIP do Bling em vez do cálculo novo.
     if is_promo_target:
         _append_named_columns(out, columns, CALCULATED_PROMO_PRICE_COLUMNS)
     elif is_price_target:
@@ -158,18 +156,10 @@ def _build_from_empty_model(df_source: pd.DataFrame, contract_columns: list[str]
 
 
 def _build_from_filled_model(df_source: pd.DataFrame, df_model: pd.DataFrame, contract_columns: list[str], mapping: dict[str, str]) -> pd.DataFrame:
-    """Preenche um modelo já exportado pelo Bling usando a origem como atualização.
-
-    Para modelos como preços multiloja, o arquivo do Bling vem com linhas reais
-    contendo IdProduto, ID na Loja, Código, Nome e Loja. Esse arquivo não pode ser
-    tratado como modelo vazio. A regra correta é preservar todas as linhas e
-    atualizar apenas as colunas mapeadas com dados vindos da origem, casando por
-    Código/SKU/ID na Loja sempre que possível.
-    """
-    model = df_model.reindex(columns=contract_columns, fill_value='').copy().fillna('').astype(str).reset_index(drop=True)
+    model = reindex_exact_model_columns(df_model, contract_columns).copy().fillna('').astype(str).reset_index(drop=True)
     source = df_source if isinstance(df_source, pd.DataFrame) else pd.DataFrame()
     if source.empty:
-        return model
+        return reindex_exact_model_columns(model, contract_columns)
 
     model_key_columns = _key_columns(model)
     same_length = len(source) == len(model)
@@ -201,7 +191,7 @@ def _build_from_filled_model(df_source: pd.DataFrame, df_model: pd.DataFrame, co
             if bool(mask.any()):
                 model.loc[mask, target_column] = values[mask]
 
-    return model.reindex(columns=contract_columns, fill_value='').fillna('')
+    return reindex_exact_model_columns(model, contract_columns)
 
 
 def build_universal_output(
@@ -209,14 +199,15 @@ def build_universal_output(
     df_model: pd.DataFrame,
     mapping: dict[str, str] | None = None,
 ) -> pd.DataFrame:
-    """Gera saída idêntica ao modelo anexado.
+    """Gera saída exatamente com o contrato do modelo anexado.
 
-    Regra central do MapeiaAI:
-    - mesmas colunas do modelo;
-    - mesma ordem do modelo;
-    - sem colunas extras;
-    - modelo vazio cria linhas a partir da origem;
-    - modelo preenchido preserva as linhas do Bling e atualiza pelos dados da origem.
+    Lema do sistema:
+    - modelo anexado manda na saída;
+    - mesmas colunas;
+    - mesma ordem;
+    - nenhuma coluna extra;
+    - nenhuma coluna removida;
+    - dados da origem apenas preenchem valores do contrato.
     """
     contract = build_universal_contract(df_model)
     source = df_source if isinstance(df_source, pd.DataFrame) else pd.DataFrame()
@@ -228,10 +219,11 @@ def build_universal_output(
     else:
         df_output = _build_from_empty_model(source, contract.columns, safe_mapping)
 
+    df_output = reindex_exact_model_columns(df_output, contract.columns)
     errors = validate_universal_output(df_output, contract)
     if errors:
         raise ValueError(' | '.join(errors))
-    return df_output
+    return enforce_same_model_contract(pd.DataFrame(columns=contract.columns), df_output)
 
 
 def empty_universal_output(df_model: pd.DataFrame, rows: int = 0) -> pd.DataFrame:
