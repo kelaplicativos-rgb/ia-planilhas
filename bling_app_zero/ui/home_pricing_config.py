@@ -8,8 +8,10 @@ import streamlit as st
 
 from bling_app_zero.core.shared_price_calculator import normalize_shared_price_config
 from bling_app_zero.v2.price_multistore.quick_ui import (
+    GLOBAL_PRICE_CONFIG_KEY,
     GLOBAL_PRICE_READY_KEY,
     GLOBAL_PRICE_RESULT_KEY,
+    PRICE_CALCULATOR_CONFIG_KEY,
     PRICE_CALCULATOR_MODE_KEY,
     PRICE_CALCULATOR_PROMO_DISCOUNT_KEY,
     PRICE_CALCULATOR_READY_KEY,
@@ -42,6 +44,13 @@ class HomePricingDefaults:
     supplier_term_days: float = 15.0
     stock_turnover_days: float = 30.0
     promo_discount_percent: float = 0.0
+
+
+def _num(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value or default)
+    except Exception:
+        return float(default)
 
 
 def default_home_pricing_config() -> dict[str, Any]:
@@ -95,6 +104,8 @@ def disable_home_pricing() -> dict[str, Any]:
 
 
 def _mode_label(config: dict[str, Any]) -> str:
+    if str(config.get('quick_reprice_mode') or '') == 'markup':
+        return 'Reajuste rápido'
     mode = str(config.get('calculator_mode') or 'nominal_profit')
     return CALCULATOR_MODE_LABELS.get(mode, 'Lucro nominal')
 
@@ -115,6 +126,13 @@ def _calculator_result():
     return st.session_state.get(GLOBAL_PRICE_RESULT_KEY)
 
 
+def _calculator_config():
+    config = st.session_state.get(PRICE_CALCULATOR_CONFIG_KEY)
+    if config is not None:
+        return config
+    return st.session_state.get(GLOBAL_PRICE_CONFIG_KEY)
+
+
 def _calculator_ready() -> bool:
     return bool(st.session_state.get(PRICE_CALCULATOR_READY_KEY, st.session_state.get(GLOBAL_PRICE_READY_KEY, False)))
 
@@ -128,10 +146,38 @@ def _promo_discount_from_state() -> float:
 
 def _config_from_global_result(*, source_df: pd.DataFrame | None = None) -> dict[str, Any]:
     result = _calculator_result()
+    raw_input = _calculator_config()
+    has_source = isinstance(source_df, pd.DataFrame) and not source_df.empty
+
+    input_tax = _num(getattr(raw_input, 'tax_percent', 0.0), 0.0)
+    input_freight = _num(getattr(raw_input, 'freight', 0.0), 0.0)
+    input_fixed = _num(getattr(raw_input, 'fixed_fee', 0.0), 0.0)
+    input_extra = _num(getattr(raw_input, 'extra_cost', 0.0), 0.0)
+    input_fee = _num(getattr(raw_input, 'classic_fee_percent', 0.0), 0.0) if str(getattr(raw_input, 'ad_type', 'Clássico')) == 'Clássico' else _num(getattr(raw_input, 'premium_fee_percent', 0.0), 0.0)
+    promo = _promo_discount_from_state()
+
+    # BLINGFIX: em planilhas de preço multiloja, a etapa Preço funciona como
+    # reajuste rápido: base da coluna escolhida + percentuais/fixos da tela.
+    # Assim, informar 10% altera a coluna Preco e o desconto promocional altera
+    # Preco Promocional no arquivo final.
+    if has_source and (input_tax > 0 or input_fee > 0 or input_freight > 0 or input_fixed > 0 or input_extra > 0 or promo > 0):
+        return normalize_home_pricing_config(
+            {
+                'enabled': True,
+                'calculator_mode': 'nominal_profit',
+                'quick_reprice_mode': 'markup',
+                'quick_markup_percent': input_tax,
+                'marketplace_fee_percent': input_fee,
+                'freight_cost': input_freight + input_fixed + input_extra,
+                'other_sale_fees_percent': 0.0,
+                'promo_discount_percent': promo,
+            }
+        )
+
     if result is None:
         current = get_home_pricing_config()
         current['enabled'] = _calculator_ready()
-        current['promo_discount_percent'] = _promo_discount_from_state()
+        current['promo_discount_percent'] = promo
         return current
 
     sale_price = float(getattr(result, 'sale_price', 0.0) or 0.0)
@@ -144,7 +190,6 @@ def _config_from_global_result(*, source_df: pd.DataFrame | None = None) -> dict
     tax_value = float(getattr(result, 'tax', 0.0) or 0.0)
     tax_percent = (tax_value / sale_price * 100.0) if sale_price else 0.0
     extra_cost = float(getattr(result, 'extra_cost', 0.0) or 0.0)
-    has_source = isinstance(source_df, pd.DataFrame) and not source_df.empty
     calculator_mode = _current_calculation_mode(has_source=has_source)
 
     if calculator_mode == 'fixed_sale_price':
@@ -173,7 +218,7 @@ def _config_from_global_result(*, source_df: pd.DataFrame | None = None) -> dict
             'desired_sale_price': desired_sale_price,
             'supplier_term_days': 0.0,
             'stock_turnover_days': 0.0,
-            'promo_discount_percent': _promo_discount_from_state(),
+            'promo_discount_percent': promo,
             'source_sample_cost': cost,
         }
     )
@@ -185,7 +230,9 @@ def render_home_pricing_config_form(source_df: pd.DataFrame | None = None) -> di
     if bool(config.get('enabled', False)):
         if isinstance(source_df, pd.DataFrame) and not source_df.empty:
             promo = float(config.get('promo_discount_percent', 0.0) or 0.0)
-            if promo > 0:
+            if str(config.get('quick_reprice_mode') or '') == 'markup':
+                st.success(f'Preço pronto. Reajuste: +{float(config.get("quick_markup_percent", 0.0) or 0.0):.2f}%. Promocional: -{promo:.2f}%.')
+            elif promo > 0:
                 st.success(f'Preço pronto. Modo: {_mode_label(config)}. Promocional: -{promo:.2f}%.')
             else:
                 st.success(f'Preço pronto. Modo: {_mode_label(config)}.')
