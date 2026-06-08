@@ -28,8 +28,12 @@ PRICE_UPDATE_SIGNALS = (
 PRICE_UPDATE_REQUIRED = (
     'preco', 'preço', 'preco_unitario', 'preço_unitário', 'preco unitario', 'preço unitário', 'valor',
 )
+PRICE_MULTISTORE_SIGNALS = (
+    'id_na_loja', 'id loja', 'nome_loja', 'nome loja', 'multilojas', 'multi lojas', 'preco_promocional',
+    'preço promocional', 'id_produto', 'idproduto', 'link_externo', 'link externo',
+)
 ID_SIGNALS = (
-    'id', 'id_produto', 'id produto', 'codigo', 'código', 'sku', 'gtin', 'ean',
+    'id', 'id_produto', 'id produto', 'idproduto', 'codigo', 'código', 'sku', 'gtin', 'ean',
 )
 BLING_REQUIRED_HINTS = (
     'obrigatorio', 'obrigatório',
@@ -74,21 +78,30 @@ def detect_model_contract(df: pd.DataFrame | None) -> ModelContractDetection:
     keys = _column_keys(columns)
     stock_score = _score(keys, STOCK_SIGNALS)
     price_score = _score(keys, PRICE_UPDATE_SIGNALS)
+    multistore_score = _score(keys, PRICE_MULTISTORE_SIGNALS)
     cadastro_score = _score(keys, CADASTRO_SIGNALS)
     id_score = _score(keys, ID_SIGNALS)
     required_score = _score(keys, BLING_REQUIRED_HINTS)
     has_stock_quantity = any(_has_any(key, ('balanco', 'balanço', 'saldo', 'estoque', 'quantidade', 'qtd')) for key in keys)
     has_deposit = any(_has_any(key, ('deposito', 'depósito')) for key in keys)
     has_price_required = any(_has_any(key, PRICE_UPDATE_REQUIRED) for key in keys)
-    has_cadastro_only = any(_has_any(key, ('ncm', 'marca', 'categoria', 'imagem', 'imagens', 'url_imagens', 'descricao_complementar', 'ficha_tecnica', 'caracteristicas')) for key in keys)
+    has_multistore_price = has_price_required and any(_has_any(key, ('nome_loja', 'nome loja', 'multilojas', 'multi lojas', 'id_na_loja', 'id loja')) for key in keys)
+    has_cadastro_only = any(_has_any(key, ('ncm', 'categoria', 'imagem', 'imagens', 'url_imagens', 'descricao_complementar', 'ficha_tecnica', 'caracteristicas')) for key in keys)
 
     scores = {
         'cadastro': cadastro_score,
         'estoque': stock_score,
         'atualizacao_preco': price_score,
+        'precos_multiloja': multistore_score,
         'id': id_score,
         'obrigatorio': required_score,
     }
+
+    if has_multistore_price and id_score >= 1 and not has_stock_quantity:
+        return ModelContractDetection(
+            'atualizacao_preco', CONTRACT_LABELS['atualizacao_preco'], 0.97,
+            'modelo_de_precos_multiloja_detectado_por_id_preco_e_loja', scores, columns,
+        )
 
     if has_stock_quantity and (has_deposit or stock_score >= 2) and not has_cadastro_only:
         return ModelContractDetection(
@@ -124,7 +137,7 @@ def normalize_contract_operation(value: object) -> str:
         return 'estoque'
     if text in {'cadastro', 'bling_cadastro', 'produtos', 'produto'}:
         return 'cadastro'
-    if text in {'atualizacao_preco', 'atualizacao_precos', 'atualização_preço', 'atualização_preços', 'preco', 'precos', 'preço', 'preços'}:
+    if text in {'atualizacao_preco', 'atualizacao_precos', 'atualização_preço', 'atualização_preços', 'preco', 'precos', 'preço', 'preços', 'precos_multiloja', 'preco_multiloja', 'multiloja'}:
         return 'atualizacao_preco'
     if text in {'universal', 'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}:
         return 'universal'
