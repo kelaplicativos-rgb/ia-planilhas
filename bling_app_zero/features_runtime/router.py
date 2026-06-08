@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import streamlit as st
 
+from bling_app_zero.core.bling_intelligent_operation_runtime import (
+    apply_intelligent_operation_runtime,
+    build_intelligent_operation_runtime,
+)
 from bling_app_zero.features_runtime.contracts import FeatureContract
 from bling_app_zero.features_runtime.registry import get_feature_contract
 
@@ -19,55 +23,26 @@ def _first_state_value(*keys: str) -> object:
 
 
 def active_mode() -> str:
-    context = str(st.session_state.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower()
-    finish = str(st.session_state.get(FINISH_MODE_KEY) or '').strip().lower()
-    if finish == 'api_direct' or context in {'bling', 'bling_api'}:
-        return 'api'
-    return 'csv'
+    runtime = build_intelligent_operation_runtime(st.session_state)
+    return runtime.mode
 
 
 def active_operation() -> str:
-    """Resolve a operação ativa sem deixar estado legado sobrescrever a escolha da API.
-
-    No modo API direta, a escolha do rádio `direct_bling_operation_choice` precisa ter
-    prioridade sobre chaves antigas como `model_contract_type` ou `operacao_final`.
-    Isso evita o fluxo de estoque herdar cadastro ou universal de um fluxo anterior.
-    """
-    if active_mode() == 'api':
-        direct_choice = st.session_state.get('direct_bling_operation_choice')
-        if direct_choice not in (None, ''):
-            return str(direct_choice)
-        return str(
-            _first_state_value(
-                'home_slim_flow_operation',
-                'home_detected_operation',
-                'operacao_final',
-                'tipo_operacao_final',
-                MODEL_CONTRACT_TYPE_KEY,
-            )
-            or ''
-        )
-
-    return str(
-        _first_state_value(
-            MODEL_CONTRACT_TYPE_KEY,
-            'home_slim_flow_operation',
-            'home_detected_operation',
-            'operacao_final',
-            'tipo_operacao_final',
-            'tipo_operacao_site',
-            'operation_site',
-        )
-        or ''
-    )
+    # Resolve a operação ativa usando o runtime inteligente único.
+    # A mesma inteligência vale para API e CSV.
+    runtime = build_intelligent_operation_runtime(st.session_state)
+    return runtime.operation
 
 
 def active_contract() -> FeatureContract:
-    contract = get_feature_contract(active_operation(), active_mode())
+    runtime = apply_intelligent_operation_runtime(st.session_state)
+    contract = get_feature_contract(runtime.operation, runtime.mode)
     st.session_state['active_feature_contract_key'] = contract.key
     st.session_state['active_feature_operation'] = contract.operation
     st.session_state['active_feature_mode'] = contract.mode
     st.session_state['active_feature_steps'] = list(contract.steps)
+    st.session_state['flow_spine_contract_key'] = contract.key
+    st.session_state['flow_spine_primary_action_label'] = contract.primary_action_label
     return contract
 
 
