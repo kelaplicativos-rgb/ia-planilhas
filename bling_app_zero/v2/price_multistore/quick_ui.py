@@ -26,6 +26,7 @@ PRICE_CALCULATOR_SAMPLE_PROMO_PRICE_KEY = 'price_calculator_sample_promo_price'
 PRICE_CALCULATOR_SAMPLE_PROFIT_KEY = 'price_calculator_sample_profit'
 PRICE_CALCULATOR_SAMPLE_MARGIN_KEY = 'price_calculator_sample_margin'
 PRICE_CALCULATOR_PROMO_DISCOUNT_KEY = 'price_calculator_promo_discount_percent'
+PRICE_CALCULATOR_PROMO_DISCOUNT_STATE_KEY = 'price_calculator_promo_discount_percent_value'
 PRICE_CALCULATOR_MODE_KEY = 'price_calculator_mode'
 PRICE_CALCULATOR_MODE_WIDGET_KEY = 'price_calculator_mode_select'
 PRICE_CALCULATOR_LEGACY_MODE_KEY = 'global_price_application_mode'
@@ -252,7 +253,7 @@ def _save_global_result(
     st.session_state[PRICE_CALCULATOR_READY_KEY] = True
     st.session_state[PRICE_CALCULATOR_CONTEXT_KEY] = context
     st.session_state[PRICE_CALCULATOR_MODE_KEY] = normalized_mode
-    st.session_state[PRICE_CALCULATOR_PROMO_DISCOUNT_KEY] = float(promo_discount_percent)
+    st.session_state[PRICE_CALCULATOR_PROMO_DISCOUNT_STATE_KEY] = float(promo_discount_percent)
     st.session_state[PRICE_CALCULATOR_SAMPLE_SALE_PRICE_KEY] = float(result.sale_price)
     st.session_state[PRICE_CALCULATOR_SAMPLE_PROMO_PRICE_KEY] = float(promo)
     st.session_state[PRICE_CALCULATOR_SAMPLE_PROFIT_KEY] = float(result.profit)
@@ -274,10 +275,16 @@ def _save_global_result(
         st.session_state[GLOBAL_PRICE_SOURCE_COST_COLUMN_KEY] = cost_column
 
 
+def _current_promo_discount() -> Decimal:
+    if PRICE_CALCULATOR_PROMO_DISCOUNT_KEY in st.session_state:
+        return to_decimal(st.session_state.get(PRICE_CALCULATOR_PROMO_DISCOUNT_KEY, 0))
+    return to_decimal(st.session_state.get(PRICE_CALCULATOR_PROMO_DISCOUNT_STATE_KEY, 0))
+
+
 def _render_saved_result_notice() -> None:
     result = _result_from_state()
     mode = str(_legacy_or_new_state(PRICE_CALCULATOR_CONTEXT_KEY, GLOBAL_PRICE_MODE_KEY, '') or '')
-    promo_discount = to_decimal(st.session_state.get(PRICE_CALCULATOR_PROMO_DISCOUNT_KEY, 0))
+    promo_discount = _current_promo_discount()
     if isinstance(result, GlobalPriceResult):
         promo = _promo_price(result.sale_price, promo_discount)
         promo_text = f' · promocional {money(promo)}' if promo > 0 else ''
@@ -318,7 +325,8 @@ def render_quick_price_calculator(*, embedded: bool = False, source_df: pd.DataF
         fixed_fee = c_cost_2.number_input('Taxa fixa (R$)', min_value=0.0, value=0.0, step=0.5, key='quick_market_fixed_fee')
         extra_cost = c_cost_3.number_input('Outros (R$)', min_value=0.0, value=0.0, step=0.5, key='quick_market_extra_cost')
 
-        promo_discount = st.number_input('Desconto promocional (%)', min_value=0.0, max_value=100.0, value=float(st.session_state.get(PRICE_CALCULATOR_PROMO_DISCOUNT_KEY, 0.0) or 0.0), step=1.0, key=PRICE_CALCULATOR_PROMO_DISCOUNT_KEY)
+        promo_default = float(st.session_state.get(PRICE_CALCULATOR_PROMO_DISCOUNT_STATE_KEY, st.session_state.get(PRICE_CALCULATOR_PROMO_DISCOUNT_KEY, 0.0)) or 0.0)
+        promo_discount = st.number_input('Desconto promocional (%)', min_value=0.0, max_value=100.0, value=promo_default, step=1.0, key=PRICE_CALCULATOR_PROMO_DISCOUNT_KEY)
         promo_discount_decimal = to_decimal(promo_discount)
 
         data = build_input_from_values(ad_type=ad_type, classic_fee_percent=classic_fee, premium_fee_percent=premium_fee, cost=cost, sale_price=sale_price, tax_percent=tax_percent, freight=freight, fixed_fee=fixed_fee, extra_cost=extra_cost)
@@ -395,6 +403,7 @@ __all__ = [
     'PRICE_CALCULATOR_CONTEXT_KEY',
     'PRICE_CALCULATOR_MODE_KEY',
     'PRICE_CALCULATOR_PROMO_DISCOUNT_KEY',
+    'PRICE_CALCULATOR_PROMO_DISCOUNT_STATE_KEY',
     'PRICE_CALCULATOR_READY_KEY',
     'PRICE_CALCULATOR_RESULT_KEY',
     'PRICE_CALCULATOR_SAMPLE_MARGIN_KEY',
