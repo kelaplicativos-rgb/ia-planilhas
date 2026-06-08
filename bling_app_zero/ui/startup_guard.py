@@ -13,11 +13,13 @@ BOOT_STARTED_AT_KEY = 'bling_startup_guard_started_at_v1'
 
 
 def ensure_app_ready() -> bool:
-    """Bloqueia a primeira renderização para evitar ações antes do SessionInfo.
+    """Estabiliza a sessão sem forçar rerun na primeira renderização.
 
-    Em celular e Streamlit Cloud, a UI pode aparecer antes de a sessão/websocket
-    estabilizar. Botões pesados clicados nesse instante podem gerar:
-    "Tried to use SessionInfo before it was initialized".
+    Em celular e Streamlit Cloud, st.rerun() logo no boot pode provocar o pop-up
+    "Bad message format / Tried to use SessionInfo before it was initialized".
+    O BLINGFIX mantém a proteção, mas troca o rerun por uma pequena espera local
+    e libera a mesma execução. Assim uma operação longa de API não sofre uma
+    reinicialização visual desnecessária.
     """
     if bool(st.session_state.get(BOOT_READY_KEY)):
         return True
@@ -28,16 +30,22 @@ def ensure_app_ready() -> bool:
     if not bool(st.session_state.get(BOOT_RENDERED_KEY)):
         st.session_state[BOOT_RENDERED_KEY] = True
         add_audit_event(
-            'startup_guard_first_render_blocked',
+            'startup_guard_first_render_stabilized_without_rerun',
             area='APP',
             status='INFO',
             details={'responsible_file': RESPONSIBLE_FILE},
         )
-        st.info('Preparando sessão do sistema...')
-        st.progress(20, text='Inicializando conexão segura da tela...')
-        time.sleep(0.25)
-        st.rerun()
-        return False
+        notice = st.empty()
+        progress = st.progress(20, text='Inicializando conexão segura da tela...')
+        notice.info('Preparando sessão do sistema...')
+        time.sleep(0.35)
+        try:
+            progress.progress(100, text='Sessão pronta.')
+            time.sleep(0.05)
+            progress.empty()
+            notice.empty()
+        except Exception:
+            pass
 
     st.session_state[BOOT_READY_KEY] = True
     elapsed = round(time.time() - float(st.session_state.get(BOOT_STARTED_AT_KEY) or time.time()), 2)
@@ -45,7 +53,7 @@ def ensure_app_ready() -> bool:
         'startup_guard_ready',
         area='APP',
         status='OK',
-        details={'elapsed_seconds': elapsed, 'responsible_file': RESPONSIBLE_FILE},
+        details={'elapsed_seconds': elapsed, 'no_startup_rerun': True, 'responsible_file': RESPONSIBLE_FILE},
     )
     return True
 
