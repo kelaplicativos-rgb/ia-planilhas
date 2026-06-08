@@ -13,6 +13,8 @@ KEY_TERMS = (
 )
 PRICE_TERMS = ('preco', 'preço', 'valor')
 PROMO_PRICE_TERMS = ('preco_promocional', 'preço_promocional', 'preco promocional', 'preço promocional', 'promocional')
+CALCULATED_PRICE_COLUMNS = ('Preço de venda', 'Preco de venda')
+CALCULATED_PROMO_PRICE_COLUMNS = ('Preço promocional', 'Preco Promocional', 'Preço Promocional')
 NAME_TERMS = ('nome', 'descricao', 'descrição', 'produto', 'titulo', 'título')
 EMPTY_MARKERS = {'', 'nan', 'none', 'null', '<na>'}
 
@@ -60,6 +62,14 @@ def _key_columns(df: pd.DataFrame) -> list[str]:
     return preferred + [column for column in secondary if column not in preferred]
 
 
+def _append_named_columns(out: list[str], columns: list[str], preferred: tuple[str, ...]) -> None:
+    normalized_preferred = [_norm_column(column) for column in preferred]
+    for wanted in normalized_preferred:
+        for column in columns:
+            if column not in out and _norm_column(column) == wanted:
+                out.append(column)
+
+
 def _append_columns(out: list[str], columns: list[str], terms: tuple[str, ...], *, exclude_terms: tuple[str, ...] = ()) -> None:
     for column in columns:
         if column in out:
@@ -73,17 +83,30 @@ def _append_columns(out: list[str], columns: list[str], terms: tuple[str, ...], 
 def _candidate_source_columns(df_source: pd.DataFrame, mapped_column: str, target_column: str) -> list[str]:
     columns = [str(column) for column in df_source.columns]
     out: list[str] = []
-    if mapped_column and mapped_column in columns:
+
+    is_promo_target = _has_term(target_column, PROMO_PRICE_TERMS)
+    is_price_target = _has_term(target_column, PRICE_TERMS) and not is_promo_target
+
+    # BLINGFIX: quando a calculadora criou resultados, eles precisam ganhar do
+    # nome igual do modelo/origem (`Preco` e `Preco Promocional`). Caso contrário
+    # o output final usa o valor antigo do ZIP do Bling em vez do cálculo novo.
+    if is_promo_target:
+        _append_named_columns(out, columns, CALCULATED_PROMO_PRICE_COLUMNS)
+    elif is_price_target:
+        _append_named_columns(out, columns, CALCULATED_PRICE_COLUMNS)
+
+    if mapped_column and mapped_column in columns and mapped_column not in out:
         out.append(mapped_column)
+
     target_key = _norm_column(target_column)
     for column in columns:
         if column not in out and _norm_column(column) == target_key:
             out.append(column)
 
-    if _has_term(target_column, PROMO_PRICE_TERMS):
+    if is_promo_target:
         _append_columns(out, columns, PROMO_PRICE_TERMS)
         _append_columns(out, columns, PRICE_TERMS, exclude_terms=PROMO_PRICE_TERMS)
-    elif _has_term(target_column, PRICE_TERMS):
+    elif is_price_target:
         _append_columns(out, columns, PRICE_TERMS, exclude_terms=PROMO_PRICE_TERMS)
         _append_columns(out, columns, PROMO_PRICE_TERMS)
 
@@ -171,8 +194,9 @@ def _build_from_filled_model(df_source: pd.DataFrame, df_model: pd.DataFrame, co
         if applied:
             continue
 
-        if same_length and mapped_column in source.columns:
-            values = source[mapped_column].fillna('').astype(str).reset_index(drop=True)
+        fallback_column = candidates[0]
+        if same_length and fallback_column in source.columns:
+            values = source[fallback_column].fillna('').astype(str).reset_index(drop=True)
             mask = values.map(lambda value: not _is_empty(value))
             if bool(mask.any()):
                 model.loc[mask, target_column] = values[mask]
