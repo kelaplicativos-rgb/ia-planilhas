@@ -17,7 +17,7 @@ from bling_app_zero.universal.model_contract_detector import (
     detect_model_contract,
 )
 
-MODEL_SPREADSHEET_TYPES = ['xlsx', 'xls', 'csv', 'xlsm', 'xlsb']
+MODEL_SPREADSHEET_TYPES = ['xlsx', 'xls', 'csv', 'xlsm', 'xlsb', 'zip']
 EXCEL_HEADER_FALLBACK_TYPES = {'xlsx', 'xlsm'}
 
 
@@ -268,7 +268,7 @@ def render_model_upload_box(
     )
 
     if not supported_files:
-        st.warning('Nenhuma planilha compatível encontrada. Use XLSX, XLS, CSV, XLSM ou XLSB.')
+        st.warning('Nenhuma planilha compatível encontrada. Use XLSX, XLS, CSV, XLSM, XLSB ou ZIP com CSV/XLSX dentro.')
         return ModelUploadResult(attachments=[], ignored_files=ignored_files)
 
     with st.spinner('Lendo modelo de destino...'):
