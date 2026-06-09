@@ -8,17 +8,13 @@ import streamlit as st
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.interaction_guard import (
     activate_logout_guard,
-    activate_manual_back_lock,
     clear_logout_guard,
-    clear_manual_back_lock,
     disconnect_backend_token,
-    locked_manual_back_target,
     logout_guard_active,
-    manual_back_lock_active,
 )
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/blingfix_runtime_patches.py'
-_PATCH_INSTALLED_KEY = 'blingfix_runtime_patches_installed_v5'
+_PATCH_INSTALLED_KEY = 'blingfix_runtime_patches_installed_v6'
 MAX_BLING_IMAGES_PER_PRODUCT = 6
 _IMAGE_LIST_KEYS = {'imagens', 'images', 'imagensurl', 'externas', 'externos', 'fotos'}
 
@@ -65,80 +61,6 @@ def _patch_disconnect() -> None:
 
     bling_oauth.disconnect = guarded_disconnect
     home_bling_api_flow.disconnect = guarded_disconnect
-
-
-def _patch_home_wizard_navigation() -> None:
-    from bling_app_zero.ui import home_wizard
-
-    original_resolve: Callable[..., Any] | None = getattr(home_wizard, '_blingfix_original_resolve_active_step', None)
-    if original_resolve is None:
-        original_resolve = home_wizard._resolve_active_step
-        setattr(home_wizard, '_blingfix_original_resolve_active_step', original_resolve)
-
-    def guarded_resolve_active_step(active_step: str, *, has_model: bool, start_at_origin: bool) -> str:
-        locked_target = locked_manual_back_target('')
-        if locked_target:
-            return locked_target
-        return original_resolve(active_step, has_model=has_model, start_at_origin=start_at_origin)
-
-    home_wizard._resolve_active_step = guarded_resolve_active_step
-
-    def guarded_render_safe_step_nav(steps: list[str], active_step: str) -> None:
-        if active_step not in steps:
-            return
-        plan = home_wizard._flow_plan()
-        previous_step = plan.previous_step(active_step)
-        next_step = plan.next_step(active_step)
-        can_go_next = bool(next_step) and home_wizard._can_advance_from(active_step)
-        contract = home_wizard.active_contract()
-        locked = manual_back_lock_active(active_step)
-
-        _render_persistent_process_bar(home_wizard, steps, active_step, locked=locked)
-
-        if contract.is_api and can_go_next and not locked:
-            home_wizard._go_to_step(next_step)
-            add_audit_event('wizard_api_auto_next_applied', area='WIZARD', step=next_step, details={'from': active_step, 'to': next_step, 'flow_spine': plan.to_dict(), 'responsible_file': RESPONSIBLE_FILE})
-            home_wizard.safe_rerun('wizard_api_auto_next', target_step=next_step)
-            return
-
-        if contract.is_api and can_go_next and locked:
-            add_audit_event('wizard_api_auto_next_blocked_by_manual_back', area='WIZARD', step=active_step, status='OK', details={'active_step': active_step, 'next_step': next_step, 'responsible_file': RESPONSIBLE_FILE})
-
-        st.markdown('---')
-        col_back, col_status, col_next = st.columns([1, 1.4, 1])
-        with col_back:
-            if previous_step and st.button('⬅️ Voltar', use_container_width=True, key=f'wizard_local_back_{active_step}'):
-                activate_manual_back_lock(active_step, previous_step)
-                home_wizard._go_to_step(previous_step)
-                add_audit_event('wizard_local_back_clicked', area='WIZARD', step=previous_step, details={'from': active_step, 'to': previous_step, 'state_preserved': True, 'flow_spine': plan.to_dict(), 'responsible_file': RESPONSIBLE_FILE})
-                home_wizard.safe_rerun('wizard_back_clicked', target_step=previous_step)
-            elif not previous_step:
-                st.caption('Início do fluxo')
-        with col_status:
-            if next_step:
-                if can_go_next:
-                    if locked:
-                        st.info(f'Você voltou para revisar: {_label_for_home_wizard(home_wizard, active_step)}. O avanço automático está pausado até tocar em Próximo.')
-                    else:
-                        st.success(f'Próxima etapa liberada: {home_wizard._label_for(next_step)}')
-                else:
-                    home_wizard.render_pending_notice(home_wizard._pending_message_for(active_step))
-            else:
-                st.success('Última etapa do fluxo.')
-        with col_next:
-            if next_step:
-                if can_go_next:
-                    if st.button(f'Próximo: {home_wizard._label_for(next_step)}', use_container_width=True, key=f'wizard_local_next_{active_step}'):
-                        clear_manual_back_lock('manual_next_clicked')
-                        home_wizard._go_to_step(next_step)
-                        add_audit_event('wizard_local_next_clicked', area='WIZARD', step=next_step, details={'from': active_step, 'to': next_step, 'prerequisite_ok': True, 'state_preserved': True, 'flow_spine': plan.to_dict(), 'responsible_file': RESPONSIBLE_FILE})
-                        home_wizard.safe_rerun('wizard_next_clicked', target_step=next_step)
-                else:
-                    home_wizard._render_blocked_next_state(next_step)
-            else:
-                st.caption('Final')
-
-    home_wizard._render_safe_step_nav = guarded_render_safe_step_nav
 
 
 def _patch_site_operation_guard() -> None:
@@ -365,40 +287,6 @@ def _normalize_operation(value: object) -> str:
     return text
 
 
-def _render_persistent_process_bar(home_wizard_module: Any, steps: list[str], active_step: str, *, locked: bool) -> None:
-    if active_step not in steps:
-        return
-    index = steps.index(active_step)
-    total = max(1, len(steps))
-    percent = int(((index + 1) / total) * 100)
-    current_label = _label_for_home_wizard(home_wizard_module, active_step)
-
-    st.markdown('''
-<style>
-.blingfix-progress-card{border:1px solid rgba(15,23,42,.10);background:linear-gradient(135deg,#ffffff 0%,#f8fafc 100%);border-radius:16px;padding:.72rem .82rem;margin:.55rem 0 .85rem 0;box-shadow:0 8px 22px rgba(15,23,42,.05);}
-.blingfix-progress-title{font-size:.82rem;font-weight:900;color:#0f172a;margin-bottom:.22rem;}
-.blingfix-progress-subtitle{font-size:.78rem;color:#475569;line-height:1.25;}
-.blingfix-progress-locked{color:#9a3412;font-weight:850;}
-</style>
-''', unsafe_allow_html=True)
-    lock_text = ' · avanço automático pausado' if locked else ''
-    lock_class = ' blingfix-progress-locked' if locked else ''
-    st.markdown(f'''
-<div class="blingfix-progress-card">
-  <div class="blingfix-progress-title">Acompanhamento do processo</div>
-  <div class="blingfix-progress-subtitle{lock_class}">Etapa {index + 1} de {total} · {current_label}{lock_text}</div>
-</div>
-''', unsafe_allow_html=True)
-    st.progress(max(1, min(100, percent)))
-
-
-def _label_for_home_wizard(home_wizard_module: Any, step: str) -> str:
-    try:
-        return str(home_wizard_module._label_for(step))
-    except Exception:
-        return str(step or '')
-
-
 def install_blingfix_runtime_patches() -> None:
     if st.session_state.get(_PATCH_INSTALLED_KEY):
         return
@@ -406,11 +294,10 @@ def install_blingfix_runtime_patches() -> None:
     _patch_internal_image_payload_previews()
     _patch_oauth_callback()
     _patch_disconnect()
-    _patch_home_wizard_navigation()
     _patch_site_operation_guard()
     _patch_api_batch_operation_guard()
     st.session_state[_PATCH_INSTALLED_KEY] = True
-    add_audit_event('blingfix_runtime_patches_installed', area='APP', status='OK', details={'logout_guard_active': logout_guard_active(), 'api_operation_guard': True, 'bling_image_limit_guard': True, 'max_images_per_product': MAX_BLING_IMAGES_PER_PRODUCT, 'request_wrapper_accepts_args': True, 'preview_payload_patches': True, 'direct_sender_payload_patch_removed': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('blingfix_runtime_patches_installed', area='APP', status='OK', details={'logout_guard_active': logout_guard_active(), 'api_operation_guard': True, 'bling_image_limit_guard': True, 'max_images_per_product': MAX_BLING_IMAGES_PER_PRODUCT, 'request_wrapper_accepts_args': True, 'preview_payload_patches': True, 'direct_sender_payload_patch_removed': True, 'home_wizard_navigation_native': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_blingfix_runtime_patches']
