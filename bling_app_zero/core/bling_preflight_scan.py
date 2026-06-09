@@ -16,7 +16,17 @@ _NAME_TERMS = ('nome', 'produto', 'descrição', 'descricao', 'titulo', 'título
 _QTY_TERMS = ('quantidade', 'qtd', 'saldo', 'estoque', 'balanço', 'balanco')
 _PRICE_TERMS = ('preco', 'preço', 'valor', 'valor venda', 'preco venda', 'preço venda', 'preco unitario', 'preço unitário')
 _IMAGE_TERMS = ('imagem', 'imagens', 'foto', 'fotos', 'url imagem')
-_ID_BLING_TERMS = ('id produto bling', 'id_produto_bling', 'id bling', 'id_bling', 'codigo bling', 'código bling')
+_ID_BLING_TERMS = (
+    'id',
+    'id produto',
+    'id_produto',
+    'id produto bling',
+    'id_produto_bling',
+    'id bling',
+    'id_bling',
+    'codigo bling',
+    'código bling',
+)
 
 
 @dataclass(frozen=True)
@@ -92,8 +102,7 @@ def _sendable_mask(df: pd.DataFrame, operation: str) -> pd.Series:
         return pd.Series([], dtype=bool)
 
     columns = _operation_columns(df)
-    has_identifier = _filled_mask(df, columns['codigo']) | _filled_mask(df, columns['gtin'])
-    has_id_bling = _filled_mask(df, columns['id_bling'])
+    has_identifier = _filled_mask(df, columns['codigo']) | _filled_mask(df, columns['gtin']) | _filled_mask(df, columns['id_bling'])
     has_name = _filled_mask(df, columns['nome'])
     has_qty = _filled_mask(df, columns['quantidade'])
     has_price = _filled_mask(df, columns['preco'])
@@ -101,7 +110,7 @@ def _sendable_mask(df: pd.DataFrame, operation: str) -> pd.Series:
     if op == OP_ESTOQUE:
         return has_identifier & has_qty
     if op == OP_ATUALIZACAO_PRECO:
-        return (has_id_bling | has_identifier) & has_price
+        return has_identifier & has_price
     return has_identifier | has_name
 
 
@@ -113,19 +122,19 @@ def pending_reason_for_row(row: pd.Series, operation: str, columns: dict[str, st
     has_name = bool(_safe_value(row, columns.get('nome', '')))
     has_qty = bool(_safe_value(row, columns.get('quantidade', '')))
     has_price = bool(_safe_value(row, columns.get('preco', '')))
-    has_identifier = has_code or has_gtin
+    has_identifier = has_code or has_gtin or has_id_bling
 
     if op == OP_ESTOQUE:
         missing: list[str] = []
         if not has_identifier:
-            missing.append('SKU/código/GTIN')
+            missing.append('ID Bling/SKU/código/GTIN')
         if not has_qty:
             missing.append('quantidade')
         return 'Falta ' + ' e '.join(missing) if missing else ''
 
     if op == OP_ATUALIZACAO_PRECO:
         missing = []
-        if not (has_id_bling or has_identifier):
+        if not has_identifier:
             missing.append('ID Bling ou SKU/código/GTIN')
         if not has_price:
             missing.append('preço')
@@ -148,7 +157,7 @@ def filter_sendable_dataframe(df: pd.DataFrame, operation: str) -> pd.DataFrame:
 
 def build_pending_rows_dataframe(df: pd.DataFrame, operation: str, *, limit: int = 100) -> pd.DataFrame:
     """Monta uma tabela curta com as linhas que foram bloqueadas pela pré-varredura."""
-    columns_out = ['linha', 'codigo', 'gtin', 'produto', 'quantidade', 'preco', 'motivo']
+    columns_out = ['linha', 'codigo', 'gtin', 'id_bling', 'produto', 'quantidade', 'preco', 'motivo']
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame(columns=columns_out)
 
@@ -167,6 +176,7 @@ def build_pending_rows_dataframe(df: pd.DataFrame, operation: str, *, limit: int
                 'linha': str(int(index) + 1 if isinstance(index, int) else index),
                 'codigo': _safe_value(row, columns['codigo']),
                 'gtin': _safe_value(row, columns['gtin']),
+                'id_bling': _safe_value(row, columns['id_bling']),
                 'produto': _safe_value(row, columns['nome']),
                 'quantidade': _safe_value(row, columns['quantidade']),
                 'preco': _safe_value(row, columns['preco']),
