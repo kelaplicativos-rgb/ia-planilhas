@@ -61,6 +61,75 @@ def _contract_operation() -> str:
     return UNIVERSAL_OPERATION
 
 
+def _operation_from_state_key(key: str) -> str:
+    return normalize_contract_operation(st.session_state.get(key))
+
+
+def _clear_runtime_flow_state(reason: str, *, target_operation: str = '') -> list[str]:
+    removed: list[str] = []
+    for key in RESET_OUTPUT_KEYS:
+        if key in st.session_state:
+            st.session_state.pop(key, None)
+            removed.append(key)
+    for key in list(st.session_state.keys()):
+        text_key = str(key)
+        if text_key.startswith((
+            'df_final_',
+            'df_site_bruto_',
+            'df_origem_site_como_planilha_',
+            'site_source_urls_como_planilha_',
+            'site_requested_columns_como_planilha_',
+            'site_modelo_',
+            'blingsmartscan_report_',
+            'blingsmartscan_notice_',
+            'blingsmartscan_decision_',
+        )):
+            if text_key not in {HOME_CADASTRO_MODEL_KEY, HOME_ESTOQUE_MODEL_KEY}:
+                st.session_state.pop(key, None)
+                removed.append(text_key)
+    if removed:
+        add_audit_event(
+            'wizard_runtime_flow_state_cleared',
+            area='WIZARD',
+            step='reset',
+            status='OK',
+            details={
+                'reason': reason,
+                'target_operation': target_operation,
+                'removed_count': len(removed),
+                'removed_keys': removed[:80],
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+    return removed
+
+
+def _clear_if_operation_changed(next_operation: str, *, reason: str) -> None:
+    previous_candidates = [
+        _operation_from_state_key('active_feature_operation'),
+        _operation_from_state_key('flow_spine_operation'),
+        _operation_from_state_key('flow_spine_sender_operation'),
+        _operation_from_state_key('flow_spine_api_batch_operation'),
+        _operation_from_state_key(FLOW_OPERATION_KEY),
+        _operation_from_state_key('operacao_final'),
+    ]
+    previous = next((item for item in previous_candidates if item and item != next_operation), '')
+    if previous:
+        _clear_runtime_flow_state(reason, target_operation=next_operation)
+        add_audit_event(
+            'wizard_operation_switch_state_isolated',
+            area='WIZARD',
+            step='origem',
+            status='OK',
+            details={
+                'previous_operation': previous,
+                'next_operation': next_operation,
+                'reason': reason,
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+
+
 def looks_like_loaded_df(value: object) -> bool:
     if value is None or not hasattr(value, 'columns'):
         return False
@@ -224,6 +293,7 @@ def select_origin(origin: str, *, set_scroll_target: Callable[[str], None] | Non
         return
     previous_origin = st.session_state.get(FLOW_ORIGIN_KEY)
     operation = _contract_operation()
+    _clear_if_operation_changed(operation, reason='origin_selected_operation_changed')
     st.session_state[ORIGIN_RADIO_KEY] = origin
     st.session_state[FLOW_ORIGIN_KEY] = origin
     st.session_state[FLOW_OPERATION_KEY] = operation
@@ -263,12 +333,11 @@ def select_origin(origin: str, *, set_scroll_target: Callable[[str], None] | Non
 
 
 def reset_wizard() -> None:
-    for key in RESET_OUTPUT_KEYS:
-        st.session_state.pop(key, None)
+    removed = _clear_runtime_flow_state('wizard_reset')
     st.session_state.pop(FLOW_ORIGIN_KEY, None)
     st.session_state.pop('origem_final', None)
     st.session_state.pop(QUICK_MODEL_READY_KEY, None)
-    add_audit_event('wizard_reset', area='WIZARD', step='download', details={'single_page_flow': SINGLE_PAGE_FLOW, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('wizard_reset', area='WIZARD', step='download', details={'single_page_flow': SINGLE_PAGE_FLOW, 'removed_count': len(removed), 'responsible_file': RESPONSIBLE_FILE})
     safe_rerun('wizard_reset', target_step=STEP_MODELO)
 
 
