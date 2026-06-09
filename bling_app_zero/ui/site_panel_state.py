@@ -11,10 +11,14 @@ from bling_app_zero.core.audit import add_audit_event
 RESPONSIBLE_FILE = 'bling_app_zero/ui/site_panel_state.py'
 UNIVERSAL_OPERATION = 'universal'
 UNIVERSAL_ALIASES = {'universal', 'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}
-SITE_CAPTURE_STALE_SECONDS = 150
-SITE_CAPTURE_HARD_STALE_SECONDS = 1800
-SITE_CAPTURE_PROGRESS_GRACE_SECONDS = 420
-SITE_CAPTURE_MEANINGFUL_IDLE_SECONDS = 900
+# Captura por site no Streamlit pode ser interrompida pela própria rerenderização.
+# O diagnóstico 80 mostrou cadastro/API preso em running por mais de 1 minuto,
+# sem erro e sem resultado. O watchdog precisa destravar antes de a tela ficar
+# parecendo quebrada para o usuário.
+SITE_CAPTURE_STALE_SECONDS = 75
+SITE_CAPTURE_HARD_STALE_SECONDS = 420
+SITE_CAPTURE_PROGRESS_GRACE_SECONDS = 110
+SITE_CAPTURE_MEANINGFUL_IDLE_SECONDS = 180
 LEGACY_AUTH_KEYS = (
     'guided_login_confirmed_logged_in',
     'guided_login_capture_config',
@@ -198,6 +202,14 @@ def _last_progress_seen_at() -> float:
             return 0.0
 
 
+def _last_progress_payload() -> dict:
+    for key in ('site_progress_last', 'live_operation_progress_last_v1'):
+        payload = st.session_state.get(key)
+        if isinstance(payload, dict):
+            return payload
+    return {}
+
+
 def _extract_int_from_text(text: object, patterns: tuple[str, ...]) -> int:
     raw = str(text or '')
     for pattern in patterns:
@@ -223,9 +235,7 @@ def _payload_number(last_payload: dict, *keys: str) -> int:
 
 def _progress_has_live_signal(now: float, *, started_at: float, max_age_seconds: int) -> tuple[bool, float, dict, str]:
     last_seen_at = _last_progress_seen_at()
-    last_payload = st.session_state.get('site_progress_last')
-    if not isinstance(last_payload, dict):
-        last_payload = {}
+    last_payload = _last_progress_payload()
 
     message = str(last_payload.get('message') or '')
     stage = str(last_payload.get('stage') or '')
@@ -254,14 +264,6 @@ def _progress_has_live_signal(now: float, *, started_at: float, max_age_seconds:
 
 
 def recover_stale_capture_if_needed(operation: str, *, max_age_seconds: int = SITE_CAPTURE_STALE_SECONDS) -> bool:
-    """Destrava captura realmente parada sem matar busca longa ainda viva.
-
-    BLINGFIX: captura profunda de site pode ficar alguns minutos sem atualizar a
-    UI enquanto varre páginas ou valida produtos. Antes, 150s + 180s de grace
-    matavam uma captura que já tinha encontrado centenas de produtos. Agora a
-    trava só limpa quando não há sinal recente e não há evidência de captura
-    profunda dentro da janela segura.
-    """
     if not bool(st.session_state.get('site_capture_running', False)):
         return False
 
@@ -303,7 +305,7 @@ def recover_stale_capture_if_needed(operation: str, *, max_age_seconds: int = SI
         operation=operation,
         running=False,
         finished=False,
-        error='A captura anterior ficou sem progresso recente e foi destravada. Execute novamente ou reduza o lote inicial.',
+        error='A captura anterior ficou sem progresso recente e foi destravada. Execute novamente. O próximo lote será menor e mais rápido.',
     )
     add_audit_event(
         'site_capture_unstuck_auto_timeout',
@@ -314,12 +316,10 @@ def recover_stale_capture_if_needed(operation: str, *, max_age_seconds: int = SI
             'operation': operation,
             'age_seconds': round(age, 2),
             'max_age_seconds': max_age_seconds,
-            'hard_stale_seconds': SITE_CAPTURE_HARD_STALE_SECONDS,
-            'meaningful_idle_seconds': SITE_CAPTURE_MEANINGFUL_IDLE_SECONDS,
             'last_progress_age_seconds': last_progress_age,
             'last_stage': last_payload.get('stage', ''),
             'last_message': last_payload.get('message', ''),
-            'reason': 'sem_progresso_recente',
+            'reason': live_reason,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
