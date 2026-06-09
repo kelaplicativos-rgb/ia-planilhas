@@ -102,6 +102,16 @@ def _is_stock_full_site_scan(operation: str, deep_options: dict[str, int | bool]
     return bool(_is_stock_balance_only(operation, options) and options.get('stock_full_site_scan', True))
 
 
+def _skip_predeep_discovery(operation: str, options: dict[str, int | bool]) -> bool:
+    contract = active_contract()
+    return bool(
+        options.get('skip_predeep_discovery')
+        or options.get('cadastro_api_skip_predeep_discovery')
+        or options.get('stock_api_skip_predeep_discovery')
+        or (contract.is_api and contract.operation == operation and operation in {'cadastro', 'estoque'})
+    )
+
+
 def _next_step_after_capture() -> str:
     return STEP_DOWNLOAD if active_contract().is_api else STEP_MAPEAMENTO
 
@@ -141,8 +151,6 @@ def _store_smartscan_notice(operation: str, report, *, rows: int) -> None:
 
 
 def _progress_callback_for_capture(*, operation: str, options: dict[str, int | bool], progress_bar, status_box):
-    # BLINGFIX: cadastro e estoque usam a mesma medula visual e o mesmo callback vivo.
-    # Antes, estoque retornava None aqui e ficava parecendo travado em “Preparando captura...”.
     return make_site_progress_callback(progress_bar, status_box)
 
 
@@ -215,19 +223,21 @@ def prepare_raw_urls_for_capture(
 ) -> tuple[str, dict[str, object]]:
     options = deep_options or {}
     profile = capture_profile(operation, stock_balance_only=_is_stock_balance_only(operation, options))
-    if _is_stock_balance_only(operation, options) and not _is_stock_full_site_scan(operation, options):
+    if _skip_predeep_discovery(operation, options):
         _emit_capture_progress(
             'Entrada validada',
-            'Usando somente os links informados, sem varredura profunda.',
+            'Modo API anti-trava: pulando descoberta profunda prévia. O motor principal fará uma leitura controlada do site.',
             progress=0.08,
-            stock_balance_only=True,
+            stock_balance_only=_is_stock_balance_only(operation, options),
+            skip_predeep_discovery=True,
         )
         return raw_urls, {
             'deep_capture_enabled': False,
-            'stock_balance_only': True,
+            'stock_balance_only': _is_stock_balance_only(operation, options),
             'stock_full_site_scan': False,
-            'scan_mode': 'stock_balance_product_links_only',
-            'reason': 'Operação de estoque via API usando apenas links de produtos informados, sem varredura profunda.',
+            'scan_mode': f'{operation}_api_fast_direct_engine',
+            'reason': 'Fluxo API direto usa o motor principal sem pré-descoberta duplicada para evitar travas.',
+            'capture_spine': profile.scan_goal,
         }
 
     if not bool(options.get('enabled')):
@@ -395,6 +405,7 @@ def run_site_capture(
             'has_cadastro_model': isinstance(df_modelo_cadastro, pd.DataFrame),
             'has_estoque_model': isinstance(df_modelo_estoque, pd.DataFrame),
             'deep_capture_requested': bool(options.get('enabled')),
+            'skip_predeep_discovery': bool(options.get('skip_predeep_discovery')),
             'stock_balance_only': stock_balance_only,
             'stock_full_site_scan': stock_full_site_scan,
             'all_products': bool(all_products),
@@ -518,47 +529,8 @@ def run_site_capture(
     _persist_operation_state(operation)
     set_capture_state(operation=operation, running=False, finished=True, rows=rows, columns=columns)
     if smart_report is not None:
-        try:
-            report_payload = asdict(smart_report)
-            report_payload['flow_decision'] = flow_decision
-            st.session_state[f'blingsmartscan_report_{operation}'] = report_payload
-        except Exception:
-            st.session_state[f'blingsmartscan_report_{operation}'] = {'message': getattr(smart_report, 'message', ''), 'flow_decision': flow_decision}
         _store_smartscan_notice(operation, smart_report, rows=rows)
-
-    target_step = _next_step_after_capture()
-    target_label = _next_step_label_after_capture()
-    details = {
-        'operation': operation,
-        'feature_contract': active_contract().key,
-        'rows': rows,
-        'columns': columns,
-        'elapsed_seconds': round(time.time() - started_at, 2),
-        'max_pages': int(max_pages),
-        'max_products': int(max_products),
-        'all_products': bool(all_products),
-        'stock_balance_only': stock_balance_only,
-        'stock_full_site_scan': stock_full_site_scan,
-        'scan_goal': profile.scan_goal,
-        'progress_mode': progress_mode(),
-        'neutral_capture_state': True,
-        'capture_spine': 'site_capture_spine_v1',
-        'responsible_file': RESPONSIBLE_FILE,
-        'manual_continue_required': True,
-        'manual_continue_target_step': target_step,
-        'flow_decision': flow_decision,
-    }
-    details.update(deep_details)
-    if smart_report is not None:
-        details['blingsmartscan_report'] = asdict(smart_report)
-    add_audit_event('blingsmartscan_ui_saved_to_state', area='SITE', step='entrada', status=str(flow_decision.get('status') or 'OK'), details=details)
-
-    if deep_details.get('deep_capture_stopped_by_budget'):
-        st.session_state['blingsmartscan_budget_notice'] = f'O BLINGSMARTSCAN encontrou {rows} produto(s) neste lote e parou para evitar queda do sistema. Você pode rodar outro lote depois.'
-    _emit_capture_progress('Resultado salvo', f'Busca concluída. {rows} linha(s) e {columns} coluna(s) salvas para o próximo passo.', progress=1.0, rows=rows, columns=columns, elapsed_seconds=round(time.time() - started_at, 2), progress_mode=progress_mode())
     _mark_manual_continue(operation, rows, columns)
-    finish_progress(progress_bar, status_box, text='BLINGSMARTSCAN concluído. Resultado salvo.')
-    st.success(f'BLINGSMARTSCAN concluiu e salvou {rows} produto(s). Toque em Continuar para ir para {target_label}.')
-
-
-__all__ = ['capture_limits_for_operation', 'run_site_capture']
+    finish_progress(progress_bar, status_box, text='BLINGSMARTSCAN concluído.')
+    add_audit_event('blingsmartscan_ui_finished_waiting_manual_continue', area='SITE', step='entrada', status='OK', details={'operation': operation, 'stock_balance_only': stock_balance_only, 'stock_full_site_scan': stock_full_site_scan, 'rows': rows, 'columns': columns, 'elapsed_seconds': round(time.time() - started_at, 2), 'target_step': _next_step_after_capture(), 'next_label': _next_step_label_after_capture(), 'progress_mode': progress_mode(), 'neutral_capture_state': True, 'capture_spine': 'site_capture_spine_v1', 'responsible_file': RESPONSIBLE_FILE})
+    st.success(f'BLINGSMARTSCAN concluiu e salvou {rows} produto(s). Toque em Continuar para {_next_step_label_after_capture()}.')
