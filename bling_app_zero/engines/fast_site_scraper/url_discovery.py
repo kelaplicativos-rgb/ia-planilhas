@@ -32,6 +32,7 @@ FEED_BATCH = 36
 SMART_URL_TARGET = 220
 FULL_SCAN_URL_TARGET = 2500
 MIN_HTML_PRODUCTS_TO_SKIP_FEED = 60
+PUBLIC_HTML_DISCOVERY_ONLY = True
 
 
 def split_urls(raw: str) -> list[str]:
@@ -73,7 +74,6 @@ def productish_url(url: str) -> bool:
     if query_keys & PRODUCT_QUERY_HINTS:
         return True
 
-    # Evita marcar categorias genéricas como produto só porque contêm /produtos.
     if re.search(r'/(produto|product)s?/[a-z0-9][a-z0-9._-]{2,}', low_path):
         return True
     if re.search(r'/(p|item)/[a-z0-9][a-z0-9._-]{2,}', low_path):
@@ -114,6 +114,12 @@ def feed_candidates(start: str) -> list[str]:
 
 
 def discover_from_feeds(starts: list[str], max_products: int) -> list[str]:
+    """Descobre URLs por feeds apenas para complemento controlado.
+
+    Esta função não deve criar linhas na busca ao vivo. Produto vindo somente
+    de feed/cache/API/teste precisa ser descartado se não existir na lista
+    pública viva encontrada por HTML.
+    """
     queue: list[str] = []
     for start in starts:
         queue.extend(feed_candidates(start))
@@ -187,13 +193,7 @@ def discover_from_html(starts: list[str], max_pages: int, max_products: int) -> 
 
 
 def _smart_target(max_products: int) -> int:
-    """Define o alvo da descoberta sem travar a busca ampla.
-
-    Antes, o fallback genérico sempre parava em 220 URLs, mesmo quando o fluxo
-    vinha com `Buscar todos os produtos encontrados`. O pipeline usa um valor alto
-    de `max_products` para esse modo; por isso, quando o pedido passa de 220,
-    liberamos uma varredura maior com teto seguro.
-    """
+    """Define o alvo da descoberta sem travar a busca ampla."""
     try:
         requested = int(max_products or 0)
     except Exception:
@@ -221,7 +221,10 @@ def discover_product_urls(raw_urls: str, max_pages: int, max_products: int) -> l
         if url not in urls:
             urls.append(url)
 
-    # Fluxo rápido primeiro: segue links da página/categoria, parecido com Instant Data Scraper.
+    # BLINGFIX ORIGEM VIVA:
+    # A descoberta de produtos na busca ao vivo usa apenas HTML público.
+    # Feeds/sitemaps/API/cache/testes podem complementar depois, mas nunca
+    # criar produto novo fora da lista viva encontrada na URL informada.
     html_urls = discover_from_html(starts, max_pages=max_pages, max_products=smart_target)
     for url in html_urls:
         if url not in urls:
@@ -229,17 +232,4 @@ def discover_product_urls(raw_urls: str, max_pages: int, max_products: int) -> l
             if len(urls) >= smart_target:
                 return urls[:smart_target]
 
-    # Sitemap/feed agora é complemento, não a fonte principal gigante.
-    if len(urls) >= MIN_HTML_PRODUCTS_TO_SKIP_FEED:
-        return urls[:smart_target]
-
-    feed_needed = max(0, smart_target - len(urls))
-    if feed_needed:
-        feed_urls = discover_from_feeds(starts, max_products=feed_needed)
-        for url in feed_urls:
-            if url not in urls:
-                urls.append(url)
-                if len(urls) >= smart_target:
-                    break
-
-    return (urls or direct_products or starts)[:smart_target]
+    return urls[:smart_target]
