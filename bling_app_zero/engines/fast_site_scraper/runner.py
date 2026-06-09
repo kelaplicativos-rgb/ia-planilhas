@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from typing import Callable, Iterable
 
 import pandas as pd
@@ -109,43 +109,77 @@ def _read_products_parallel(
             stop_reason = 'Leitura pausada por limite de tempo técnico. Resultado parcial preservado.'
             break
 
-        batch_size = min(max(workers * 3, 12), len(pending_urls), total - processed)
+        batch_size = min(max(workers * 2, 8), len(pending_urls), total - processed)
         batch = pending_urls[:batch_size]
         pending_urls = pending_urls[batch_size:]
+        executor = ThreadPoolExecutor(max_workers=workers)
+        futures = {executor.submit(scrape_one, url, needed): url for url in batch}
+        unfinished = set(futures.keys())
+        batch_idle_started = time.perf_counter()
 
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(scrape_one, url, needed): url for url in batch}
-            for future in as_completed(futures):
-                processed += 1
-                product = FastProductData(url=futures.get(future, ''))
-                try:
-                    url, product, elapsed, failed = future.result()
-                    if failed:
+        try:
+            while unfinished:
+                left = _seconds_left(started, budget_seconds)
+                if left <= 1:
+                    stop_reason = 'Leitura pausada por limite de tempo técnico. Resultado parcial preservado.'
+                    break
+
+                done, unfinished = wait(unfinished, timeout=min(1.0, max(0.1, left)), return_when=FIRST_COMPLETED)
+                if not done:
+                    if time.perf_counter() - batch_idle_started >= 10:
+                        stop_reason = 'Leitura pausada por link lento. Resultado parcial preservado.'
+                        break
+                    continue
+
+                batch_idle_started = time.perf_counter()
+                for future in done:
+                    processed += 1
+                    product = FastProductData(url=futures.get(future, ''))
+                    try:
+                        url, product, elapsed, failed = future.result(timeout=0)
+                        if failed:
+                            errors += 1
+                        if elapsed >= SLOW_LINK_SECONDS:
+                            slow_links.append({'url': url, 'seconds': round(elapsed, 2)})
+                        if has_useful_data(product, needed):
+                            products_by_url.append((url, product))
+                            last_gain_at = processed
+                            if is_complete_product(product, important):
+                                complete_count += 1
+                    except Exception:
                         errors += 1
-                    if elapsed >= SLOW_LINK_SECONDS:
-                        slow_links.append({'url': url, 'seconds': round(elapsed, 2)})
-                    if has_useful_data(product, needed):
-                        products_by_url.append((url, product))
-                        last_gain_at = processed
-                        if is_complete_product(product, important):
-                            complete_count += 1
-                except Exception:
-                    errors += 1
 
-                if stop_early:
-                    should_stop, reason = should_stop_early(
-                        processed=processed,
-                        products=[product for _, product in products_by_url],
-                        complete_count=complete_count,
-                        last_gain_at=last_gain_at,
-                    )
-                    if should_stop:
-                        stop_reason = reason
-                        pending_urls = []
+                    if stop_early:
+                        should_stop, reason = should_stop_early(
+                            processed=processed,
+                            products=[product for _, product in products_by_url],
+                            complete_count=complete_count,
+                            last_gain_at=last_gain_at,
+                        )
+                        if should_stop:
+                            stop_reason = reason
+                            pending_urls = []
+                            emit(progress_callback, {
+                                'stage': 'Busca suficiente',
+                                'message': stop_reason,
+                                'progress': 0.86,
+                                'processed': processed,
+                                'total': total,
+                                'found': len(products_by_url),
+                                'complete': complete_count,
+                                'errors': errors,
+                                'devtools': 0,
+                                'slow_links': slow_links[-5:],
+                            })
+                            break
+
+                    now = time.perf_counter()
+                    if now - last_emit >= 0.5 or processed == total:
+                        ratio = processed / max(total, 1)
                         emit(progress_callback, {
-                            'stage': 'Busca suficiente',
-                            'message': stop_reason,
-                            'progress': 0.86,
+                            'stage': 'Lendo produtos em lote seguro',
+                            'message': f'{processed}/{total} produto(s) lido(s). {len(products_by_url)} com dados úteis.',
+                            'progress': 0.28 + (0.58 * ratio),
                             'processed': processed,
                             'total': total,
                             'found': len(products_by_url),
@@ -153,39 +187,39 @@ def _read_products_parallel(
                             'errors': errors,
                             'devtools': 0,
                             'slow_links': slow_links[-5:],
+                            'stop_early': bool(stop_early),
+                            'rich_description_enabled': 'descricao_complementar' in needed,
+                            'dynamic_render_fallback_enabled': True,
+                            'seconds_left': round(_seconds_left(started, budget_seconds), 1),
                         })
-                        break
+                        last_emit = now
 
-                if _seconds_left(started, budget_seconds) <= 1:
-                    stop_reason = 'Leitura pausada por limite de tempo técnico. Resultado parcial preservado.'
-                    pending_urls = []
+                if stop_reason:
                     break
-
-                now = time.perf_counter()
-                if now - last_emit >= 0.5 or processed == total:
-                    ratio = processed / max(total, 1)
-                    emit(progress_callback, {
-                        'stage': 'Lendo produtos em lote seguro',
-                        'message': f'{processed}/{total} produto(s) lido(s). {len(products_by_url)} com dados úteis.',
-                        'progress': 0.28 + (0.58 * ratio),
+        finally:
+            if unfinished:
+                for future in unfinished:
+                    future.cancel()
+                errors += len(unfinished)
+                add_audit_event(
+                    'site_scraper_slow_futures_cancelled',
+                    area='SITE',
+                    step='entrada',
+                    status='AVISO',
+                    details={
+                        'cancelled': len(unfinished),
                         'processed': processed,
-                        'total': total,
                         'found': len(products_by_url),
-                        'complete': complete_count,
-                        'errors': errors,
-                        'devtools': 0,
-                        'slow_links': slow_links[-5:],
-                        'stop_early': bool(stop_early),
-                        'rich_description_enabled': 'descricao_complementar' in needed,
-                        'dynamic_render_fallback_enabled': True,
-                        'seconds_left': round(_seconds_left(started, budget_seconds), 1),
-                    })
-                    last_emit = now
+                        'reason': stop_reason or 'lote_sem_resposta',
+                        'responsible_file': RESPONSIBLE_FILE,
+                    },
+                )
+            executor.shutdown(wait=False, cancel_futures=True)
 
-            if stop_reason:
-                break
+        if stop_reason:
+            break
 
-    if stop_reason and 'limite de tempo' in stop_reason:
+    if stop_reason and ('limite de tempo' in stop_reason or 'link lento' in stop_reason):
         add_audit_event(
             'site_scraper_read_budget_reached',
             area='SITE',
@@ -197,6 +231,7 @@ def _read_products_parallel(
                 'found': len(products_by_url),
                 'errors': errors,
                 'budget_seconds': int(budget_seconds),
+                'stop_reason': stop_reason,
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
