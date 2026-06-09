@@ -14,7 +14,7 @@ from bling_app_zero.core.interaction_guard import (
 )
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/blingfix_runtime_patches.py'
-_PATCH_INSTALLED_KEY = 'blingfix_runtime_patches_installed_v6'
+_PATCH_INSTALLED_KEY = 'blingfix_runtime_patches_installed_v7'
 MAX_BLING_IMAGES_PER_PRODUCT = 6
 _IMAGE_LIST_KEYS = {'imagens', 'images', 'imagensurl', 'externas', 'externos', 'fotos'}
 
@@ -81,6 +81,30 @@ def _patch_site_operation_guard() -> None:
 
     site_panel_state.get_site_df = guarded_get_site_df
     site_panel.get_site_df = guarded_get_site_df
+
+
+def _patch_stock_site_origin_filter() -> None:
+    try:
+        from bling_app_zero.pipelines import site_pipeline_blingfix
+        from bling_app_zero.pipelines.stock_api_origin_guard import filter_origin_rows_for_operation
+
+        def guarded_filter_live_origin_rows(df, raw_urls: str):
+            operation = str(st.session_state.get('active_feature_operation') or st.session_state.get('flow_spine_operation') or st.session_state.get('operacao_final') or '')
+            return filter_origin_rows_for_operation(df, raw_urls, operation=operation)
+
+        site_pipeline_blingfix._filter_live_origin_rows = guarded_filter_live_origin_rows
+        add_audit_event(
+            'stock_api_origin_url_filter_runtime_patch_installed',
+            area='SITE',
+            status='OK',
+            details={
+                'target': 'site_pipeline_blingfix._filter_live_origin_rows',
+                'reason': 'Estoque/API não deve zerar linhas sem URL quando há identificador e quantidade.',
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+    except Exception as exc:
+        add_audit_event('stock_api_origin_url_filter_runtime_patch_failed', area='SITE', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
 
 
 def _looks_like_product_catalog_df(df: Any) -> bool:
@@ -295,9 +319,10 @@ def install_blingfix_runtime_patches() -> None:
     _patch_oauth_callback()
     _patch_disconnect()
     _patch_site_operation_guard()
+    _patch_stock_site_origin_filter()
     _patch_api_batch_operation_guard()
     st.session_state[_PATCH_INSTALLED_KEY] = True
-    add_audit_event('blingfix_runtime_patches_installed', area='APP', status='OK', details={'logout_guard_active': logout_guard_active(), 'api_operation_guard': True, 'bling_image_limit_guard': True, 'max_images_per_product': MAX_BLING_IMAGES_PER_PRODUCT, 'request_wrapper_accepts_args': True, 'preview_payload_patches': True, 'direct_sender_payload_patch_removed': True, 'home_wizard_navigation_native': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('blingfix_runtime_patches_installed', area='APP', status='OK', details={'logout_guard_active': logout_guard_active(), 'api_operation_guard': True, 'stock_api_origin_url_filter_patch': True, 'bling_image_limit_guard': True, 'max_images_per_product': MAX_BLING_IMAGES_PER_PRODUCT, 'request_wrapper_accepts_args': True, 'preview_payload_patches': True, 'direct_sender_payload_patch_removed': True, 'home_wizard_navigation_native': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_blingfix_runtime_patches']
