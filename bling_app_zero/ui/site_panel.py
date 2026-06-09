@@ -45,12 +45,9 @@ RESPONSIBLE_FILE = 'bling_app_zero/ui/site_panel.py'
 SCAN_TOTAL_MAX_PAGES = SAFE_CAPTURE_MAX_PAGES
 SCAN_TOTAL_MAX_PRODUCTS = SAFE_CAPTURE_MAX_PRODUCTS
 SCAN_TOTAL_MAX_DEPTH = SAFE_CAPTURE_MAX_DEPTH
-# BLINGFIX 3.8.8: a trava em 19% ocorre na descoberta profunda prévia.
-# No fluxo Estoque/API, não fazemos mais essa descoberta dupla. A tela entrega
-# o link ao motor de estoque, que faz uma única descoberta/leitura e salva lote.
-STOCK_BALANCE_MAX_PAGES = min(FLOW_CAPTURE_MAX_PAGES, 180)
-STOCK_BALANCE_MAX_PRODUCTS = min(FLOW_CAPTURE_MAX_PRODUCTS, 450)
-STOCK_BALANCE_MAX_DEPTH = min(FLOW_CAPTURE_MAX_DEPTH, 2)
+FAST_API_MAX_PAGES = min(FLOW_CAPTURE_MAX_PAGES, 180)
+FAST_API_MAX_PRODUCTS = min(FLOW_CAPTURE_MAX_PRODUCTS, 450)
+FAST_API_MAX_DEPTH = min(FLOW_CAPTURE_MAX_DEPTH, 2)
 SITE_PANEL_DISCOVERY_BUDGET_SECONDS = 45
 SUPPORTED_SITE_OPERATIONS = {'cadastro', 'estoque', 'atualizacao_preco', UNIVERSAL_OPERATION}
 
@@ -74,6 +71,11 @@ def _site_operation() -> str:
 def _is_stock_api_balance_mode(operation: str) -> bool:
     contract = active_contract()
     return bool(contract.is_api and contract.operation == 'estoque' and operation == 'estoque')
+
+
+def _is_direct_api_site_mode(operation: str) -> bool:
+    contract = active_contract()
+    return bool(contract.is_api and contract.operation == operation and operation in {'cadastro', 'estoque'})
 
 
 def _next_step_after_site_capture() -> str:
@@ -122,17 +124,20 @@ def _render_urls_input(operation: str) -> str:
 
 
 def _scan_total_options(operation: str) -> dict[str, int | bool]:
-    if _is_stock_api_balance_mode(operation):
+    if _is_direct_api_site_mode(operation):
         return {
             'enabled': True,
-            'max_pages': STOCK_BALANCE_MAX_PAGES,
-            'max_products': STOCK_BALANCE_MAX_PRODUCTS,
-            'max_depth': STOCK_BALANCE_MAX_DEPTH,
+            'max_pages': FAST_API_MAX_PAGES,
+            'max_products': FAST_API_MAX_PRODUCTS,
+            'max_depth': FAST_API_MAX_DEPTH,
             'scan_total_ui': True,
-            'stock_balance_only': True,
+            'stock_balance_only': _is_stock_api_balance_mode(operation),
             'stock_full_site_scan': False,
-            'stock_api_fast_batch': True,
-            'stock_api_skip_predeep_discovery': True,
+            'stock_api_fast_batch': _is_stock_api_balance_mode(operation),
+            'stock_api_skip_predeep_discovery': _is_stock_api_balance_mode(operation),
+            'cadastro_api_fast_batch': operation == 'cadastro',
+            'cadastro_api_skip_predeep_discovery': operation == 'cadastro',
+            'skip_predeep_discovery': True,
             'budget_seconds': SITE_PANEL_DISCOVERY_BUDGET_SECONDS,
         }
     return {
@@ -145,13 +150,19 @@ def _scan_total_options(operation: str) -> dict[str, int | bool]:
         'stock_full_site_scan': False,
         'stock_api_fast_batch': False,
         'stock_api_skip_predeep_discovery': False,
+        'cadastro_api_fast_batch': False,
+        'cadastro_api_skip_predeep_discovery': False,
+        'skip_predeep_discovery': False,
         'budget_seconds': SITE_PANEL_DISCOVERY_BUDGET_SECONDS,
     }
 
 
 def _render_scan_total_notice(operation: str) -> None:
-    if _is_stock_api_balance_mode(operation):
-        orange_warning('Estoque/API em modo anti-trava: o sistema pula a descoberta profunda prévia que travava em 19% e deixa o motor de estoque fazer uma única leitura controlada para salvar o lote e liberar o envio ao Bling.')
+    if _is_direct_api_site_mode(operation):
+        if operation == 'cadastro':
+            orange_warning('Cadastro/API em modo anti-trava: o sistema pula a descoberta profunda prévia e deixa o motor principal fazer uma leitura controlada para salvar o lote e liberar o envio ao Bling.')
+        else:
+            orange_warning('Estoque/API em modo anti-trava: o sistema pula a descoberta profunda prévia que travava em 19% e deixa o motor de estoque fazer uma única leitura controlada para salvar o lote e liberar o envio ao Bling.')
         return
     orange_warning('Busca completa ativa: o sistema procura produtos no site e captura os dados conforme o contrato ativo.')
 
