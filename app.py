@@ -11,6 +11,7 @@ from bling_app_zero.ui.alerts import enforce_attention_alert_policy
 from bling_app_zero.ui.blingfix_runtime_patches import install_blingfix_runtime_patches
 from bling_app_zero.ui.home import render_home
 from bling_app_zero.ui.layout import inject_streamlit_toolbar_fix
+from bling_app_zero.ui.preventive_bootstrap import install_preventive_bootstrap
 from bling_app_zero.ui.sidebar_tools import render_sidebar_tools
 from bling_app_zero.ui.startup_guard import ensure_app_ready
 
@@ -54,6 +55,7 @@ def main() -> None:
     if not ensure_app_ready():
         return
 
+    install_preventive_bootstrap()
     restore_mapping_widget_state_from_snapshot()
     _install_bling_api_verified_media_checkpoint('before_runtime_patches')
     install_blingfix_runtime_patches()
