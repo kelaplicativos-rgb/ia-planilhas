@@ -4,7 +4,7 @@ import json
 import re
 from html import unescape
 from typing import Any, Callable
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import pandas as pd
 import requests
@@ -49,6 +49,76 @@ def _ensure_col(df: pd.DataFrame, preferred: str, aliases: tuple[str, ...]) -> s
         return existing
     df[preferred] = ''
     return preferred
+
+
+def _domain(value: str) -> str:
+    try:
+        return urlparse(str(value or '')).netloc.lower().replace('www.', '')
+    except Exception:
+        return ''
+
+
+def _input_public_domains(raw_urls: str) -> set[str]:
+    domains: set[str] = set()
+    for item in re.split(r'[\n,;]+', str(raw_urls or '')):
+        item = item.strip()
+        if not item.startswith(('http://', 'https://')):
+            continue
+        host = _domain(item)
+        if host:
+            domains.add(host)
+    return domains
+
+
+def _same_public_domain(url: str, allowed_domains: set[str]) -> bool:
+    host = _domain(url)
+    if not host:
+        return False
+    return any(host == domain or host.endswith('.' + domain) for domain in allowed_domains)
+
+
+def _filter_live_origin_rows(df: pd.DataFrame, raw_urls: str) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return df
+
+    allowed_domains = _input_public_domains(raw_urls)
+    if not allowed_domains:
+        return df.iloc[0:0].copy()
+
+    out = df.copy().fillna('')
+    url_col = _find_col(out, URL_COLUMNS)
+    if not url_col:
+        add_audit_event(
+            'site_pipeline_live_origin_blocked_without_url',
+            area='SITE',
+            status='BLOQUEADO',
+            details={
+                'rows_before': len(out),
+                'reason': 'Resultado de busca por site sem coluna de URL pública.',
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+        return out.iloc[0:0].copy()
+
+    before = len(out)
+    out = out[out[url_col].map(lambda value: _same_public_domain(clean_cell(value), allowed_domains))].copy()
+    removed = before - len(out)
+    if removed:
+        add_audit_event(
+            'site_pipeline_live_origin_rows_removed',
+            area='SITE',
+            status='AVISO',
+            details={
+                'rows_before': before,
+                'rows_after': len(out),
+                'removed': removed,
+                'url_column': url_col,
+                'allowed_domains': sorted(allowed_domains),
+                'reason': 'Linhas removidas por não pertencerem ao domínio público informado.',
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+    return out.fillna('')
 
 
 def _jsonld_objects(value: Any) -> list[dict[str, Any]]:
@@ -342,6 +412,7 @@ def run_pipeline(
         operation=operation,
         progress_callback=progress_callback,
     )
+    df = _filter_live_origin_rows(df, raw_urls)
     return enrich_product_pages_for_bling(df, operation=str(operation or ''), progress_callback=progress_callback)
 
 
