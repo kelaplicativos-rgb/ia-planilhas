@@ -45,10 +45,13 @@ RESPONSIBLE_FILE = 'bling_app_zero/ui/site_panel.py'
 SCAN_TOTAL_MAX_PAGES = SAFE_CAPTURE_MAX_PAGES
 SCAN_TOTAL_MAX_PRODUCTS = SAFE_CAPTURE_MAX_PRODUCTS
 SCAN_TOTAL_MAX_DEPTH = SAFE_CAPTURE_MAX_DEPTH
-STOCK_BALANCE_MAX_PAGES = FLOW_CAPTURE_MAX_PAGES
-STOCK_BALANCE_MAX_PRODUCTS = FLOW_CAPTURE_MAX_PRODUCTS
-STOCK_BALANCE_MAX_DEPTH = FLOW_CAPTURE_MAX_DEPTH
-SITE_PANEL_DISCOVERY_BUDGET_SECONDS = 180
+# BLINGFIX 3.8.7: no fluxo Estoque/API, o primeiro lote precisa terminar e
+# chegar na API. O diagnóstico 77 ficou em running com 650/1500 antes de salvar
+# qualquer linha. Por isso o painel reduz o lote inicial sem alterar o motor base.
+STOCK_BALANCE_MAX_PAGES = min(FLOW_CAPTURE_MAX_PAGES, 180)
+STOCK_BALANCE_MAX_PRODUCTS = min(FLOW_CAPTURE_MAX_PRODUCTS, 450)
+STOCK_BALANCE_MAX_DEPTH = min(FLOW_CAPTURE_MAX_DEPTH, 2)
+SITE_PANEL_DISCOVERY_BUDGET_SECONDS = 70
 SUPPORTED_SITE_OPERATIONS = {'cadastro', 'estoque', 'atualizacao_preco', UNIVERSAL_OPERATION}
 
 
@@ -128,6 +131,7 @@ def _scan_total_options(operation: str) -> dict[str, int | bool]:
             'scan_total_ui': True,
             'stock_balance_only': True,
             'stock_full_site_scan': True,
+            'stock_api_fast_batch': True,
             'budget_seconds': SITE_PANEL_DISCOVERY_BUDGET_SECONDS,
         }
     return {
@@ -138,13 +142,14 @@ def _scan_total_options(operation: str) -> dict[str, int | bool]:
         'scan_total_ui': True,
         'stock_balance_only': False,
         'stock_full_site_scan': False,
+        'stock_api_fast_batch': False,
         'budget_seconds': SITE_PANEL_DISCOVERY_BUDGET_SECONDS,
     }
 
 
 def _render_scan_total_notice(operation: str) -> None:
     if _is_stock_api_balance_mode(operation):
-        orange_warning('Busca completa ativa: o sistema vai capturar produtos e salvar somente os campos necessários para estoque/API.')
+        orange_warning('Busca de estoque/API em lote seguro: o sistema vai capturar um primeiro lote menor, salvar saldo/código/GTIN/depósito e liberar o envio ao Bling sem prender a tela em varredura gigante.')
         return
     orange_warning('Busca completa ativa: o sistema procura produtos no site e captura os dados conforme o contrato ativo.')
 
@@ -160,7 +165,7 @@ def _render_running_state(operation: str) -> None:
     render_live_site_operation_panel()
     with st.expander('Plano e histórico detalhado da busca', expanded=False):
         render_site_progress_history()
-    st.info('A tela está em modo seguro enquanto a busca roda. O sistema destrava automaticamente buscas sem resultado.')
+    st.info('A tela está em modo seguro enquanto a busca roda. Se não houver avanço real, o sistema destrava automaticamente.')
     with st.expander('Busca parece travada?', expanded=False):
         st.caption('Use esta opção apenas se a busca ficou sem sinal vivo por muito tempo ou se a conexão caiu.')
         if st.button('Limpar busca travada e tentar novamente', use_container_width=True, key=f'limpar_captura_travada_{operation}'):
