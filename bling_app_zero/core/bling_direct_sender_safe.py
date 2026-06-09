@@ -23,7 +23,7 @@ DEFAULT_API_BASE_URL = 'https://www.bling.com.br/Api/v3'
 API_STOCK_DEPOSIT_KEY = 'bling_api_stock_deposit_name'
 API_STOCK_DEPOSIT_ID_KEY = 'bling_api_stock_deposit_id'
 API_STOCK_DEPOSIT_OPTIONS_KEY = 'bling_api_stock_deposit_options'
-PRODUCT_RESOLUTION_CACHE_KEY = 'bling_safe_product_resolution_cache_v9'
+PRODUCT_RESOLUTION_CACHE_KEY = 'bling_safe_product_resolution_cache_v10'
 CATEGORY_RESOLUTION_CACHE_KEY = 'bling_safe_category_resolution_cache_v5'
 PRODUCT_LOOKUP_TIMEOUT = 12
 CATEGORY_LOOKUP_TIMEOUT = 12
@@ -31,8 +31,8 @@ DEPOSIT_LOOKUP_TIMEOUT = 15
 SEND_TIMEOUT = 30
 
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
-    'id': ('id produto bling', 'id_produto_bling', 'id bling', 'id_bling', 'id produto bling api', 'id produto'),
-    'codigo': ('código', 'codigo', 'sku', 'ref', 'referencia', 'referência', 'codigo produto', 'código produto', 'cod produto', 'cod'),
+    'id': ('id', 'id produto', 'id_produto', 'id produto bling', 'id_produto_bling', 'id bling', 'id_bling', 'codigo bling', 'código bling', 'id produto bling api', 'id produto api'),
+    'codigo': ('código', 'codigo', 'sku', 'ref', 'referencia', 'referência', 'codigo produto', 'código produto', 'cod produto', 'cod', 'cód', 'cód.', 'codigo fornecedor', 'código fornecedor'),
     'nome': ('nome', 'produto', 'título', 'titulo', 'nome produto', 'nome do produto', 'descrição produto', 'descricao produto'),
     'descricao': ('descrição', 'descricao', 'descrição curta', 'descricao curta', 'descrição do produto', 'descricao do produto', 'detalhes', 'descricao complementar', 'descrição complementar'),
     'preco': ('preço', 'preco', 'preço unitário', 'preco unitario', 'preço unitário (obrigatório)', 'preco unitario (obrigatorio)', 'valor', 'valor venda', 'preço de venda', 'preco de venda'),
@@ -40,7 +40,7 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     'marca': ('marca', 'fabricante'),
     'unidade': ('unidade', 'un'),
     'ncm': ('ncm',),
-    'quantidade': ('quantidade', 'saldo', 'estoque', 'balanço', 'balanco', 'qtd', 'qtde'),
+    'quantidade': ('quantidade', 'saldo', 'estoque', 'balanço', 'balanco', 'qtd', 'qtde', 'stock'),
     'deposito': ('depósito', 'deposito', 'nome depósito', 'nome deposito', 'depósito padrão', 'deposito padrao'),
     'categoria': ('categoria', 'categoria produto', 'categoria do produto', 'departamento', 'grupo'),
     'imagens': ('imagens', 'imagem', 'url imagem', 'url imagens', 'fotos', 'foto'),
@@ -181,7 +181,19 @@ def _session_cache(key: str) -> dict[str, str]:
 
 def _item_identifiers(item: dict[str, Any]) -> list[str]:
     trib = item.get('tributacao') if isinstance(item.get('tributacao'), dict) else {}
-    return _unique_non_empty([item.get('codigo'), item.get('sku'), item.get('codigoProduto'), item.get('gtin'), item.get('ean'), item.get('codigoBarras'), trib.get('gtin'), trib.get('ean'), trib.get('codigoBarras')])
+    return _unique_non_empty([
+        item.get('id'),
+        item.get('idProduto'),
+        item.get('codigo'),
+        item.get('sku'),
+        item.get('codigoProduto'),
+        item.get('gtin'),
+        item.get('ean'),
+        item.get('codigoBarras'),
+        trib.get('gtin'),
+        trib.get('ean'),
+        trib.get('codigoBarras'),
+    ])
 
 
 def _resolve_product_by_candidate(token: dict[str, Any], candidate: str) -> str:
@@ -192,6 +204,23 @@ def _resolve_product_by_candidate(token: dict[str, Any], candidate: str) -> str:
     key = candidate.lower()
     if key in cache:
         return str(cache.get(key) or '')
+
+    if candidate.isdigit() and len(candidate) >= 6:
+        try:
+            response = requests.get(_url(f'/produtos/{candidate}'), headers=_headers(token), timeout=PRODUCT_LOOKUP_TIMEOUT)
+            if response.status_code < 400:
+                data = response.json() if str(response.text or '').strip() else {}
+                items = _extract_items(data)
+                if items or isinstance(data, dict):
+                    item = items[0] if items else data
+                    item_id = str(item.get('id') or item.get('idProduto') or candidate).strip()
+                    if item_id:
+                        cache[key] = item_id
+                        add_audit_event('bling_safe_product_resolved_by_direct_id_before_send', area='BLING_ENVIO', status='OK', details={'candidate': candidate, 'product_id': item_id, 'responsible_file': RESPONSIBLE_FILE})
+                        return item_id
+        except Exception as exc:
+            add_audit_event('bling_safe_product_direct_id_lookup_exception', area='BLING_ENVIO', status='AVISO', details={'candidate': candidate, 'error': str(exc)[:180], 'responsible_file': RESPONSIBLE_FILE})
+
     lookup_path = _secret('product_lookup_path', '/produtos') or '/produtos'
     for params in ({'codigo': candidate}, {'criterio': candidate}, {'pesquisa': candidate}):
         try:
@@ -280,7 +309,7 @@ def _resolve_category_id(token: dict[str, Any], category_name: str, *, line: int
                 lookup_errors.append(f'{path}: {str(exc)[:120]}')
     if _secret('auto_create_categories', '1').lower() not in {'1', 'true', 'sim', 'yes', 'on'}:
         cache[key] = ''
-        add_audit_event('bling_safe_category_auto_create_disabled', area='BLING_ENVIO', status='AVISO', details={'line': line, 'product_code': product_code, 'category': name, 'lookup_errors': lookup_errors[:6], 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('bling_safe_category_auto_create_disabled', area='BLING_ENVIO', status='IGNORADO', details={'line': line, 'product_code': product_code, 'category': name, 'lookup_errors': lookup_errors[:6], 'responsible_file': RESPONSIBLE_FILE})
         return ''
     create_errors: list[str] = []
     for path in _category_paths():
@@ -367,7 +396,7 @@ def _stock_payload(product_id: str, deposit_id: str, quantity: float) -> dict[st
 
 
 def _stock_endpoint_attempts(product_id: str) -> list[tuple[str, str]]:
-    raw = [((_secret('stock_update_method', 'POST') or 'POST').upper(), _secret('stock_write_path', '/estoques') or '/estoques'), ('POST', '/estoques'), ('POST', '/estoques/saldos'), ('PUT', f'/estoques/saldos/{product_id}'), ('PATCH', f'/estoques/saldos/{product_id}')]
+    raw = [((_secret('stock_update_method', 'POST') or 'POST').upper(), _secret('stock_write_path', '/estoques/saldos') or '/estoques/saldos'), ('POST', '/estoques/saldos'), ('POST', '/estoques'), ('PUT', f'/estoques/saldos/{product_id}'), ('PATCH', f'/estoques/saldos/{product_id}')]
     out: list[tuple[str, str]] = []
     for method, path in raw:
         path = str(path or '').replace('{id}', product_id).replace('{idProduto}', product_id)
@@ -466,7 +495,7 @@ def _stock_preview_payloads(df: pd.DataFrame, *, limit: int = 5) -> list[dict[st
             if product_id:
                 break
         if not product_id:
-            previews.append({'payload': {}, 'status': 'IGNORADO', 'motivo': 'Produto não resolvido no Bling por Código/GTIN/ID.'})
+            previews.append({'payload': {}, 'status': 'IGNORADO', 'motivo': 'Produto não resolvido no Bling por ID/Código/SKU/GTIN.'})
         elif not deposit_id:
             previews.append({'payload': {}, 'status': 'IGNORADO', 'motivo': 'Depósito não resolvido no Bling.'})
         elif quantity is None:
@@ -580,7 +609,7 @@ def _send_stock_dataframe_to_bling(df: pd.DataFrame, *, limit: int | None = None
             failed += 1
             not_found.append(int(index) if isinstance(index, int) else position - 1)
             if len(errors) < 8:
-                errors.append(f'Linha {line}: produto não encontrado no Bling por Código/SKU/GTIN/ID.')
+                errors.append(f'Linha {line}: produto não encontrado no Bling por ID/Código/SKU/GTIN.')
             continue
         deposit_id = _resolve_deposit_id(token, _value(row, mapping, 'deposito')) or default_deposit_id
         if not deposit_id:
@@ -610,8 +639,9 @@ def _send_stock_dataframe_to_bling(df: pd.DataFrame, *, limit: int | None = None
             failed += 1
             status = getattr(last_response, 'status_code', 'sem resposta')
             preview = str(getattr(last_response, 'text', '') or '')[:180]
+            first_endpoint = attempts[0].get('path') if attempts else '/estoques/saldos'
             if len(errors) < 8:
-                errors.append(f'Linha {line}: Bling recusou estoque ({status}). Primeiro endpoint tentado: /estoques. {preview}')
+                errors.append(f'Linha {line}: Bling recusou estoque ({status}). Primeiro endpoint tentado: {first_endpoint}. {preview}')
             add_audit_event('bling_safe_stock_clean_payload_failed', area='BLING_ENVIO', status='AVISO', details={'line': line, 'product_id': product_id, 'deposit_id': deposit_id, 'quantity': quantity, 'payload': payload, 'attempts': attempts[-6:], 'responsible_file': RESPONSIBLE_FILE})
         _emit_progress(progress_callback, {'stage': 'Enviando ao Bling', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
     _emit_progress(progress_callback, {'stage': 'Envio concluído', 'processed': total, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': 1.0})
