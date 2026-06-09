@@ -25,12 +25,47 @@ from bling_app_zero.core.bling_smart_product_diff import update_existing_product
 from bling_app_zero.core.bling_token_store import load_token
 from bling_app_zero.core.bling_direct_sender_safe import send_dataframe_to_bling as _safe_send_dataframe_to_bling
 from bling_app_zero.core.operation_contract import OP_CADASTRO, normalize_operation
+from bling_app_zero.core.operation_safety_guard import require_rows_before_api
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_direct_sender_smart_diff.py'
 _IMAGE_PAYLOAD_KEYS = {'midia', 'imagens', 'images'}
 _CATEGORY_PAYLOAD_KEYS = {'categoria'}
 _IMAGE_FIELD_KEYS = {'imagens'}
 _CATEGORY_FIELD_KEYS = {'categoria_id', 'categoria_descricao'}
+
+
+def _blocked_empty_result(operation: str, progress_callback: Callable[[dict[str, Any]], None] | None = None) -> DirectSendResult:
+    op = normalize_operation(operation)
+    decision = require_rows_before_api(operation=op)
+    message = decision.message or 'Envio ao Bling bloqueado: rota inteligente recebeu origem vazia.'
+    _emit_progress(
+        progress_callback,
+        {
+            'stage': 'Envio bloqueado antes da API',
+            'operation': op,
+            'processed': 0,
+            'total': 0,
+            'sent': 0,
+            'failed': 0,
+            'skipped': 0,
+            'progress': 1.0,
+            'blocked_before_api': True,
+            'reason': decision.reason or 'sem_linhas',
+        },
+    )
+    add_audit_event(
+        'bling_smart_diff_blocked_empty_before_api',
+        area='BLING_ENVIO',
+        status='BLOQUEADO',
+        details={
+            'operation': op,
+            'message': message,
+            'reason': decision.reason or 'sem_linhas',
+            'decision_details': decision.details or {},
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+    return DirectSendResult(0, 0, 0, 0, (message,), tuple())
 
 
 def _update_existing_product_diff(
@@ -149,6 +184,8 @@ def _send_cadastro_smart_diff(
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> DirectSendResult:
     patch_bling_api_base_urls()
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return _blocked_empty_result(OP_CADASTRO, progress_callback)
     schema_error = _cadastro_schema_error(df)
     if schema_error:
         total = len(df) if isinstance(df, pd.DataFrame) else 0
@@ -256,7 +293,7 @@ def _send_cadastro_smart_diff(
         _emit_progress(progress_callback, {'stage': 'Cadastrando no Bling com comparação', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
 
     _emit_progress(progress_callback, {'stage': 'Cadastro inteligente com comparação concluído', 'processed': total, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': 1.0})
-    add_audit_event('bling_smart_diff_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'attempted': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'mode': 'diff_update_only_changed_create_new_skip_unchanged_no_duplicate_recreate_no_double_count_field_acceptance_audit_api_base_clean', 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('bling_smart_diff_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'attempted': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'mode': 'diff_update_only_changed_create_new_skip_unchanged_no_duplicate_recreate_no_double_count_field_acceptance_audit_api_base_clean_empty_guarded', 'responsible_file': RESPONSIBLE_FILE})
     return DirectSendResult(total, sent, failed, skipped, tuple(errors), tuple())
 
 
@@ -268,9 +305,12 @@ def send_dataframe_to_bling(
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> DirectSendResult:
     patch_bling_api_base_urls()
-    if normalize_operation(operation) == OP_CADASTRO:
+    op = normalize_operation(operation)
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return _blocked_empty_result(op, progress_callback)
+    if op == OP_CADASTRO:
         return _send_cadastro_smart_diff(df, limit=limit, progress_callback=progress_callback)
-    return _safe_send_dataframe_to_bling(df, operation, limit=limit, progress_callback=progress_callback)
+    return _safe_send_dataframe_to_bling(df, op, limit=limit, progress_callback=progress_callback)
 
 
 __all__ = ['DirectSendResult', 'is_direct_send_available', 'preview_payloads', 'send_dataframe_to_bling']
