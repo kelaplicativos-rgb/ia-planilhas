@@ -11,6 +11,7 @@ from bling_app_zero.core.bling_direct_sender_smart_diff import send_dataframe_to
 from bling_app_zero.core.bling_pre_send_defaults import apply_dataframe_send_defaults, apply_product_send_defaults
 from bling_app_zero.core.bling_product_update_intelligence import ACTION_PENDING, analyze_stock_update_need
 from bling_app_zero.core.operation_contract import OP_CADASTRO, OP_ESTOQUE, normalize_operation
+from bling_app_zero.core.operation_safety_guard import require_rows_before_api
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_intelligent_update_sender.py'
 
@@ -132,6 +133,39 @@ def split_intelligent_update_rows(df: pd.DataFrame, operation: str = '') -> tupl
     return prepared_df.loc[allowed_indices].copy().fillna(''), pending
 
 
+def _block_empty_before_api(operation: str, progress_callback: Callable[[dict[str, Any]], None] | None = None) -> DirectSendResult:
+    decision = require_rows_before_api(operation=operation)
+    message = decision.message or 'Envio ao Bling bloqueado: nenhuma linha apta para API.'
+    _emit(
+        progress_callback,
+        {
+            'stage': 'Envio bloqueado antes da API',
+            'operation': normalize_operation(operation),
+            'processed': 0,
+            'total': 0,
+            'sent': 0,
+            'failed': 0,
+            'skipped': 0,
+            'progress': 1.0,
+            'blocked_before_api': True,
+            'reason': decision.reason or 'sem_linhas',
+        },
+    )
+    add_audit_event(
+        'bling_intelligent_update_blocked_empty_before_api',
+        area='BLING_ENVIO',
+        status='BLOQUEADO',
+        details={
+            'operation': normalize_operation(operation),
+            'message': message,
+            'reason': decision.reason or 'sem_linhas',
+            'decision_details': decision.details or {},
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+    return DirectSendResult(0, 0, 0, 0, (message,), tuple())
+
+
 def send_dataframe_to_bling_intelligent(
     df: pd.DataFrame,
     operation: str,
@@ -140,10 +174,10 @@ def send_dataframe_to_bling_intelligent(
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> DirectSendResult:
     patch_bling_api_base_urls()
-    if not isinstance(df, pd.DataFrame) or df.empty:
-        return DirectSendResult(0, 0, 0, 0, tuple(), tuple())
-
     op = normalize_operation(operation)
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return _block_empty_before_api(op, progress_callback)
+
     allowed_df, pending = split_intelligent_update_rows(df, op)
     skipped_before_api = len(pending)
     for item in pending[:50]:
