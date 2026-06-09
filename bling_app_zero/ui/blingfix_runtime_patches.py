@@ -18,7 +18,7 @@ from bling_app_zero.core.interaction_guard import (
 )
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/blingfix_runtime_patches.py'
-_PATCH_INSTALLED_KEY = 'blingfix_runtime_patches_installed_v4'
+_PATCH_INSTALLED_KEY = 'blingfix_runtime_patches_installed_v5'
 MAX_BLING_IMAGES_PER_PRODUCT = 6
 _IMAGE_LIST_KEYS = {'imagens', 'images', 'imagensurl', 'externas', 'externos', 'fotos'}
 
@@ -334,20 +334,7 @@ def _patch_internal_image_payload_previews() -> None:
     except Exception as exc:
         add_audit_event('bling_image_preview_patch_failed', area='BLING_ENVIO', status='AVISO', details={'target': 'bling_force_product_update', 'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
 
-    try:
-        from bling_app_zero.core import bling_direct_sender as direct_sender
-        original_payload = getattr(direct_sender, '_blingfix_original_payload_cadastro', None)
-        if original_payload is None:
-            original_payload = direct_sender._payload_cadastro
-            setattr(direct_sender, '_blingfix_original_payload_cadastro', original_payload)
-
-        def payload_cadastro_limited(*args: Any, **kwargs: Any) -> dict[str, Any]:
-            return _sanitize_any_bling_payload(original_payload(*args, **kwargs))
-
-        direct_sender._payload_cadastro = payload_cadastro_limited
-        patched.append('bling_direct_sender._payload_cadastro')
-    except Exception as exc:
-        add_audit_event('bling_image_preview_patch_failed', area='BLING_ENVIO', status='AVISO', details={'target': 'bling_direct_sender', 'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
+    patched.append('bling_direct_sender_native_safe_layer_no_payload_patch')
 
     try:
         from bling_app_zero.core import bling_autocadastro_api as autocadastro
@@ -364,7 +351,7 @@ def _patch_internal_image_payload_previews() -> None:
     except Exception as exc:
         add_audit_event('bling_image_preview_patch_failed', area='BLING_ENVIO', status='AVISO', details={'target': 'bling_autocadastro_api', 'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
 
-    add_audit_event('bling_image_preview_payload_patches_installed', area='BLING_ENVIO', status='OK', details={'patched': patched, 'max_images_per_product': MAX_BLING_IMAGES_PER_PRODUCT, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('bling_image_preview_payload_patches_installed', area='BLING_ENVIO', status='OK', details={'patched': patched, 'max_images_per_product': MAX_BLING_IMAGES_PER_PRODUCT, 'direct_sender_payload_patch_removed': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 def _normalize_operation(value: object) -> str:
@@ -423,7 +410,7 @@ def install_blingfix_runtime_patches() -> None:
     _patch_site_operation_guard()
     _patch_api_batch_operation_guard()
     st.session_state[_PATCH_INSTALLED_KEY] = True
-    add_audit_event('blingfix_runtime_patches_installed', area='APP', status='OK', details={'logout_guard_active': logout_guard_active(), 'api_operation_guard': True, 'bling_image_limit_guard': True, 'max_images_per_product': MAX_BLING_IMAGES_PER_PRODUCT, 'request_wrapper_accepts_args': True, 'preview_payload_patches': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('blingfix_runtime_patches_installed', area='APP', status='OK', details={'logout_guard_active': logout_guard_active(), 'api_operation_guard': True, 'bling_image_limit_guard': True, 'max_images_per_product': MAX_BLING_IMAGES_PER_PRODUCT, 'request_wrapper_accepts_args': True, 'preview_payload_patches': True, 'direct_sender_payload_patch_removed': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_blingfix_runtime_patches']
