@@ -45,9 +45,13 @@ RESPONSIBLE_FILE = 'bling_app_zero/ui/site_panel.py'
 SCAN_TOTAL_MAX_PAGES = SAFE_CAPTURE_MAX_PAGES
 SCAN_TOTAL_MAX_PRODUCTS = SAFE_CAPTURE_MAX_PRODUCTS
 SCAN_TOTAL_MAX_DEPTH = SAFE_CAPTURE_MAX_DEPTH
-FAST_API_MAX_PAGES = min(FLOW_CAPTURE_MAX_PAGES, 180)
-FAST_API_MAX_PRODUCTS = min(FLOW_CAPTURE_MAX_PRODUCTS, 450)
-FAST_API_MAX_DEPTH = min(FLOW_CAPTURE_MAX_DEPTH, 2)
+# Um único motor API por site. A diferença entre cadastro e estoque é apenas o
+# peso do contrato: estoque lê saldo/identificação; cadastro lê dados completos,
+# imagens e descrição. Por isso o primeiro lote de cadastro precisa ser menor.
+API_SITE_MAX_PAGES = min(FLOW_CAPTURE_MAX_PAGES, 180)
+API_SITE_MAX_DEPTH = min(FLOW_CAPTURE_MAX_DEPTH, 2)
+API_SITE_STOCK_PRODUCTS = min(FLOW_CAPTURE_MAX_PRODUCTS, 450)
+API_SITE_CADASTRO_PRODUCTS = min(FLOW_CAPTURE_MAX_PRODUCTS, 80)
 SITE_PANEL_DISCOVERY_BUDGET_SECONDS = 45
 SUPPORTED_SITE_OPERATIONS = {'cadastro', 'estoque', 'atualizacao_preco', UNIVERSAL_OPERATION}
 
@@ -76,6 +80,10 @@ def _is_stock_api_balance_mode(operation: str) -> bool:
 def _is_direct_api_site_mode(operation: str) -> bool:
     contract = active_contract()
     return bool(contract.is_api and contract.operation == operation and operation in {'cadastro', 'estoque'})
+
+
+def _api_site_max_products(operation: str) -> int:
+    return API_SITE_STOCK_PRODUCTS if operation == 'estoque' else API_SITE_CADASTRO_PRODUCTS
 
 
 def _next_step_after_site_capture() -> str:
@@ -127,9 +135,9 @@ def _scan_total_options(operation: str) -> dict[str, int | bool]:
     if _is_direct_api_site_mode(operation):
         return {
             'enabled': True,
-            'max_pages': FAST_API_MAX_PAGES,
-            'max_products': FAST_API_MAX_PRODUCTS,
-            'max_depth': FAST_API_MAX_DEPTH,
+            'max_pages': API_SITE_MAX_PAGES,
+            'max_products': _api_site_max_products(operation),
+            'max_depth': API_SITE_MAX_DEPTH,
             'scan_total_ui': True,
             'stock_balance_only': _is_stock_api_balance_mode(operation),
             'stock_full_site_scan': False,
@@ -138,6 +146,8 @@ def _scan_total_options(operation: str) -> dict[str, int | bool]:
             'cadastro_api_fast_batch': operation == 'cadastro',
             'cadastro_api_skip_predeep_discovery': operation == 'cadastro',
             'skip_predeep_discovery': True,
+            'unified_api_site_engine': True,
+            'api_site_batch_contract': operation,
             'budget_seconds': SITE_PANEL_DISCOVERY_BUDGET_SECONDS,
         }
     return {
@@ -153,6 +163,8 @@ def _scan_total_options(operation: str) -> dict[str, int | bool]:
         'cadastro_api_fast_batch': False,
         'cadastro_api_skip_predeep_discovery': False,
         'skip_predeep_discovery': False,
+        'unified_api_site_engine': False,
+        'api_site_batch_contract': '',
         'budget_seconds': SITE_PANEL_DISCOVERY_BUDGET_SECONDS,
     }
 
@@ -160,9 +172,9 @@ def _scan_total_options(operation: str) -> dict[str, int | bool]:
 def _render_scan_total_notice(operation: str) -> None:
     if _is_direct_api_site_mode(operation):
         if operation == 'cadastro':
-            orange_warning('Cadastro/API em modo anti-trava: o sistema pula a descoberta profunda prévia e deixa o motor principal fazer uma leitura controlada para salvar o lote e liberar o envio ao Bling.')
+            orange_warning('Cadastro/API usa o mesmo motor do Estoque/API: leitura em lote seguro, sem descoberta duplicada, salvando o primeiro lote completo para liberar envio ao Bling.')
         else:
-            orange_warning('Estoque/API em modo anti-trava: o sistema pula a descoberta profunda prévia que travava em 19% e deixa o motor de estoque fazer uma única leitura controlada para salvar o lote e liberar o envio ao Bling.')
+            orange_warning('Estoque/API usa o mesmo motor do Cadastro/API: leitura em lote seguro, sem descoberta duplicada, salvando saldo e identificação para liberar envio ao Bling.')
         return
     orange_warning('Busca completa ativa: o sistema procura produtos no site e captura os dados conforme o contrato ativo.')
 
