@@ -48,7 +48,7 @@ SCAN_TOTAL_MAX_DEPTH = SAFE_CAPTURE_MAX_DEPTH
 STOCK_BALANCE_MAX_PAGES = FLOW_CAPTURE_MAX_PAGES
 STOCK_BALANCE_MAX_PRODUCTS = FLOW_CAPTURE_MAX_PRODUCTS
 STOCK_BALANCE_MAX_DEPTH = FLOW_CAPTURE_MAX_DEPTH
-SITE_PANEL_DISCOVERY_BUDGET_SECONDS = 55
+SITE_PANEL_DISCOVERY_BUDGET_SECONDS = 180
 SUPPORTED_SITE_OPERATIONS = {'cadastro', 'estoque', 'atualizacao_preco', UNIVERSAL_OPERATION}
 
 
@@ -144,26 +144,26 @@ def _scan_total_options(operation: str) -> dict[str, int | bool]:
 
 def _render_scan_total_notice(operation: str) -> None:
     if _is_stock_api_balance_mode(operation):
-        orange_warning(
-            '🚀 Busca completa ativa: o sistema vai capturar produtos com a mesma interface do cadastro e, no final, salvar somente os campos necessários para estoque/API.'
-        )
+        orange_warning('Busca completa ativa: o sistema vai capturar produtos e salvar somente os campos necessários para estoque/API.')
         return
-    orange_warning(
-        '🚀 Busca completa ativa: o sistema procura produtos no site, captura imagens, descrições, preços e dados técnicos conforme o contrato ativo.'
-    )
+    orange_warning('Busca completa ativa: o sistema procura produtos no site e captura os dados conforme o contrato ativo.')
 
 
 def _render_running_state(operation: str) -> None:
+    recovered = recover_stale_capture_if_needed(operation)
+    if recovered:
+        orange_warning('A busca anterior ficou sem resultado e foi destravada automaticamente. Revise os links e execute novamente.')
+        return
     profile = capture_profile(operation, stock_balance_only=_is_stock_api_balance_mode(operation))
     st.markdown(f'### {profile.running_title}')
     orange_warning(profile.running_notice)
     render_live_site_operation_panel()
     with st.expander('Plano e histórico detalhado da busca', expanded=False):
         render_site_progress_history()
-    st.info('A tela está em modo seguro: campos, botões e módulos pesados ficam ocultos enquanto a busca roda. O painel vivo acima continua mostrando sinal, tempo e progresso.')
+    st.info('A tela está em modo seguro enquanto a busca roda. O sistema destrava automaticamente buscas sem resultado.')
     with st.expander('Busca parece travada?', expanded=False):
         st.caption('Use esta opção apenas se a busca ficou sem sinal vivo por muito tempo ou se a conexão caiu.')
-        if st.button('🧹 Limpar busca travada e tentar novamente', use_container_width=True, key=f'limpar_captura_travada_{operation}'):
+        if st.button('Limpar busca travada e tentar novamente', use_container_width=True, key=f'limpar_captura_travada_{operation}'):
             clear_stuck_capture(operation)
             safe_rerun('site_capture_stuck_cleared', target_step=STEP_ENTRADA)
     add_audit_event('site_panel_running_guard_rendered', area='SITE', step='entrada', status='INFO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE, 'capture_spine': 'site_capture_spine_v1', 'live_panel': True})
@@ -227,7 +227,7 @@ def _render_universal_fallback(
     df_modelo: pd.DataFrame | None,
 ) -> None:
     expanded = bool(st.session_state.get('site_capture_error'))
-    with st.expander('🔐 Site protegido ou com login', expanded=expanded):
+    with st.expander('Site protegido ou com login', expanded=expanded):
         if _is_stock_api_balance_mode(operation):
             orange_warning('Use se os saldos estiverem em tela protegida. Cole HTML, tabela, CSV ou XLSX contendo produto e saldo.')
         else:
@@ -267,10 +267,8 @@ def render_site_panel() -> None:
         _render_ready_state(operation, df_site_bruto, stock_balance_only)
         return
 
-    st.markdown(
-        f'<section class="bling-flow-card bling-inline-card"><div class="bling-flow-card-kicker">{profile.kicker}</div><h2 class="bling-flow-card-title">{profile.title}</h2></section>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(f'### {profile.title}')
+    st.caption(profile.kicker)
 
     _, df_modelo_cadastro, df_modelo_estoque, df_modelo, requested_columns = _render_site_models_inline(operation)
     raw_urls = _render_urls_input(operation)
