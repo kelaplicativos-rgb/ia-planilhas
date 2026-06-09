@@ -21,7 +21,6 @@ from bling_app_zero.engines.fast_site_scraper.constants import (
 from bling_app_zero.engines.fast_site_scraper.http_client import fetch_live
 from bling_app_zero.engines.fast_site_scraper.url_discovery import (
     allowed_url,
-    discover_from_feeds,
     norm_url,
     productish_url,
     same_domain,
@@ -184,11 +183,6 @@ def discover_deep_product_urls(
     progress_callback: Callable[[dict], None] | None = None,
     budget_seconds: int | float = DISCOVERY_BUDGET_SECONDS,
 ) -> DeepCaptureResult:
-    """Expande um domínio/categoria em links prováveis de produto sem travar o app.
-
-    BLINGFIX: emite progresso minucioso antes e depois de cada página aberta,
-    para a tela não ficar parada durante varreduras profundas ou lotes pesados.
-    """
     started = time.perf_counter()
     starts = [norm_url(url) for url in split_urls(raw_urls) if norm_url(url)]
     starts = list(dict.fromkeys(starts))
@@ -387,50 +381,6 @@ def discover_deep_product_urls(
             links_found_on_page=found_on_page,
             ignored_external=ignored_external,
         ))
-
-    if len(products) < max_products and _time_left(started, budget_seconds) > 5:
-        feed_budget = min(max_products - len(products), 250)
-        _emit(progress_callback, _build_progress_payload(
-            started=started,
-            stage='Busca em feeds do site',
-            message=f'Complementando com feeds/sitemap. Restam até {feed_budget} produto(s).',
-            visited=len(visited),
-            scanned_pages=scanned_pages,
-            products=products,
-            queue_size=len(queue),
-            max_pages=max_pages,
-            max_products=max_products,
-            max_depth=max_depth,
-            budget_seconds=budget_seconds,
-            flow_mode=flow_mode,
-            progress=0.87,
-        ))
-        try:
-            feed_urls = discover_from_feeds(starts, max_products=feed_budget)
-        except Exception:
-            feed_urls = []
-        for index, link in enumerate(feed_urls, start=1):
-            if link not in products:
-                products.append(link)
-                if index == 1 or index % 25 == 0 or len(products) >= max_products:
-                    _emit(progress_callback, _build_progress_payload(
-                        started=started,
-                        stage='Feeds/sitemap analisados',
-                        message=f'{len(products)}/{max_products} produto(s) preparado(s) após feeds/sitemap.',
-                        visited=len(visited),
-                        scanned_pages=scanned_pages,
-                        products=products,
-                        queue_size=len(queue),
-                        max_pages=max_pages,
-                        max_products=max_products,
-                        max_depth=max_depth,
-                        budget_seconds=budget_seconds,
-                        flow_mode=flow_mode,
-                        current_url=link,
-                        progress=0.87,
-                    ))
-                if len(products) >= max_products:
-                    break
 
     if stopped_by_budget:
         add_audit_event(
