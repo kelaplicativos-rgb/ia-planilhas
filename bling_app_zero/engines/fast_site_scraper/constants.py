@@ -26,11 +26,13 @@ FLOW_CAPTURE_TIMEOUT_SECONDS = 95
 
 STREAMLIT_HARD_BUDGET_SECONDS = 95
 
-# BLINGFIX 2026-06-03:
-# O diagnóstico mostrou pausa técnica com 250 links encontrados e 0 linhas salvas.
-# 28s/24s era pouco para Mega Center: descobria URLs, mas não dava tempo de preparar linhas.
-DISCOVERY_BUDGET_SECONDS = 55
-PRODUCT_READ_BUDGET_SECONDS = 58
+# BLINGFIX 2026-06-09:
+# O diagnóstico 74 mostrou captura iniciada com 650 páginas/1500 produtos e
+# budget de apenas 55s, ficando em running sem linhas. A descoberta precisa de
+# orçamento maior e o guard preventivo fica responsável por destravar estados
+# realmente parados sem enviar dados vazios ao Bling.
+DISCOVERY_BUDGET_SECONDS = 180
+PRODUCT_READ_BUDGET_SECONDS = 120
 
 RICH_DESCRIPTION_KINDS = {'descricao_complementar', 'ficha_tecnica', 'caracteristicas'}
 DESCRIPTION_TRIGGER_KINDS = {'descricao', 'descricao_curta', 'nome_apoio', *RICH_DESCRIPTION_KINDS}
