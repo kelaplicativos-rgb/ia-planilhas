@@ -4,6 +4,12 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.flow_spine import build_flow_spine_plan, pending_message_for, resolve_step
+from bling_app_zero.core.interaction_guard import (
+    activate_manual_back_lock,
+    clear_manual_back_lock,
+    locked_manual_back_target,
+    manual_back_lock_active,
+)
 from bling_app_zero.features_runtime.router import (
     active_contract,
     feature_needs_model,
@@ -225,6 +231,37 @@ def _render_step_progress(steps: list[str], active_step: str) -> None:
                 st.success(f'{label} concluído.')
 
 
+def _render_persistent_process_bar(steps: list[str], active_step: str, *, locked: bool) -> None:
+    if active_step not in steps:
+        return
+    index = steps.index(active_step)
+    total = max(1, len(steps))
+    percent = int(((index + 1) / total) * 100)
+    lock_text = ' · avanço automático pausado' if locked else ''
+    lock_class = ' blingfix-progress-locked' if locked else ''
+    st.markdown(
+        '''
+<style>
+.blingfix-progress-card{border:1px solid rgba(15,23,42,.10);background:linear-gradient(135deg,#ffffff 0%,#f8fafc 100%);border-radius:16px;padding:.72rem .82rem;margin:.55rem 0 .85rem 0;box-shadow:0 8px 22px rgba(15,23,42,.05);}
+.blingfix-progress-title{font-size:.82rem;font-weight:900;color:#0f172a;margin-bottom:.22rem;}
+.blingfix-progress-subtitle{font-size:.78rem;color:#475569;line-height:1.25;}
+.blingfix-progress-locked{color:#9a3412;font-weight:850;}
+</style>
+''',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'''
+<div class="blingfix-progress-card">
+  <div class="blingfix-progress-title">Acompanhamento do processo</div>
+  <div class="blingfix-progress-subtitle{lock_class}">Etapa {index + 1} de {total} · {_label_for(active_step)}{lock_text}</div>
+</div>
+''',
+        unsafe_allow_html=True,
+    )
+    st.progress(max(1, min(100, percent)))
+
+
 def _render_safe_step_nav(steps: list[str], active_step: str) -> None:
     if active_step not in steps:
         return
@@ -233,8 +270,11 @@ def _render_safe_step_nav(steps: list[str], active_step: str) -> None:
     next_step = plan.next_step(active_step)
     can_go_next = bool(next_step) and _can_advance_from(active_step)
     contract = active_contract()
+    locked = manual_back_lock_active(active_step)
 
-    if contract.is_api and can_go_next:
+    _render_persistent_process_bar(steps, active_step, locked=locked)
+
+    if contract.is_api and can_go_next and not locked:
         _go_to_step(next_step)
         add_audit_event(
             'wizard_api_auto_next_applied',
@@ -245,10 +285,20 @@ def _render_safe_step_nav(steps: list[str], active_step: str) -> None:
         safe_rerun('wizard_api_auto_next', target_step=next_step)
         return
 
+    if contract.is_api and can_go_next and locked:
+        add_audit_event(
+            'wizard_api_auto_next_blocked_by_manual_back',
+            area='WIZARD',
+            step=active_step,
+            status='OK',
+            details={'active_step': active_step, 'next_step': next_step, 'responsible_file': RESPONSIBLE_FILE},
+        )
+
     st.markdown('---')
     col_back, col_status, col_next = st.columns([1, 1.4, 1])
     with col_back:
         if previous_step and st.button('⬅️ Voltar', use_container_width=True, key=f'wizard_local_back_{active_step}'):
+            activate_manual_back_lock(active_step, previous_step)
             _go_to_step(previous_step)
             add_audit_event('wizard_local_back_clicked', area='WIZARD', step=previous_step, details={'from': active_step, 'to': previous_step, 'state_preserved': True, 'flow_spine': plan.to_dict(), 'responsible_file': RESPONSIBLE_FILE})
             safe_rerun('wizard_back_clicked', target_step=previous_step)
@@ -257,7 +307,10 @@ def _render_safe_step_nav(steps: list[str], active_step: str) -> None:
     with col_status:
         if next_step:
             if can_go_next:
-                st.success(f'Próxima etapa liberada: {_label_for(next_step)}')
+                if locked:
+                    st.info(f'Você voltou para revisar: {_label_for(active_step)}. O avanço automático está pausado até tocar em Próximo.')
+                else:
+                    st.success(f'Próxima etapa liberada: {_label_for(next_step)}')
             else:
                 render_pending_notice(_pending_message_for(active_step))
         else:
@@ -266,6 +319,7 @@ def _render_safe_step_nav(steps: list[str], active_step: str) -> None:
         if next_step:
             if can_go_next:
                 if st.button(f'Próximo: {_label_for(next_step)}', use_container_width=True, key=f'wizard_local_next_{active_step}'):
+                    clear_manual_back_lock('manual_next_clicked')
                     _go_to_step(next_step)
                     add_audit_event('wizard_local_next_clicked', area='WIZARD', step=next_step, details={'from': active_step, 'to': next_step, 'prerequisite_ok': True, 'state_preserved': True, 'flow_spine': plan.to_dict(), 'responsible_file': RESPONSIBLE_FILE})
                     safe_rerun('wizard_next_clicked', target_step=next_step)
@@ -278,6 +332,9 @@ def _render_safe_step_nav(steps: list[str], active_step: str) -> None:
 def _resolve_active_step(active_step: str, *, has_model: bool, start_at_origin: bool) -> str:
     plan = _flow_plan()
     steps = list(plan.steps)
+    locked_target = locked_manual_back_target('')
+    if locked_target and locked_target in steps:
+        return locked_target
     active_step = resolve_step(plan, active_step)
     contract = active_contract()
     if start_at_origin and active_step == STEP_MODELO:
@@ -522,7 +579,7 @@ def render_home_wizard() -> None:
     active_step = _resolve_active_step(_active_start_step(), has_model=has_model, start_at_origin=start_at_origin)
     plan = _flow_plan()
     steps = list(plan.steps)
-    add_audit_event('wizard_single_step_rendered', area='WIZARD', step=active_step, details={'operation': operation or 'universal', 'feature_contract': plan.contract_key, 'steps': steps, 'render_mode': 'flow_spine_safe_nav', 'single_page_flow': SINGLE_PAGE_FLOW, 'skip_model_step': start_at_origin, 'active_start_step': active_step, 'finish_mode': mode, 'home_entry_context': context, 'flow_spine': plan.to_dict(), 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('wizard_single_step_rendered', area='WIZARD', step=active_step, details={'operation': operation or 'universal', 'feature_contract': plan.contract_key, 'steps': steps, 'render_mode': 'flow_spine_safe_nav_native', 'single_page_flow': SINGLE_PAGE_FLOW, 'skip_model_step': start_at_origin, 'active_start_step': active_step, 'finish_mode': mode, 'home_entry_context': context, 'flow_spine': plan.to_dict(), 'manual_back_lock_native': True, 'responsible_file': RESPONSIBLE_FILE})
     _render_steps_from(active_step, skip_model=start_at_origin)
     inject_scroll_to_target()
 
