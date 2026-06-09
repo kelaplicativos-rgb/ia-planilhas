@@ -52,8 +52,11 @@ CONTRACTS: dict[tuple[str, str], FeatureContract] = {
         needs_download=False,
         primary_action_label='Atualizar estoque no Bling',
         steps=API_STEPS,
-        required_columns=('quantidade',),
-        optional_columns=('id', 'codigo', 'gtin', 'deposito'),
+        # BLINGFIX: busca por site não deve pedir coluna "id" simples, porque ID
+        # do site não é ID interno do Bling. O envio resolve o produto por Código
+        # ou GTIN antes de montar o payload /estoques/saldos.
+        required_columns=('Quantidade',),
+        optional_columns=('Código', 'GTIN', 'Depósito'),
     ),
     ('atualizacao_preco', 'api'): FeatureContract(
         key='preco_api',
@@ -107,8 +110,8 @@ CONTRACTS: dict[tuple[str, str], FeatureContract] = {
         label='Atualização de preços por planilha',
         operation='atualizacao_preco',
         mode='csv',
-        supports_api=False,
         supports_csv=True,
+        supports_api=False,
         needs_model=True,
         needs_pricing=True,
         needs_mapping=True,
