@@ -12,11 +12,12 @@ RESPONSIBLE_FILE = 'bling_app_zero/pipelines/stock_api_origin_guard.py'
 URL_COLUMNS = ('url', 'link', 'produto_url', 'url_produto', 'origem url', 'link produto')
 STOCK_ID_COLUMNS = ('codigo', 'código', 'sku', 'gtin', 'ean', 'id produto', 'id_produto', 'id bling', 'id_bling')
 STOCK_QTY_COLUMNS = ('quantidade', 'qtd', 'saldo', 'estoque', 'balanco', 'balanço', 'stock')
+CADASTRO_CORE_COLUMNS = ('nome', 'descricao', 'descrição', 'codigo', 'código', 'sku', 'preco', 'preço', 'imagens', 'imagem', 'gtin', 'marca', 'categoria')
 
 
 def _key(value: object) -> str:
     text = str(value or '').strip().lower()
-    for old, new in {'ã': 'a', 'á': 'a', 'à': 'a', 'â': 'a', 'é': 'e', 'ê': 'e', 'í': 'i', 'ó': 'o', 'ô': 'o', 'õ': 'o', 'ú': 'u', 'ç': 'c'}.items():
+    for old, new in {'ã': 'a', 'á': 'a', 'à': 'a', 'â': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ô': 'o', 'õ': 'o', 'ú': 'u', 'ç': 'c'}.items():
         text = text.replace(old, new)
     text = re.sub(r'[^a-z0-9]+', ' ', text)
     return re.sub(r'\s+', ' ', text).strip()
@@ -29,6 +30,16 @@ def _find_col(df: pd.DataFrame, aliases: tuple[str, ...]) -> str:
         if any(alias == col_key or alias in col_key for alias in alias_keys):
             return str(column)
     return ''
+
+
+def _count_cols(df: pd.DataFrame, aliases: tuple[str, ...]) -> int:
+    alias_keys = [_key(alias) for alias in aliases]
+    count = 0
+    for column in df.columns:
+        col_key = _key(column)
+        if any(alias == col_key or alias in col_key for alias in alias_keys):
+            count += 1
+    return count
 
 
 def _domain(value: str) -> str:
@@ -61,19 +72,17 @@ def _has_stock_payload_columns(df: pd.DataFrame) -> bool:
     return bool(isinstance(df, pd.DataFrame) and not df.empty and _find_col(df, STOCK_ID_COLUMNS) and _find_col(df, STOCK_QTY_COLUMNS))
 
 
-def filter_origin_rows_for_operation(df: pd.DataFrame, raw_urls: str, *, operation: str = '') -> pd.DataFrame:
+def _has_cadastro_payload_columns(df: pd.DataFrame) -> bool:
     if not isinstance(df, pd.DataFrame) or df.empty:
-        return df
+        return False
+    useful_cols = _count_cols(df, CADASTRO_CORE_COLUMNS)
+    has_name = bool(_find_col(df, ('nome', 'descricao', 'descrição')))
+    has_price_or_code = bool(_find_col(df, ('preco', 'preço', 'codigo', 'código', 'sku', 'gtin')))
+    return bool(useful_cols >= 2 and has_name and has_price_or_code)
 
-    allowed_domains = _input_public_domains(raw_urls)
-    if not allowed_domains:
-        return df.iloc[0:0].copy()
 
-    out = df.copy().fillna('')
-    url_col = _find_col(out, URL_COLUMNS)
-    op = str(operation or '').strip().lower()
-
-    if not url_col and op == 'estoque' and _has_stock_payload_columns(out):
+def _keep_api_rows_without_url(out: pd.DataFrame, *, op: str) -> pd.DataFrame | None:
+    if op == 'estoque' and _has_stock_payload_columns(out):
         add_audit_event(
             'site_pipeline_live_origin_url_filter_skipped_for_stock_api',
             area='SITE',
@@ -86,6 +95,43 @@ def filter_origin_rows_for_operation(df: pd.DataFrame, raw_urls: str, *, operati
             },
         )
         return out.fillna('')
+
+    if op == 'cadastro' and _has_cadastro_payload_columns(out):
+        add_audit_event(
+            'site_pipeline_live_origin_url_filter_skipped_for_cadastro_api',
+            area='SITE',
+            status='OK',
+            details={
+                'rows_before': len(out),
+                'reason': 'Cadastro/API sem coluna URL, mas com campos de produto válidos. Mantendo linhas para pré-varredura/API.',
+                'columns': list(map(str, out.columns))[:30],
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+        return out.fillna('')
+
+    return None
+
+
+def filter_origin_rows_for_operation(df: pd.DataFrame, raw_urls: str, *, operation: str = '') -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return df
+
+    out = df.copy().fillna('')
+    url_col = _find_col(out, URL_COLUMNS)
+    op = str(operation or '').strip().lower()
+
+    if not url_col:
+        kept = _keep_api_rows_without_url(out, op=op)
+        if kept is not None:
+            return kept
+
+    allowed_domains = _input_public_domains(raw_urls)
+    if not allowed_domains:
+        kept = _keep_api_rows_without_url(out, op=op)
+        if kept is not None:
+            return kept
+        return out.iloc[0:0].copy()
 
     if not url_col:
         add_audit_event(
