@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-APP_VERSION = '3.8.7-BLINGFIX-ESTOQUE-CAPTURA-ANTI-TRAVA-20260609'
+APP_VERSION = '3.8.8-BLINGFIX-ESTOQUE-SEM-TRAVA-19-20260609'
 
 PAGE_CONFIG = {
     'page_title': 'MapeiaAI',
