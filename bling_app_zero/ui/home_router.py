@@ -104,7 +104,7 @@ def _start_wizard_context(context: str, *, step: str | None = None) -> None:
         st.session_state.pop(WIZARD_STEP_KEY, None)
     elif normalized_context == CONTEXT_UNIVERSAL:
         activate_csv_finish_mode()
-        set_step_without_rerun(step or STEP_MODELO)
+        set_step_without_rerun(step or STEP_ORIGEM)
     elif step:
         set_step_without_rerun(step)
     else:
@@ -344,7 +344,7 @@ def _render_light_entry_home() -> None:
                 safe_rerun('home_use_connected_bling')
         with col_file:
             if st.button('Gerar arquivo sem API', use_container_width=True, key='home_continue_without_bling_connected'):
-                _start_wizard_context(CONTEXT_UNIVERSAL, step=STEP_MODELO)
+                _start_wizard_context(CONTEXT_UNIVERSAL, step=STEP_ORIGEM)
                 safe_rerun('home_continue_without_bling_connected')
         return
 
@@ -358,7 +358,7 @@ def _render_light_entry_home() -> None:
 
     st.divider()
     if st.button('Continuar sem conectar ao Bling', use_container_width=True, key='home_continue_without_bling'):
-        _start_wizard_context(CONTEXT_UNIVERSAL, step=STEP_MODELO)
+        _start_wizard_context(CONTEXT_UNIVERSAL, step=STEP_ORIGEM)
         safe_rerun('home_continue_without_bling')
 
     add_audit_event(
@@ -372,6 +372,7 @@ def _render_light_entry_home() -> None:
             'local_connected': bool(effective_status.get('local_connected')),
             'home_order': 'android_safe_bling_or_continue_without',
             'lazy_flow_entry': True,
+            'csv_first_step': STEP_ORIGEM,
         },
     )
 
@@ -403,6 +404,7 @@ def _render_professional_home() -> None:
             'bling_oauth_target': 'android_safe_top_or_copy',
             'legacy_routes_removed': True,
             'lazy_flow_entry': True,
+            'csv_first_step': STEP_ORIGEM,
         },
     )
 
