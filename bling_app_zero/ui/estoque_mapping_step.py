@@ -7,6 +7,7 @@ from bling_app_zero.ui.estoque_mapping import render_manual_estoque_mapping
 from bling_app_zero.ui.estoque_wizard_state import (
     ESTOQUE_MODELO_KEY,
     current_stock_source,
+    resolve_stock_model_df,
     sync_manual_stock_output,
     valid_model,
 )
@@ -28,7 +29,7 @@ def render_estoque_gerar_step() -> None:
         'Mapeie as colunas do modelo operacional. Se houver coluna Depósito, use a opção “escrever valor” nessa própria coluna.'
     )
 
-    df_modelo = st.session_state.get(ESTOQUE_MODELO_KEY)
+    df_modelo = resolve_stock_model_df(st.session_state.get(ESTOQUE_MODELO_KEY), persist=True)
     df_origem, source_name = current_stock_source()
 
     if not valid_model(df_modelo):
