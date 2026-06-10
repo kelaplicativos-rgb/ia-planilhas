@@ -24,6 +24,8 @@ ACTIVE_FLOW_KEY = 'home_active_operation_v2'
 HOME_ALLOW_FLOW_KEY = 'home_allow_operation_v2_session'
 HOME_BOOT_LOCK_KEY = 'home_boot_landing_rendered_once'
 HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
+HOME_FLOW_SCHEMA_KEY = 'home_source_first_flow_schema_v1'
+HOME_FLOW_SCHEMA_VERSION = 'source_first_origin_start_v3_20260610'
 BLING_AUTH_READY_KEY = 'home_bling_auth_ready_url'
 BLING_BACKEND_LAST_STATUS_KEY = 'home_bling_backend_last_status'
 FLOW_HOME = 'home'
@@ -48,6 +50,60 @@ VALID_SINGLE_PAGE_STEPS = {
     'download',
     'regras',
 }
+
+STALE_FLOW_KEYS = (
+    ACTIVE_FLOW_KEY,
+    HOME_ALLOW_FLOW_KEY,
+    HOME_BOOT_LOCK_KEY,
+    HOME_ENTRY_CONTEXT_KEY,
+    WIZARD_STEP_KEY,
+    'home_single_page_flow_active',
+    'home_slim_flow_origin',
+    'home_slim_flow_operation',
+    'home_detected_operation',
+    'frontpage_origin_radio_universal',
+    'origem_final',
+    'origem_dados',
+    'origem_tipo',
+    'origem_planilha_via_site',
+    'site_gerou_origem_planilha',
+    'operation_site',
+    'tipo_operacao_site',
+    'tipo_operacao',
+    'operacao_final',
+    'tipo_operacao_final',
+    'active_feature_contract_key',
+    'active_feature_operation',
+    'active_feature_mode',
+    'flow_spine_operation',
+    'flow_spine_final_destination',
+    'flow_spine_sender_operation',
+    'flow_spine_api_batch_operation',
+    'site_capture_running',
+    'site_capture_finished',
+    'site_capture_result_ready',
+    'site_capture_error',
+    'site_capture_rows',
+    'site_capture_columns',
+    'site_capture_operation',
+    'site_capture_started_at',
+    'blingsmartscan_manual_continue_required',
+    'blingsmartscan_ready_to_continue',
+    'blingsmartscan_continue_target_step',
+    'blingsmartscan_finished_operation',
+    'blingsmartscan_finished_rows',
+    'blingsmartscan_finished_columns',
+)
+STALE_FLOW_PREFIXES = (
+    'df_site_bruto',
+    'df_origem_site_como_planilha_',
+    'site_source_urls_como_planilha_',
+    'site_requested_columns_como_planilha_',
+    'site_deep_capture_',
+    'blingsmartscan_notice_',
+    'blingsmartscan_decision_',
+    'blingsmartscan_report_',
+)
 
 
 def _query_param(name: str) -> str:
@@ -81,6 +137,43 @@ def _clear_navigation_params() -> None:
             st.query_params.pop(key, None)
     except Exception:
         pass
+
+
+def _reset_stale_flow_session_if_needed() -> None:
+    """Força sessão antiga a voltar para a primeira tela correta após deploy.
+
+    O Streamlit preserva session_state entre reruns. Depois da mudança para
+    fluxo Origem -> Entrada -> Modelo, sessões antigas podem continuar abrindo
+    direto em Entrada/Site/Estoque. Este reset roda uma única vez por versão.
+    """
+    if st.session_state.get(HOME_FLOW_SCHEMA_KEY) == HOME_FLOW_SCHEMA_VERSION:
+        return
+
+    removed: list[str] = []
+    for key in STALE_FLOW_KEYS:
+        if key in st.session_state:
+            st.session_state.pop(key, None)
+            removed.append(key)
+    for key in list(st.session_state.keys()):
+        text_key = str(key)
+        if any(text_key.startswith(prefix) for prefix in STALE_FLOW_PREFIXES):
+            st.session_state.pop(key, None)
+            removed.append(text_key)
+
+    st.session_state[HOME_FLOW_SCHEMA_KEY] = HOME_FLOW_SCHEMA_VERSION
+    _clear_navigation_params()
+    add_audit_event(
+        'home_router_source_first_schema_session_reset',
+        area='HOME',
+        status='OK',
+        details={
+            'responsible_file': RESPONSIBLE_FILE,
+            'schema_version': HOME_FLOW_SCHEMA_VERSION,
+            'removed_count': len(removed),
+            'removed_keys': removed[:80],
+            'reason': 'force_home_after_source_first_deploy',
+        },
+    )
 
 
 def _set_home_flow() -> None:
@@ -373,6 +466,7 @@ def _render_light_entry_home() -> None:
             'home_order': 'android_safe_bling_or_continue_without',
             'lazy_flow_entry': True,
             'csv_first_step': STEP_ORIGEM,
+            'schema_version': HOME_FLOW_SCHEMA_VERSION,
         },
     )
 
@@ -405,11 +499,13 @@ def _render_professional_home() -> None:
             'legacy_routes_removed': True,
             'lazy_flow_entry': True,
             'csv_first_step': STEP_ORIGEM,
+            'schema_version': HOME_FLOW_SCHEMA_VERSION,
         },
     )
 
 
 def render_home() -> None:
+    _reset_stale_flow_session_if_needed()
     flow = _requested_flow()
     if flow == FLOW_HOME:
         _render_professional_home()
