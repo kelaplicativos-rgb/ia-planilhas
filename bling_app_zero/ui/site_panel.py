@@ -14,7 +14,7 @@ from bling_app_zero.engines.fast_site_scraper.constants import (
 )
 from bling_app_zero.features_runtime.router import active_contract, feature_needs_model
 from bling_app_zero.ui.home_shared import show_contract
-from bling_app_zero.ui.home_wizard_constants import STEP_DOWNLOAD, STEP_ENTRADA, STEP_MAPEAMENTO
+from bling_app_zero.ui.home_wizard_constants import STEP_DOWNLOAD, STEP_ENTRADA, STEP_MAPEAMENTO, STEP_MODELO
 from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 from bling_app_zero.ui.manual_table_import_panel import render_manual_table_import_panel
 from bling_app_zero.ui.mirror_planner_panel import render_mirror_planner_panel
@@ -42,12 +42,6 @@ from bling_app_zero.ui.site_panel_state import (
 from bling_app_zero.ui.site_progress import render_live_site_operation_panel, render_site_progress_history
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/site_panel.py'
-
-# BLINGFIX 2026-06-10:
-# Streamlit Cloud + Android/WebView quebra quando uma única execução tenta
-# varrer muitas páginas/produtos e envia muito estado ao frontend. A regra nova
-# é lote seguro: cada clique busca uma quantidade menor e salva o resultado para
-# continuar o fluxo sem depender de execução longa.
 SITE_BATCH_MAX_PAGES = 20
 SITE_BATCH_MAX_PRODUCTS = 100
 SITE_BATCH_MAX_DEPTH = 1
@@ -57,8 +51,6 @@ SCAN_TOTAL_MAX_PAGES = min(SAFE_CAPTURE_MAX_PAGES, SITE_BATCH_MAX_PAGES)
 SCAN_TOTAL_MAX_PRODUCTS = min(SAFE_CAPTURE_MAX_PRODUCTS, SITE_BATCH_MAX_PRODUCTS)
 SCAN_TOTAL_MAX_DEPTH = min(SAFE_CAPTURE_MAX_DEPTH, SITE_BATCH_MAX_DEPTH)
 
-# Modo API também fica limitado por lote. Cadastro completo continua menor que
-# estoque porque lê mais campos/imagens/descrições.
 API_SITE_MAX_PAGES = min(FLOW_CAPTURE_MAX_PAGES, SITE_BATCH_MAX_PAGES)
 API_SITE_MAX_DEPTH = min(FLOW_CAPTURE_MAX_DEPTH, SITE_BATCH_MAX_DEPTH)
 API_SITE_STOCK_PRODUCTS = min(FLOW_CAPTURE_MAX_PRODUCTS, SITE_BATCH_MAX_PRODUCTS)
@@ -106,11 +98,18 @@ def _next_step_after_site_capture() -> str:
     contract = active_contract()
     if contract.is_api:
         return STEP_DOWNLOAD
+    if feature_needs_model():
+        return STEP_MODELO
     return STEP_MAPEAMENTO
 
 
 def _next_step_label() -> str:
-    return 'Enviar para o Bling' if active_contract().is_api else 'Mapeamento'
+    contract = active_contract()
+    if contract.is_api:
+        return 'Enviar para o Bling'
+    if feature_needs_model():
+        return 'Modelo/Contrato'
+    return 'Mapeamento'
 
 
 def _render_site_models_inline(operation: str) -> tuple[object, pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, list[str] | None]:
