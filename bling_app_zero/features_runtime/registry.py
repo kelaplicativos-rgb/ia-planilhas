@@ -11,13 +11,15 @@ STEP_REGRAS = 'regras'
 STEP_PREVIEW = 'preview'
 STEP_DOWNLOAD = 'download'
 
-# BLINGFIX: fluxo API curto.
-# Cadastro, estoque e preços via API não precisam passar por telas separadas de
-# mapeamento/prévia. A prévia do payload fica dentro da própria tela de envio.
+# BLINGARCH 2026-06-10:
+# O fluxo principal passa a tratar Origem como recurso comum. Primeiro o usuário
+# decide como finaliza, depois escolhe/carrega a origem, e só então confirma a
+# operação/modelo/contrato. Isso permite aproveitar a mesma busca por site para
+# cadastro, estoque e atualização de preço.
 API_STEPS = (STEP_ORIGEM, STEP_ENTRADA, STEP_DOWNLOAD)
-CSV_PRODUCT_STEPS = (STEP_MODELO, STEP_ORIGEM, STEP_ENTRADA, STEP_PRECIFICACAO, STEP_MAPEAMENTO, STEP_REGRAS, STEP_PREVIEW, STEP_DOWNLOAD)
-CSV_STOCK_STEPS = (STEP_MODELO, STEP_ORIGEM, STEP_ENTRADA, STEP_MAPEAMENTO, STEP_PREVIEW, STEP_DOWNLOAD)
-CSV_PRICE_STEPS = (STEP_MODELO, STEP_ORIGEM, STEP_ENTRADA, STEP_PRECIFICACAO, STEP_MAPEAMENTO, STEP_PREVIEW, STEP_DOWNLOAD)
+CSV_PRODUCT_STEPS = (STEP_ORIGEM, STEP_ENTRADA, STEP_MODELO, STEP_PRECIFICACAO, STEP_MAPEAMENTO, STEP_REGRAS, STEP_PREVIEW, STEP_DOWNLOAD)
+CSV_STOCK_STEPS = (STEP_ORIGEM, STEP_ENTRADA, STEP_MODELO, STEP_MAPEAMENTO, STEP_PREVIEW, STEP_DOWNLOAD)
+CSV_PRICE_STEPS = (STEP_ORIGEM, STEP_ENTRADA, STEP_MODELO, STEP_PRECIFICACAO, STEP_MAPEAMENTO, STEP_PREVIEW, STEP_DOWNLOAD)
 UNIVERSAL_STEPS = CSV_PRODUCT_STEPS
 
 CONTRACTS: dict[tuple[str, str], FeatureContract] = {
@@ -52,9 +54,6 @@ CONTRACTS: dict[tuple[str, str], FeatureContract] = {
         needs_download=False,
         primary_action_label='Atualizar estoque no Bling',
         steps=API_STEPS,
-        # BLINGFIX: busca por site não deve pedir coluna "id" simples, porque ID
-        # do site não é ID interno do Bling. O envio resolve o produto por Código
-        # ou GTIN antes de montar o payload /estoques/saldos.
         required_columns=('Quantidade',),
         optional_columns=('Código', 'GTIN', 'Depósito'),
     ),
