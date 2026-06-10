@@ -1,8 +1,12 @@
-"""BLINGFIX 89 - unified site API capture runtime guard.
+"""BLINGFIX 90 - unified site API capture runtime guard.
 
-This file is imported automatically by Python when the repository root is on
-sys.path. It patches the Streamlit site capture modules after import so the
-same site-search engine is used for cadastro, estoque and atualizacao_preco.
+Imported automatically by Python when the repository root is on sys.path.
+It patches the Streamlit site capture modules after import so the same
+site-search engine is used for cadastro, estoque and atualizacao_preco.
+
+BLINGFIX 90 adds a hard stop for the 42% hang: direct API site operations use a
+small first batch during extraction. This prevents the SmartScan extraction step
+from staying indefinitely on the "Produtos localizados / Extraindo dados" phase.
 """
 from __future__ import annotations
 
@@ -19,26 +23,24 @@ TARGET_MODULES = {
 DIRECT_API_SITE_OPERATIONS = {"cadastro", "estoque", "atualizacao_preco"}
 SITE_API_CAPTURE_POLICIES: dict[str, dict[str, Any]] = {
     "cadastro": {
-        "max_pages": 45,
-        "max_products": 80,
-        "max_depth": 2,
+        "max_pages": 12,
+        "max_products": 40,
+        "max_depth": 1,
         "send_mode": "produto",
     },
     "estoque": {
-        "max_pages": 45,
-        "max_products": 450,
-        "max_depth": 2,
+        "max_pages": 12,
+        "max_products": 80,
+        "max_depth": 1,
         "send_mode": "estoque",
     },
     "atualizacao_preco": {
-        "max_pages": 45,
-        "max_products": 250,
-        "max_depth": 2,
+        "max_pages": 12,
+        "max_products": 60,
+        "max_depth": 1,
         "send_mode": "preco",
     },
 }
-
-_PATCHED: set[str] = set()
 
 
 def _policy(operation: object) -> dict[str, Any]:
@@ -62,14 +64,14 @@ def _audit(module: ModuleType, event: str, *, status: str = "OK", details: dict[
             area="SITE",
             step="entrada",
             status=status,
-            details={**(details or {}), "responsible_file": "sitecustomize.py", "blingfix": "89_unified_site_api_runtime"},
+            details={**(details or {}), "responsible_file": "sitecustomize.py", "blingfix": "90_stop_42_percent_extraction"},
         )
     except Exception:
         pass
 
 
 def _patch_site_panel(module: ModuleType) -> None:
-    if getattr(module, "_blingfix_89_unified_site_api_patched", False):
+    if getattr(module, "_blingfix_90_site_api_extraction_guard_patched", False):
         return
 
     module.SITE_API_CAPTURE_POLICIES = SITE_API_CAPTURE_POLICIES
@@ -112,8 +114,10 @@ def _patch_site_panel(module: ModuleType) -> None:
                 "unified_api_site_engine": True,
                 "api_site_batch_contract": op,
                 "api_site_send_mode": _api_site_send_mode(op),
-                "site_api_capture_policy": "unified_site_api_capture_v1_runtime",
-                "budget_seconds": getattr(module, "SITE_PANEL_DISCOVERY_BUDGET_SECONDS", 45),
+                "site_api_capture_policy": "unified_site_api_capture_v2_stop_42_percent",
+                "api_direct_first_batch_only": True,
+                "disable_deep_extraction_after_discovery": True,
+                "budget_seconds": min(int(getattr(module, "SITE_PANEL_DISCOVERY_BUDGET_SECONDS", 45)), 20),
             }
         return {
             "enabled": True,
@@ -141,13 +145,13 @@ def _patch_site_panel(module: ModuleType) -> None:
         if _is_direct_api_site_mode(operation):
             op = str(operation or "").strip().lower()
             if op == "cadastro":
-                module.orange_warning("Cadastro/API usa a busca única por site: lote seguro, sem descoberta duplicada, preparando produto completo para envio ao Bling.")
+                module.orange_warning("Cadastro/API usa busca única em lote curto: captura rápida para liberar envio ao Bling sem travar nos 42%.")
             elif op == "estoque":
-                module.orange_warning("Estoque/API usa a busca única por site: lote seguro, sem descoberta duplicada, preparando saldo/depósito para envio ao Bling.")
+                module.orange_warning("Estoque/API usa busca única em lote curto: captura rápida de saldo/identificação sem travar nos 42%.")
             elif op == "atualizacao_preco":
-                module.orange_warning("Preço/API usa a busca única por site: lote seguro, sem descoberta duplicada, preparando preço para envio ao Bling.")
+                module.orange_warning("Preço/API usa busca única em lote curto: captura rápida de preço sem travar nos 42%.")
             else:
-                module.orange_warning("API usa a busca única por site: lote seguro, sem descoberta duplicada.")
+                module.orange_warning("API usa busca única em lote curto sem travar nos 42%.")
             return
         module.orange_warning("Busca completa ativa: o sistema procura produtos no site e captura os dados conforme o contrato ativo.")
 
@@ -158,9 +162,9 @@ def _patch_site_panel(module: ModuleType) -> None:
     module._api_site_send_mode = _api_site_send_mode
     module._scan_total_options = _scan_total_options
     module._render_scan_total_notice = _render_scan_total_notice
-    module._blingfix_89_unified_site_api_patched = True
+    module._blingfix_90_site_api_extraction_guard_patched = True
 
-    _audit(module, "site_api_unified_panel_patch_installed", details={"operations": sorted(DIRECT_API_SITE_OPERATIONS)})
+    _audit(module, "site_api_unified_panel_patch_installed", details={"operations": sorted(DIRECT_API_SITE_OPERATIONS), "policy": "v2_stop_42_percent"})
 
 
 def _force_options(module: ModuleType, operation: object, options: dict[str, Any] | None) -> dict[str, Any]:
@@ -189,14 +193,17 @@ def _force_options(module: ModuleType, operation: object, options: dict[str, Any
             "unified_api_site_engine": True,
             "api_site_batch_contract": op,
             "api_site_send_mode": str(policy["send_mode"]),
-            "site_api_capture_policy": "unified_site_api_capture_v1_runtime_hard_guard",
+            "site_api_capture_policy": "unified_site_api_capture_v2_stop_42_percent_hard_guard",
+            "api_direct_first_batch_only": True,
+            "disable_deep_extraction_after_discovery": True,
+            "budget_seconds": 20,
         }
     )
     return forced
 
 
 def _patch_site_panel_capture(module: ModuleType) -> None:
-    if getattr(module, "_blingfix_89_unified_site_api_patched", False):
+    if getattr(module, "_blingfix_90_site_api_extraction_guard_patched", False):
         return
 
     module.DIRECT_API_SITE_OPERATIONS = DIRECT_API_SITE_OPERATIONS
@@ -206,6 +213,7 @@ def _patch_site_panel_capture(module: ModuleType) -> None:
     }
 
     original_run_site_capture = module.run_site_capture
+    original_run_current_site_engine = module._run_current_site_engine
 
     def _skip_predeep_discovery(operation: str, options: dict[str, Any]) -> bool:
         if bool(options.get("skip_predeep_discovery") or options.get("price_api_skip_predeep_discovery")):
@@ -233,6 +241,27 @@ def _patch_site_panel_capture(module: ModuleType) -> None:
             )
         return module.ALL_PAGES_LIMIT, module.ALL_PRODUCTS_LIMIT, True
 
+    def guarded_engine_runner(**kwargs):
+        operation = str(kwargs.get("operation") or "").strip().lower()
+        if _is_direct_api_operation(module, operation):
+            policy = _policy(operation)
+            kwargs["all_products"] = True
+            kwargs["max_pages"] = min(int(kwargs.get("max_pages") or policy["max_pages"]), int(policy["max_pages"]))
+            kwargs["max_products"] = min(int(kwargs.get("max_products") or policy["max_products"]), int(policy["max_products"]))
+            kwargs["max_depth"] = min(int(kwargs.get("max_depth") or policy["max_depth"]), int(policy["max_depth"]))
+            _audit(
+                module,
+                "site_api_42_percent_extraction_guard_applied",
+                details={
+                    "operation": operation,
+                    "max_pages": kwargs["max_pages"],
+                    "max_products": kwargs["max_products"],
+                    "max_depth": kwargs["max_depth"],
+                    "policy": "v2_stop_42_percent",
+                },
+            )
+        return original_run_current_site_engine(**kwargs)
+
     def run_site_capture(*, operation: str, raw_urls: str, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, deep_options=None) -> None:
         options = _force_options(module, operation, deep_options)
         if _is_direct_api_operation(module, operation):
@@ -244,11 +273,14 @@ def _patch_site_panel_capture(module: ModuleType) -> None:
                     "feature_contract": getattr(module.active_contract(), "key", ""),
                     "max_pages": int(options.get("max_pages") or 0),
                     "max_products": int(options.get("max_products") or 0),
+                    "max_depth": int(options.get("max_depth") or 0),
                     "skip_predeep_discovery": bool(options.get("skip_predeep_discovery")),
                     "unified_api_site_engine": bool(options.get("unified_api_site_engine")),
                     "api_site_batch_contract": options.get("api_site_batch_contract", ""),
                     "api_site_send_mode": options.get("api_site_send_mode", ""),
                     "site_api_capture_policy": options.get("site_api_capture_policy", ""),
+                    "api_direct_first_batch_only": bool(options.get("api_direct_first_batch_only")),
+                    "fix_reason": "evitar_travamento_42_porcento_na_extracao",
                 },
             )
         return original_run_site_capture(
@@ -263,10 +295,11 @@ def _patch_site_panel_capture(module: ModuleType) -> None:
 
     module._skip_predeep_discovery = _skip_predeep_discovery
     module.capture_limits_for_operation = capture_limits_for_operation
+    module._run_current_site_engine = guarded_engine_runner
     module.run_site_capture = run_site_capture
-    module._blingfix_89_unified_site_api_patched = True
+    module._blingfix_90_site_api_extraction_guard_patched = True
 
-    _audit(module, "site_api_unified_capture_patch_installed", details={"operations": sorted(DIRECT_API_SITE_OPERATIONS)})
+    _audit(module, "site_api_unified_capture_patch_installed", details={"operations": sorted(DIRECT_API_SITE_OPERATIONS), "policy": "v2_stop_42_percent"})
 
 
 def _patch_module(module: ModuleType) -> None:
