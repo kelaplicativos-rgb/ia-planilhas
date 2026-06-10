@@ -159,14 +159,35 @@ def has_universal_model() -> bool:
     return has_any_model(['home_modelo_universal_df', 'df_modelo_universal', 'modelo_universal_df'])
 
 
-def has_home_models() -> bool:
-    if not feature_needs_model():
-        return True
+def _has_real_destination_model() -> bool:
     return has_cadastro_model() or has_estoque_model() or has_preco_model() or has_universal_model()
 
 
+def _is_pre_model_stage() -> bool:
+    current_step = str(st.session_state.get(WIZARD_STEP_KEY) or '').strip().lower()
+    if current_step in {'', STEP_ORIGEM, STEP_ENTRADA}:
+        return True
+    return False
+
+
+def has_home_models() -> bool:
+    """Modelo disponível para etapa atual.
+
+    BLINGARCH: origem e entrada podem acontecer antes do modelo/contrato para
+    reaproveitar a mesma origem em cadastro, estoque ou preço. Porém, ao chegar
+    na etapa de Modelo em diante, o modelo real continua obrigatório.
+    """
+    if not feature_needs_model():
+        return True
+    if _has_real_destination_model():
+        return True
+    if _is_pre_model_stage():
+        return True
+    return False
+
+
 def came_from_bling_quick_model() -> bool:
-    return bool(st.session_state.get(QUICK_MODEL_READY_KEY)) and has_home_models()
+    return bool(st.session_state.get(QUICK_MODEL_READY_KEY)) and _has_real_destination_model()
 
 
 def query_param(name: str) -> str:
@@ -210,7 +231,7 @@ def clear_stale_cadastro_operation_state() -> None:
 
 
 def ensure_universal_operation_state() -> str:
-    if feature_needs_model() and not has_home_models():
+    if feature_needs_model() and not _has_real_destination_model() and not _is_pre_model_stage():
         return ''
     operation = _contract_operation()
     clear_stale_cadastro_operation_state()
@@ -234,7 +255,7 @@ def wizard_steps_for_operation(operation: str | None = None) -> list[str]:
     steps = runtime_active_steps()
     if not feature_needs_model():
         return [step for step in steps if step != STEP_MODELO]
-    return list(steps) if has_home_models() else [STEP_MODELO]
+    return list(steps)
 
 
 def target_by_delta(current_step: str, operation: str, delta: int) -> str:
@@ -318,6 +339,7 @@ def select_origin(origin: str, *, set_scroll_target: Callable[[str], None] | Non
             'scroll_target': STEP_ENTRADA,
             'scroll_callback_used': scroll_callback_used,
             'single_page_flow': SINGLE_PAGE_FLOW,
+            'source_before_model': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -338,7 +360,7 @@ def reset_wizard() -> None:
     st.session_state.pop('origem_final', None)
     st.session_state.pop(QUICK_MODEL_READY_KEY, None)
     add_audit_event('wizard_reset', area='WIZARD', step='download', details={'single_page_flow': SINGLE_PAGE_FLOW, 'removed_count': len(removed), 'responsible_file': RESPONSIBLE_FILE})
-    safe_rerun('wizard_reset', target_step=STEP_MODELO)
+    safe_rerun('wizard_reset', target_step=STEP_ORIGEM)
 
 
 def get_df_final_universal():
