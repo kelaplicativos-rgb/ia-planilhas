@@ -14,9 +14,22 @@ from bling_app_zero.core.interaction_guard import (
 )
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/blingfix_runtime_patches.py'
-_PATCH_INSTALLED_KEY = 'blingfix_runtime_patches_installed_v7'
+_PATCH_INSTALLED_KEY = 'blingfix_runtime_patches_installed_v8'
 MAX_BLING_IMAGES_PER_PRODUCT = 6
 _IMAGE_LIST_KEYS = {'imagens', 'images', 'imagensurl', 'externas', 'externos', 'fotos'}
+
+
+SITE_API_CAPTURE_POLICIES: dict[str, dict[str, Any]] = {
+    'cadastro': {'max_pages': 12, 'max_products': 40, 'max_depth': 1, 'send_mode': 'produto'},
+    'estoque': {'max_pages': 12, 'max_products': 80, 'max_depth': 1, 'send_mode': 'estoque'},
+    'atualizacao_preco': {'max_pages': 12, 'max_products': 60, 'max_depth': 1, 'send_mode': 'preco'},
+}
+DIRECT_API_SITE_OPERATIONS = set(SITE_API_CAPTURE_POLICIES)
+
+
+def _site_api_policy(operation: object) -> dict[str, Any]:
+    operation_key = _normalize_operation(operation)
+    return dict(SITE_API_CAPTURE_POLICIES.get(operation_key) or SITE_API_CAPTURE_POLICIES['cadastro'])
 
 
 def _patch_oauth_callback() -> None:
@@ -97,14 +110,194 @@ def _patch_stock_site_origin_filter() -> None:
             'stock_api_origin_url_filter_runtime_patch_installed',
             area='SITE',
             status='OK',
-            details={
-                'target': 'site_pipeline_blingfix._filter_live_origin_rows',
-                'reason': 'Estoque/API não deve zerar linhas sem URL quando há identificador e quantidade.',
-                'responsible_file': RESPONSIBLE_FILE,
-            },
+            details={'target': 'site_pipeline_blingfix._filter_live_origin_rows', 'reason': 'Estoque/API não deve zerar linhas sem URL quando há identificador e quantidade.', 'responsible_file': RESPONSIBLE_FILE},
         )
     except Exception as exc:
         add_audit_event('stock_api_origin_url_filter_runtime_patch_failed', area='SITE', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
+
+
+def _is_direct_api_operation(module: Any, operation: object) -> bool:
+    operation_key = _normalize_operation(operation)
+    try:
+        contract = module.active_contract()
+        return bool(contract.is_api and contract.operation == operation_key and operation_key in DIRECT_API_SITE_OPERATIONS)
+    except Exception:
+        return False
+
+
+def _force_site_api_options(module: Any, operation: object, options: dict[str, Any] | None) -> dict[str, Any]:
+    forced = dict(options or {})
+    operation_key = _normalize_operation(operation)
+    if not _is_direct_api_operation(module, operation_key):
+        return forced
+    policy = _site_api_policy(operation_key)
+    forced.update(
+        {
+            'enabled': True,
+            'max_pages': int(policy['max_pages']),
+            'max_products': int(policy['max_products']),
+            'max_depth': int(policy['max_depth']),
+            'scan_total_ui': True,
+            'stock_balance_only': operation_key == 'estoque',
+            'stock_full_site_scan': False,
+            'stock_api_fast_batch': operation_key == 'estoque',
+            'stock_api_skip_predeep_discovery': operation_key == 'estoque',
+            'cadastro_api_fast_batch': operation_key == 'cadastro',
+            'cadastro_api_skip_predeep_discovery': operation_key == 'cadastro',
+            'price_api_fast_batch': operation_key == 'atualizacao_preco',
+            'price_api_skip_predeep_discovery': operation_key == 'atualizacao_preco',
+            'skip_predeep_discovery': True,
+            'unified_api_site_engine': True,
+            'api_site_batch_contract': operation_key,
+            'api_site_send_mode': str(policy['send_mode']),
+            'site_api_capture_policy': 'runtime_v8_unified_site_api_short_batch',
+            'api_direct_first_batch_only': True,
+            'disable_deep_extraction_after_discovery': True,
+            'budget_seconds': 20,
+        }
+    )
+    return forced
+
+
+def _patch_unified_site_api_runtime_guard() -> None:
+    try:
+        from bling_app_zero.ui import site_panel, site_panel_capture
+
+        if getattr(site_panel_capture, '_blingfix_v8_unified_site_api_guard', False):
+            return
+
+        site_panel.SITE_API_CAPTURE_POLICIES = SITE_API_CAPTURE_POLICIES
+        site_panel.DIRECT_API_SITE_OPERATIONS = DIRECT_API_SITE_OPERATIONS
+        site_panel.SUPPORTED_SITE_OPERATIONS = {*DIRECT_API_SITE_OPERATIONS, site_panel.UNIVERSAL_OPERATION}
+
+        def direct_api_site_mode(operation: str) -> bool:
+            return _is_direct_api_operation(site_panel, operation)
+
+        def api_site_max_pages(operation: str) -> int:
+            return int(_site_api_policy(operation)['max_pages'])
+
+        def api_site_max_products(operation: str) -> int:
+            return int(_site_api_policy(operation)['max_products'])
+
+        def api_site_max_depth(operation: str) -> int:
+            return int(_site_api_policy(operation)['max_depth'])
+
+        def api_site_send_mode(operation: str) -> str:
+            return str(_site_api_policy(operation)['send_mode'])
+
+        def scan_total_options(operation: str) -> dict[str, Any]:
+            if direct_api_site_mode(operation):
+                return _force_site_api_options(site_panel, operation, {})
+            return {
+                'enabled': True,
+                'max_pages': getattr(site_panel, 'SCAN_TOTAL_MAX_PAGES', 120),
+                'max_products': getattr(site_panel, 'SCAN_TOTAL_MAX_PRODUCTS', 500),
+                'max_depth': getattr(site_panel, 'SCAN_TOTAL_MAX_DEPTH', 2),
+                'scan_total_ui': True,
+                'stock_balance_only': False,
+                'stock_full_site_scan': False,
+                'stock_api_fast_batch': False,
+                'stock_api_skip_predeep_discovery': False,
+                'cadastro_api_fast_batch': False,
+                'cadastro_api_skip_predeep_discovery': False,
+                'price_api_fast_batch': False,
+                'price_api_skip_predeep_discovery': False,
+                'skip_predeep_discovery': False,
+                'unified_api_site_engine': False,
+                'api_site_batch_contract': '',
+                'api_site_send_mode': '',
+                'site_api_capture_policy': 'public_full_scan',
+                'budget_seconds': getattr(site_panel, 'SITE_PANEL_DISCOVERY_BUDGET_SECONDS', 45),
+            }
+
+        def render_scan_total_notice(operation: str) -> None:
+            if direct_api_site_mode(operation):
+                op = _normalize_operation(operation)
+                if op == 'atualizacao_preco':
+                    site_panel.orange_warning('Preço/API usa busca única em lote curto: captura rápida de preço sem travar nos 42%.')
+                elif op == 'estoque':
+                    site_panel.orange_warning('Estoque/API usa busca única em lote curto: captura rápida de saldo sem travar nos 42%.')
+                else:
+                    site_panel.orange_warning('Cadastro/API usa busca única em lote curto: captura rápida para liberar envio ao Bling.')
+                return
+            site_panel.orange_warning('Busca completa ativa: o sistema procura produtos no site e captura os dados conforme o contrato ativo.')
+
+        site_panel._is_direct_api_site_mode = direct_api_site_mode
+        site_panel._api_site_max_pages = api_site_max_pages
+        site_panel._api_site_max_products = api_site_max_products
+        site_panel._api_site_max_depth = api_site_max_depth
+        site_panel._api_site_send_mode = api_site_send_mode
+        site_panel._scan_total_options = scan_total_options
+        site_panel._render_scan_total_notice = render_scan_total_notice
+
+        original_run_site_capture = site_panel_capture.run_site_capture
+        original_engine_runner = site_panel_capture._run_current_site_engine
+
+        def skip_predeep_discovery(operation: str, options: dict[str, Any]) -> bool:
+            if bool(options.get('skip_predeep_discovery') or options.get('price_api_skip_predeep_discovery')):
+                return True
+            return _is_direct_api_operation(site_panel_capture, operation)
+
+        def capture_limits_for_operation(operation: str, deep_options: dict[str, Any] | None) -> tuple[int, int, bool]:
+            options = _force_site_api_options(site_panel_capture, operation, deep_options)
+            if _is_direct_api_operation(site_panel_capture, operation):
+                policy = _site_api_policy(operation)
+                return int(policy['max_pages']), int(policy['max_products']), True
+            if site_panel_capture._is_stock_balance_only(operation, options):
+                return (
+                    min(max(int(options.get('max_pages') or 0), site_panel_capture.STOCK_BALANCE_PAGES_LIMIT), site_panel_capture.STOCK_BALANCE_PAGES_LIMIT),
+                    min(max(int(options.get('max_products') or 0), site_panel_capture.STOCK_BALANCE_PRODUCTS_LIMIT), site_panel_capture.STOCK_BALANCE_PRODUCTS_LIMIT),
+                    True,
+                )
+            if bool(options.get('enabled')):
+                return (
+                    min(max(int(options.get('max_pages') or 0), site_panel_capture.ALL_PAGES_LIMIT), site_panel_capture.ALL_PAGES_LIMIT),
+                    min(max(int(options.get('max_products') or 0), site_panel_capture.ALL_PRODUCTS_LIMIT), site_panel_capture.ALL_PRODUCTS_LIMIT),
+                    True,
+                )
+            return site_panel_capture.ALL_PAGES_LIMIT, site_panel_capture.ALL_PRODUCTS_LIMIT, True
+
+        def guarded_engine_runner(**kwargs):
+            operation = _normalize_operation(kwargs.get('operation'))
+            if _is_direct_api_operation(site_panel_capture, operation):
+                policy = _site_api_policy(operation)
+                kwargs['all_products'] = True
+                kwargs['max_pages'] = min(int(kwargs.get('max_pages') or policy['max_pages']), int(policy['max_pages']))
+                kwargs['max_products'] = min(int(kwargs.get('max_products') or policy['max_products']), int(policy['max_products']))
+                kwargs['max_depth'] = min(int(kwargs.get('max_depth') or policy['max_depth']), int(policy['max_depth']))
+                add_audit_event(
+                    'site_api_42_percent_extraction_guard_applied',
+                    area='SITE',
+                    step='entrada',
+                    status='OK',
+                    details={'operation': operation, 'max_pages': kwargs['max_pages'], 'max_products': kwargs['max_products'], 'max_depth': kwargs['max_depth'], 'site_api_capture_policy': 'runtime_v8_unified_site_api_short_batch', 'responsible_file': RESPONSIBLE_FILE},
+                )
+            return original_engine_runner(**kwargs)
+
+        def guarded_run_site_capture(*, operation: str, raw_urls: str, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, deep_options=None) -> None:
+            options = _force_site_api_options(site_panel_capture, operation, deep_options)
+            if _is_direct_api_operation(site_panel_capture, operation):
+                add_audit_event(
+                    'site_api_unified_capture_options_forced',
+                    area='SITE',
+                    step='entrada',
+                    status='OK',
+                    details={'operation': operation, 'feature_contract': getattr(site_panel_capture.active_contract(), 'key', ''), 'max_pages': int(options.get('max_pages') or 0), 'max_products': int(options.get('max_products') or 0), 'max_depth': int(options.get('max_depth') or 0), 'skip_predeep_discovery': bool(options.get('skip_predeep_discovery')), 'unified_api_site_engine': bool(options.get('unified_api_site_engine')), 'api_site_batch_contract': options.get('api_site_batch_contract', ''), 'api_site_send_mode': options.get('api_site_send_mode', ''), 'site_api_capture_policy': options.get('site_api_capture_policy', ''), 'responsible_file': RESPONSIBLE_FILE},
+                )
+            return original_run_site_capture(operation=operation, raw_urls=raw_urls, requested_columns=requested_columns, df_modelo_cadastro=df_modelo_cadastro, df_modelo_estoque=df_modelo_estoque, df_modelo=df_modelo, deep_options=options)
+
+        site_panel_capture.DIRECT_API_SITE_OPERATIONS = DIRECT_API_SITE_OPERATIONS
+        site_panel_capture.DIRECT_API_SITE_LIMITS = {op: {'max_pages': int(policy['max_pages']), 'max_products': int(policy['max_products'])} for op, policy in SITE_API_CAPTURE_POLICIES.items()}
+        site_panel_capture._skip_predeep_discovery = skip_predeep_discovery
+        site_panel_capture.capture_limits_for_operation = capture_limits_for_operation
+        site_panel_capture._run_current_site_engine = guarded_engine_runner
+        site_panel_capture.run_site_capture = guarded_run_site_capture
+        site_panel.run_site_capture = guarded_run_site_capture
+        site_panel_capture._blingfix_v8_unified_site_api_guard = True
+
+        add_audit_event('site_api_runtime_guard_v8_installed', area='SITE', step='entrada', status='OK', details={'operations': sorted(DIRECT_API_SITE_OPERATIONS), 'policies': SITE_API_CAPTURE_POLICIES, 'responsible_file': RESPONSIBLE_FILE})
+    except Exception as exc:
+        add_audit_event('site_api_runtime_guard_v8_failed', area='SITE', step='entrada', status='ERRO', details={'error': str(exc)[:300], 'responsible_file': RESPONSIBLE_FILE})
 
 
 def _looks_like_product_catalog_df(df: Any) -> bool:
@@ -220,19 +413,7 @@ def _patch_bling_image_limit_guard() -> None:
         sanitized, removed = _sanitize_bling_request_json(url, payload)
         if removed:
             kwargs['json'] = sanitized
-            add_audit_event(
-                'bling_image_limit_guard_applied',
-                area='BLING_ENVIO',
-                status='CORRIGIDO',
-                details={
-                    'method': str(method).upper(),
-                    'url_preview': str(url)[:160],
-                    'max_images_per_product': MAX_BLING_IMAGES_PER_PRODUCT,
-                    'removed_images': removed,
-                    'reason': 'Bling bloqueia produto com mais de 6 imagens. Payload limitado antes do envio.',
-                    'responsible_file': RESPONSIBLE_FILE,
-                },
-            )
+            add_audit_event('bling_image_limit_guard_applied', area='BLING_ENVIO', status='CORRIGIDO', details={'method': str(method).upper(), 'url_preview': str(url)[:160], 'max_images_per_product': MAX_BLING_IMAGES_PER_PRODUCT, 'removed_images': removed, 'reason': 'Bling bloqueia produto com mais de 6 imagens. Payload limitado antes do envio.', 'responsible_file': RESPONSIBLE_FILE})
         return original_request(method, url, *args, **kwargs)
 
     requests.request = guarded_request
@@ -321,8 +502,9 @@ def install_blingfix_runtime_patches() -> None:
     _patch_site_operation_guard()
     _patch_stock_site_origin_filter()
     _patch_api_batch_operation_guard()
+    _patch_unified_site_api_runtime_guard()
     st.session_state[_PATCH_INSTALLED_KEY] = True
-    add_audit_event('blingfix_runtime_patches_installed', area='APP', status='OK', details={'logout_guard_active': logout_guard_active(), 'api_operation_guard': True, 'stock_api_origin_url_filter_patch': True, 'bling_image_limit_guard': True, 'max_images_per_product': MAX_BLING_IMAGES_PER_PRODUCT, 'request_wrapper_accepts_args': True, 'preview_payload_patches': True, 'direct_sender_payload_patch_removed': True, 'home_wizard_navigation_native': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('blingfix_runtime_patches_installed', area='APP', status='OK', details={'logout_guard_active': logout_guard_active(), 'api_operation_guard': True, 'stock_api_origin_url_filter_patch': True, 'unified_site_api_runtime_guard_v8': True, 'bling_image_limit_guard': True, 'max_images_per_product': MAX_BLING_IMAGES_PER_PRODUCT, 'request_wrapper_accepts_args': True, 'preview_payload_patches': True, 'direct_sender_payload_patch_removed': True, 'home_wizard_navigation_native': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_blingfix_runtime_patches']
