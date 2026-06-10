@@ -432,6 +432,7 @@ def _render_universal_entrada(section_number: int = 4) -> None:
     if origin == 'site':
         from bling_app_zero.ui.site_panel import render_site_panel
         render_site_panel()
+        return
     render_universal_entrada_step()
 
 
