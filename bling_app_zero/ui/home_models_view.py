@@ -52,13 +52,6 @@ def _model_summary_df() -> pd.DataFrame | None:
     return None
 
 
-def _first_valid_df(*items: pd.DataFrame | None) -> pd.DataFrame | None:
-    for df in items:
-        if isinstance(df, pd.DataFrame):
-            return df
-    return None
-
-
 def _render_loaded_summary() -> None:
     df = _model_summary_df()
     if not isinstance(df, pd.DataFrame):
@@ -124,7 +117,7 @@ def _split_models_by_contract(upload) -> tuple[pd.DataFrame | None, pd.DataFrame
                     'contract_confidence': getattr(upload, 'contract_confidence', None),
                     'contract_reason': getattr(upload, 'contract_reason', ''),
                     'dataframe': df_log_summary(df),
-                    'responsible_file': RESPONSIBLE_FILE,
+                    'responsible_file': RESPONSIBLE_FILE
                 },
             )
             cadastro = df if contract_type == 'cadastro' else None
@@ -190,7 +183,7 @@ def render_home_bling_models() -> None:
             },
         )
         save_home_models(cadastro_model, estoque_model, preco_model, universal_model, replace_missing=True)
-        auto_forward_after_first_model_upload(_first_valid_df(cadastro_model, estoque_model, preco_model, universal_model), None)
+        auto_forward_after_first_model_upload(cadastro_model, estoque_model)
 
     _render_loaded_summary()
 
