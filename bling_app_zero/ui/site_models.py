@@ -17,6 +17,9 @@ class EmptyModelUpload:
 
 
 UNIVERSAL_ALIASES = {'universal', 'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}
+NEUTRAL_SITE_COLUMNS = ['Codigo', 'SKU', 'GTIN', 'Nome', 'Descricao', 'Preco', 'Estoque', 'Quantidade', 'Categoria', 'Marca', 'URL', 'Imagem']
+NEUTRAL_STOCK_COLUMNS = ['Codigo', 'SKU', 'GTIN', 'Nome', 'Estoque', 'Quantidade', 'Deposito', 'URL']
+NEUTRAL_PRICE_COLUMNS = ['Codigo', 'SKU', 'GTIN', 'Nome', 'Preco', 'URL']
 
 
 def unique_columns(columns: list[str]) -> list[str]:
@@ -100,6 +103,15 @@ def choose_site_model_df(upload, operation: str = 'cadastro') -> pd.DataFrame | 
     return choose_site_cadastro_model_df(upload)
 
 
+def neutral_columns_for_site_capture(operation: str) -> list[str]:
+    normalized = str(operation or '').strip().lower()
+    if normalized == 'estoque':
+        return list(NEUTRAL_STOCK_COLUMNS)
+    if normalized in {'atualizacao_preco', 'preco', 'price'}:
+        return list(NEUTRAL_PRICE_COLUMNS)
+    return list(NEUTRAL_SITE_COLUMNS)
+
+
 def requested_columns_for_site_capture(
     operation: str,
     df_modelo_cadastro: pd.DataFrame | None,
@@ -112,7 +124,7 @@ def requested_columns_for_site_capture(
         columns = unique_columns(columns_from_df(df_modelo_cadastro) + columns_from_df(df_modelo_estoque))
     else:
         columns = unique_columns(columns_from_df(df_modelo_cadastro))
-    return columns or None
+    return columns or neutral_columns_for_site_capture(operation)
 
 
 def has_home_site_model_for_operation(operation: str) -> bool:
@@ -127,11 +139,11 @@ def has_home_site_model_for_operation(operation: str) -> bool:
 def _home_model_summary(operation_key: str) -> str:
     if operation_key in UNIVERSAL_ALIASES:
         total = len(unique_columns(columns_from_df(get_home_cadastro_model()) + columns_from_df(get_home_estoque_model())))
-        return f'Modelo de destino já definido: {total} coluna(s) na origem única.' if total else 'Nenhum modelo foi encontrado na etapa Modelo.'
+        return f'Modelo de destino ja definido: {total} coluna(s) na origem unica.' if total else 'Nenhum modelo foi encontrado ainda.'
     df = get_home_estoque_model() if operation_key == 'estoque' else get_home_cadastro_model()
     if isinstance(df, pd.DataFrame):
-        return f'Modelo já definido na etapa Modelo: {len(df.columns)} coluna(s).'
-    return 'Nenhum modelo desta operação foi encontrado na etapa Modelo.'
+        return f'Modelo ja definido: {len(df.columns)} coluna(s).'
+    return 'Nenhum modelo desta operacao foi encontrado ainda.'
 
 
 def render_optional_site_model_upload(operation: str = 'cadastro') -> object:
@@ -140,9 +152,9 @@ def render_optional_site_model_upload(operation: str = 'cadastro') -> object:
 
     if has_home_site_model_for_operation(operation_key):
         st.success(_home_model_summary(operation_key))
-        st.caption('A busca por site usará o modelo já anexado no início. Não é necessário anexar a mesma planilha novamente.')
+        st.caption('A busca por site usara o modelo ja anexado. Nao e necessario anexar a mesma planilha novamente.')
     else:
-        st.warning('Modelo de destino não encontrado nesta sessão. Volte na etapa Modelo de destino e anexe o modelo correto uma única vez.')
+        st.info('Modelo ainda nao definido. A busca sera neutra e voce podera escolher cadastro, estoque ou preco depois.')
 
     return EmptyModelUpload()
 
@@ -154,6 +166,7 @@ __all__ = [
     'choose_site_model_df',
     'columns_from_df',
     'has_home_site_model_for_operation',
+    'neutral_columns_for_site_capture',
     'render_optional_site_model_upload',
     'requested_columns_for_site_capture',
     'unique_columns',
