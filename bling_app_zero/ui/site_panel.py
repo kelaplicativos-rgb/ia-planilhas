@@ -42,27 +42,33 @@ from bling_app_zero.ui.site_panel_state import (
 from bling_app_zero.ui.site_progress import render_live_site_operation_panel, render_site_progress_history
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/site_panel.py'
-SCAN_TOTAL_MAX_PAGES = SAFE_CAPTURE_MAX_PAGES
-SCAN_TOTAL_MAX_PRODUCTS = SAFE_CAPTURE_MAX_PRODUCTS
-SCAN_TOTAL_MAX_DEPTH = SAFE_CAPTURE_MAX_DEPTH
-# Um único motor API por site. A diferença entre cadastro e estoque é apenas o
-# peso do contrato: estoque lê saldo/identificação; cadastro lê dados completos,
-# imagens e descrição. Por isso o primeiro lote de cadastro precisa ser menor.
-API_SITE_MAX_PAGES = min(FLOW_CAPTURE_MAX_PAGES, 180)
-API_SITE_MAX_DEPTH = min(FLOW_CAPTURE_MAX_DEPTH, 2)
-API_SITE_STOCK_PRODUCTS = min(FLOW_CAPTURE_MAX_PRODUCTS, 450)
-API_SITE_CADASTRO_PRODUCTS = min(FLOW_CAPTURE_MAX_PRODUCTS, 80)
-SITE_PANEL_DISCOVERY_BUDGET_SECONDS = 45
 
 # BLINGFIX 2026-06-10:
-# Diagnóstico 13 mostrou estoque/site CSV rodando como captura completa de
-# cadastro: 120 páginas / 500 produtos / scan_goal cadastro. No Streamlit isso
-# estoura a conexão com popup "Bad message..." e a sessão volta com resultado
-# parcial ou running preso. Estoque deve usar leitura leve de saldo/identificação.
-STOCK_SITE_SAFE_MAX_PAGES = min(SAFE_CAPTURE_MAX_PAGES, 60)
-STOCK_SITE_SAFE_MAX_PRODUCTS = min(SAFE_CAPTURE_MAX_PRODUCTS, 180)
-STOCK_SITE_SAFE_MAX_DEPTH = min(SAFE_CAPTURE_MAX_DEPTH, 2)
-STOCK_SITE_DISCOVERY_BUDGET_SECONDS = 35
+# Streamlit Cloud + Android/WebView quebra quando uma única execução tenta
+# varrer muitas páginas/produtos e envia muito estado ao frontend. A regra nova
+# é lote seguro: cada clique busca uma quantidade menor e salva o resultado para
+# continuar o fluxo sem depender de execução longa.
+SITE_BATCH_MAX_PAGES = 20
+SITE_BATCH_MAX_PRODUCTS = 100
+SITE_BATCH_MAX_DEPTH = 1
+SITE_BATCH_DISCOVERY_BUDGET_SECONDS = 20
+
+SCAN_TOTAL_MAX_PAGES = min(SAFE_CAPTURE_MAX_PAGES, SITE_BATCH_MAX_PAGES)
+SCAN_TOTAL_MAX_PRODUCTS = min(SAFE_CAPTURE_MAX_PRODUCTS, SITE_BATCH_MAX_PRODUCTS)
+SCAN_TOTAL_MAX_DEPTH = min(SAFE_CAPTURE_MAX_DEPTH, SITE_BATCH_MAX_DEPTH)
+
+# Modo API também fica limitado por lote. Cadastro completo continua menor que
+# estoque porque lê mais campos/imagens/descrições.
+API_SITE_MAX_PAGES = min(FLOW_CAPTURE_MAX_PAGES, SITE_BATCH_MAX_PAGES)
+API_SITE_MAX_DEPTH = min(FLOW_CAPTURE_MAX_DEPTH, SITE_BATCH_MAX_DEPTH)
+API_SITE_STOCK_PRODUCTS = min(FLOW_CAPTURE_MAX_PRODUCTS, SITE_BATCH_MAX_PRODUCTS)
+API_SITE_CADASTRO_PRODUCTS = min(FLOW_CAPTURE_MAX_PRODUCTS, 60)
+SITE_PANEL_DISCOVERY_BUDGET_SECONDS = SITE_BATCH_DISCOVERY_BUDGET_SECONDS
+
+STOCK_SITE_SAFE_MAX_PAGES = min(SAFE_CAPTURE_MAX_PAGES, SITE_BATCH_MAX_PAGES)
+STOCK_SITE_SAFE_MAX_PRODUCTS = min(SAFE_CAPTURE_MAX_PRODUCTS, SITE_BATCH_MAX_PRODUCTS)
+STOCK_SITE_SAFE_MAX_DEPTH = min(SAFE_CAPTURE_MAX_DEPTH, SITE_BATCH_MAX_DEPTH)
+STOCK_SITE_DISCOVERY_BUDGET_SECONDS = SITE_BATCH_DISCOVERY_BUDGET_SECONDS
 SUPPORTED_SITE_OPERATIONS = {'cadastro', 'estoque', 'atualizacao_preco', UNIVERSAL_OPERATION}
 
 
@@ -84,9 +90,6 @@ def _site_operation() -> str:
 
 def _is_stock_api_balance_mode(operation: str) -> bool:
     contract = active_contract()
-    # Mesmo no fluxo CSV, operação estoque não precisa do motor pesado de cadastro
-    # completo. Usar perfil de saldo/identificação evita queda de websocket do
-    # Streamlit e reduz retornos parciais por reconexão.
     return bool(operation == 'estoque' or (contract.is_api and contract.operation == 'estoque' and operation == 'estoque'))
 
 
@@ -140,7 +143,7 @@ def _render_urls_input(operation: str) -> str:
         height=120,
         key=f'urls_site_{operation}',
         placeholder='https://site.com.br\nhttps://site.com.br/categoria\nhttps://site.com.br/produto-1',
-        help='Cole página inicial, categorias ou produtos. A mesma captura inteligente será usada para cadastro ou estoque, mudando apenas os campos finais salvos.',
+        help='Cole página inicial, categorias ou produtos. Para evitar queda no mobile, cada clique busca um lote seguro.',
     )
 
 
@@ -161,6 +164,7 @@ def _scan_total_options(operation: str) -> dict[str, int | bool]:
             'skip_predeep_discovery': True,
             'unified_api_site_engine': True,
             'api_site_batch_contract': operation,
+            'site_api_capture_policy': 'api_safe_short_batch',
             'budget_seconds': SITE_PANEL_DISCOVERY_BUDGET_SECONDS,
         }
 
@@ -180,7 +184,7 @@ def _scan_total_options(operation: str) -> dict[str, int | bool]:
             'skip_predeep_discovery': False,
             'unified_api_site_engine': False,
             'api_site_batch_contract': '',
-            'site_api_capture_policy': 'stock_csv_safe_scan',
+            'site_api_capture_policy': 'stock_csv_safe_short_batch',
             'budget_seconds': STOCK_SITE_DISCOVERY_BUDGET_SECONDS,
         }
 
@@ -199,22 +203,26 @@ def _scan_total_options(operation: str) -> dict[str, int | bool]:
         'skip_predeep_discovery': False,
         'unified_api_site_engine': False,
         'api_site_batch_contract': '',
-        'site_api_capture_policy': 'public_full_scan',
+        'site_api_capture_policy': 'public_safe_short_batch',
         'budget_seconds': SITE_PANEL_DISCOVERY_BUDGET_SECONDS,
     }
 
 
 def _render_scan_total_notice(operation: str) -> None:
     if _is_direct_api_site_mode(operation):
-        if operation == 'cadastro':
-            orange_warning('Cadastro/API usa o mesmo motor do Estoque/API: leitura em lote seguro, sem descoberta duplicada, salvando o primeiro lote completo para liberar envio ao Bling.')
-        else:
-            orange_warning('Estoque/API usa o mesmo motor do Cadastro/API: leitura em lote seguro, sem descoberta duplicada, salvando saldo e identificação para liberar envio ao Bling.')
+        orange_warning(
+            f'Busca em lote seguro ativa: cada execução lê até {API_SITE_MAX_PAGES} páginas e até {_api_site_max_products(operation)} produtos para evitar queda do Streamlit mobile.'
+        )
         return
     if operation == 'estoque':
-        orange_warning('Busca de estoque ativa em modo seguro: o sistema prioriza Código/ID, Depósito, Saldo/Balanço e campos do contrato, evitando a captura pesada de cadastro completo.')
+        orange_warning(
+            f'Busca de estoque em lote seguro: até {STOCK_SITE_SAFE_MAX_PAGES} páginas e {STOCK_SITE_SAFE_MAX_PRODUCTS} produtos por execução. '
+            'O sistema prioriza Código/ID, Depósito, Saldo/Balanço e campos do contrato.'
+        )
         return
-    orange_warning('Busca completa ativa: o sistema procura produtos no site e captura os dados conforme o contrato ativo.')
+    orange_warning(
+        f'Busca completa em lote seguro: até {SCAN_TOTAL_MAX_PAGES} páginas e {SCAN_TOTAL_MAX_PRODUCTS} produtos por execução para evitar travas no Streamlit.'
+    )
 
 
 def _render_running_state(operation: str) -> None:
@@ -226,15 +234,15 @@ def _render_running_state(operation: str) -> None:
     st.markdown(f'### {profile.running_title}')
     orange_warning(profile.running_notice)
     render_live_site_operation_panel()
-    with st.expander('Plano e histórico detalhado da busca', expanded=False):
+    with st.expander('Plano e histórico leve da busca', expanded=False):
         render_site_progress_history()
-    st.info('A tela está em modo seguro enquanto a busca roda. Se não houver avanço real, o sistema destrava automaticamente.')
+    st.info('A tela está em modo seguro enquanto a busca roda. Cada execução usa lote curto para evitar queda no celular.')
     with st.expander('Busca parece travada?', expanded=False):
         st.caption('Use esta opção apenas se a busca ficou sem sinal vivo por muito tempo ou se a conexão caiu.')
         if st.button('Limpar busca travada e tentar novamente', use_container_width=True, key=f'limpar_captura_travada_{operation}'):
             clear_stuck_capture(operation)
             safe_rerun('site_capture_stuck_cleared', target_step=STEP_ENTRADA)
-    add_audit_event('site_panel_running_guard_rendered', area='SITE', step='entrada', status='INFO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE, 'capture_spine': 'site_capture_spine_v1', 'live_panel': True})
+    add_audit_event('site_panel_running_guard_rendered', area='SITE', step='entrada', status='INFO', details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE, 'capture_spine': 'site_capture_spine_v1', 'live_panel': True, 'safe_short_batch': True})
 
 
 def _render_last_error(error: str, operation: str) -> None:
@@ -266,9 +274,10 @@ def _render_ready_state(operation: str, df_site_bruto: pd.DataFrame, stock_balan
     columns = len(df_site_bruto.columns)
     next_step = _next_step_after_site_capture()
     next_label = _next_step_label()
-    st.success(f'Produtos capturados e salvos: {rows} produto(s), {columns} coluna(s).')
+    st.success(f'Lote capturado e salvo: {rows} produto(s), {columns} coluna(s).')
+    st.caption('Esse lote já está salvo. Continue para revisão/mapeamento. Para buscar outras categorias, recomece a busca com links mais específicos após baixar/revisar este lote.')
     if stock_balance_only:
-        st.caption('O mesmo motor capturou os produtos; para estoque, o sistema usará os campos de saldo, identificação e depósito necessários.')
+        st.caption('Para estoque, o sistema usará os campos de saldo, identificação e depósito necessários.')
     notice = st.session_state.get(f'blingsmartscan_notice_{operation}') or st.session_state.get('blingsmartscan_last_notice') or {}
     if isinstance(notice, dict) and notice:
         with st.expander('Resumo do BLINGSMARTSCAN', expanded=False):
@@ -282,7 +291,7 @@ def _render_ready_state(operation: str, df_site_bruto: pd.DataFrame, stock_balan
     st.caption(f'O resultado já está salvo em Origem dos dados. Toque abaixo para seguir para {next_label}.')
     if st.button(f'Continuar para {next_label}', use_container_width=True, key=f'continuar_pos_smartscan_{operation}'):
         _clear_smartscan_manual_flags()
-        add_audit_event('site_panel_manual_continue_clicked', area='SITE', step=next_step, status='OK', details={'operation': operation, 'rows': rows, 'columns': columns, 'stock_balance_only': stock_balance_only, 'target_step': next_step, 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('site_panel_manual_continue_clicked', area='SITE', step=next_step, status='OK', details={'operation': operation, 'rows': rows, 'columns': columns, 'stock_balance_only': stock_balance_only, 'target_step': next_step, 'responsible_file': RESPONSIBLE_FILE, 'safe_short_batch': True})
         safe_rerun('site_capture_manual_continue', target_step=next_step)
 
 
@@ -330,7 +339,7 @@ def render_site_panel() -> None:
             area='SITE',
             step='entrada',
             status='OK',
-            details={'operation': operation, 'rows': len(df_site_bruto), 'columns': len(df_site_bruto.columns), 'stock_balance_only': stock_balance_only, 'manual_continue': True, 'target_step': _next_step_after_site_capture(), 'responsible_file': RESPONSIBLE_FILE, 'capture_spine': 'site_capture_spine_v1'},
+            details={'operation': operation, 'rows': len(df_site_bruto), 'columns': len(df_site_bruto.columns), 'stock_balance_only': stock_balance_only, 'manual_continue': True, 'target_step': _next_step_after_site_capture(), 'responsible_file': RESPONSIBLE_FILE, 'capture_spine': 'site_capture_spine_v1', 'safe_short_batch': True},
         )
         _render_ready_state(operation, df_site_bruto, stock_balance_only)
         return
@@ -368,6 +377,7 @@ def render_site_panel() -> None:
                 'deep_options': deep_options,
                 'capture_spine': 'site_capture_spine_v1',
                 'responsible_file': RESPONSIBLE_FILE,
+                'safe_short_batch': True,
             },
         )
         run_site_capture(
