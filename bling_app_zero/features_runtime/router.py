@@ -5,10 +5,11 @@ from streamlit.errors import StreamlitAPIException
 
 from bling_app_zero.features_runtime.contracts import FeatureContract
 from bling_app_zero.features_runtime.registry import get_feature_contract, normalize_operation
+from bling_app_zero.universal.model_contract_detector import MODEL_CONTRACT_TYPE_KEY as DESTINATION_MODEL_CONTRACT_TYPE_KEY
 
 HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
 FINISH_MODE_KEY = 'bling_finish_mode'
-MODEL_CONTRACT_TYPE_KEY = 'model_contract_type'
+LEGACY_MODEL_CONTRACT_TYPE_KEY = 'model_contract_type'
 
 API_CONTEXTS = {'bling', 'bling_api', 'api', 'api_direct'}
 API_FINISH_MODES = {'api_direct', 'api', 'bling_api'}
@@ -18,20 +19,19 @@ API_OPERATION_PRIORITY_KEYS = (
     'direct_bling_operation_applied',
     'direct_bling_operation_choice',
     'flow_spine_api_batch_operation',
-    'flow_spine_operation',
-    'active_feature_operation',
+    DESTINATION_MODEL_CONTRACT_TYPE_KEY,
     'home_slim_flow_operation',
     'home_detected_operation',
     'operacao_final',
     'tipo_operacao_final',
-    'tipo_operacao_site',
-    'operation_site',
-    MODEL_CONTRACT_TYPE_KEY,
-)
-CSV_OPERATION_PRIORITY_KEYS = (
-    MODEL_CONTRACT_TYPE_KEY,
     'flow_spine_operation',
     'active_feature_operation',
+    'tipo_operacao_site',
+    'operation_site',
+    LEGACY_MODEL_CONTRACT_TYPE_KEY,
+)
+CSV_OPERATION_PRIORITY_KEYS = (
+    DESTINATION_MODEL_CONTRACT_TYPE_KEY,
     'home_slim_flow_operation',
     'home_detected_operation',
     'operacao_final',
@@ -40,6 +40,9 @@ CSV_OPERATION_PRIORITY_KEYS = (
     'operation_site',
     'site_capture_operation',
     'blingsmartscan_finished_operation',
+    'flow_spine_operation',
+    'active_feature_operation',
+    LEGACY_MODEL_CONTRACT_TYPE_KEY,
 )
 
 
