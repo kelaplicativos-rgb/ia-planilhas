@@ -361,9 +361,17 @@ def _resolve_active_step(active_step: str, *, has_model: bool, start_at_origin: 
     contract = active_contract()
     real_model = _real_model_available()
 
+    # BLINGFIX: se a origem já foi escolhida/carregada e o modelo já existe,
+    # não renderiza Origem nem Dados novamente. Avança para Mapeamento ou Precificação.
+    if active_step == STEP_ORIGEM and current_origin_choice() in {'arquivo', 'site'}:
+        if universal_context_ready():
+            if feature_needs_model() and not real_model:
+                return STEP_MODELO if STEP_MODELO in steps else active_step
+            return _step_after_model_when_source_ready(contract, steps, active_step)
+        return STEP_ENTRADA if STEP_ENTRADA in steps else active_step
+
     # BLINGFIX: depois da captura por site, o botão aponta para Modelo/Contrato.
-    # Se o modelo já existe e a origem está pronta, não pode voltar para Origem,
-    # senão cria loop Entrada/Site -> Modelo -> Origem -> Entrada/Site.
+    # Se o modelo já existe e a origem está pronta, não pode voltar para Origem.
     if active_step == STEP_MODELO and real_model and universal_context_ready():
         return _step_after_model_when_source_ready(contract, steps, active_step)
 
@@ -373,8 +381,6 @@ def _resolve_active_step(active_step: str, *, has_model: bool, start_at_origin: 
         return STEP_ORIGEM if STEP_ORIGEM in steps else steps[0]
     if has_model and active_step == STEP_MODELO and real_model:
         return STEP_ORIGEM if STEP_ORIGEM in steps else steps[0]
-    if active_step == STEP_ORIGEM and current_origin_choice() in {'arquivo', 'site'}:
-        return STEP_ENTRADA if STEP_ENTRADA in steps else active_step
     if active_step == STEP_ENTRADA and universal_context_ready():
         if contract.is_api:
             return STEP_DOWNLOAD if STEP_DOWNLOAD in steps else active_step
@@ -615,7 +621,7 @@ def render_home_wizard() -> None:
     active_step = _resolve_active_step(current_start, has_model=has_model, start_at_origin=start_at_origin)
     plan = _flow_plan()
     steps = list(plan.steps)
-    add_audit_event('wizard_single_step_rendered', area='WIZARD', step=active_step, details={'operation': operation or 'universal', 'feature_contract': plan.contract_key, 'steps': steps, 'render_mode': 'flow_spine_safe_nav_native', 'single_page_flow': SINGLE_PAGE_FLOW, 'skip_model_step': start_at_origin, 'active_start_step': active_step, 'finish_mode': mode, 'home_entry_context': context, 'flow_spine': plan.to_dict(), 'manual_back_lock_native': True, 'source_before_model': True, 'site_after_model_loop_fixed': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('wizard_single_step_rendered', area='WIZARD', step=active_step, details={'operation': operation or 'universal', 'feature_contract': plan.contract_key, 'steps': steps, 'render_mode': 'flow_spine_safe_nav_native', 'single_page_flow': SINGLE_PAGE_FLOW, 'skip_model_step': start_at_origin, 'active_start_step': active_step, 'finish_mode': mode, 'home_entry_context': context, 'flow_spine': plan.to_dict(), 'manual_back_lock_native': True, 'source_before_model': True, 'site_after_model_loop_fixed': True, 'source_ready_origin_skip_fixed': True, 'responsible_file': RESPONSIBLE_FILE})
     _render_steps_from(active_step, skip_model=start_at_origin)
     inject_scroll_to_target()
 
