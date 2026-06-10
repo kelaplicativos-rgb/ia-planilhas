@@ -143,8 +143,22 @@ def _context_confidence() -> dict:
     return fallback if isinstance(fallback, dict) else {}
 
 
+def _real_model_available() -> bool:
+    try:
+        from bling_app_zero.ui.home_wizard_state import _has_real_destination_model
+
+        return bool(_has_real_destination_model())
+    except Exception:
+        return bool(has_home_models())
+
+
 def _model_available() -> bool:
-    return bool(has_home_models()) or not feature_needs_model() or _is_api_direct_mode()
+    if not feature_needs_model() or _is_api_direct_mode():
+        return True
+    current_step = str(st.session_state.get(WIZARD_STEP_KEY) or '').strip().lower()
+    if current_step == STEP_MODELO:
+        return _real_model_available()
+    return bool(has_home_models())
 
 
 def _current_contract_operation() -> str:
@@ -182,7 +196,7 @@ def _label_for(step: str) -> str:
 
 def _step_is_done(step: str) -> bool:
     if step == STEP_MODELO:
-        return _model_available()
+        return _real_model_available() if feature_needs_model() and not _is_api_direct_mode() else True
     if step == STEP_ORIGEM:
         return current_origin_choice() in {'arquivo', 'site'}
     if step == STEP_ENTRADA:
@@ -196,7 +210,7 @@ def _step_is_done(step: str) -> bool:
 
 def _can_advance_from(step: str) -> bool:
     if step == STEP_MODELO:
-        return _model_available()
+        return _real_model_available() if feature_needs_model() and not _is_api_direct_mode() else True
     if step == STEP_ORIGEM:
         return current_origin_choice() in {'arquivo', 'site'}
     if step == STEP_ENTRADA:
@@ -337,15 +351,20 @@ def _resolve_active_step(active_step: str, *, has_model: bool, start_at_origin: 
         return locked_target
     active_step = resolve_step(plan, active_step)
     contract = active_contract()
+    real_model = _real_model_available()
+    if start_at_origin and active_step == STEP_MODELO and not real_model:
+        return STEP_MODELO
     if start_at_origin and active_step == STEP_MODELO:
         return STEP_ORIGEM if STEP_ORIGEM in steps else steps[0]
-    if has_model and active_step == STEP_MODELO:
+    if has_model and active_step == STEP_MODELO and real_model:
         return STEP_ORIGEM if STEP_ORIGEM in steps else steps[0]
     if active_step == STEP_ORIGEM and current_origin_choice() in {'arquivo', 'site'}:
         return STEP_ENTRADA if STEP_ENTRADA in steps else active_step
     if active_step == STEP_ENTRADA and universal_context_ready():
         if contract.is_api:
             return STEP_DOWNLOAD if STEP_DOWNLOAD in steps else active_step
+        if feature_needs_model() and not real_model:
+            return STEP_MODELO if STEP_MODELO in steps else active_step
         if not feature_needs_pricing():
             return STEP_MAPEAMENTO if STEP_MAPEAMENTO in steps else active_step
         return STEP_PRECIFICACAO if STEP_PRECIFICACAO in steps else active_step
@@ -561,10 +580,11 @@ def render_home_wizard() -> None:
         direct_mode = False
         activate_csv_finish_mode()
 
+    current_start = _active_start_step()
     if direct_mode:
         apply_direct_api_contract()
         has_model = True
-    elif feature_needs_model() and not has_model:
+    elif feature_needs_model() and not has_model and current_start not in {STEP_ORIGEM, STEP_ENTRADA}:
         set_step_without_rerun(STEP_MODELO)
         st.session_state.pop('home_slim_flow_origin', None)
         plan = _flow_plan()
@@ -576,10 +596,10 @@ def render_home_wizard() -> None:
         return
 
     start_at_origin = came_from_bling_quick_model() or direct_mode or not feature_needs_model()
-    active_step = _resolve_active_step(_active_start_step(), has_model=has_model, start_at_origin=start_at_origin)
+    active_step = _resolve_active_step(current_start, has_model=has_model, start_at_origin=start_at_origin)
     plan = _flow_plan()
     steps = list(plan.steps)
-    add_audit_event('wizard_single_step_rendered', area='WIZARD', step=active_step, details={'operation': operation or 'universal', 'feature_contract': plan.contract_key, 'steps': steps, 'render_mode': 'flow_spine_safe_nav_native', 'single_page_flow': SINGLE_PAGE_FLOW, 'skip_model_step': start_at_origin, 'active_start_step': active_step, 'finish_mode': mode, 'home_entry_context': context, 'flow_spine': plan.to_dict(), 'manual_back_lock_native': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('wizard_single_step_rendered', area='WIZARD', step=active_step, details={'operation': operation or 'universal', 'feature_contract': plan.contract_key, 'steps': steps, 'render_mode': 'flow_spine_safe_nav_native', 'single_page_flow': SINGLE_PAGE_FLOW, 'skip_model_step': start_at_origin, 'active_start_step': active_step, 'finish_mode': mode, 'home_entry_context': context, 'flow_spine': plan.to_dict(), 'manual_back_lock_native': True, 'source_before_model': True, 'responsible_file': RESPONSIBLE_FILE})
     _render_steps_from(active_step, skip_model=start_at_origin)
     inject_scroll_to_target()
 
