@@ -16,6 +16,31 @@ from bling_app_zero.ui.sidebar_tools import render_sidebar_tools
 from bling_app_zero.ui.startup_guard import ensure_app_ready
 
 
+RUNTIME_PATCH_KEYS_TO_REFRESH = (
+    'blingfix_runtime_patches_installed_v7',
+    'blingfix_runtime_patches_installed_v8',
+)
+
+
+def _refresh_blingfix_runtime_patch_session() -> None:
+    removed: list[str] = []
+    for key in RUNTIME_PATCH_KEYS_TO_REFRESH:
+        if key in st.session_state:
+            st.session_state.pop(key, None)
+            removed.append(key)
+    if removed:
+        add_audit_event(
+            'blingfix_runtime_patch_session_keys_refreshed',
+            area='APP',
+            status='OK',
+            details={
+                'removed_keys': removed,
+                'reason': 'Forçar instalação do runtime atualizado de busca única API/site.',
+                'responsible_file': 'app.py',
+            },
+        )
+
+
 def _install_bling_api_verified_media_checkpoint(stage: str = 'startup') -> None:
     try:
         from bling_app_zero.core.existing_product_media_patch_runtime import install_existing_product_media_patch_runtime
@@ -58,6 +83,7 @@ def main() -> None:
     install_preventive_bootstrap()
     restore_mapping_widget_state_from_snapshot()
     _install_bling_api_verified_media_checkpoint('before_runtime_patches')
+    _refresh_blingfix_runtime_patch_session()
     install_blingfix_runtime_patches()
     _install_bling_api_verified_media_checkpoint('after_runtime_patches')
     bling_oauth.process_oauth_callback()
