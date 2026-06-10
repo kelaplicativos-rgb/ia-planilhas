@@ -22,7 +22,7 @@ from bling_app_zero.engines.fast_site_scraper.deep_site_capture import discover_
 from bling_app_zero.features_runtime.router import active_contract, feature_needs_model
 from bling_app_zero.flows.site_operation_router import run_site_engine
 from bling_app_zero.ui.home_shared import load_site_pipeline
-from bling_app_zero.ui.home_wizard_constants import STEP_DOWNLOAD, STEP_MAPEAMENTO
+from bling_app_zero.ui.home_wizard_constants import STEP_DOWNLOAD, STEP_MAPEAMENTO, STEP_MODELO
 from bling_app_zero.ui.site_capture_spine import capture_profile, extracting_message, found_products_message, progress_mode
 from bling_app_zero.ui.site_outputs import save_site_source
 from bling_app_zero.ui.site_panel_state import (
@@ -113,11 +113,21 @@ def _skip_predeep_discovery(operation: str, options: dict[str, int | bool]) -> b
 
 
 def _next_step_after_capture() -> str:
-    return STEP_DOWNLOAD if active_contract().is_api else STEP_MAPEAMENTO
+    contract = active_contract()
+    if contract.is_api:
+        return STEP_DOWNLOAD
+    if feature_needs_model():
+        return STEP_MODELO
+    return STEP_MAPEAMENTO
 
 
 def _next_step_label_after_capture() -> str:
-    return 'Enviar para o Bling' if active_contract().is_api else 'Mapeamento'
+    contract = active_contract()
+    if contract.is_api:
+        return 'Enviar para o Bling'
+    if feature_needs_model():
+        return 'Modelo/Contrato'
+    return 'Mapeamento'
 
 
 def _orange_notice(message: str) -> None:
