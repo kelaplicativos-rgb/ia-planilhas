@@ -104,11 +104,37 @@ def _render_model_type_guidance() -> None:
 
 def _split_models_by_contract(upload) -> tuple[pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None]:
     df = upload.model_df if isinstance(upload.model_df, pd.DataFrame) else None
+    contract_type = str(getattr(upload, 'contract_type', '') or st.session_state.get(MODEL_CONTRACT_TYPE_KEY) or '').strip()
+
+    # BLINGFIX: mesmo no caminho "universal", o upload já passa pelo detector real.
+    # Antes, esta tela sobrescrevia qualquer detecção para "universal" e fazia um
+    # modelo oficial de Estoque/Saldo ser salvo como modelo genérico. Isso deixava
+    # o Flow Spine em universal e a captura por site usava o contrato errado.
     if _is_universal_entry():
+        if contract_type in BLING_CONTRACTS:
+            st.session_state[MODEL_CONTRACT_TYPE_KEY] = contract_type
+            add_audit_event(
+                'home_universal_entry_real_bling_contract_preserved',
+                area='MODELO',
+                step=st.session_state.get(WIZARD_STEP_KEY),
+                status='OK',
+                details={
+                    'contract_type': contract_type,
+                    'contract_label': getattr(upload, 'contract_label', CONTRACT_LABELS.get(contract_type, 'Modelo de destino')),
+                    'contract_confidence': getattr(upload, 'contract_confidence', None),
+                    'contract_reason': getattr(upload, 'contract_reason', ''),
+                    'dataframe': df_log_summary(df),
+                    'responsible_file': RESPONSIBLE_FILE,
+                },
+            )
+            cadastro = df if contract_type == 'cadastro' else None
+            estoque = df if contract_type == 'estoque' else None
+            preco = df if contract_type == 'atualizacao_preco' else None
+            return cadastro, estoque, preco, None
+
         st.session_state[MODEL_CONTRACT_TYPE_KEY] = 'universal'
         return None, None, None, df
 
-    contract_type = str(getattr(upload, 'contract_type', '') or st.session_state.get(MODEL_CONTRACT_TYPE_KEY) or '').strip()
     if _is_bling_csv_entry() and contract_type not in BLING_CONTRACTS:
         if isinstance(df, pd.DataFrame):
             st.warning('Este caminho é Bling CSV. Envie um modelo oficial do Bling: Cadastro, Estoque ou Atualização de Preços.')
@@ -154,8 +180,8 @@ def render_home_bling_models() -> None:
             status='OK',
             details={
                 'entry_context': _entry_context(),
-                'contract_type': 'universal' if _is_universal_entry() else getattr(upload, 'contract_type', 'universal'),
-                'contract_label': 'Modelo de destino' if _is_universal_entry() else getattr(upload, 'contract_label', 'Modelo de destino'),
+                'contract_type': 'universal' if _is_universal_entry() and universal_model is not None else getattr(upload, 'contract_type', 'universal'),
+                'contract_label': 'Modelo de destino' if _is_universal_entry() and universal_model is not None else getattr(upload, 'contract_label', 'Modelo de destino'),
                 'cadastro': df_log_summary(cadastro_model),
                 'estoque': df_log_summary(estoque_model),
                 'preco': df_log_summary(preco_model),
