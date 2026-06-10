@@ -53,6 +53,16 @@ API_SITE_MAX_DEPTH = min(FLOW_CAPTURE_MAX_DEPTH, 2)
 API_SITE_STOCK_PRODUCTS = min(FLOW_CAPTURE_MAX_PRODUCTS, 450)
 API_SITE_CADASTRO_PRODUCTS = min(FLOW_CAPTURE_MAX_PRODUCTS, 80)
 SITE_PANEL_DISCOVERY_BUDGET_SECONDS = 45
+
+# BLINGFIX 2026-06-10:
+# Diagnóstico 13 mostrou estoque/site CSV rodando como captura completa de
+# cadastro: 120 páginas / 500 produtos / scan_goal cadastro. No Streamlit isso
+# estoura a conexão com popup "Bad message..." e a sessão volta com resultado
+# parcial ou running preso. Estoque deve usar leitura leve de saldo/identificação.
+STOCK_SITE_SAFE_MAX_PAGES = min(SAFE_CAPTURE_MAX_PAGES, 60)
+STOCK_SITE_SAFE_MAX_PRODUCTS = min(SAFE_CAPTURE_MAX_PRODUCTS, 180)
+STOCK_SITE_SAFE_MAX_DEPTH = min(SAFE_CAPTURE_MAX_DEPTH, 2)
+STOCK_SITE_DISCOVERY_BUDGET_SECONDS = 35
 SUPPORTED_SITE_OPERATIONS = {'cadastro', 'estoque', 'atualizacao_preco', UNIVERSAL_OPERATION}
 
 
@@ -74,7 +84,10 @@ def _site_operation() -> str:
 
 def _is_stock_api_balance_mode(operation: str) -> bool:
     contract = active_contract()
-    return bool(contract.is_api and contract.operation == 'estoque' and operation == 'estoque')
+    # Mesmo no fluxo CSV, operação estoque não precisa do motor pesado de cadastro
+    # completo. Usar perfil de saldo/identificação evita queda de websocket do
+    # Streamlit e reduz retornos parciais por reconexão.
+    return bool(operation == 'estoque' or (contract.is_api and contract.operation == 'estoque' and operation == 'estoque'))
 
 
 def _is_direct_api_site_mode(operation: str) -> bool:
@@ -150,6 +163,27 @@ def _scan_total_options(operation: str) -> dict[str, int | bool]:
             'api_site_batch_contract': operation,
             'budget_seconds': SITE_PANEL_DISCOVERY_BUDGET_SECONDS,
         }
+
+    if operation == 'estoque':
+        return {
+            'enabled': True,
+            'max_pages': STOCK_SITE_SAFE_MAX_PAGES,
+            'max_products': STOCK_SITE_SAFE_MAX_PRODUCTS,
+            'max_depth': STOCK_SITE_SAFE_MAX_DEPTH,
+            'scan_total_ui': True,
+            'stock_balance_only': True,
+            'stock_full_site_scan': True,
+            'stock_api_fast_batch': True,
+            'stock_api_skip_predeep_discovery': False,
+            'cadastro_api_fast_batch': False,
+            'cadastro_api_skip_predeep_discovery': False,
+            'skip_predeep_discovery': False,
+            'unified_api_site_engine': False,
+            'api_site_batch_contract': '',
+            'site_api_capture_policy': 'stock_csv_safe_scan',
+            'budget_seconds': STOCK_SITE_DISCOVERY_BUDGET_SECONDS,
+        }
+
     return {
         'enabled': True,
         'max_pages': SCAN_TOTAL_MAX_PAGES,
@@ -165,6 +199,7 @@ def _scan_total_options(operation: str) -> dict[str, int | bool]:
         'skip_predeep_discovery': False,
         'unified_api_site_engine': False,
         'api_site_batch_contract': '',
+        'site_api_capture_policy': 'public_full_scan',
         'budget_seconds': SITE_PANEL_DISCOVERY_BUDGET_SECONDS,
     }
 
@@ -175,6 +210,9 @@ def _render_scan_total_notice(operation: str) -> None:
             orange_warning('Cadastro/API usa o mesmo motor do Estoque/API: leitura em lote seguro, sem descoberta duplicada, salvando o primeiro lote completo para liberar envio ao Bling.')
         else:
             orange_warning('Estoque/API usa o mesmo motor do Cadastro/API: leitura em lote seguro, sem descoberta duplicada, salvando saldo e identificação para liberar envio ao Bling.')
+        return
+    if operation == 'estoque':
+        orange_warning('Busca de estoque ativa em modo seguro: o sistema prioriza Código/ID, Depósito, Saldo/Balanço e campos do contrato, evitando a captura pesada de cadastro completo.')
         return
     orange_warning('Busca completa ativa: o sistema procura produtos no site e captura os dados conforme o contrato ativo.')
 
@@ -230,7 +268,7 @@ def _render_ready_state(operation: str, df_site_bruto: pd.DataFrame, stock_balan
     next_label = _next_step_label()
     st.success(f'Produtos capturados e salvos: {rows} produto(s), {columns} coluna(s).')
     if stock_balance_only:
-        st.caption('O mesmo motor capturou os produtos; para estoque/API, o sistema usará os campos de saldo, identificação e depósito necessários.')
+        st.caption('O mesmo motor capturou os produtos; para estoque, o sistema usará os campos de saldo, identificação e depósito necessários.')
     notice = st.session_state.get(f'blingsmartscan_notice_{operation}') or st.session_state.get('blingsmartscan_last_notice') or {}
     if isinstance(notice, dict) and notice:
         with st.expander('Resumo do BLINGSMARTSCAN', expanded=False):
