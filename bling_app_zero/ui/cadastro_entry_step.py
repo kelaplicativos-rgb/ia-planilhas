@@ -28,6 +28,7 @@ from bling_app_zero.ui.home_wizard_constants import STEP_LABELS, STEP_MAPEAMENTO
 from bling_app_zero.ui.home_wizard_rerun import safe_rerun, set_step_without_rerun
 from bling_app_zero.ui.home_wizard_scroll import set_scroll_target
 from bling_app_zero.ui.smart_upload import SmartUploadResult
+from bling_app_zero.universal.model_contract_detector import MODEL_CONTRACT_TYPE_KEY, normalize_contract_operation
 
 SITE_SOURCE_FALLBACK_KEYS = (
     'df_origem_site_como_planilha_universal',
@@ -70,6 +71,28 @@ def _first_existing_model(*models: pd.DataFrame | None) -> pd.DataFrame | None:
     return None
 
 
+def _current_contract_operation() -> str:
+    for key in (
+        MODEL_CONTRACT_TYPE_KEY,
+        'home_slim_flow_operation',
+        'home_detected_operation',
+        'operacao_final',
+        'tipo_operacao_final',
+        'tipo_operacao_site',
+        'operation_site',
+    ):
+        operation = normalize_contract_operation(st.session_state.get(key))
+        if operation:
+            return operation
+    try:
+        operation = normalize_contract_operation(st.query_params.get('operacao', ''))
+        if operation:
+            return operation
+    except Exception:
+        pass
+    return ''
+
+
 def _direct_api_model() -> pd.DataFrame | None:
     if not _is_api_context():
         return None
@@ -84,15 +107,30 @@ def _direct_api_model() -> pd.DataFrame | None:
 
 
 def _bling_contract_model() -> pd.DataFrame | None:
+    operation = _current_contract_operation()
+    if operation == 'estoque':
+        return _first_existing_model(get_home_estoque_model(), get_home_universal_model())
+    if operation == 'atualizacao_preco':
+        return _first_existing_model(get_home_preco_model(), get_home_universal_model())
+    if operation == 'cadastro':
+        return _first_existing_model(get_home_cadastro_model(), get_home_universal_model())
     return _first_existing_model(
-        get_home_cadastro_model(),
         get_home_estoque_model(),
+        get_home_cadastro_model(),
         get_home_preco_model(),
+        get_home_universal_model(),
     )
 
 
 def _universal_contract_model() -> pd.DataFrame | None:
-    return _copy_model(get_home_universal_model())
+    operation = _current_contract_operation()
+    if operation == 'estoque':
+        return _first_existing_model(get_home_estoque_model(), get_home_universal_model())
+    if operation == 'atualizacao_preco':
+        return _first_existing_model(get_home_preco_model(), get_home_universal_model())
+    if operation == 'cadastro':
+        return _first_existing_model(get_home_cadastro_model(), get_home_universal_model())
+    return _first_existing_model(get_home_universal_model(), get_home_estoque_model(), get_home_cadastro_model(), get_home_preco_model())
 
 
 def _first_contract_model() -> pd.DataFrame | None:
@@ -114,7 +152,7 @@ def empty_cadastro_upload_result() -> SmartUploadResult:
         cadastro_model_file=None,
         cadastro_model_df=_first_contract_model(),
         estoque_model_file=None,
-        estoque_model_df=get_home_estoque_model() if _is_bling_csv_context() else None,
+        estoque_model_df=get_home_estoque_model(),
         attachments=[],
         ignored_files=[],
     )
