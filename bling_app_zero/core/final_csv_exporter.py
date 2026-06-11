@@ -7,18 +7,10 @@ from typing import Sequence
 
 import pandas as pd
 
-from bling_app_zero.core.final_download_resources import looks_like_image_column, normalize_image_urls
-
-try:
-    from bling_app_zero.features.runtime import run_features_for_stage
-except Exception:  # pragma: no cover
-    run_features_for_stage = None
-
 RESPONSIBLE_FILE = 'bling_app_zero/core/final_csv_exporter.py'
 INTERNAL_COLUMN_PREFIXES = ('_v2_',)
 DEFAULT_SEPARATOR = ';'
 DEFAULT_ENCODING = 'utf-8-sig'
-CSV_DANGEROUS_CHARS = (';', '"', "'", '\t')
 
 
 @dataclass(frozen=True)
@@ -42,42 +34,21 @@ def _as_list(values: Sequence[object] | None) -> list[object]:
 
 def clean_text(value: object) -> str:
     text = '' if value is None else str(value)
-    text = text.replace('\ufeff', '')
-    text = text.replace('\x00', '')
+    text = text.replace('\ufeff', '').replace('\x00', '')
     text = text.replace('\r\n', ' ').replace('\n', ' ').replace('\r', ' ')
-    return ' '.join(text.split()).strip()
+    return text.strip()
 
 
 def clean_bling_cell_text(value: object, *, sep: str = DEFAULT_SEPARATOR) -> str:
-    text = clean_text(value)
-    if not text:
-        return ''
-    for char in CSV_DANGEROUS_CHARS:
-        text = text.replace(char, ' ')
-    if sep:
-        text = text.replace(str(sep), ' ')
-    return ' '.join(text.split()).strip()
+    # Compatibilidade de nome antigo. Não remove mais ponto e vírgula, aspas ou tabs.
+    return clean_text(value)
 
 
 def clean_columns(columns: Sequence[object] | None) -> list[str]:
-    cleaned: list[str] = []
-    seen: set[str] = set()
-    for column in _as_list(columns):
-        text = clean_text(column)
-        if not text or text in seen:
-            continue
-        cleaned.append(text)
-        seen.add(text)
-    return cleaned
+    return [clean_text(column) for column in _as_list(columns) if clean_text(column)]
 
 
 def exact_contract_columns(columns: Sequence[object] | None) -> list[str]:
-    """Preserva o cabeçalho do modelo anexado sem deduplicar ou renomear.
-
-    Esta função é a fonte da verdade para o lema do sistema: o modelo anexado
-    define o contrato de saída. Apenas caracteres físicos impossíveis para CSV
-    são removidos; espaços internos e nomes do usuário são preservados.
-    """
     if columns is None:
         return []
     out: list[str] = []
@@ -107,12 +78,6 @@ def drop_internal_columns(df: pd.DataFrame, prefixes: Sequence[str] = INTERNAL_C
 
 
 def normalize_dataframe(df: pd.DataFrame | None, *, keep_internal: bool = False, preserve_columns: bool = False) -> pd.DataFrame:
-    """Normaliza valores sem quebrar o cabeçalho contratado.
-
-    Quando `preserve_columns=True`, os nomes das colunas não são limpos nem
-    deduplicados. Isso evita que um modelo de marketplace com cabeçalho próprio
-    perca autenticidade no download final.
-    """
     if not isinstance(df, pd.DataFrame):
         return pd.DataFrame()
     out = df.copy().fillna('')
@@ -121,19 +86,12 @@ def normalize_dataframe(df: pd.DataFrame | None, *, keep_internal: bool = False,
     if not preserve_columns:
         out.columns = [clean_text(column) for column in out.columns]
     for column in out.columns:
-        out[column] = out[column].map(clean_bling_cell_text)
+        out[column] = out[column].map(clean_text)
     return out.fillna('')
 
 
 def normalize_image_columns(df: pd.DataFrame | None) -> pd.DataFrame:
-    if not isinstance(df, pd.DataFrame) or df.empty:
-        return pd.DataFrame() if df is None else df
-    out = df.copy().fillna('')
-    for column in out.columns:
-        if looks_like_image_column(column):
-            out[column] = out[column].map(normalize_image_urls)
-            out[column] = out[column].map(clean_bling_cell_text)
-    return out
+    return df.copy().fillna('') if isinstance(df, pd.DataFrame) else pd.DataFrame()
 
 
 def contract_from_df(df: pd.DataFrame | None, contract_columns: Sequence[object] | None = None) -> list[str]:
@@ -141,14 +99,13 @@ def contract_from_df(df: pd.DataFrame | None, contract_columns: Sequence[object]
     if explicit:
         return explicit
     if isinstance(df, pd.DataFrame):
-        return clean_columns(df.columns)
+        return exact_contract_columns(df.columns)
     return []
 
 
 def force_empty_columns(df: pd.DataFrame, columns: Sequence[object] | None = None) -> pd.DataFrame:
     out = df.copy().fillna('') if isinstance(df, pd.DataFrame) else pd.DataFrame()
-    protected = clean_explicit_empty_columns(columns)
-    for column in protected:
+    for column in clean_explicit_empty_columns(columns):
         if column in out.columns:
             out[column] = ''
     return out
@@ -172,40 +129,14 @@ def validate_contract_identity(df: pd.DataFrame | None, contract_columns: Sequen
     if not isinstance(df, pd.DataFrame):
         return ['A planilha final não é uma tabela válida.']
     output_columns = exact_contract_columns(df.columns)
-    errors: list[str] = []
     if output_columns != contract:
-        errors.append('A planilha final não está fiel ao contrato de colunas do modelo anexado.')
-    missing = [column for column in contract if column not in output_columns]
-    extra = [column for column in output_columns if column not in contract]
-    if missing:
-        errors.append('Colunas ausentes no download final: ' + ', '.join(missing))
-    if extra:
-        errors.append('Colunas extras no download final: ' + ', '.join(extra))
-    return errors
+        return ['A planilha final não está fiel ao contrato de colunas do modelo anexado.']
+    return []
 
 
 def physical_csv_contract_errors(csv_bytes: bytes, expected_columns: int, *, sep: str = DEFAULT_SEPARATOR) -> list[str]:
-    if expected_columns <= 0:
-        return []
-    try:
-        text = csv_bytes.decode(DEFAULT_ENCODING)
-    except Exception:
-        text = csv_bytes.decode('utf-8-sig', errors='replace')
-    text = text.replace('\ufeff', '')
-    errors: list[str] = []
-    expected_separators = max(0, expected_columns - 1)
-    for line_number, line in enumerate(text.splitlines(), start=1):
-        if not line:
-            continue
-        current = line.count(sep)
-        if current != expected_separators:
-            errors.append(
-                f'Linha física {line_number} possui {current} separador(es), esperado {expected_separators}. '
-                'Remova ponto e vírgula ou quebras internas antes de importar.'
-            )
-            if len(errors) >= 10:
-                break
-    return errors
+    # CSV usa aspas quando necessário; contar separadores físicos quebra valores legítimos.
+    return []
 
 
 def _to_csv_bytes_strict(df: pd.DataFrame, *, sep: str = DEFAULT_SEPARATOR) -> bytes:
@@ -214,82 +145,29 @@ def _to_csv_bytes_strict(df: pd.DataFrame, *, sep: str = DEFAULT_SEPARATOR) -> b
     return buffer.getvalue().encode(DEFAULT_ENCODING)
 
 
-def sanitize_final_dataframe(
-    df: pd.DataFrame | None,
-    *,
-    operation: str = 'global',
-    contract_columns: Sequence[object] | None = None,
-    explicit_empty_columns: Sequence[object] | None = None,
-    run_download_features: bool = True,
-) -> pd.DataFrame:
+def sanitize_final_dataframe(df: pd.DataFrame | None, *, operation: str = 'global', contract_columns: Sequence[object] | None = None, explicit_empty_columns: Sequence[object] | None = None, run_download_features: bool = True) -> pd.DataFrame:
     if df is None:
         return enforce_contract(None, contract_columns)
-
     contract = contract_from_df(df, contract_columns)
-    preserve = bool(contract)
-    input_df = normalize_image_columns(normalize_dataframe(df, keep_internal=False, preserve_columns=preserve))
-    protected_empty = clean_explicit_empty_columns(explicit_empty_columns)
-    input_df = force_empty_columns(input_df, protected_empty)
-
-    safe = input_df
-    if run_download_features and callable(run_features_for_stage):
-        context = run_features_for_stage(
-            operation=str(operation or 'global').strip().lower() or 'global',
-            stage='download',
-            final_df=input_df.copy().fillna(''),
-            config={'contract_columns': list(contract), 'explicit_empty_columns': sorted(protected_empty)},
-        )
-        safe = context.final_df if isinstance(getattr(context, 'final_df', None), pd.DataFrame) else input_df
-
-    safe = normalize_image_columns(force_empty_columns(normalize_dataframe(safe, keep_internal=False, preserve_columns=preserve), protected_empty))
+    safe = normalize_dataframe(df, keep_internal=False, preserve_columns=bool(contract))
+    safe = force_empty_columns(safe, explicit_empty_columns)
     return enforce_contract(safe, contract)
 
 
-def final_csv_bytes(
-    df: pd.DataFrame | None,
-    *,
-    operation: str = 'global',
-    contract_columns: Sequence[object] | None = None,
-    explicit_empty_columns: Sequence[object] | None = None,
-    sep: str = DEFAULT_SEPARATOR,
-    run_download_features: bool = True,
-) -> bytes:
-    safe = sanitize_final_dataframe(df, operation=operation, contract_columns=contract_columns, explicit_empty_columns=explicit_empty_columns, run_download_features=run_download_features)
-    csv_bytes = _to_csv_bytes_strict(safe, sep=sep)
-    physical_errors = physical_csv_contract_errors(csv_bytes, len(safe.columns), sep=sep)
-    if physical_errors:
-        raise ValueError('CSV final bloqueado por divergência física de colunas: ' + ' | '.join(physical_errors))
-    return csv_bytes
+def final_csv_bytes(df: pd.DataFrame | None, *, operation: str = 'global', contract_columns: Sequence[object] | None = None, explicit_empty_columns: Sequence[object] | None = None, sep: str = DEFAULT_SEPARATOR, run_download_features: bool = True) -> bytes:
+    safe = sanitize_final_dataframe(df, operation=operation, contract_columns=contract_columns, explicit_empty_columns=explicit_empty_columns, run_download_features=False)
+    return _to_csv_bytes_strict(safe, sep=sep)
 
 
 def filename_for_operation(operation: str) -> str:
-    op = str(operation or 'bling').lower().strip()
-    if op == 'estoque':
-        return 'bling_atualizacao_estoque.csv'
-    if op == 'cadastro':
-        return 'bling_cadastro_produtos.csv'
-    if op in {'precos_multiloja', 'preco_multiloja', 'multiloja', 'preco'}:
-        return 'bling_precos_multilojas.csv'
-    return 'bling_exportacao.csv'
+    return 'modelo_mapeado.csv'
 
 
-def build_final_csv_export(
-    df: pd.DataFrame | None,
-    *,
-    operation: str = 'global',
-    contract_columns: Sequence[object] | None = None,
-    explicit_empty_columns: Sequence[object] | None = None,
-    file_name: str | None = None,
-    sep: str = DEFAULT_SEPARATOR,
-    run_download_features: bool = True,
-) -> FinalCsvExportResult:
-    safe = sanitize_final_dataframe(df, operation=operation, contract_columns=contract_columns, explicit_empty_columns=explicit_empty_columns, run_download_features=run_download_features)
+def build_final_csv_export(df: pd.DataFrame | None, *, operation: str = 'global', contract_columns: Sequence[object] | None = None, explicit_empty_columns: Sequence[object] | None = None, file_name: str | None = None, sep: str = DEFAULT_SEPARATOR, run_download_features: bool = True) -> FinalCsvExportResult:
+    safe = sanitize_final_dataframe(df, operation=operation, contract_columns=contract_columns, explicit_empty_columns=explicit_empty_columns, run_download_features=False)
     csv_bytes = _to_csv_bytes_strict(safe, sep=sep)
-    physical_errors = physical_csv_contract_errors(csv_bytes, len(safe.columns), sep=sep)
-    if physical_errors:
-        raise ValueError('CSV final bloqueado por divergência física de colunas: ' + ' | '.join(physical_errors))
     filename = file_name or filename_for_operation(operation)
-    return FinalCsvExportResult(df=safe, csv_bytes=csv_bytes, filename=filename, operation=str(operation or 'global'), columns=tuple(map(str, safe.columns)), rows=int(len(safe)))
+    return FinalCsvExportResult(df=safe, csv_bytes=csv_bytes, filename=filename, operation='universal', columns=tuple(map(str, safe.columns)), rows=int(len(safe)))
 
 
 __all__ = [
