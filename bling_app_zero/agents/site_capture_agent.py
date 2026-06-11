@@ -12,6 +12,7 @@ from bling_app_zero.agents.site_platform_detector import SitePlatformSignal, det
 from bling_app_zero.core.audit import add_audit_event
 
 RESPONSIBLE_FILE = 'bling_app_zero/agents/site_capture_agent.py'
+SMARTSCAN_SAFE_URL_BATCH = 60
 
 
 @dataclass(frozen=True)
@@ -39,13 +40,21 @@ def _strategy_for(platform: SitePlatformSignal, operation: str) -> str:
         return 'api_first_then_fast_scraper'
     if platform.platform in {'shopify', 'woocommerce', 'loja_integrada', 'nuvemshop', 'tray'}:
         return 'platform_hints_then_fast_scraper'
-    if operation == 'estoque':
-        return 'stock_safe_batch_with_ai_validation'
     return 'generic_safe_batch_with_ai_validation'
 
 
 def _should_try_api(strategy: str, platform: SitePlatformSignal) -> bool:
     return strategy.startswith('api_first') or platform.platform in {'stoqui', 'mega_center', 'shopify', 'woocommerce', 'loja_integrada', 'nuvemshop', 'tray'}
+
+
+def _limit_raw_urls(raw_urls: str, *, max_products: int) -> tuple[str, int, int]:
+    lines = [line.strip() for line in str(raw_urls or '').splitlines() if line.strip()]
+    original = len(lines)
+    if not lines:
+        return str(raw_urls or ''), 0, 0
+    limit = max(1, min(int(max_products or SMARTSCAN_SAFE_URL_BATCH), SMARTSCAN_SAFE_URL_BATCH))
+    limited = lines[:limit]
+    return '\n'.join(limited), original, len(limited)
 
 
 def _run_engine(
@@ -81,9 +90,32 @@ def run_bling_smartscan(
     max_products: int,
     progress_callback: Callable[[dict], None] | None = None,
 ) -> tuple[pd.DataFrame, SmartScanReport]:
-    """Executa captura inteligente com API Finder + validação BLINGSMARTCORE."""
     platform = detect_site_platform(raw_urls)
     strategy = _strategy_for(platform, operation)
+    max_products = max(1, min(int(max_products or SMARTSCAN_SAFE_URL_BATCH), SMARTSCAN_SAFE_URL_BATCH))
+    raw_urls, original_urls, used_urls = _limit_raw_urls(raw_urls, max_products=max_products)
+    if original_urls > used_urls:
+        add_audit_event(
+            'site_smartscan_url_batch_limited',
+            area='SITE',
+            step='entrada',
+            status='OK',
+            details={
+                'operation': operation,
+                'original_urls': original_urls,
+                'used_urls': used_urls,
+                'reason': 'Evitar trava do Streamlit; captura roda em lote curto.',
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+        _emit(progress_callback, {
+            'stage': 'Lote seguro',
+            'message': f'{original_urls} links encontrados. Processando primeiro lote com {used_urls} para evitar travamento.',
+            'progress': 0.18,
+            'original_urls': original_urls,
+            'used_urls': used_urls,
+        })
+
     _emit(progress_callback, {
         'stage': 'BLINGSMARTSCAN',
         'message': f'Plataforma provável: {platform.platform} ({int(platform.confidence * 100)}%). Estratégia: {strategy}.',
@@ -104,6 +136,8 @@ def run_bling_smartscan(
             'requested_columns_count': len(requested_columns or []),
             'max_pages': int(max_pages),
             'max_products': int(max_products),
+            'url_batch_original': original_urls,
+            'url_batch_used': used_urls,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -151,10 +185,10 @@ def run_bling_smartscan(
             progress_callback=progress_callback,
         )
 
-    normalized_df, core_result = apply_blingsmartcore(df, origin='site', operation=operation)
+    normalized_df, core_result = apply_blingsmartcore(df, origin='site', operation='universal')
     quality = core_result.quality
     source = 'API interna' if used_api else 'scraper seguro'
-    message = f'BLINGSMARTSCAN finalizado via {source} com nota {quality.score}/100 e {quality.rows} produto(s) capturado(s).'
+    message = f'Busca por site finalizada via {source} com nota {quality.score}/100 e {quality.rows} produto(s) capturado(s).'
     _emit(progress_callback, {
         'stage': 'Validação inteligente',
         'message': message,
@@ -188,9 +222,11 @@ def run_bling_smartscan(
             'platform': asdict(platform),
             'strategy': strategy,
             'quality': asdict(quality),
-            'operation': operation,
+            'operation': 'universal',
             'used_api': used_api,
             'api_finder': asdict(api_result) if api_result is not None else None,
+            'url_batch_original': original_urls,
+            'url_batch_used': used_urls,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
