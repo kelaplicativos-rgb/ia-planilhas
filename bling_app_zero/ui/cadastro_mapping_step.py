@@ -67,8 +67,11 @@ def _resolve_model_df() -> pd.DataFrame | None:
     for key in MODEL_FALLBACK_KEYS:
         value = st.session_state.get(key)
         if valid_model(value):
-            st.session_state[CADASTRO_MODELO_KEY] = value.copy().fillna('')
-            return value.copy().fillna('')
+            model = value.copy().fillna('')
+            st.session_state[CADASTRO_MODELO_KEY] = model
+            st.session_state['df_modelo_universal'] = model
+            st.session_state['home_modelo_universal_df'] = model
+            return model
 
     data = st.session_state.get(MODEL_BYTES_KEY)
     name = str(st.session_state.get(MODEL_NAME_KEY) or 'modelo.csv')
@@ -78,11 +81,19 @@ def _resolve_model_df() -> pd.DataFrame | None:
         except Exception:
             df = None
         if valid_model(df):
-            df = df.copy().fillna('')
-            st.session_state[CADASTRO_MODELO_KEY] = df
-            st.session_state['df_modelo_universal'] = df
-            st.session_state['home_modelo_universal_df'] = df
-            return df
+            model = df.copy().fillna('')
+            st.session_state[CADASTRO_MODELO_KEY] = model
+            st.session_state['df_modelo_universal'] = model
+            st.session_state['home_modelo_universal_df'] = model
+            return model
+    return None
+
+
+def _current_final_df() -> pd.DataFrame | None:
+    for key in ('df_final_universal', 'df_final_cadastro'):
+        value = st.session_state.get(key)
+        if isinstance(value, pd.DataFrame):
+            return value
     return None
 
 
@@ -156,7 +167,7 @@ def render_cadastro_mapeamento_step() -> None:
 
     render_shared_cadastro_mapping(df_para_mapear, df_modelo)
 
-    df_final = st.session_state.get('df_final_universal') or st.session_state.get('df_final_cadastro')
+    df_final = _current_final_df()
     if isinstance(df_final, pd.DataFrame) and len(df_final) != len(df_origem):
         if render_row_count_blocker(df_final):
             return
