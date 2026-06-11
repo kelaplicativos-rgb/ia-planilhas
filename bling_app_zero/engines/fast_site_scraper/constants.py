@@ -1,38 +1,32 @@
 from __future__ import annotations
 
-MAX_WORKERS = 6
-SLOW_LINK_SECONDS = 6.0
-SMART_COMPLETE_TARGET = 180
-SMART_STOP_MIN_PROCESSED = 120
-SMART_STOP_COMPLETE_RATIO = 0.72
-SMART_STOP_NO_GAIN_WINDOW = 80
-SMART_STOP_MIN_FOUND = 60
-DEVTOOLS_FALLBACK_MAX_PER_RUN = 8
+MAX_WORKERS = 4
+SLOW_LINK_SECONDS = 5.0
+SMART_COMPLETE_TARGET = 90
+SMART_STOP_MIN_PROCESSED = 45
+SMART_STOP_COMPLETE_RATIO = 0.70
+SMART_STOP_NO_GAIN_WINDOW = 30
+SMART_STOP_MIN_FOUND = 30
+DEVTOOLS_FALLBACK_MAX_PER_RUN = 4
 
-SAFE_CAPTURE_MAX_PAGES = 120
-SAFE_CAPTURE_MAX_PRODUCTS = 500
-SAFE_CAPTURE_MAX_DEPTH = 2
-SAFE_CAPTURE_TIMEOUT_SECONDS = 75
+SAFE_CAPTURE_MAX_PAGES = 60
+SAFE_CAPTURE_MAX_PRODUCTS = 120
+SAFE_CAPTURE_MAX_DEPTH = 1
+SAFE_CAPTURE_TIMEOUT_SECONDS = 55
 
-DEEP_CAPTURE_MAX_PAGES = 450
-DEEP_CAPTURE_MAX_PRODUCTS = 1200
-DEEP_CAPTURE_MAX_DEPTH = 3
-DEEP_CAPTURE_TIMEOUT_SECONDS = 110
+DEEP_CAPTURE_MAX_PAGES = 120
+DEEP_CAPTURE_MAX_PRODUCTS = 180
+DEEP_CAPTURE_MAX_DEPTH = 1
+DEEP_CAPTURE_TIMEOUT_SECONDS = 70
 
-FLOW_CAPTURE_MAX_PAGES = 650
-FLOW_CAPTURE_MAX_PRODUCTS = 1500
-FLOW_CAPTURE_MAX_DEPTH = 3
-FLOW_CAPTURE_TIMEOUT_SECONDS = 95
+FLOW_CAPTURE_MAX_PAGES = 120
+FLOW_CAPTURE_MAX_PRODUCTS = 180
+FLOW_CAPTURE_MAX_DEPTH = 1
+FLOW_CAPTURE_TIMEOUT_SECONDS = 70
 
-STREAMLIT_HARD_BUDGET_SECONDS = 95
-
-# BLINGFIX 2026-06-09:
-# O diagnóstico 74 mostrou captura iniciada com 650 páginas/1500 produtos e
-# budget de apenas 55s, ficando em running sem linhas. A descoberta precisa de
-# orçamento maior e o guard preventivo fica responsável por destravar estados
-# realmente parados sem enviar dados vazios ao Bling.
-DISCOVERY_BUDGET_SECONDS = 180
-PRODUCT_READ_BUDGET_SECONDS = 120
+STREAMLIT_HARD_BUDGET_SECONDS = 70
+DISCOVERY_BUDGET_SECONDS = 35
+PRODUCT_READ_BUDGET_SECONDS = 55
 
 RICH_DESCRIPTION_KINDS = {'descricao_complementar', 'ficha_tecnica', 'caracteristicas'}
 DESCRIPTION_TRIGGER_KINDS = {'descricao', 'descricao_curta', 'nome_apoio', *RICH_DESCRIPTION_KINDS}
@@ -55,13 +49,6 @@ def normalize_capture_limits(
     max_depth: int | None = None,
     mode: str = 'safe',
 ) -> dict[str, int | bool]:
-    """Normaliza limites de captura por site.
-
-    Regra BLINGFIX:
-    - nenhum modo pode entregar números gigantes ao Streamlit;
-    - estoque/site completo roda em lotes seguros;
-    - o sistema deve retornar parcial em vez de cair por timeout.
-    """
     normalized_mode = str(mode or 'safe').strip().lower()
     if normalized_mode in {'flow', 'continuous', 'stock_flow', 'estoque_flow', 'stock_balance_flow'}:
         return {
