@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -47,6 +48,10 @@ ESTOQUE_QTY_TERMS = ('quantidade', 'qtd', 'saldo', 'estoque', 'balanco', 'balan�
 ESTOQUE_DEPOSIT_TERMS = ('deposito', 'depósito')
 ESTOQUE_CODE_TERMS = ('codigo', 'código', 'sku', 'referencia', 'referência', 'id')
 STOCK_ONLY_STRICT_COLUMNS = {'quantidade', 'id', 'codigo', 'gtin', 'deposito'}
+GENERIC_DOWNLOAD_LABEL = '⬇️ Download Modelo Mapeado'
+CSV_MIME = 'text/csv; charset=utf-8'
+XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+XLSM_MIME = 'application/vnd.ms-excel.sheet.macroEnabled.12'
 
 
 class _NamedBytesIO(BytesIO):
@@ -65,7 +70,16 @@ def df_signature(df: pd.DataFrame) -> str:
 
 
 def download_label() -> str:
-    return '⬇️ Baixar arquivo final para o Bling'
+    return GENERIC_DOWNLOAD_LABEL
+
+
+def _download_mime_for_name(file_name: str) -> str:
+    suffix = Path(str(file_name or '')).suffix.lower()
+    if suffix == '.xlsx':
+        return XLSX_MIME
+    if suffix == '.xlsm':
+        return XLSM_MIME
+    return CSV_MIME
 
 
 def _is_api_context() -> bool:
@@ -186,7 +200,7 @@ def after_final_download(operation: str, signature: str, rules_sig: str) -> None
     st.session_state['final_download_done'] = True
     st.session_state[FINAL_DOWNLOAD_OPERATION_KEY] = normalize_operation(operation)
     add_audit_event(
-        'final_csv_download_completed_navigation_preserved',
+        'final_model_download_completed_navigation_preserved',
         area='DOWNLOAD',
         details={
             'operation': operation,
@@ -282,7 +296,7 @@ def save_download_snapshot(
     st.session_state[FINAL_DOWNLOAD_RULES_SIGNATURE_KEY] = rules_sig
     st.session_state[FINAL_DOWNLOAD_WIDGET_KEY] = widget_key
     st.session_state['flow_spine_sender_operation'] = normalize_operation(operation)
-    st.session_state['flow_spine_sender_destination'] = 'api_bling' if _is_api_context() else 'csv_download'
+    st.session_state['flow_spine_sender_destination'] = 'api_bling' if _is_api_context() else 'mapped_model_download'
 
 
 def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: str, signature: str, rules_sig: str) -> None:
@@ -312,44 +326,42 @@ def render_download(df_final: pd.DataFrame, operation: str, key: str = 'final') 
     if not isinstance(download_df, pd.DataFrame) or download_df.empty:
         st.warning('Nada para baixar/enviar após aplicar o contrato da operação.')
         return
-
     mismatch_error = _operation_contract_mismatch_error(raw_df, download_df, operation)
     if mismatch_error:
         st.error(mismatch_error)
         st.warning('Envio e download foram bloqueados para evitar cadastro incorreto no Bling.')
         return
-
     errors = validate_final_df(download_df, operation)
     if errors:
         for error in errors:
             st.error(error)
         return
-
     signature = df_signature(download_df)
     rules_sig = rules_signature()
     try:
-        csv_bytes = to_bling_csv_bytes(download_df, operation, contract_columns=model_columns if contract_applied else None)
+        file_bytes = to_bling_csv_bytes(download_df, operation, contract_columns=model_columns if contract_applied else None)
     except Exception as exc:
-        st.error('CSV final bloqueado: o arquivo perderia o contrato de colunas aceito pelo Bling.')
+        st.error('Download final bloqueado: o arquivo perderia o contrato de colunas do modelo anexado.')
         st.warning(str(exc))
         return
     file_name = filename_for_operation(operation)
-    save_download_snapshot(download_df=download_df, file_bytes=csv_bytes, file_name=file_name, mime='text/csv; charset=utf-8', operation=operation, signature=signature, rules_sig=rules_sig, widget_key=key)
+    mime = _download_mime_for_name(file_name)
+    save_download_snapshot(download_df=download_df, file_bytes=file_bytes, file_name=file_name, mime=mime, operation=operation, signature=signature, rules_sig=rules_sig, widget_key=key)
     if contract_applied:
-        st.success(f'Contrato aplicado: {operation_badge(operation)} · {len(model_columns)} coluna(s).')
+        st.success(f'Modelo aplicado: {len(model_columns)} coluna(s).')
     if _is_api_context():
         _render_direct_bling_send(download_df, operation, key, signature, rules_sig)
-        st.caption('Backup opcional em CSV')
+        st.caption('Backup opcional do modelo mapeado')
         st.download_button(
             download_label(),
-            data=csv_bytes,
+            data=file_bytes,
             file_name=file_name,
-            mime='text/csv; charset=utf-8',
+            mime=mime,
             use_container_width=True,
-            key=f'download_csv_backup_{key}_{signature}_{rules_sig}',
+            key=f'download_model_backup_{key}_{signature}_{rules_sig}',
         )
         return
-    st.download_button(download_label(), data=csv_bytes, file_name=file_name, mime='text/csv; charset=utf-8', use_container_width=True, key=f'download_csv_{key}_{signature}_{rules_sig}', on_click=after_final_download, args=(operation, signature, rules_sig))
+    st.download_button(download_label(), data=file_bytes, file_name=file_name, mime=mime, use_container_width=True, key=f'download_model_{key}_{signature}_{rules_sig}', on_click=after_final_download, args=(operation, signature, rules_sig))
 
 
 def download_final(df_final: pd.DataFrame, operation: str, key: str = 'final') -> None:
