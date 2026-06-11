@@ -85,6 +85,16 @@ def _render_blocking_list(title: str, items: list[str]) -> None:
         st.caption(f'Mais {hidden_count} item(ns) oculto(s). Ajuste os campos sinalizados para continuar.')
 
 
+def _render_non_blocking_list(title: str, items: list[str]) -> None:
+    if not items:
+        return
+    visible = items[:BLINGFIX_REQUIRED_MAX_LIST]
+    st.info(f'{title}: ' + ', '.join(visible))
+    hidden_count = len(items) - len(visible)
+    if hidden_count > 0:
+        st.caption(f'Mais {hidden_count} item(ns) oculto(s).')
+
+
 def _mapping_blockers(mapping: dict[str, str], target_columns: list[str]) -> list[str]:
     blockers: list[str] = []
     missing = _missing_required_targets(mapping, target_columns)
@@ -93,9 +103,8 @@ def _mapping_blockers(mapping: dict[str, str], target_columns: list[str]) -> lis
         blockers.append('required')
         _render_blocking_list('Campos obrigatórios sem ligação', missing)
     if duplicated:
-        blockers.append('duplicated')
-        _render_blocking_list('Colunas de origem repetidas', duplicated)
-        st.caption('Use a mesma coluna apenas quando for realmente necessário com valor fixo/manual. Para evitar erro no CSV final, a confirmação fica bloqueada.')
+        _render_non_blocking_list('Colunas de origem repetidas permitidas', duplicated)
+        st.caption('A mesma coluna de origem pode ser usada em mais de um campo quando necessário. Isso não bloqueia mais a confirmação do mapeamento.')
     return blockers
 
 
