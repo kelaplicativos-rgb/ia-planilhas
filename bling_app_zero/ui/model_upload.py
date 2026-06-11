@@ -19,6 +19,7 @@ from bling_app_zero.universal.model_contract_detector import (
 
 MODEL_SPREADSHEET_TYPES = ['xlsx', 'xls', 'csv', 'xlsm', 'xlsb', 'zip']
 EXCEL_HEADER_FALLBACK_TYPES = {'xlsx', 'xlsm'}
+MODEL_LABEL = 'Modelo para mapear'
 
 
 @dataclass
@@ -32,7 +33,7 @@ class ModelUploadResult:
     attachments: list[Any] | None = None
     ignored_files: list[Any] | None = None
     contract_type: str = 'universal'
-    contract_label: str = 'Modelo de destino'
+    contract_label: str = MODEL_LABEL
     contract_confidence: float = 0.0
     contract_reason: str = ''
 
@@ -118,11 +119,11 @@ def _read_excel_header_fallback(file: Any) -> pd.DataFrame | None:
             pass
 
         if not best_columns:
-            add_audit_event('destination_model_header_fallback_empty', area='MODELO', status='AVISO', details={'file': _file_audit_info(file)})
+            add_audit_event('mapping_model_header_fallback_empty', area='MODELO', status='AVISO', details={'file': _file_audit_info(file)})
             return None
         df = pd.DataFrame(columns=_dedupe_columns(best_columns))
         add_audit_event(
-            'destination_model_header_fallback_applied',
+            'mapping_model_header_fallback_applied',
             area='MODELO',
             status='OK',
             details={
@@ -134,7 +135,7 @@ def _read_excel_header_fallback(file: Any) -> pd.DataFrame | None:
         )
         return df
     except Exception as exc:
-        add_audit_event('destination_model_header_fallback_failed', area='MODELO', status='ERRO', details={'file': _file_audit_info(file), 'error': str(exc)})
+        add_audit_event('mapping_model_header_fallback_failed', area='MODELO', status='ERRO', details={'file': _file_audit_info(file), 'error': str(exc)})
         return None
 
 
@@ -145,19 +146,19 @@ def _safe_read(file: Any) -> pd.DataFrame | None:
             fallback_df = _read_excel_header_fallback(file)
             if _valid_model(fallback_df):
                 df = fallback_df
-        add_audit_event('destination_model_file_read', area='MODELO', details={'file': _file_audit_info(file), 'dataframe': _df_audit_info(df)})
+        add_audit_event('mapping_model_file_read', area='MODELO', details={'file': _file_audit_info(file), 'dataframe': _df_audit_info(df)})
         return df
     except Exception as exc:
         fallback_df = _read_excel_header_fallback(file)
         if _valid_model(fallback_df):
             add_audit_event(
-                'destination_model_file_read_recovered_by_header_fallback',
+                'mapping_model_file_read_recovered_by_header_fallback',
                 area='MODELO',
                 status='OK',
                 details={'file': _file_audit_info(file), 'dataframe': _df_audit_info(fallback_df), 'original_error': str(exc)},
             )
             return fallback_df
-        add_audit_event('destination_model_file_read_failed', area='MODELO', status='ERRO', details={'file': _file_audit_info(file), 'error': str(exc)})
+        add_audit_event('mapping_model_file_read_failed', area='MODELO', status='ERRO', details={'file': _file_audit_info(file), 'error': str(exc)})
         return None
 
 
@@ -179,52 +180,41 @@ def _columns_caption(df: pd.DataFrame, limit: int = 18) -> str:
 
 
 def _remember_contract_detection(detection) -> None:
-    st.session_state[MODEL_CONTRACT_TYPE_KEY] = detection.contract_type
-    st.session_state[MODEL_CONTRACT_LABEL_KEY] = detection.label
-    st.session_state[MODEL_CONTRACT_CONFIDENCE_KEY] = float(detection.confidence)
-    st.session_state[MODEL_CONTRACT_REASON_KEY] = detection.reason
-    st.session_state['home_detected_operation'] = detection.contract_type
-    st.session_state['operacao_final'] = detection.contract_type
-    st.session_state['tipo_operacao_final'] = detection.contract_type
-    st.session_state['home_slim_flow_operation'] = detection.contract_type
+    st.session_state[MODEL_CONTRACT_TYPE_KEY] = 'universal'
+    st.session_state[MODEL_CONTRACT_LABEL_KEY] = MODEL_LABEL
+    st.session_state[MODEL_CONTRACT_CONFIDENCE_KEY] = 1.0
+    st.session_state[MODEL_CONTRACT_REASON_KEY] = 'Modelo para mapear enviado pelo usuário.'
+    st.session_state['home_detected_operation'] = 'universal'
 
 
 def _display_contract_label(label: object) -> str:
-    text = str(label or '').strip()
-    if not text or text.lower() in {'modelo universal', 'universal'}:
-        return 'Modelo de destino'
-    return text
+    return MODEL_LABEL
 
 
 def _render_model_summary(file: Any | None, df: pd.DataFrame | None, detection=None) -> None:
     if not isinstance(df, pd.DataFrame):
         return
-    label = _display_contract_label(getattr(detection, 'label', 'Modelo de destino'))
-    st.success(f'{label} anexado como modelo de destino.')
+    st.success(f'{MODEL_LABEL} anexado.')
     st.caption(f'{_file_name(file)} · {len(df)} linha(s) · {len(df.columns)} coluna(s)')
-    with st.expander('Ver colunas do modelo de destino', expanded=False):
+    with st.expander('Ver colunas do modelo para mapear', expanded=False):
         st.caption(_columns_caption(df))
 
 
 def _classified_result(destination_file: Any, destination_df: pd.DataFrame, detection, supported_files: list[Any], ignored_files: list[Any]) -> ModelUploadResult:
-    contract = detection.contract_type
-    cadastro_df = destination_df if contract in {'cadastro', 'atualizacao_preco', 'universal'} else None
-    estoque_df = destination_df if contract == 'estoque' else None
-    cadastro_file = destination_file if cadastro_df is not None else None
-    estoque_file = destination_file if estoque_df is not None else None
+    df = destination_df.copy().fillna('')
     return ModelUploadResult(
-        cadastro_model_file=cadastro_file,
-        cadastro_model_df=cadastro_df,
-        estoque_model_file=estoque_file,
-        estoque_model_df=estoque_df,
+        cadastro_model_file=destination_file,
+        cadastro_model_df=df,
+        estoque_model_file=destination_file,
+        estoque_model_df=df,
         model_file=destination_file,
-        model_df=destination_df,
+        model_df=df,
         attachments=supported_files,
         ignored_files=ignored_files,
-        contract_type=contract,
-        contract_label=_display_contract_label(detection.label),
-        contract_confidence=float(detection.confidence),
-        contract_reason=detection.reason,
+        contract_type='universal',
+        contract_label=MODEL_LABEL,
+        contract_confidence=1.0,
+        contract_reason='Modelo para mapear enviado pelo usuário.',
     )
 
 
@@ -236,7 +226,7 @@ def render_model_upload_box(
     caption: str | None = None,
 ) -> ModelUploadResult:
     files = st.file_uploader(
-        'Enviar modelo de destino',
+        'Enviar modelo para mapear',
         type=None,
         accept_multiple_files=True,
         key=key,
@@ -252,7 +242,7 @@ def render_model_upload_box(
     ignored_files = [file for file in selected_files if _file_ext(file) not in MODEL_SPREADSHEET_TYPES]
 
     add_audit_event(
-        'destination_model_upload_received',
+        'mapping_model_upload_received',
         area='MODELO',
         details={
             'title': title,
@@ -263,7 +253,7 @@ def render_model_upload_box(
             'supported_count': len(supported_files),
             'ignored_count': len(ignored_files),
             'files': [_file_audit_info(file) for file in selected_files],
-            'model_policy': 'detect_real_bling_or_universal_contract',
+            'model_policy': 'universal_mapping_model',
         },
     )
 
@@ -271,7 +261,7 @@ def render_model_upload_box(
         st.warning('Nenhuma planilha compatível encontrada. Use XLSX, XLS, CSV, XLSM, XLSB ou ZIP com CSV/XLSX dentro.')
         return ModelUploadResult(attachments=[], ignored_files=ignored_files)
 
-    with st.spinner('Lendo modelo de destino...'):
+    with st.spinner('Lendo modelo para mapear...'):
         loaded = [(file, _safe_read(file)) for file in supported_files]
         destination_file, destination_df = _pick_destination_model(loaded)
 
@@ -282,18 +272,15 @@ def render_model_upload_box(
     detection = detect_model_contract(destination_df)
     _remember_contract_detection(detection)
     add_audit_event(
-        'destination_model_selected',
+        'mapping_model_selected',
         area='MODELO',
         status='OK',
         details={
             'selected_model_file': _file_audit_info(destination_file),
             'selected_df': _df_audit_info(destination_df),
-            'model_policy': 'real_contract_detection',
-            'contract_type': detection.contract_type,
-            'contract_label': detection.label,
-            'contract_confidence': detection.confidence,
-            'contract_reason': detection.reason,
-            'scores': detection.scores,
+            'model_policy': 'universal_mapping_model',
+            'contract_type': 'universal',
+            'contract_label': MODEL_LABEL,
         },
     )
     _render_model_summary(destination_file, destination_df, detection)
