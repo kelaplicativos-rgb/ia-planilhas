@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from io import BytesIO
+
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.files import read_uploaded_file
 from bling_app_zero.core.flow_spine_output import output_diagnostics, output_is_api, output_plan
 from bling_app_zero.ui.cadastro_wizard_state import (
     CADASTRO_MODELO_KEY,
@@ -20,6 +23,29 @@ from bling_app_zero.ui.shared_mapping import render_shared_cadastro_mapping
 RESPONSIBLE_FILE = 'bling_app_zero/ui/cadastro_mapping_step.py'
 HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
 CONTEXT_BLING_API = 'bling_api'
+MODEL_BYTES_KEY = 'destination_model_upload_bytes'
+MODEL_NAME_KEY = 'destination_model_upload_name'
+
+MODEL_FALLBACK_KEYS = (
+    CADASTRO_MODELO_KEY,
+    'df_modelo_universal',
+    'home_modelo_universal_df',
+    'modelo_universal_df',
+    'mapeiaai_final_contract_df',
+    'home_modelo_cadastro_df',
+    'df_modelo_cadastro',
+    'modelo_cadastro_df',
+    'home_modelo_estoque_df',
+    'df_modelo_estoque',
+    'modelo_estoque_df',
+    'estoque_wizard_df_modelo',
+)
+
+
+class _NamedBytesIO(BytesIO):
+    def __init__(self, data: bytes, name: str):
+        super().__init__(data)
+        self.name = name
 
 
 def _is_api_context() -> bool:
@@ -35,6 +61,29 @@ def _operation_label() -> str:
         return str(plan.primary_action_label or plan.operation or '').strip()
     except Exception:
         return ''
+
+
+def _resolve_model_df() -> pd.DataFrame | None:
+    for key in MODEL_FALLBACK_KEYS:
+        value = st.session_state.get(key)
+        if valid_model(value):
+            st.session_state[CADASTRO_MODELO_KEY] = value.copy().fillna('')
+            return value.copy().fillna('')
+
+    data = st.session_state.get(MODEL_BYTES_KEY)
+    name = str(st.session_state.get(MODEL_NAME_KEY) or 'modelo.csv')
+    if isinstance(data, (bytes, bytearray)) and data:
+        try:
+            df = read_uploaded_file(_NamedBytesIO(bytes(data), name))
+        except Exception:
+            df = None
+        if valid_model(df):
+            df = df.copy().fillna('')
+            st.session_state[CADASTRO_MODELO_KEY] = df
+            st.session_state['df_modelo_universal'] = df
+            st.session_state['home_modelo_universal_df'] = df
+            return df
+    return None
 
 
 def _render_mapping_spine_caption() -> None:
@@ -69,7 +118,7 @@ def _df_for_mapping(df_origem: pd.DataFrame) -> pd.DataFrame:
 
 def render_cadastro_mapeamento_step() -> None:
     df_origem = st.session_state.get(CADASTRO_ORIGEM_KEY)
-    df_modelo = st.session_state.get(CADASTRO_MODELO_KEY)
+    df_modelo = _resolve_model_df()
     _render_mapping_spine_caption()
 
     if not valid_df(df_origem):
@@ -107,7 +156,7 @@ def render_cadastro_mapeamento_step() -> None:
 
     render_shared_cadastro_mapping(df_para_mapear, df_modelo)
 
-    df_final = st.session_state.get('df_final_cadastro')
+    df_final = st.session_state.get('df_final_universal') or st.session_state.get('df_final_cadastro')
     if isinstance(df_final, pd.DataFrame) and len(df_final) != len(df_origem):
         if render_row_count_blocker(df_final):
             return
