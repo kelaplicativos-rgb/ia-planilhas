@@ -18,6 +18,7 @@ LIVE_HARD_STALE_SECONDS = 900
 MAX_PROGRESS_EVENTS = 25
 CALLBACK_RENDER_INTERVAL_SECONDS = 4.0
 CALLBACK_RENDER_MIN_PERCENT_DELTA = 8
+RESPONSIBLE_FILE = 'bling_app_zero/ui/site_progress.py'
 
 
 # BLINGFIX 2026-06-10:
@@ -26,6 +27,10 @@ CALLBACK_RENDER_MIN_PERCENT_DELTA = 8
 # quando o backend envia muitas mensagens de UI durante uma captura longa.
 # A correção abaixo mantém o progresso salvo em session_state, mas reduz o volume
 # de renderizações em tempo real e remove tabelas/sidebar pesadas durante o loop.
+# BLINGFIX 2026-06-11:
+# Nunca abrir expander dentro do histórico de progresso. Essa tela já pode estar
+# dentro de outro expander do painel do site e Streamlit bloqueia expanders
+# aninhados com StreamlitAPIException.
 
 
 def _progress_state_from_streamlit() -> SiteProgressState:
@@ -290,8 +295,8 @@ def render_site_progress_history() -> None:
     _render_execution_plan()
 
     if log:
-        with st.expander('Últimos eventos salvos', expanded=False):
-            _render_progress_table(log, height=220)
+        st.markdown('#### Últimos eventos salvos')
+        _render_progress_table(log, height=220)
     else:
         st.caption('Aguardando primeiro evento detalhado salvo.')
 
