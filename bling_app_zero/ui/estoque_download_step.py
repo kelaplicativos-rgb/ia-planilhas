@@ -7,11 +7,11 @@ from bling_app_zero.ui.estoque_wizard_state import build_stock_outputs_if_possib
 
 
 def render_estoque_download_step() -> None:
-    st.markdown('### Download do estoque')
-    st.caption('Última etapa: baixe somente a planilha final de atualização de estoque.')
+    st.markdown('### Download')
+    st.caption('Baixe o modelo mapeado usando exatamente o layout anexado.')
 
     if not build_stock_outputs_if_possible():
-        st.warning('Ainda não há planilha de estoque. Volte para o mapeamento do estoque.')
+        st.warning('Ainda não há modelo mapeado. Volte para o mapeamento.')
         return
     render_stock_downloads()
 
