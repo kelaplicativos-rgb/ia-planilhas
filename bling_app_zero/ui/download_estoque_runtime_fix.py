@@ -9,12 +9,13 @@ from bling_app_zero.core.operation_contract import OP_ESTOQUE, normalize_operati
 from bling_app_zero.core.text import normalize_key
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/download_estoque_runtime_fix.py'
-_PATCH_ATTR = '_download_estoque_runtime_fix_v5_template_file'
+_PATCH_ATTR = '_download_estoque_runtime_fix_v6_template_label'
 _ORIGINAL_ATTR = '_download_estoque_original_mismatch_error'
 
 ESTOQUE_QTY_TERMS = ('quantidade', 'qtd', 'saldo', 'estoque', 'balanco', 'balanço')
 ESTOQUE_DEPOSIT_TERMS = ('deposito', 'depósito')
 ESTOQUE_CODE_TERMS = ('codigo', 'código', 'sku', 'referencia', 'referência', 'id', 'id produto', 'id_produto')
+DOWNLOAD_LABEL_TEXT = '⬇️ Download Modelo Mapeado'
 
 
 def _columns(df: Any) -> list[str]:
@@ -57,6 +58,8 @@ def install_download_estoque_runtime_fix() -> bool:
         add_audit_event('download_estoque_runtime_fix_import_failed', area='DOWNLOAD', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
         return False
 
+    home_download.download_label = lambda: DOWNLOAD_LABEL_TEXT
+
     if getattr(home_download, _PATCH_ATTR, False):
         return False
 
@@ -74,7 +77,7 @@ def install_download_estoque_runtime_fix() -> bool:
 
     home_download._operation_contract_mismatch_error = guarded_contract_mismatch
     setattr(home_download, _PATCH_ATTR, True)
-    add_audit_event('download_estoque_runtime_fix_installed', area='DOWNLOAD', status='OK', details={'exact_model_runtime': True, 'exact_template_file_runtime': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('download_estoque_runtime_fix_installed', area='DOWNLOAD', status='OK', details={'exact_model_runtime': True, 'exact_template_file_runtime': True, 'download_label': DOWNLOAD_LABEL_TEXT, 'responsible_file': RESPONSIBLE_FILE})
     return True
 
 
