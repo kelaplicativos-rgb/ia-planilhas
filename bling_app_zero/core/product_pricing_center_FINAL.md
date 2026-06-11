@@ -1,0 +1,3 @@
+# Final
+
+Centralizador finalizado.
