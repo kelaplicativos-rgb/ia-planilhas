@@ -27,6 +27,18 @@ MODEL_NAME_KEY = 'destination_model_upload_name'
 MODEL_OBJECT_KEY = 'destination_model_upload_object'
 
 MODEL_STATE_KEYS = (
+    MODEL_SIGNATURE_KEY,
+    MODEL_BYTES_KEY,
+    MODEL_NAME_KEY,
+    MODEL_OBJECT_KEY,
+    'destination_model_contract_type',
+    'destination_model_contract_label',
+    'destination_model_contract_confidence',
+    'destination_model_contract_reason',
+    'model_contract_type',
+    'model_contract_label',
+    'model_contract_confidence',
+    'model_contract_reason',
     'df_modelo_universal',
     'home_modelo_universal_df',
     'modelo_universal_df',
@@ -55,6 +67,11 @@ OUTPUT_STATE_KEYS = (
     'final_download_df_snapshot',
     'final_download_file_bytes',
     'final_download_file_name',
+    'final_download_mime',
+    'final_download_signature',
+    'final_download_rules_signature',
+    'final_download_operation',
+    'final_download_widget_key',
 )
 
 
@@ -104,6 +121,10 @@ def _file_signature(file: Any | None) -> str:
     if not data:
         return ''
     return f'{_file_name(file)}:{len(data)}:{hashlib.sha256(data).hexdigest()[:16]}'
+
+
+def _has_previous_model_state() -> bool:
+    return any(key in st.session_state for key in MODEL_STATE_KEYS)
 
 
 def _clear_previous_model_state(reason: str) -> None:
@@ -248,6 +269,8 @@ def render_model_upload_box(title: str, operation: str, key: str, required_model
     files = st.file_uploader('Enviar modelo para mapear', type=None, accept_multiple_files=True, key=key, help='Envie a planilha modelo que será preenchida no final. Ela precisa ter cabeçalho com os nomes das colunas.', label_visibility='collapsed')
 
     if not files:
+        if _has_previous_model_state():
+            _clear_previous_model_state('modelo_removido_ou_uploader_vazio')
         return ModelUploadResult(attachments=[], ignored_files=[])
 
     selected_files = list(files)
@@ -257,6 +280,7 @@ def render_model_upload_box(title: str, operation: str, key: str, required_model
     add_audit_event('mapping_model_upload_received', area='MODELO', details={'title': title, 'operation': operation, 'key': key, 'required_model': required_model, 'caption': caption, 'supported_count': len(supported_files), 'ignored_count': len(ignored_files), 'files': [_file_audit_info(file) for file in selected_files], 'model_policy': 'universal_mapping_model'})
 
     if not supported_files:
+        _clear_previous_model_state('modelo_incompativel')
         st.warning('Nenhuma planilha compatível encontrada. Use XLSX, XLS, CSV, XLSM, XLSB ou ZIP com CSV/XLSX dentro.')
         return ModelUploadResult(attachments=[], ignored_files=ignored_files)
 
@@ -271,6 +295,7 @@ def render_model_upload_box(title: str, operation: str, key: str, required_model
         destination_file, destination_df = _pick_destination_model(loaded)
 
     if not _valid_model(destination_df):
+        _clear_previous_model_state('modelo_sem_colunas_validas')
         st.warning('Não encontrei colunas válidas nesse arquivo. Verifique se a planilha possui cabeçalho na primeira linha ou envie o modelo correto que será preenchido no final.')
         return ModelUploadResult(attachments=supported_files, ignored_files=ignored_files)
 
