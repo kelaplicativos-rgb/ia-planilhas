@@ -12,87 +12,24 @@ MODEL_TYPE_CADASTRO: Final[str] = 'cadastro'
 MODEL_TYPE_ESTOQUE: Final[str] = 'estoque'
 MODEL_TYPE_PRECOS: Final[str] = 'precos'
 
-VALID_OPERATIONS: Final[set[str]] = {
-    OP_CADASTRO,
-    OP_ESTOQUE,
-    OP_ATUALIZACAO_PRECO,
-    OP_UNIVERSAL,
-}
-
-LEGACY_OPERATION_ALIASES: Final[dict[str, str]] = {
-    '': OP_UNIVERSAL,
-    'modelo': OP_UNIVERSAL,
-    'modelo final': OP_UNIVERSAL,
-    'modelo_final': OP_UNIVERSAL,
-    'modelo_destino': OP_UNIVERSAL,
-    'planilha': OP_UNIVERSAL,
-    'csv': OP_UNIVERSAL,
-    'universal': OP_UNIVERSAL,
-    'wizard_cadastro_estoque': OP_UNIVERSAL,
-
-    'cadastro': OP_CADASTRO,
-    'cadastrar': OP_CADASTRO,
-    'produto': OP_CADASTRO,
-    'produtos': OP_CADASTRO,
-    'new_product': OP_CADASTRO,
-    'create_product': OP_CADASTRO,
-    'cadastro_produto': OP_CADASTRO,
-    'cadastro_produtos': OP_CADASTRO,
-    'cadastro de produto': OP_CADASTRO,
-    'cadastro de produtos': OP_CADASTRO,
-
-    'estoque': OP_ESTOQUE,
-    'stock': OP_ESTOQUE,
-    'saldo': OP_ESTOQUE,
-    'saldos': OP_ESTOQUE,
-    'quantidade': OP_ESTOQUE,
-    'quantidades': OP_ESTOQUE,
-    'atualizacao_estoque': OP_ESTOQUE,
-    'atualização_estoque': OP_ESTOQUE,
-    'atualizar_estoque': OP_ESTOQUE,
-    'atualizar estoque': OP_ESTOQUE,
-    'atualização de estoque': OP_ESTOQUE,
-    'atualizacao de estoque': OP_ESTOQUE,
-
-    'preco': OP_ATUALIZACAO_PRECO,
-    'preço': OP_ATUALIZACAO_PRECO,
-    'precos': OP_ATUALIZACAO_PRECO,
-    'preços': OP_ATUALIZACAO_PRECO,
-    'price': OP_ATUALIZACAO_PRECO,
-    'prices': OP_ATUALIZACAO_PRECO,
-    'atualizar_preco': OP_ATUALIZACAO_PRECO,
-    'atualizar_precos': OP_ATUALIZACAO_PRECO,
-    'atualizar preço': OP_ATUALIZACAO_PRECO,
-    'atualizar preços': OP_ATUALIZACAO_PRECO,
-    'atualizacao_preco': OP_ATUALIZACAO_PRECO,
-    'atualizacao_precos': OP_ATUALIZACAO_PRECO,
-    'atualização_preço': OP_ATUALIZACAO_PRECO,
-    'atualização_preços': OP_ATUALIZACAO_PRECO,
-    'atualização_precos': OP_ATUALIZACAO_PRECO,
-    'atualização de preço': OP_ATUALIZACAO_PRECO,
-    'atualização de preços': OP_ATUALIZACAO_PRECO,
-    'atualizacao de preco': OP_ATUALIZACAO_PRECO,
-    'atualizacao de precos': OP_ATUALIZACAO_PRECO,
-}
-
+VALID_OPERATIONS: Final[set[str]] = {OP_UNIVERSAL, OP_CADASTRO, OP_ESTOQUE, OP_ATUALIZACAO_PRECO}
+LEGACY_OPERATION_ALIASES: Final[dict[str, str]] = {'': OP_UNIVERSAL}
 MODEL_OPERATION_BY_TYPE: Final[dict[str, str]] = {
-    MODEL_TYPE_CADASTRO: OP_CADASTRO,
-    MODEL_TYPE_ESTOQUE: OP_ESTOQUE,
-    MODEL_TYPE_PRECOS: OP_ATUALIZACAO_PRECO,
+    MODEL_TYPE_CADASTRO: OP_UNIVERSAL,
+    MODEL_TYPE_ESTOQUE: OP_UNIVERSAL,
+    MODEL_TYPE_PRECOS: OP_UNIVERSAL,
 }
-
 OPERATION_LABELS: Final[dict[str, str]] = {
-    OP_CADASTRO: 'Cadastro de produtos',
-    OP_ESTOQUE: 'Atualização de estoque',
-    OP_ATUALIZACAO_PRECO: 'Atualização de preços',
-    OP_UNIVERSAL: 'Modelo final preenchido',
+    OP_UNIVERSAL: 'Modelo para mapear',
+    OP_CADASTRO: 'Modelo para mapear',
+    OP_ESTOQUE: 'Modelo para mapear',
+    OP_ATUALIZACAO_PRECO: 'Modelo para mapear',
 }
-
 OPERATION_BADGES: Final[dict[str, str]] = {
-    OP_CADASTRO: '📄 CSV BLING · CADASTRO',
-    OP_ESTOQUE: '📦 CSV BLING · ESTOQUE',
-    OP_ATUALIZACAO_PRECO: '💲 CSV BLING · PREÇOS',
-    OP_UNIVERSAL: '📄 CSV BLING · MODELO FINAL',
+    OP_UNIVERSAL: 'Modelo mapeado',
+    OP_CADASTRO: 'Modelo mapeado',
+    OP_ESTOQUE: 'Modelo mapeado',
+    OP_ATUALIZACAO_PRECO: 'Modelo mapeado',
 }
 
 
@@ -104,40 +41,27 @@ class OperationContract:
 
 
 def normalize_operation(value: object, *, default: str = OP_UNIVERSAL) -> str:
-    text = str(value or '').strip().lower()
-    if text in VALID_OPERATIONS:
-        return text
-    if text in LEGACY_OPERATION_ALIASES:
-        return LEGACY_OPERATION_ALIASES[text]
-    return default
+    return OP_UNIVERSAL
 
 
 def operation_from_model_type(model_type: object, *, default: str = OP_UNIVERSAL) -> str:
-    text = str(model_type or '').strip().lower()
-    if text in MODEL_OPERATION_BY_TYPE:
-        return MODEL_OPERATION_BY_TYPE[text]
-    return normalize_operation(text, default=default)
+    return OP_UNIVERSAL
 
 
 def operation_label(operation: object) -> str:
-    return OPERATION_LABELS.get(normalize_operation(operation), OPERATION_LABELS[OP_UNIVERSAL])
+    return OPERATION_LABELS[OP_UNIVERSAL]
 
 
 def operation_badge(operation: object) -> str:
-    return OPERATION_BADGES.get(normalize_operation(operation), OPERATION_BADGES[OP_UNIVERSAL])
+    return OPERATION_BADGES[OP_UNIVERSAL]
 
 
 def operation_contract(operation: object) -> OperationContract:
-    normalized = normalize_operation(operation)
-    return OperationContract(
-        operation=normalized,
-        label=operation_label(normalized),
-        badge=operation_badge(normalized),
-    )
+    return OperationContract(operation=OP_UNIVERSAL, label=operation_label(operation), badge=operation_badge(operation))
 
 
 def is_price_update_operation(operation: object) -> bool:
-    return normalize_operation(operation) == OP_ATUALIZACAO_PRECO
+    return False
 
 
 __all__ = [
