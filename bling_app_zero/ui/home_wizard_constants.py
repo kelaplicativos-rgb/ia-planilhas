@@ -3,8 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 # Chaves históricas mantidas como aliases de compatibilidade.
-# No fluxo atual elas representam o modelo de destino anexado na primeira etapa,
-# não contratos separados de cadastro/estoque.
+# No fluxo atual elas representam o mesmo modelo universal enviado pelo usuário.
 HOME_CADASTRO_MODEL_KEY = 'home_modelo_cadastro_df'
 HOME_ESTOQUE_MODEL_KEY = 'home_modelo_estoque_df'
 GLOBAL_CADASTRO_MODEL_KEYS = ['df_modelo_cadastro', 'modelo_cadastro_df']
@@ -19,13 +18,13 @@ WIZARD_STEP_KEY = 'bling_wizard_step'
 UNIVERSAL_OPERATION_VALUE = 'universal'
 
 STEP_MODELO = 'modelo'
-STEP_OPERACAO = 'operacao'  # legado: oculto no fluxo atual
+STEP_OPERACAO = 'operacao'
 STEP_PRECIFICACAO = 'precificacao'
 STEP_ORIGEM = 'origem'
 STEP_ENTRADA = 'entrada'
 STEP_REGRAS = 'regras'
 STEP_MAPEAMENTO = 'mapeamento'
-STEP_GERAR_ESTOQUE = 'gerar_estoque'  # legado: não usado no fluxo atual
+STEP_GERAR_ESTOQUE = 'gerar_estoque'
 STEP_PREVIEW = 'preview'
 STEP_DOWNLOAD = 'download'
 STEP_PROCESSAR = 'processar'
@@ -41,13 +40,12 @@ UNIVERSAL_STEPS = [
     STEP_DOWNLOAD,
 ]
 
-# Aliases legados preservados para não quebrar imports externos.
 CADASTRO_STEPS = list(UNIVERSAL_STEPS)
 ESTOQUE_STEPS = list(UNIVERSAL_STEPS)
 ALL_STEPS = list(dict.fromkeys(UNIVERSAL_STEPS + [STEP_OPERACAO, STEP_GERAR_ESTOQUE, STEP_PROCESSAR]))
 
 STEP_LABELS = {
-    STEP_MODELO: 'Modelo de destino',
+    STEP_MODELO: 'Modelo para mapear',
     STEP_OPERACAO: 'Etapa legada ocultada',
     STEP_ORIGEM: 'Origem dos dados',
     STEP_ENTRADA: 'Dados importados',
@@ -97,22 +95,8 @@ RESET_OUTPUT_KEYS = [
     'flow_spine_sender_operation',
     'flow_spine_final_title',
     'bling_finish_mode',
-    'bling_api_intelligent_batch_plan_v1',
-    'bling_api_batch_send_state_v2',
-    'bling_api_payload_preview_cache_v2',
-    'bling_api_preflight_cache_v1',
-    'bling_api_live_progress_v2',
-    'bling_api_last_batch_seconds_v1',
-    'neutral_bling_send_state_v1',
-    'neutral_bling_send_report_v1',
     'mapping_bling_api',
     'mapping_confidence_bling_api',
-    'bling_safe_product_resolution_cache_v10',
-    'cadastro_entry_site_source_resolved_from',
-    'cadastro_source_signature_atual',
-    'bling_autofluxo_last_step',
-    'bling_autofluxo_pause_step',
-    'bling_autofluxo_last_move',
     'rules_center_reviewed',
     'bling_user_rules',
     'home_precificacao_inicial',
@@ -129,10 +113,6 @@ RESET_OUTPUT_KEYS = [
     'cadastro_wizard_expected_source_signature',
     'cadastro_mapping_confirmed',
     'cadastro_mapping_confirmed_signature',
-    'cadastro_supplier_price_master_filter_active',
-    'cadastro_supplier_price_master_rows',
-    'cadastro_supplier_price_master_signature',
-    'cadastro_supplier_price_master_excess_rows_removed',
     'df_final_cadastro',
     'df_final_cadastro_preview_rules_applied',
     'mapping_cadastro',
@@ -186,20 +166,6 @@ RESET_OUTPUT_KEYS = [
     'live_operation_progress_last_v1',
     'live_operation_progress_log_v1',
     'live_operation_progress_last_seen_at_v1',
-    'blingsmartscan_report_estoque',
-    'blingsmartscan_report_cadastro',
-    'blingsmartscan_notice_estoque',
-    'blingsmartscan_notice_cadastro',
-    'blingsmartscan_decision_estoque',
-    'blingsmartscan_decision_cadastro',
-    'blingsmartscan_last_notice',
-    'blingsmartscan_last_decision',
-    'blingsmartscan_manual_continue_required',
-    'blingsmartscan_ready_to_continue',
-    'blingsmartscan_continue_target_step',
-    'blingsmartscan_finished_operation',
-    'blingsmartscan_finished_rows',
-    'blingsmartscan_finished_columns',
     'site_stock_requested_columns_enforced',
     'site_stock_requested_columns_count',
     'guided_login_capture_config',
@@ -220,7 +186,43 @@ class WizardNav:
     steps: list[str]
 
 
-def nav_for_step(steps: list[str], current: str) -> WizardNav:
-    if current not in steps:
-        current = steps[0]
-    return WizardNav(current=current, index=steps.index(current), total=len(steps), steps=steps)
+def nav_for_step(step: str, steps: list[str] | None = None) -> WizardNav:
+    safe_steps = list(steps or UNIVERSAL_STEPS)
+    current = str(step or STEP_MODELO).strip().lower()
+    if current not in safe_steps:
+        current = safe_steps[0]
+    return WizardNav(current=current, index=safe_steps.index(current), total=len(safe_steps), steps=safe_steps)
+
+
+__all__ = [
+    'ALL_STEPS',
+    'CADASTRO_STEPS',
+    'DEFAULT_PENDING_MESSAGE',
+    'ESTOQUE_STEPS',
+    'FLOW_ACTIVE_KEY',
+    'FLOW_OPERATION_KEY',
+    'FLOW_ORIGIN_KEY',
+    'GLOBAL_CADASTRO_MODEL_KEYS',
+    'GLOBAL_ESTOQUE_MODEL_KEYS',
+    'HOME_CADASTRO_MODEL_KEY',
+    'HOME_ESTOQUE_MODEL_KEY',
+    'LEGACY_ORIGIN_RADIO_KEY',
+    'RESET_OUTPUT_KEYS',
+    'STEP_DOWNLOAD',
+    'STEP_ENTRADA',
+    'STEP_GERAR_ESTOQUE',
+    'STEP_LABELS',
+    'STEP_MAPEAMENTO',
+    'STEP_MODELO',
+    'STEP_OPERACAO',
+    'STEP_ORIGEM',
+    'STEP_PRECIFICACAO',
+    'STEP_PREVIEW',
+    'STEP_PROCESSAR',
+    'STEP_REGRAS',
+    'UNIVERSAL_OPERATION_VALUE',
+    'UNIVERSAL_STEPS',
+    'WIZARD_STEP_KEY',
+    'WizardNav',
+    'nav_for_step',
+]
