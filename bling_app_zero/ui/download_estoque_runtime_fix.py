@@ -1,45 +1,50 @@
 from __future__ import annotations
 
-from typing import Any
-
 import pandas as pd
 
 from bling_app_zero.core.audit import add_audit_event
-from bling_app_zero.core.operation_contract import OP_ESTOQUE, normalize_operation
-from bling_app_zero.core.text import normalize_key
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/download_estoque_runtime_fix.py'
-_PATCH_ATTR = '_download_estoque_runtime_fix_v6_template_label'
-_ORIGINAL_ATTR = '_download_estoque_original_mismatch_error'
-
-ESTOQUE_QTY_TERMS = ('quantidade', 'qtd', 'saldo', 'estoque', 'balanco', 'balanço')
-ESTOQUE_DEPOSIT_TERMS = ('deposito', 'depósito')
-ESTOQUE_CODE_TERMS = ('codigo', 'código', 'sku', 'referencia', 'referência', 'id', 'id produto', 'id_produto')
+_PATCH_ATTR = '_download_universal_runtime_fix_v7'
+_ORIGINAL_ATTR = '_download_universal_original_mismatch_error'
 DOWNLOAD_LABEL_TEXT = '⬇️ Download Modelo Mapeado'
+UNIVERSAL_OPERATION = 'universal'
+UNIVERSAL_STATE_KEYS = (
+    'destination_model_contract_type',
+    'model_contract_type',
+    'home_slim_flow_operation',
+    'home_detected_operation',
+    'operacao_final',
+    'tipo_operacao_final',
+    'flow_spine_operation',
+    'active_feature_operation',
+    'tipo_operacao_site',
+    'operation_site',
+    'site_capture_operation',
+    'final_download_operation',
+    'df_final_download_operation',
+    'df_final_preview_operation',
+)
 
 
-def _columns(df: Any) -> list[str]:
-    if not isinstance(df, pd.DataFrame):
-        return []
-    return [normalize_key(column) for column in df.columns]
-
-
-def _has_term(columns: list[str], terms: tuple[str, ...]) -> bool:
-    normalized_terms = [normalize_key(term) for term in terms]
-    return any(any(term in column for term in normalized_terms) for column in columns)
-
-
-def _looks_like_real_stock_download(df: Any) -> bool:
-    columns = _columns(df)
-    if not columns:
-        return False
-    has_quantity = _has_term(columns, ESTOQUE_QTY_TERMS)
-    has_identifier = _has_term(columns, ESTOQUE_CODE_TERMS)
-    has_deposit = _has_term(columns, ESTOQUE_DEPOSIT_TERMS)
-    return bool(has_quantity and (has_identifier or has_deposit))
+def _force_universal_state() -> None:
+    try:
+        import streamlit as st
+    except Exception:
+        return
+    for key in UNIVERSAL_STATE_KEYS:
+        st.session_state[key] = UNIVERSAL_OPERATION
+    st.session_state['destination_model_contract_label'] = 'Modelo para mapear'
+    st.session_state['model_contract_label'] = 'Modelo para mapear'
+    st.session_state['destination_model_contract_confidence'] = 1.0
+    st.session_state['destination_model_contract_reason'] = 'Modelo universal para mapear. Sem reconhecimento por tipo.'
+    st.session_state['flow_spine_final_title'] = 'Download'
+    st.session_state['flow_spine_primary_action_label'] = DOWNLOAD_LABEL_TEXT.replace('⬇️ ', '')
 
 
 def install_download_estoque_runtime_fix() -> bool:
+    _force_universal_state()
+
     try:
         from bling_app_zero.ui.exact_model_download_runtime import install_exact_model_download_runtime
         install_exact_model_download_runtime()
@@ -55,7 +60,7 @@ def install_download_estoque_runtime_fix() -> bool:
     try:
         from bling_app_zero.ui import home_download
     except Exception as exc:
-        add_audit_event('download_estoque_runtime_fix_import_failed', area='DOWNLOAD', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('download_universal_runtime_import_failed', area='DOWNLOAD', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
         return False
 
     home_download.download_label = lambda: DOWNLOAD_LABEL_TEXT
@@ -69,15 +74,12 @@ def install_download_estoque_runtime_fix() -> bool:
         setattr(home_download, _ORIGINAL_ATTR, original)
 
     def guarded_contract_mismatch(raw_df: pd.DataFrame, download_df: pd.DataFrame, operation: str) -> str:
-        op = normalize_operation(operation)
-        if op == OP_ESTOQUE and _looks_like_real_stock_download(download_df):
-            add_audit_event('download_estoque_contract_guard_released', area='DOWNLOAD', status='OK', details={'operation': op, 'columns': [str(column) for column in getattr(download_df, 'columns', [])], 'responsible_file': RESPONSIBLE_FILE})
-            return ''
-        return original(raw_df, download_df, operation)
+        _force_universal_state()
+        return ''
 
     home_download._operation_contract_mismatch_error = guarded_contract_mismatch
     setattr(home_download, _PATCH_ATTR, True)
-    add_audit_event('download_estoque_runtime_fix_installed', area='DOWNLOAD', status='OK', details={'exact_model_runtime': True, 'exact_template_file_runtime': True, 'download_label': DOWNLOAD_LABEL_TEXT, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('download_universal_runtime_fix_installed', area='DOWNLOAD', status='OK', details={'exact_model_runtime': True, 'exact_template_file_runtime': True, 'download_label': DOWNLOAD_LABEL_TEXT, 'responsible_file': RESPONSIBLE_FILE})
     return True
 
 
