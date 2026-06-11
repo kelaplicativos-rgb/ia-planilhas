@@ -5,7 +5,7 @@ import pandas as pd
 from bling_app_zero.core.audit import add_audit_event
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/download_estoque_runtime_fix.py'
-_PATCH_ATTR = '_download_universal_runtime_fix_v7'
+_PATCH_ATTR = '_download_universal_runtime_fix_v8_safe_state'
 _ORIGINAL_ATTR = '_download_universal_original_mismatch_error'
 DOWNLOAD_LABEL_TEXT = '⬇️ Download Modelo Mapeado'
 UNIVERSAL_OPERATION = 'universal'
@@ -27,19 +27,31 @@ UNIVERSAL_STATE_KEYS = (
 )
 
 
+def _safe_state_set(st, key: str, value) -> None:
+    try:
+        st.session_state[key] = value
+    except Exception:
+        # Streamlit não permite alterar algumas chaves depois que o widget
+        # correspondente já foi instanciado. O runtime não deve derrubar o app.
+        try:
+            st.session_state.setdefault('universal_state_write_warnings', {})[key] = str(value)
+        except Exception:
+            pass
+
+
 def _force_universal_state() -> None:
     try:
         import streamlit as st
     except Exception:
         return
     for key in UNIVERSAL_STATE_KEYS:
-        st.session_state[key] = UNIVERSAL_OPERATION
-    st.session_state['destination_model_contract_label'] = 'Modelo para mapear'
-    st.session_state['model_contract_label'] = 'Modelo para mapear'
-    st.session_state['destination_model_contract_confidence'] = 1.0
-    st.session_state['destination_model_contract_reason'] = 'Modelo universal para mapear. Sem reconhecimento por tipo.'
-    st.session_state['flow_spine_final_title'] = 'Download'
-    st.session_state['flow_spine_primary_action_label'] = DOWNLOAD_LABEL_TEXT.replace('⬇️ ', '')
+        _safe_state_set(st, key, UNIVERSAL_OPERATION)
+    _safe_state_set(st, 'destination_model_contract_label', 'Modelo para mapear')
+    _safe_state_set(st, 'model_contract_label', 'Modelo para mapear')
+    _safe_state_set(st, 'destination_model_contract_confidence', 1.0)
+    _safe_state_set(st, 'destination_model_contract_reason', 'Modelo universal para mapear. Sem reconhecimento por tipo.')
+    _safe_state_set(st, 'flow_spine_final_title', 'Download')
+    _safe_state_set(st, 'flow_spine_primary_action_label', DOWNLOAD_LABEL_TEXT.replace('⬇️ ', ''))
 
 
 def install_download_estoque_runtime_fix() -> bool:
@@ -79,7 +91,7 @@ def install_download_estoque_runtime_fix() -> bool:
 
     home_download._operation_contract_mismatch_error = guarded_contract_mismatch
     setattr(home_download, _PATCH_ATTR, True)
-    add_audit_event('download_universal_runtime_fix_installed', area='DOWNLOAD', status='OK', details={'exact_model_runtime': True, 'exact_template_file_runtime': True, 'download_label': DOWNLOAD_LABEL_TEXT, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('download_universal_runtime_fix_installed', area='DOWNLOAD', status='OK', details={'exact_model_runtime': True, 'exact_template_file_runtime': True, 'download_label': DOWNLOAD_LABEL_TEXT, 'safe_state_write': True, 'responsible_file': RESPONSIBLE_FILE})
     return True
 
 
