@@ -43,6 +43,17 @@ ORIGIN_FALLBACK_KEYS = (
 )
 
 
+def _force_universal_state() -> None:
+    st.session_state['destination_model_contract_type'] = 'universal'
+    st.session_state['destination_model_contract_label'] = 'Modelo para mapear'
+    st.session_state['home_slim_flow_operation'] = 'universal'
+    st.session_state['home_detected_operation'] = 'universal'
+    st.session_state['operacao_final'] = 'universal'
+    st.session_state['tipo_operacao_final'] = 'universal'
+    st.session_state['flow_spine_operation'] = 'universal'
+    st.session_state['active_feature_operation'] = 'universal'
+
+
 def _copy_valid_df(value) -> pd.DataFrame | None:
     if isinstance(value, pd.DataFrame) and not value.empty and len(value.columns) > 0:
         return value.copy().fillna('')
@@ -50,6 +61,7 @@ def _copy_valid_df(value) -> pd.DataFrame | None:
 
 
 def _origin_fallback_df() -> tuple[pd.DataFrame | None, str]:
+    _force_universal_state()
     for key in ORIGIN_FALLBACK_KEYS:
         df = _copy_valid_df(st.session_state.get(key))
         if df is not None:
@@ -60,14 +72,7 @@ def _origin_fallback_df() -> tuple[pd.DataFrame | None, str]:
 
 
 def universal_context_ready() -> bool:
-    """Entrada pronta para seguir.
-
-    BLINGARCH: a origem pode ser carregada antes do modelo/contrato.
-    BLINGFIX: quando a origem vem da busca por site e depois o usuário anexa
-    modelo de estoque, os dados podem estar em chaves legadas/site/estoque.
-    Esta função agora consolida essas chaves em UNIVERSAL_ORIGEM_KEY para que
-    Mapeamento, Preview e Download não exibam falso "Carregue os dados primeiro".
-    """
+    _force_universal_state()
     if _cadastro_context_ready():
         return True
     if valid_df(st.session_state.get(UNIVERSAL_ORIGEM_KEY)):
@@ -96,6 +101,7 @@ def universal_context_ready() -> bool:
 
 
 def universal_mapping_ready() -> bool:
+    _force_universal_state()
     if _cadastro_mapping_ready():
         return True
     try:
