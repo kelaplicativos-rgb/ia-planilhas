@@ -4,54 +4,13 @@ import streamlit as st
 from streamlit.errors import StreamlitAPIException
 
 from bling_app_zero.features_runtime.contracts import FeatureContract
-from bling_app_zero.features_runtime.registry import get_feature_contract, normalize_operation
-from bling_app_zero.universal.model_contract_detector import MODEL_CONTRACT_TYPE_KEY as DESTINATION_MODEL_CONTRACT_TYPE_KEY
+from bling_app_zero.features_runtime.registry import get_feature_contract
 
 HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
 FINISH_MODE_KEY = 'bling_finish_mode'
-LEGACY_MODEL_CONTRACT_TYPE_KEY = 'model_contract_type'
 
 API_CONTEXTS = {'bling', 'bling_api', 'api', 'api_direct'}
 API_FINISH_MODES = {'api_direct', 'api', 'bling_api'}
-API_OPERATION_PRIORITY_KEYS = (
-    'site_capture_operation',
-    'blingsmartscan_finished_operation',
-    'direct_bling_operation_applied',
-    'direct_bling_operation_choice',
-    'flow_spine_api_batch_operation',
-    DESTINATION_MODEL_CONTRACT_TYPE_KEY,
-    'home_slim_flow_operation',
-    'home_detected_operation',
-    'operacao_final',
-    'tipo_operacao_final',
-    'flow_spine_operation',
-    'active_feature_operation',
-    'tipo_operacao_site',
-    'operation_site',
-    LEGACY_MODEL_CONTRACT_TYPE_KEY,
-)
-CSV_OPERATION_PRIORITY_KEYS = (
-    DESTINATION_MODEL_CONTRACT_TYPE_KEY,
-    'home_slim_flow_operation',
-    'home_detected_operation',
-    'operacao_final',
-    'tipo_operacao_final',
-    'tipo_operacao_site',
-    'operation_site',
-    'site_capture_operation',
-    'blingsmartscan_finished_operation',
-    'flow_spine_operation',
-    'active_feature_operation',
-    LEGACY_MODEL_CONTRACT_TYPE_KEY,
-)
-
-
-def _first_state_value(*keys: str) -> object:
-    for key in keys:
-        value = st.session_state.get(key)
-        if value not in (None, ''):
-            return value
-    return ''
 
 
 def _clean(value: object) -> str:
@@ -59,14 +18,6 @@ def _clean(value: object) -> str:
 
 
 def _safe_state_set(key: str, value: object) -> None:
-    """Atualiza session_state sem quebrar quando a chave pertence a widget já criado.
-
-    Streamlit não permite modificar st.session_state de um widget depois que ele
-    foi instanciado na mesma execução. Isso acontecia com
-    direct_bling_operation_choice. A regra aqui é: chaves internas podem ser
-    forçadas; chaves de widget devem ser preservadas quando já estiverem
-    bloqueadas pelo ciclo atual da tela.
-    """
     try:
         st.session_state[key] = value
     except StreamlitAPIException:
@@ -85,40 +36,33 @@ def active_mode() -> str:
 
 
 def active_operation() -> str:
-    keys = API_OPERATION_PRIORITY_KEYS if active_mode() == 'api' else CSV_OPERATION_PRIORITY_KEYS
-    for key in keys:
-        value = st.session_state.get(key)
-        if value in (None, ''):
-            continue
-        operation = normalize_operation(value)
-        if operation:
-            if active_mode() == 'api' and operation == 'universal':
-                continue
-            return operation
-    return 'cadastro' if active_mode() == 'api' else 'universal'
+    # Para arquivos/planilhas/download, não existe mais contrato interno por tipo.
+    # O modelo anexado pelo usuário é o contrato universal absoluto.
+    if active_mode() != 'api':
+        return 'universal'
+    return 'universal'
 
 
 def _apply_runtime_state(contract: FeatureContract) -> None:
-    _safe_state_set('active_feature_contract_key', contract.key)
-    _safe_state_set('active_feature_operation', contract.operation)
+    _safe_state_set('active_feature_contract_key', 'universal_mapping')
+    _safe_state_set('active_feature_operation', 'universal')
     _safe_state_set('active_feature_mode', contract.mode)
     _safe_state_set('active_feature_steps', list(contract.steps))
-    _safe_state_set('flow_spine_contract_key', contract.key)
-    _safe_state_set('flow_spine_operation', contract.operation)
-    _safe_state_set('flow_spine_primary_action_label', contract.primary_action_label)
+    _safe_state_set('flow_spine_contract_key', 'universal_mapping')
+    _safe_state_set('flow_spine_operation', 'universal')
+    _safe_state_set('flow_spine_primary_action_label', 'Download Modelo Mapeado')
     if contract.mode == 'api':
         _safe_state_set('flow_spine_final_destination', 'api_bling')
-        _safe_state_set('flow_spine_final_title', 'Enviar para o Bling')
-        _safe_state_set('direct_bling_operation_applied', contract.operation)
-        _safe_state_set('bling_finish_mode', 'api_direct')
-        _safe_state_set('home_entry_context', 'bling_api')
+        _safe_state_set('flow_spine_final_title', 'Enviar')
+        _safe_state_set('direct_bling_operation_applied', 'universal')
     else:
         _safe_state_set('flow_spine_final_destination', 'download')
-        _safe_state_set('flow_spine_final_title', 'Baixar arquivo final')
+        _safe_state_set('flow_spine_final_title', 'Download')
 
 
 def active_contract() -> FeatureContract:
-    contract = get_feature_contract(active_operation(), active_mode())
+    mode = active_mode()
+    contract = get_feature_contract('universal', mode)
     _apply_runtime_state(contract)
     return contract
 
@@ -152,7 +96,7 @@ def feature_needs_download() -> bool:
 
 
 def feature_primary_action_label() -> str:
-    return active_contract().primary_action_label
+    return 'Download Modelo Mapeado'
 
 
 __all__ = [
