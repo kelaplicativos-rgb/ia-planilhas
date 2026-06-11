@@ -1,0 +1,1 @@
+Centralizador de precificacao aplicado nesta branch.
