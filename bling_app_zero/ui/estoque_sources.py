@@ -23,22 +23,30 @@ def safe_read_source(file: Any) -> pd.DataFrame | None:
 
 
 def source_files_from_upload(upload) -> list[Any]:
-    attachments = list(upload.attachments or [])
-    if not attachments:
+    if upload is None:
         return []
 
+    attachments = list(getattr(upload, 'attachments', None) or [])
+    source_file = getattr(upload, 'source_file', None)
+    if not attachments:
+        return [source_file] if source_file is not None else []
+
     sources: list[Any] = []
+    model_file = getattr(upload, 'model_file', None)
+    cadastro_model_file = getattr(upload, 'cadastro_model_file', None)
+    estoque_model_file = getattr(upload, 'estoque_model_file', None)
+
     for file in attachments:
-        if upload.model_file is not None and file is upload.model_file:
+        if model_file is not None and file is model_file:
             continue
-        if upload.cadastro_model_file is not None and file is upload.cadastro_model_file:
+        if cadastro_model_file is not None and file is cadastro_model_file:
             continue
-        if upload.estoque_model_file is not None and file is upload.estoque_model_file:
+        if estoque_model_file is not None and file is estoque_model_file:
             continue
         sources.append(file)
 
-    if not sources and upload.source_file is not None:
-        sources.append(upload.source_file)
+    if not sources and source_file is not None:
+        sources.append(source_file)
 
     return sources
 
