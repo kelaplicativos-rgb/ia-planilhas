@@ -40,7 +40,7 @@ DEFAULT_RENDER_STEPS = (
 )
 
 DEFAULT_LABELS = {
-    STEP_MODELO: 'Modelo',
+    STEP_MODELO: 'Modelo para mapear',
     STEP_ORIGEM: 'Origem dos dados',
     STEP_ENTRADA: 'Dados',
     STEP_PRECIFICACAO: 'Precificação',
@@ -121,11 +121,7 @@ def _labels_for_contract(contract: FeatureContract, steps: Iterable[str]) -> dic
     labels = dict(DEFAULT_LABELS)
     if contract.is_api:
         labels[STEP_ENTRADA] = 'Dados'
-        labels[STEP_DOWNLOAD] = 'Enviar para o Bling'
-    elif contract.operation == 'estoque':
-        labels[STEP_DOWNLOAD] = 'Download do estoque'
-    elif contract.operation == 'atualizacao_preco':
-        labels[STEP_DOWNLOAD] = 'Download de preços'
+        labels[STEP_DOWNLOAD] = 'Download'
     return {step: labels.get(step, step) for step in steps}
 
 
@@ -134,23 +130,11 @@ def _final_destination_for(contract: FeatureContract) -> str:
 
 
 def _final_title_for(contract: FeatureContract) -> str:
-    if contract.is_api:
-        return 'Enviar para o Bling'
-    if contract.operation == 'estoque':
-        return 'Download do estoque'
-    if contract.operation == 'atualizacao_preco':
-        return 'Download de preços'
     return 'Download'
 
 
 def _final_caption_for(contract: FeatureContract) -> str:
-    if contract.is_api:
-        return 'Envie a base revisada diretamente para o Bling conectado. O CSV fica disponível apenas como backup opcional.'
-    if contract.operation == 'estoque':
-        return 'Baixe o arquivo final de atualização de estoque, usando a mesma base validada da prévia.'
-    if contract.operation == 'atualizacao_preco':
-        return 'Baixe o arquivo final de preços, usando a mesma base validada da prévia.'
-    return 'Baixe exatamente o mesmo arquivo conferido na prévia final.'
+    return 'Baixe o modelo mapeado usando exatamente o layout anexado.'
 
 
 def build_flow_spine_plan(*, render_steps: Iterable[str] = DEFAULT_RENDER_STEPS) -> FlowSpinePlan:
@@ -206,15 +190,8 @@ def resolve_step(plan: FlowSpinePlan, candidate: object) -> str:
 
 def pending_message_for(plan: FlowSpinePlan, step: str) -> str:
     normalized = str(step or '').strip().lower()
-    if plan.is_api:
-        if normalized == STEP_ORIGEM:
-            return 'Escolha Arquivo ou Site para buscar os produtos que serão enviados ao Bling.'
-        if normalized == STEP_ENTRADA:
-            return 'Carregue os produtos da origem para liberar o envio direto.'
-        if normalized == STEP_DOWNLOAD:
-            return 'Carregue os dados para enviar direto ao Bling.'
     if normalized == STEP_MODELO:
-        return 'Anexe ou confirme o modelo de destino para liberar a próxima etapa.'
+        return 'Anexe ou confirme o modelo para mapear para liberar a próxima etapa.'
     if normalized == STEP_ORIGEM:
         return 'Escolha se os dados virão de Arquivo ou Site para continuar.'
     if normalized == STEP_ENTRADA:
