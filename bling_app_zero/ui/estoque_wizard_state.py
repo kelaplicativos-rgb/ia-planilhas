@@ -41,6 +41,32 @@ ESTOQUE_SITE_SOURCE_FALLBACK_KEYS = (
     'df_origem_universal',
 )
 
+# BLINGFIX: a etapa 4 de atualização de estoque pode ser aberta depois que
+# a origem foi carregada pelo fluxo universal/cadastro. Nesse caso a barra diz
+# "Dados concluído", mas o mapeamento antigo só olhava as chaves de estoque e
+# exibia falso "Nenhuma origem de dados carregada". Este grupo conecta todas as
+# chaves conhecidas de origem ao motor de estoque.
+ESTOQUE_SESSION_SOURCE_FALLBACK_KEYS = (
+    *ESTOQUE_SITE_SOURCE_FALLBACK_KEYS,
+    'cadastro_wizard_df_para_mapear',
+    'cadastro_wizard_df_origem',
+    'df_origem',
+    'df_origem_planilha',
+    'df_produtos_origem',
+    'df_source',
+    'df_origem_site_como_planilha',
+    'df_origem_site_como_planilha_universal',
+    'df_origem_site_como_planilha_cadastro',
+    'df_origem_site_como_planilha_estoque',
+    'df_origem_site_como_planilha_atualizacao_preco',
+    'df_origem_cadastro',
+    'df_estoque_origem',
+    'df_source_estoque',
+    'df_site_bruto_universal',
+    'df_site_bruto_cadastro',
+    'df_site_bruto_atualizacao_preco',
+)
+
 ESTOQUE_OUTPUT_KEYS = [
     'estoque_multi_outputs',
     ESTOQUE_FINAL_KEY,
@@ -58,6 +84,12 @@ def valid_model(df_modelo: pd.DataFrame | None) -> bool:
 
 def _copy_df(df: pd.DataFrame | None) -> pd.DataFrame | None:
     if isinstance(df, pd.DataFrame) and len(df.columns) > 0:
+        return df.copy().fillna('')
+    return None
+
+
+def _copy_valid_source(df: object) -> pd.DataFrame | None:
+    if isinstance(df, pd.DataFrame) and not df.empty and len(df.columns) > 0:
         return df.copy().fillna('')
     return None
 
@@ -147,14 +179,34 @@ def is_site_origin() -> bool:
     return str(st.session_state.get('home_slim_flow_origin') or st.session_state.get('origem_final') or '').strip().lower() == 'site'
 
 
-def _site_source_df() -> pd.DataFrame | None:
-    for key in ESTOQUE_SITE_SOURCE_FALLBACK_KEYS:
-        df = st.session_state.get(key)
-        if isinstance(df, pd.DataFrame) and not df.empty:
+def _session_source_df() -> tuple[pd.DataFrame | None, str]:
+    for key in ESTOQUE_SESSION_SOURCE_FALLBACK_KEYS:
+        df = _copy_valid_source(st.session_state.get(key))
+        if df is not None:
             if key != ESTOQUE_ORIGEM_SITE_KEY:
                 st.session_state[ESTOQUE_ORIGEM_SITE_KEY] = df.copy().fillna('')
-            return df.copy().fillna('')
-    return None
+                try:
+                    add_audit_event(
+                        'estoque_origin_resolved_from_session_fallback',
+                        area='ESTOQUE',
+                        step='mapeamento',
+                        status='OK',
+                        details={
+                            'source_key': key,
+                            'rows': int(len(df)),
+                            'columns': [str(column) for column in list(df.columns)[:80]],
+                            'responsible_file': RESPONSIBLE_FILE,
+                        },
+                    )
+                except Exception:
+                    pass
+            return df, key
+    return None, ''
+
+
+def _site_source_df() -> pd.DataFrame | None:
+    df, _source_key = _session_source_df()
+    return df
 
 
 def current_source_signature(df_origem_site: pd.DataFrame | None, upload) -> str:
@@ -284,9 +336,11 @@ def estoque_output_ready() -> bool:
 
 
 def current_stock_source() -> tuple[pd.DataFrame | None, str]:
-    df_site = _site_source_df()
+    df_site, source_key = _session_source_df()
     if isinstance(df_site, pd.DataFrame) and not df_site.empty:
-        return df_site, 'Origem criada pelo site'
+        if source_key == ESTOQUE_ORIGEM_SITE_KEY or str(source_key).startswith('df_site_') or 'site' in str(source_key):
+            return df_site, 'Origem criada pelo site'
+        return df_site, 'Origem recuperada do fluxo de dados'
 
     upload = st.session_state.get(ESTOQUE_UPLOAD_KEY)
     files = source_files_from_upload(upload)
@@ -317,7 +371,6 @@ def sync_manual_stock_output(name: str) -> bool:
         'df_final': df_final,
         'mapping': mapping,
     }
-
     st.session_state['estoque_multi_outputs'] = [result]
     set_stock_output(df_final, mapping)
     return True
