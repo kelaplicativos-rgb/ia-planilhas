@@ -10,16 +10,19 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.exporter import enforce_export_contract
 from bling_app_zero.core.files import read_uploaded_file
 from bling_app_zero.core.final_csv_exporter import exact_contract_columns
-from bling_app_zero.core.operation_contract import normalize_operation
 from bling_app_zero.core.text import normalize_key
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/exact_model_download_runtime.py'
-PATCH_ATTR = '_exact_model_download_runtime_v1'
+PATCH_ATTR = '_exact_model_download_runtime_unico_v3'
 ORIGINAL_ATTR = '_exact_model_original_download_dataframe_for_contract'
 MODEL_BYTES_KEY = 'destination_model_upload_bytes'
 MODEL_NAME_KEY = 'destination_model_upload_name'
 
-MODEL_KEYS = (
+MODEL_DF_KEYS = (
+    'mapeiaai_final_contract_df',
+    'home_modelo_universal_df',
+    'df_modelo_universal',
+    'modelo_universal_df',
     'home_modelo_estoque_df',
     'df_modelo_estoque',
     'modelo_estoque_df',
@@ -30,10 +33,6 @@ MODEL_KEYS = (
     'home_modelo_atualizacao_preco_df',
     'df_modelo_atualizacao_preco',
     'modelo_atualizacao_preco_df',
-    'home_modelo_universal_df',
-    'df_modelo_universal',
-    'modelo_universal_df',
-    'mapeiaai_final_contract_df',
 )
 
 
@@ -57,36 +56,36 @@ def _columns_from_upload_bytes() -> list[str]:
     try:
         df_model = read_uploaded_file(NamedBytesIO(bytes(data), name))
     except Exception as exc:
-        add_audit_event('exact_model_download_read_failed', area='DOWNLOAD', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('exact_model_read_failed', area='DOWNLOAD', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
         return []
     return _columns_from_df(df_model)
 
 
-def _active_contract_columns() -> tuple[list[str], str]:
-    for key in MODEL_KEYS:
-        columns = _columns_from_df(st.session_state.get(key))
-        if columns:
-            return columns, key
+def active_model_columns() -> tuple[list[str], str]:
     columns = _columns_from_upload_bytes()
     if columns:
         return columns, MODEL_BYTES_KEY
+    for key in MODEL_DF_KEYS:
+        columns = _columns_from_df(st.session_state.get(key))
+        if columns:
+            return columns, key
     return [], ''
 
 
-def _adapt_to_exact_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+def _adapt(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     source = df.copy().fillna('') if isinstance(df, pd.DataFrame) else pd.DataFrame()
-    by_normalized: dict[str, str] = {}
+    by_key: dict[str, str] = {}
     for column in source.columns:
         key = normalize_key(column)
-        if key and key not in by_normalized:
-            by_normalized[key] = column
+        if key and key not in by_key:
+            by_key[key] = column
     out = pd.DataFrame(index=source.index)
     for target in columns:
         if target in source.columns:
             out[target] = source[target]
-        else:
-            source_col = by_normalized.get(normalize_key(target))
-            out[target] = source[source_col] if source_col in source.columns else ''
+            continue
+        src = by_key.get(normalize_key(target))
+        out[target] = source[src] if src in source.columns else ''
     return enforce_export_contract(out, columns).fillna('')
 
 
@@ -103,10 +102,10 @@ def install_exact_model_download_runtime() -> bool:
         setattr(home_download, ORIGINAL_ATTR, original)
 
     def download_dataframe_for_contract(df: pd.DataFrame, operation: str):
-        columns, source_key = _active_contract_columns()
+        columns, source_key = active_model_columns()
         if columns:
-            adapted = _adapt_to_exact_columns(df, columns)
-            add_audit_event('exact_model_download_contract_applied', area='DOWNLOAD', status='OK', details={'operation': normalize_operation(operation), 'source_key': source_key, 'columns_count': len(columns), 'columns': columns, 'responsible_file': RESPONSIBLE_FILE})
+            adapted = _adapt(df, columns)
+            add_audit_event('exact_attached_model_contract_applied', area='DOWNLOAD', status='OK', details={'source_key': source_key, 'columns_count': len(columns), 'columns': columns, 'responsible_file': RESPONSIBLE_FILE})
             return adapted, True, columns
         return original(df, operation)
 
@@ -115,4 +114,4 @@ def install_exact_model_download_runtime() -> bool:
     return True
 
 
-__all__ = ['install_exact_model_download_runtime']
+__all__ = ['install_exact_model_download_runtime', 'active_model_columns']
