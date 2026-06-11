@@ -5,7 +5,7 @@ import pandas as pd
 from bling_app_zero.core.audit import add_audit_event
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/download_estoque_runtime_fix.py'
-_PATCH_ATTR = '_download_universal_runtime_fix_v8_safe_state'
+_PATCH_ATTR = '_download_universal_runtime_fix_v9_no_template_runtime'
 _ORIGINAL_ATTR = '_download_universal_original_mismatch_error'
 DOWNLOAD_LABEL_TEXT = '⬇️ Download Modelo Mapeado'
 UNIVERSAL_OPERATION = 'universal'
@@ -31,8 +31,6 @@ def _safe_state_set(st, key: str, value) -> None:
     try:
         st.session_state[key] = value
     except Exception:
-        # Streamlit não permite alterar algumas chaves depois que o widget
-        # correspondente já foi instanciado. O runtime não deve derrubar o app.
         try:
             st.session_state.setdefault('universal_state_write_warnings', {})[key] = str(value)
         except Exception:
@@ -64,12 +62,6 @@ def install_download_estoque_runtime_fix() -> bool:
         add_audit_event('download_exact_model_runtime_install_failed', area='DOWNLOAD', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
 
     try:
-        from bling_app_zero.ui.exact_template_file_runtime import install_exact_template_file_runtime
-        install_exact_template_file_runtime()
-    except Exception as exc:
-        add_audit_event('download_exact_template_runtime_install_failed', area='DOWNLOAD', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
-
-    try:
         from bling_app_zero.ui import home_download
     except Exception as exc:
         add_audit_event('download_universal_runtime_import_failed', area='DOWNLOAD', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
@@ -91,7 +83,7 @@ def install_download_estoque_runtime_fix() -> bool:
 
     home_download._operation_contract_mismatch_error = guarded_contract_mismatch
     setattr(home_download, _PATCH_ATTR, True)
-    add_audit_event('download_universal_runtime_fix_installed', area='DOWNLOAD', status='OK', details={'exact_model_runtime': True, 'exact_template_file_runtime': True, 'download_label': DOWNLOAD_LABEL_TEXT, 'safe_state_write': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('download_universal_runtime_fix_installed', area='DOWNLOAD', status='OK', details={'exact_model_runtime': True, 'exact_template_file_runtime': False, 'template_runtime_removed': True, 'download_label': DOWNLOAD_LABEL_TEXT, 'safe_state_write': True, 'responsible_file': RESPONSIBLE_FILE})
     return True
 
 
