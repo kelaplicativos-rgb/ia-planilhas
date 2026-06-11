@@ -9,9 +9,12 @@ from bling_app_zero.core.final_csv_exporter import (
     enforce_contract,
     filename_for_operation,
     final_csv_bytes,
-    normalize_image_urls,
     sanitize_final_dataframe,
 )
+
+
+def normalize_image_urls(value):
+    return value
 
 
 def enforce_export_contract(df: pd.DataFrame | None, contract_columns: Sequence[object] | None = None) -> pd.DataFrame:
@@ -24,12 +27,13 @@ def sanitize_for_bling(
     contract_columns: Sequence[object] | None = None,
     explicit_empty_columns: Sequence[object] | None = None,
 ) -> pd.DataFrame:
+    # Nome legado mantido, mas agora é sanitização universal mínima.
     return sanitize_final_dataframe(
         df,
-        operation=operation,
+        operation='universal',
         contract_columns=contract_columns,
         explicit_empty_columns=explicit_empty_columns,
-        run_download_features=True,
+        run_download_features=False,
     )
 
 
@@ -39,12 +43,13 @@ def to_bling_csv_bytes(
     contract_columns: Sequence[object] | None = None,
     explicit_empty_columns: Sequence[object] | None = None,
 ) -> bytes:
+    # Nome legado mantido por compatibilidade. Não aplica mais transformações Bling.
     return final_csv_bytes(
         df,
-        operation=operation,
+        operation='universal',
         contract_columns=contract_columns,
         explicit_empty_columns=explicit_empty_columns,
-        run_download_features=True,
+        run_download_features=False,
     )
 
 
