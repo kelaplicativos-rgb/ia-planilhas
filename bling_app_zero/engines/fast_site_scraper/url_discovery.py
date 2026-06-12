@@ -5,6 +5,7 @@ from urllib.parse import parse_qs, urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
 
+from bling_app_zero.engines.fast_site_scraper.catalog_api_discovery import discover_from_public_catalog_apis
 from bling_app_zero.engines.fast_site_scraper.http_client import fetch_live, fetch_many_live
 
 COMMON_FEEDS = [
@@ -12,9 +13,12 @@ COMMON_FEEDS = [
     'sitemap.xml',
     'sitemap_index.xml',
     'sitemap-products.xml',
+    'sitemap_products_1.xml',
     'product-sitemap.xml',
     'products-sitemap.xml',
     'produtos.xml',
+    'produtos-sitemap.xml',
+    'sitemap-produtos.xml',
     'products.xml',
     'google.xml',
     'merchant.xml',
@@ -23,8 +27,8 @@ COMMON_FEEDS = [
     'catalogo.xml',
     'feed.xml',
 ]
-PRODUCT_PATH_HINTS = ['/produto/', '/product/', '/p/', '/item/', 'produto-', 'product-']
-PRODUCT_QUERY_HINTS = {'sku', 'cod', 'codigo', 'ref', 'idproduto', 'product_id'}
+PRODUCT_PATH_HINTS = ['/produto/', '/produtos/', '/product/', '/products/', '/p/', '/item/', 'produto-', 'product-']
+PRODUCT_QUERY_HINTS = {'sku', 'cod', 'codigo', 'ref', 'idproduto', 'product_id', 'variant'}
 BLOCKED_TERMS = ['facebook', 'instagram', 'youtube', 'whatsapp', 'mailto:', 'tel:', '/login', '/conta', '/checkout', '/cart', '/carrinho', '/blog', '/politica', '/termos']
 HTML_DISCOVERY_PAGE_CAP = 350
 HTML_DISCOVERY_BATCH = 36
@@ -32,7 +36,6 @@ FEED_BATCH = 36
 SMART_URL_TARGET = 220
 FULL_SCAN_URL_TARGET = 2500
 MIN_HTML_PRODUCTS_TO_SKIP_FEED = 60
-PUBLIC_HTML_DISCOVERY_ONLY = True
 
 
 def split_urls(raw: str) -> list[str]:
@@ -74,9 +77,11 @@ def productish_url(url: str) -> bool:
     if query_keys & PRODUCT_QUERY_HINTS:
         return True
 
-    if re.search(r'/(produto|product)s?/[a-z0-9][a-z0-9._-]{2,}', low_path):
+    if re.search(r'/(produto|produtos|product|products)s?/[a-z0-9][a-z0-9._-]{2,}', low_path):
         return True
     if re.search(r'/(p|item)/[a-z0-9][a-z0-9._-]{2,}', low_path):
+        return True
+    if re.search(r'/[a-z0-9][a-z0-9._-]{2,}/p/?$', low_path):
         return True
 
     return any(hint in low_url for hint in ['produto-', 'product-'])
@@ -114,12 +119,6 @@ def feed_candidates(start: str) -> list[str]:
 
 
 def discover_from_feeds(starts: list[str], max_products: int) -> list[str]:
-    """Descobre URLs por feeds apenas para complemento controlado.
-
-    Esta função não deve criar linhas na busca ao vivo. Produto vindo somente
-    de feed/cache/API/teste precisa ser descartado se não existir na lista
-    pública viva encontrada por HTML.
-    """
     queue: list[str] = []
     for start in starts:
         queue.extend(feed_candidates(start))
@@ -205,6 +204,15 @@ def _smart_target(max_products: int) -> int:
     return min(requested, FULL_SCAN_URL_TARGET)
 
 
+def _extend_unique(target: list[str], items: list[str], limit: int) -> list[str]:
+    for url in items:
+        if url and url not in target:
+            target.append(url)
+            if len(target) >= limit:
+                break
+    return target
+
+
 def discover_product_urls(raw_urls: str, max_pages: int, max_products: int) -> list[str]:
     starts = [norm_url(url) for url in split_urls(raw_urls) if norm_url(url)]
     if not starts:
@@ -217,19 +225,20 @@ def discover_product_urls(raw_urls: str, max_pages: int, max_products: int) -> l
         return direct_products[:max_products]
 
     urls: list[str] = []
-    for url in direct_products:
-        if url not in urls:
-            urls.append(url)
+    _extend_unique(urls, direct_products, smart_target)
 
-    # BLINGFIX ORIGEM VIVA:
-    # A descoberta de produtos na busca ao vivo usa apenas HTML público.
-    # Feeds/sitemaps/API/cache/testes podem complementar depois, mas nunca
-    # criar produto novo fora da lista viva encontrada na URL informada.
+    api_urls = discover_from_public_catalog_apis(starts, max_products=smart_target)
+    _extend_unique(urls, api_urls, smart_target)
+    if len(urls) >= smart_target:
+        return urls[:smart_target]
+
     html_urls = discover_from_html(starts, max_pages=max_pages, max_products=smart_target)
-    for url in html_urls:
-        if url not in urls:
-            urls.append(url)
-            if len(urls) >= smart_target:
-                return urls[:smart_target]
+    _extend_unique(urls, html_urls, smart_target)
+    if len(urls) >= smart_target:
+        return urls[:smart_target]
+
+    if len(html_urls) < MIN_HTML_PRODUCTS_TO_SKIP_FEED:
+        feed_urls = discover_from_feeds(starts, max_products=smart_target - len(urls))
+        _extend_unique(urls, feed_urls, smart_target)
 
     return urls[:smart_target]
