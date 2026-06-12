@@ -12,7 +12,7 @@ from bling_app_zero.agents.site_platform_detector import SitePlatformSignal, det
 from bling_app_zero.core.audit import add_audit_event
 
 RESPONSIBLE_FILE = 'bling_app_zero/agents/site_capture_agent.py'
-SMARTSCAN_SAFE_URL_BATCH = 60
+SMARTSCAN_SAFE_URL_BATCH = 1200
 
 
 @dataclass(frozen=True)
