@@ -1,32 +1,32 @@
 from __future__ import annotations
 
-MAX_WORKERS = 4
+MAX_WORKERS = 6
 SLOW_LINK_SECONDS = 5.0
-SMART_COMPLETE_TARGET = 60
-SMART_STOP_MIN_PROCESSED = 30
+SMART_COMPLETE_TARGET = 120
+SMART_STOP_MIN_PROCESSED = 60
 SMART_STOP_COMPLETE_RATIO = 0.70
-SMART_STOP_NO_GAIN_WINDOW = 20
-SMART_STOP_MIN_FOUND = 20
-DEVTOOLS_FALLBACK_MAX_PER_RUN = 3
+SMART_STOP_NO_GAIN_WINDOW = 40
+SMART_STOP_MIN_FOUND = 40
+DEVTOOLS_FALLBACK_MAX_PER_RUN = 8
 
-SAFE_CAPTURE_MAX_PAGES = 45
-SAFE_CAPTURE_MAX_PRODUCTS = 60
+SAFE_CAPTURE_MAX_PAGES = 80
+SAFE_CAPTURE_MAX_PRODUCTS = 120
 SAFE_CAPTURE_MAX_DEPTH = 1
-SAFE_CAPTURE_TIMEOUT_SECONDS = 45
+SAFE_CAPTURE_TIMEOUT_SECONDS = 75
 
-DEEP_CAPTURE_MAX_PAGES = 80
-DEEP_CAPTURE_MAX_PRODUCTS = 80
-DEEP_CAPTURE_MAX_DEPTH = 1
-DEEP_CAPTURE_TIMEOUT_SECONDS = 55
+DEEP_CAPTURE_MAX_PAGES = 500
+DEEP_CAPTURE_MAX_PRODUCTS = 1200
+DEEP_CAPTURE_MAX_DEPTH = 2
+DEEP_CAPTURE_TIMEOUT_SECONDS = 180
 
-FLOW_CAPTURE_MAX_PAGES = 80
-FLOW_CAPTURE_MAX_PRODUCTS = 80
-FLOW_CAPTURE_MAX_DEPTH = 1
-FLOW_CAPTURE_TIMEOUT_SECONDS = 55
+FLOW_CAPTURE_MAX_PAGES = 500
+FLOW_CAPTURE_MAX_PRODUCTS = 1200
+FLOW_CAPTURE_MAX_DEPTH = 2
+FLOW_CAPTURE_TIMEOUT_SECONDS = 180
 
-STREAMLIT_HARD_BUDGET_SECONDS = 60
-DISCOVERY_BUDGET_SECONDS = 25
-PRODUCT_READ_BUDGET_SECONDS = 45
+STREAMLIT_HARD_BUDGET_SECONDS = 180
+DISCOVERY_BUDGET_SECONDS = 60
+PRODUCT_READ_BUDGET_SECONDS = 150
 
 RICH_DESCRIPTION_KINDS = {'descricao_complementar', 'ficha_tecnica', 'caracteristicas'}
 DESCRIPTION_TRIGGER_KINDS = {'descricao', 'descricao_curta', 'nome_apoio', *RICH_DESCRIPTION_KINDS}
@@ -56,17 +56,17 @@ def normalize_capture_limits(
             'max_products': _clamp_int(max_products, FLOW_CAPTURE_MAX_PRODUCTS, 1, FLOW_CAPTURE_MAX_PRODUCTS),
             'max_depth': _clamp_int(max_depth, FLOW_CAPTURE_MAX_DEPTH, 0, FLOW_CAPTURE_MAX_DEPTH),
             'timeout_seconds': FLOW_CAPTURE_TIMEOUT_SECONDS,
-            'safe_limited': True,
+            'safe_limited': False,
             'flow_mode': True,
         }
 
-    if normalized_mode in {'deep', 'deep_site_search', 'full_deep_scan'}:
+    if normalized_mode in {'deep', 'deep_site_search', 'full_deep_scan', 'complete', 'all_products'}:
         return {
             'max_pages': _clamp_int(max_pages, DEEP_CAPTURE_MAX_PAGES, 1, DEEP_CAPTURE_MAX_PAGES),
             'max_products': _clamp_int(max_products, DEEP_CAPTURE_MAX_PRODUCTS, 1, DEEP_CAPTURE_MAX_PRODUCTS),
             'max_depth': _clamp_int(max_depth, DEEP_CAPTURE_MAX_DEPTH, 0, DEEP_CAPTURE_MAX_DEPTH),
             'timeout_seconds': DEEP_CAPTURE_TIMEOUT_SECONDS,
-            'safe_limited': True,
+            'safe_limited': False,
             'flow_mode': False,
         }
 
