@@ -176,7 +176,7 @@ def model_for_operation(operation: str, *, state: MutableMapping[str, Any] | Non
     op = _resolved_operation(operation, state=state)
 
     if context == CONTEXT_BLING_API:
-        return None
+        return _first_valid_model_from_session(_bling_model_keys_for_operation(op), state=state)
 
     if context == CONTEXT_UNIVERSAL:
         return _first_valid_model_from_session(_universal_model_keys(), state=state)
