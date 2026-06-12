@@ -185,7 +185,7 @@ def run_bling_smartscan(
             progress_callback=progress_callback,
         )
 
-    normalized_df, core_result = apply_blingsmartcore(df, origin='site', operation='universal')
+    normalized_df, core_result = apply_blingsmartcore(df, origin='site', operation=operation)
     quality = core_result.quality
     source = 'API interna' if used_api else 'scraper seguro'
     message = f'Busca por site finalizada via {source} com nota {quality.score}/100 e {quality.rows} produto(s) capturado(s).'
@@ -222,7 +222,7 @@ def run_bling_smartscan(
             'platform': asdict(platform),
             'strategy': strategy,
             'quality': asdict(quality),
-            'operation': 'universal',
+            'operation': operation,
             'used_api': used_api,
             'api_finder': asdict(api_result) if api_result is not None else None,
             'url_batch_original': original_urls,
