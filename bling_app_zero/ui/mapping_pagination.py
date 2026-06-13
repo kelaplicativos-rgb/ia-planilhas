@@ -137,6 +137,47 @@ def _change_mapping_page(mapping_key: str, next_index: int, *, direction: str, t
     safe_rerun('mapping_page_changed')
 
 
+def go_to_next_mapping_page(mapping_key: str, *, reason: str = 'mapping_continue_next_fields') -> bool:
+    meta = st.session_state.get(mapping_page_meta_key(mapping_key))
+    if not isinstance(meta, dict):
+        return False
+    page_index = int(meta.get('page_index') or 0)
+    total_pages = max(1, int(meta.get('total_pages') or 1))
+    if page_index >= total_pages - 1:
+        return False
+    st.session_state.setdefault(f'{mapping_key}_visited_pages', set())
+    visited = st.session_state.get(f'{mapping_key}_visited_pages')
+    if not isinstance(visited, set):
+        visited = set(visited or []) if isinstance(visited, (list, tuple)) else set()
+    visited.add(page_index)
+    visited.add(page_index + 1)
+    st.session_state[f'{mapping_key}_visited_pages'] = visited
+    add_audit_event(
+        'mapping_continue_to_next_fields_clicked',
+        area='MAPEAMENTO',
+        status='OK',
+        details={
+            'mapping_key': mapping_key,
+            'from_page': page_index + 1,
+            'to_page': page_index + 2,
+            'total_pages': total_pages,
+            'reason': reason,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+    _change_mapping_page(mapping_key, page_index + 1, direction='next_required', total_pages=total_pages)
+    return True
+
+
+def mapping_has_more_pages(mapping_key: str) -> bool:
+    meta = st.session_state.get(mapping_page_meta_key(mapping_key))
+    if not isinstance(meta, dict):
+        return False
+    page_index = int(meta.get('page_index') or 0)
+    total_pages = max(1, int(meta.get('total_pages') or 1))
+    return page_index < total_pages - 1
+
+
 def _page_label(meta: dict) -> str:
     page_index = int(meta.get('page_index') or 0)
     total_pages = max(1, int(meta.get('total_pages') or 1))
@@ -170,6 +211,8 @@ def render_mapping_page_arrows(mapping_key: str, *, position: str = 'bottom') ->
 
 
 __all__ = [
+    'go_to_next_mapping_page',
+    'mapping_has_more_pages',
     'mapping_page_anchor_id',
     'mapping_page_key',
     'mapping_page_meta_key',
