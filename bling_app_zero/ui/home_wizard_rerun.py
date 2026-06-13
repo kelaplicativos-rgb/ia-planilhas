@@ -10,6 +10,11 @@ WIZARD_STEP_KEY = 'bling_wizard_step'
 NEUTRAL_WIZARD_STATE_KEY = 'neutral_wizard_state_v1'
 LAST_RERUN_REASON_KEY = 'home_wizard_last_rerun_reason'
 LAST_RERUN_TARGET_KEY = 'home_wizard_last_rerun_target'
+FORCE_RERUN_REASONS = {
+    'origin_selected',
+    'wizard_back_clicked',
+    'wizard_next_clicked',
+}
 
 
 def _current_api_mode() -> bool:
@@ -115,7 +120,8 @@ def safe_rerun(reason: str, *, target_step: str = '') -> None:
 
     last_reason = str(st.session_state.get(LAST_RERUN_REASON_KEY) or '')
     last_target = str(st.session_state.get(LAST_RERUN_TARGET_KEY) or '')
-    if not changed and last_reason == normalized_reason and last_target == normalized_target:
+    force_rerun = normalized_reason in FORCE_RERUN_REASONS
+    if not force_rerun and not changed and last_reason == normalized_reason and last_target == normalized_target:
         return
 
     st.session_state[LAST_RERUN_REASON_KEY] = normalized_reason
@@ -128,6 +134,7 @@ def safe_rerun(reason: str, *, target_step: str = '') -> None:
         details={
             'reason': normalized_reason,
             'changed_step': changed,
+            'forced_rerun': force_rerun,
             'neutral_wizard_synced': True,
             'api_mode_current_priority': True,
             'responsible_file': RESPONSIBLE_FILE,
@@ -136,4 +143,9 @@ def safe_rerun(reason: str, *, target_step: str = '') -> None:
     st.rerun()
 
 
-__all__ = ['set_step_without_rerun', 'safe_rerun', 'sync_neutral_wizard_step']
+__all__ = [
+    'FORCE_RERUN_REASONS',
+    'safe_rerun',
+    'set_step_without_rerun',
+    'sync_neutral_wizard_step',
+]
