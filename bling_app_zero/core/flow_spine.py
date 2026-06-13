@@ -27,6 +27,7 @@ STEP_DOWNLOAD = 'download'
 
 DESTINATION_API = 'api_bling'
 DESTINATION_CSV = 'csv_download'
+UNIFIED_BLING_SEND_KEY = 'home_bling_connected_same_flow_api_send'
 
 DEFAULT_RENDER_STEPS = (
     STEP_MODELO,
@@ -117,23 +118,36 @@ class FlowSpinePlan:
         }
 
 
+def _unified_bling_send_enabled() -> bool:
+    return bool(st.session_state.get(UNIFIED_BLING_SEND_KEY))
+
+
 def _labels_for_contract(contract: FeatureContract, steps: Iterable[str]) -> dict[str, str]:
     labels = dict(DEFAULT_LABELS)
-    if contract.is_api:
+    if contract.is_api or _unified_bling_send_enabled():
         labels[STEP_ENTRADA] = 'Dados'
-        labels[STEP_DOWNLOAD] = 'Download'
+        labels[STEP_DOWNLOAD] = 'Enviar / Download'
     return {step: labels.get(step, step) for step in steps}
 
 
 def _final_destination_for(contract: FeatureContract) -> str:
+    # BLINGFIX 2026-06-13:
+    # Bling conectado não deve trocar o wizard para contrato API curto.
+    # O fluxo permanece CSV/universal e apenas o destino final vira envio API.
+    if _unified_bling_send_enabled():
+        return DESTINATION_API
     return DESTINATION_API if contract.is_api else DESTINATION_CSV
 
 
 def _final_title_for(contract: FeatureContract) -> str:
+    if contract.is_api or _unified_bling_send_enabled():
+        return 'Enviar ao Bling'
     return 'Download'
 
 
 def _final_caption_for(contract: FeatureContract) -> str:
+    if contract.is_api or _unified_bling_send_enabled():
+        return 'Confira a base revisada antes de enviar ao Bling. O CSV fica como backup opcional.'
     return 'Baixe o modelo mapeado usando exatamente o layout anexado.'
 
 
@@ -153,16 +167,17 @@ def build_flow_spine_plan(*, render_steps: Iterable[str] = DEFAULT_RENDER_STEPS)
         steps = [STEP_ORIGEM, STEP_ENTRADA, STEP_DOWNLOAD]
 
     final_destination = _final_destination_for(contract)
+    final_title = _final_title_for(contract)
     plan = FlowSpinePlan(
         contract_key=contract.key,
         operation=contract.operation,
         mode=contract.mode,
-        is_api=bool(contract.is_api),
+        is_api=bool(contract.is_api or _unified_bling_send_enabled()),
         steps=tuple(steps),
         labels=_labels_for_contract(contract, steps),
-        primary_action_label=contract.primary_action_label,
+        primary_action_label='Enviar ao Bling' if final_destination == DESTINATION_API else contract.primary_action_label,
         final_destination=final_destination,
-        final_title=_final_title_for(contract),
+        final_title=final_title,
         final_caption=_final_caption_for(contract),
         backup_enabled=final_destination == DESTINATION_API,
         needs_model=feature_needs_model(),
