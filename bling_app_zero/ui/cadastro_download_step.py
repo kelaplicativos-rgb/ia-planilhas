@@ -5,7 +5,6 @@ import streamlit as st
 
 from bling_app_zero.core.flow_spine import build_flow_spine_plan, is_api_destination
 from bling_app_zero.ui.cadastro_wizard_state import get_context_final_df, set_context_final_df, valid_df
-from bling_app_zero.ui.home_download import _render_api_final
 from bling_app_zero.ui.home_shared import df_signature, download_final
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/cadastro_download_step.py'
@@ -54,8 +53,11 @@ def _store_output_consistency(df_final: pd.DataFrame, operation: str) -> None:
 def render_cadastro_download_step() -> None:
     plan = _flow_plan()
     operation = _current_operation()
-    st.markdown('### Download')
-    st.caption('Baixe o modelo mapeado usando exatamente o layout anexado.')
+    st.markdown('### Enviar / Download' if is_api_destination(plan) else '### Download')
+    if is_api_destination(plan):
+        st.caption('Envie ao Bling no final do mesmo fluxo. O CSV fica como backup opcional.')
+    else:
+        st.caption('Baixe o modelo mapeado usando exatamente o layout anexado.')
 
     df_final = _final_df_for_context(operation)
     if not valid_df(df_final):
@@ -65,11 +67,9 @@ def render_cadastro_download_step() -> None:
     _store_output_consistency(df_final, operation)
 
     if is_api_destination(plan):
-        st.success('Base revisada pronta para envio.')
-        _render_api_final(df_final, operation, f'{_entry_context()}_{operation}')
-        return
-
-    st.success('Modelo mapeado pronto para download.')
+        st.success('Base revisada pronta para envio ao Bling.')
+    else:
+        st.success('Modelo mapeado pronto para download.')
     download_final(df_final, operation, f'{_entry_context()}_{operation}')
 
 
