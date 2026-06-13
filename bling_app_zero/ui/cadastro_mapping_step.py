@@ -5,8 +5,13 @@ from io import BytesIO
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.bling_connected_flow_policy import (
+    activate_connected_flow,
+    annotate_dataframe_for_connected_flow,
+    bling_connected,
+)
 from bling_app_zero.core.files import read_uploaded_file
-from bling_app_zero.core.flow_spine_output import output_diagnostics, output_is_api, output_plan
+from bling_app_zero.core.flow_spine_output import output_diagnostics, output_is_api, output_operation, output_plan
 from bling_app_zero.ui.cadastro_wizard_state import (
     CADASTRO_MAPPING_CONFIRMED_KEY,
     CADASTRO_MAPPING_SIGNATURE_KEY,
@@ -54,10 +59,41 @@ class _NamedBytesIO(BytesIO):
 
 
 def _is_api_context() -> bool:
+    if bling_connected():
+        return True
     try:
         return output_is_api()
     except Exception:
         return str(st.session_state.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower() == CONTEXT_BLING_API
+
+
+def _current_operation() -> str:
+    for key in ('bling_connected_api_operation', 'active_feature_operation', 'flow_spine_operation', 'operacao_final', 'operation', 'selected_operation'):
+        value = str(st.session_state.get(key) or '').strip()
+        if value:
+            return value
+    try:
+        value = str(output_operation() or '').strip()
+        if value:
+            return value
+    except Exception:
+        pass
+    try:
+        plan = output_plan()
+        value = str(getattr(plan, 'operation', '') or '').strip()
+        if value:
+            return value
+    except Exception:
+        pass
+    return 'cadastro'
+
+
+def _origin_kind() -> str:
+    for key in ('bling_connected_origin_kind', 'origem_tipo', 'tipo_origem', 'home_source_kind', 'source_kind'):
+        value = str(st.session_state.get(key) or '').strip().lower()
+        if value:
+            return value
+    return ''
 
 
 def _operation_label() -> str:
@@ -140,18 +176,17 @@ def _api_automation_source_df(df_origem: pd.DataFrame) -> pd.DataFrame:
 
 
 def _prepare_bling_api_automation(df_origem: pd.DataFrame) -> pd.DataFrame | None:
-    """Prepara a base para API sem mapeamento manual.
+    """Prepara a base para API sem mapeamento manual."""
+    operation = _current_operation()
+    policy = activate_connected_flow(operation, _origin_kind())
 
-    Bling conectado significa mínima intervenção humana: o sistema preserva os campos
-    capturados/preparados, marca a etapa como resolvida tecnicamente e libera revisão.
-    """
     df_final = ensure_api_direct_final_df()
     if not valid_df(df_final):
         df_final = _api_automation_source_df(df_origem)
     if not valid_df(df_final):
         return None
 
-    fixed = df_final.copy().fillna('')
+    fixed = annotate_dataframe_for_connected_flow(df_final.copy().fillna(''), policy)
     signature = df_signature(fixed)
     st.session_state['df_final_bling_api'] = fixed
     st.session_state[UNIVERSAL_FINAL_KEY] = fixed
@@ -165,7 +200,23 @@ def _prepare_bling_api_automation(df_origem: pd.DataFrame) -> pd.DataFrame | Non
     st.session_state['bling_api_automation_mapping_skipped'] = True
     st.session_state['bling_api_automation_rows'] = int(len(fixed))
     st.session_state['bling_api_automation_columns'] = int(len(fixed.columns))
+    st.session_state['bling_api_required_selector'] = policy.required_selector
+    st.session_state['bling_api_must_run_ai_check'] = policy.must_run_ai_check
+    st.session_state['bling_api_final_action'] = policy.final_action
     return fixed
+
+
+def _render_connected_policy_notice() -> None:
+    selector = str(st.session_state.get('bling_api_required_selector') or '').strip()
+    final_action = str(st.session_state.get('bling_api_final_action') or '').strip()
+    if selector == 'price_channel_or_general':
+        st.info('Próxima regra: selecionar preço geral ou loja/canal de venda antes de enviar o preço calculado ao Bling.')
+    elif selector == 'stock_deposit':
+        st.info('Próxima regra: selecionar depósito do Bling antes de atualizar estoque.')
+    else:
+        st.info('Próxima regra: comparar, rodar check IA e enviar ao Bling com mínima intervenção humana.')
+    if final_action:
+        st.caption(f'Ação final planejada: {final_action}.')
 
 
 def render_cadastro_mapeamento_step() -> None:
@@ -187,7 +238,8 @@ def render_cadastro_mapeamento_step() -> None:
                 st.metric('Linhas preparadas', len(df_final_api))
             with col_b:
                 st.metric('Campos para API', len(df_final_api.columns))
-            st.info('Bling conectado: automação via API ativa. O sistema preparou os campos automaticamente; a próxima interação humana será revisar a prévia e enviar.')
+            st.info('Bling conectado: automação via API ativa. O sistema preparou os campos automaticamente; o usuário não precisa mapear manualmente.')
+            _render_connected_policy_notice()
             _render_post_mapping_notice()
             return
         st.warning('A automação da API ainda não conseguiu preparar os dados. Volte para Dados importados e confira a origem.')
