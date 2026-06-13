@@ -11,6 +11,7 @@ from bling_app_zero.ui.alerts import enforce_attention_alert_policy
 from bling_app_zero.ui.blingfix_runtime_patches import install_blingfix_runtime_patches
 from bling_app_zero.ui.home import render_home
 from bling_app_zero.ui.layout import inject_streamlit_toolbar_fix
+from bling_app_zero.ui.mapping_pagination_runtime import install_mapping_pagination_runtime
 from bling_app_zero.ui.oauth_link_guard import install_oauth_link_guard
 from bling_app_zero.ui.preventive_bootstrap import install_preventive_bootstrap
 from bling_app_zero.ui.sidebar_tools import render_sidebar_tools
@@ -101,8 +102,6 @@ def _device_hint() -> str:
     stored = str(st.session_state.get(DEVICE_HINT_KEY) or '').strip().lower()
     if stored in {'mobile', 'desktop'}:
         return stored
-    # Sem JS confiável no primeiro render: usa o modo responsivo visual via CSS e mantém
-    # a rota neutra. Assim desktop não é tratado como mobile por engano.
     return 'auto'
 
 
@@ -112,22 +111,16 @@ def _should_skip_connected_landing_for_current_device() -> bool:
         return False
     if hint == 'mobile':
         return True
-    # Rotas/callbacks vindos do Android-safe OAuth devem continuar direto no wizard.
     open_mode = _query_param('open_mode')
     if open_mode in {'android_safe', 'mobile'}:
         st.session_state[DEVICE_HINT_KEY] = 'mobile'
         return True
     if bool(st.session_state.get('home_single_page_flow_active')):
         return True
-    # Em auto, não força desktop nem mobile; deixa a Home renderizar responsiva.
     return False
 
 
 def _auto_enter_wizard_when_bling_connected_on_mobile() -> None:
-    """Pula a landing somente quando o contexto indica celular/fluxo mobile.
-
-    Desktop mantém a tela de escolha. Celular entra direto no fluxo responsivo.
-    """
     if st.session_state.get(MOBILE_AUTO_ENTRY_KEY):
         return
     if str(st.session_state.get('home_active_operation_v2') or '') == FLOW_WIZARD:
@@ -229,6 +222,7 @@ def main() -> None:
     _install_bling_api_verified_media_checkpoint('before_runtime_patches')
     _refresh_blingfix_runtime_patch_session()
     install_blingfix_runtime_patches()
+    install_mapping_pagination_runtime()
     install_oauth_link_guard()
     _install_bling_api_verified_media_checkpoint('after_runtime_patches')
     bling_oauth.process_oauth_callback()
