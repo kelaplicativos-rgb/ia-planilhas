@@ -161,6 +161,67 @@ def _normalize_redirect_uri(value: str) -> str:
     return configured
 
 
+def _looks_like_bling_api_endpoint(url: str) -> bool:
+    text = str(url or '').strip().lower()
+    return 'bling.com.br/api/' in text or 'bling.com.br/api?' in text or 'bling.com.br/api/v' in text
+
+
+def _looks_like_token_endpoint(url: str) -> bool:
+    return '/oauth/token' in str(url or '').strip().lower()
+
+
+def _looks_like_authorize_endpoint(url: str) -> bool:
+    return '/oauth/authorize' in str(url or '').strip().lower()
+
+
+def _valid_backend_start_url(url: str) -> bool:
+    text = str(url or '').strip().lower()
+    if not text:
+        return False
+    if _looks_like_bling_api_endpoint(text):
+        return False
+    return '/auth/bling/start' in text
+
+
+def _safe_backend_auth_url(*, log_invalid: bool = False) -> str:
+    raw = backend_auth_url()
+    if not raw:
+        return ''
+    if _valid_backend_start_url(raw):
+        return raw
+    if log_invalid:
+        add_audit_event(
+            'bling_oauth_backend_auth_url_ignored',
+            area='BLING_OAUTH',
+            status='AVISO',
+            details={
+                'reason': 'backend_auth_url precisa apontar para nosso backend /auth/bling/start; endpoint direto do Bling foi ignorado para evitar tela JSON FORBIDDEN',
+                'backend_auth_url_preview': raw[:140],
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+    return ''
+
+
+def _safe_authorize_url() -> str:
+    raw = authorize_url()
+    if not raw:
+        return AUTH_URL_DEFAULT
+    if _looks_like_token_endpoint(raw) or not _looks_like_authorize_endpoint(raw):
+        add_audit_event(
+            'bling_oauth_authorize_url_fallback_used',
+            area='BLING_OAUTH',
+            status='AVISO',
+            details={
+                'reason': 'authorize_url configurado não parece endpoint de autorização OAuth; usando AUTH_URL_DEFAULT',
+                'authorize_url_preview': str(raw)[:140],
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+        return AUTH_URL_DEFAULT
+    return raw
+
+
 def client_id() -> str:
     return _secret('client_id', CLIENT_ID_DEFAULT)
 
@@ -193,20 +254,23 @@ def oauth_config_status() -> dict[str, Any]:
     cid = client_id()
     secret = client_secret()
     uri = redirect_uri()
-    backend_url = backend_auth_url()
+    raw_backend_url = backend_auth_url()
+    backend_start_url = _safe_backend_auth_url(log_invalid=False)
     return {
-        'ready': bool(backend_url or (cid and secret and uri)),
+        'ready': bool(backend_start_url or (cid and secret and uri)),
         'has_client_id': bool(cid),
         'has_client_secret': bool(secret),
         'has_redirect_uri': bool(uri),
         'client_id_masked': _mask(cid),
         'redirect_uri': uri,
-        'authorize_url': authorize_url(),
+        'authorize_url': _safe_authorize_url(),
         'token_url': token_url(),
-        'backend_auth_url': backend_url,
-        'uses_backend_auth': bool(backend_url),
+        'backend_auth_url': raw_backend_url,
+        'backend_auth_url_valid': bool(backend_start_url),
+        'backend_auth_url_ignored': bool(raw_backend_url and not backend_start_url),
+        'uses_backend_auth': bool(backend_start_url),
         'include_redirect_uri_in_authorize': include_redirect_uri_in_authorize(),
-        'missing': [] if backend_url else [name for name, ok in (('client_id', bool(cid)), ('client_secret', bool(secret)), ('redirect_uri', bool(uri))) if not ok],
+        'missing': [] if backend_start_url else [name for name, ok in (('client_id', bool(cid)), ('client_secret', bool(secret)), ('redirect_uri', bool(uri))) if not ok],
     }
 
 
@@ -240,7 +304,7 @@ def _new_state(extra_context: dict[str, Any] | None = None) -> str:
 
 
 def build_authorization_url(extra_context: dict[str, Any] | None = None) -> str:
-    forced_backend_url = backend_auth_url()
+    forced_backend_url = _safe_backend_auth_url(log_invalid=True)
     if forced_backend_url:
         add_audit_event(
             'bling_oauth_backend_authorization_forced',
@@ -270,6 +334,7 @@ def build_authorization_url(extra_context: dict[str, Any] | None = None) -> str:
     params = {'response_type': 'code', 'client_id': cid, 'state': state}
     if include_redirect:
         params['redirect_uri'] = uri
+    auth_base = _safe_authorize_url()
     add_audit_event(
         'bling_oauth_authorization_url_built',
         area='BLING_OAUTH',
@@ -280,14 +345,16 @@ def build_authorization_url(extra_context: dict[str, Any] | None = None) -> str:
             'has_client_id': bool(cid),
             'client_id_masked': _mask(cid),
             'has_state': bool(state),
+            'auth_base': auth_base,
+            'forced_backend_ignored': bool(backend_auth_url() and not forced_backend_url),
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
-    return f'{authorize_url()}?{urlencode(params)}'
+    return f'{auth_base}?{urlencode(params)}'
 
 
 def required_redirect_uri() -> str:
-    backend_url = backend_auth_url()
+    backend_url = _safe_backend_auth_url(log_invalid=False)
     if backend_url and '/auth/bling/start' in backend_url:
         return backend_url.split('/auth/bling/start', 1)[0].rstrip('/') + '/auth/bling/callback'
     return redirect_uri()
@@ -538,6 +605,8 @@ def render_connection_status_card() -> None:
             'ready': config.get('ready'),
             'uses_backend_auth': config.get('uses_backend_auth'),
             'backend_auth_url_configured': bool(config.get('backend_auth_url')),
+            'backend_auth_url_valid': config.get('backend_auth_url_valid'),
+            'backend_auth_url_ignored': config.get('backend_auth_url_ignored'),
             'has_client_id': config.get('has_client_id'),
             'has_client_secret': config.get('has_client_secret'),
             'redirect_uri': status.get('required_redirect_uri'),
