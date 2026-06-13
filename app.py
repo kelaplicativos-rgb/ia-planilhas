@@ -11,6 +11,7 @@ from bling_app_zero.ui.alerts import enforce_attention_alert_policy
 from bling_app_zero.ui.blingfix_runtime_patches import install_blingfix_runtime_patches
 from bling_app_zero.ui.home import render_home
 from bling_app_zero.ui.layout import inject_streamlit_toolbar_fix
+from bling_app_zero.ui.oauth_link_guard import install_oauth_link_guard
 from bling_app_zero.ui.preventive_bootstrap import install_preventive_bootstrap
 from bling_app_zero.ui.sidebar_tools import render_sidebar_tools
 from bling_app_zero.ui.startup_guard import ensure_app_ready
@@ -85,6 +86,7 @@ def main() -> None:
     _install_bling_api_verified_media_checkpoint('before_runtime_patches')
     _refresh_blingfix_runtime_patch_session()
     install_blingfix_runtime_patches()
+    install_oauth_link_guard()
     _install_bling_api_verified_media_checkpoint('after_runtime_patches')
     bling_oauth.process_oauth_callback()
     add_audit_event('app_started', area='APP', details={'version': APP_VERSION, 'mode': 'session_guarded_start'})
