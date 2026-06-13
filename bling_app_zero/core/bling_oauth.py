@@ -7,7 +7,6 @@ import os
 import secrets
 from collections.abc import MutableMapping
 from datetime import datetime
-from html import escape
 from typing import Any
 from urllib.parse import urlencode
 
@@ -163,7 +162,12 @@ def _normalize_redirect_uri(value: str) -> str:
 
 def _looks_like_bling_api_endpoint(url: str) -> bool:
     text = str(url or '').strip().lower()
-    return 'bling.com.br/api/' in text or 'bling.com.br/api?' in text or 'bling.com.br/api/v' in text
+    return (
+        'api.bling.com.br' in text
+        or 'bling.com.br/api/' in text
+        or 'bling.com.br/api?' in text
+        or 'bling.com.br/api/v' in text
+    )
 
 
 def _looks_like_token_endpoint(url: str) -> bool:
@@ -174,28 +178,15 @@ def _looks_like_authorize_endpoint(url: str) -> bool:
     return '/oauth/authorize' in str(url or '').strip().lower()
 
 
-def _valid_backend_start_url(url: str) -> bool:
-    text = str(url or '').strip().lower()
-    if not text:
-        return False
-    if _looks_like_bling_api_endpoint(text):
-        return False
-    return '/auth/bling/start' in text
-
-
 def _safe_backend_auth_url(*, log_invalid: bool = False) -> str:
     raw = backend_auth_url()
-    if not raw:
-        return ''
-    if _valid_backend_start_url(raw):
-        return raw
-    if log_invalid:
+    if raw and log_invalid:
         add_audit_event(
             'bling_oauth_backend_auth_url_ignored',
             area='BLING_OAUTH',
             status='AVISO',
             details={
-                'reason': 'backend_auth_url precisa apontar para nosso backend /auth/bling/start; endpoint direto do Bling foi ignorado para evitar tela JSON FORBIDDEN',
+                'reason': 'backend OAuth Render desativado: ele redirecionava para api.bling.com.br/OAuth2/views/login.php e gerava Token de autenticação ausente',
                 'backend_auth_url_preview': raw[:140],
                 'responsible_file': RESPONSIBLE_FILE,
             },
@@ -207,13 +198,13 @@ def _safe_authorize_url() -> str:
     raw = authorize_url()
     if not raw:
         return AUTH_URL_DEFAULT
-    if _looks_like_token_endpoint(raw) or not _looks_like_authorize_endpoint(raw):
+    if _looks_like_bling_api_endpoint(raw) or _looks_like_token_endpoint(raw) or not _looks_like_authorize_endpoint(raw):
         add_audit_event(
             'bling_oauth_authorize_url_fallback_used',
             area='BLING_OAUTH',
             status='AVISO',
             details={
-                'reason': 'authorize_url configurado não parece endpoint de autorização OAuth; usando AUTH_URL_DEFAULT',
+                'reason': 'authorize_url configurado não parece endpoint oficial de autorização OAuth; usando AUTH_URL_DEFAULT',
                 'authorize_url_preview': str(raw)[:140],
                 'responsible_file': RESPONSIBLE_FILE,
             },
@@ -266,9 +257,9 @@ def oauth_config_status() -> dict[str, Any]:
         'authorize_url': _safe_authorize_url(),
         'token_url': token_url(),
         'backend_auth_url': raw_backend_url,
-        'backend_auth_url_valid': bool(backend_start_url),
-        'backend_auth_url_ignored': bool(raw_backend_url and not backend_start_url),
-        'uses_backend_auth': bool(backend_start_url),
+        'backend_auth_url_valid': False,
+        'backend_auth_url_ignored': bool(raw_backend_url),
+        'uses_backend_auth': False,
         'include_redirect_uri_in_authorize': include_redirect_uri_in_authorize(),
         'missing': [] if backend_start_url else [name for name, ok in (('client_id', bool(cid)), ('client_secret', bool(secret)), ('redirect_uri', bool(uri))) if not ok],
     }
@@ -304,16 +295,7 @@ def _new_state(extra_context: dict[str, Any] | None = None) -> str:
 
 
 def build_authorization_url(extra_context: dict[str, Any] | None = None) -> str:
-    forced_backend_url = _safe_backend_auth_url(log_invalid=True)
-    if forced_backend_url:
-        add_audit_event(
-            'bling_oauth_backend_authorization_forced',
-            area='BLING_OAUTH',
-            status='OK',
-            details={'backend_auth_url': forced_backend_url, 'responsible_file': RESPONSIBLE_FILE},
-        )
-        return forced_backend_url
-
+    ignored_backend_url = _safe_backend_auth_url(log_invalid=True)
     store = _state_store()
     cid = client_id()
     if not cid:
@@ -346,7 +328,7 @@ def build_authorization_url(extra_context: dict[str, Any] | None = None) -> str:
             'client_id_masked': _mask(cid),
             'has_state': bool(state),
             'auth_base': auth_base,
-            'forced_backend_ignored': bool(backend_auth_url() and not forced_backend_url),
+            'forced_backend_ignored': bool(backend_auth_url() or ignored_backend_url),
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -354,9 +336,6 @@ def build_authorization_url(extra_context: dict[str, Any] | None = None) -> str:
 
 
 def required_redirect_uri() -> str:
-    backend_url = _safe_backend_auth_url(log_invalid=False)
-    if backend_url and '/auth/bling/start' in backend_url:
-        return backend_url.split('/auth/bling/start', 1)[0].rstrip('/') + '/auth/bling/callback'
     return redirect_uri()
 
 
@@ -527,10 +506,6 @@ def _restore_oauth_return_context(payload: dict[str, Any]) -> None:
     if source_step == 'download_panel' or return_to == 'download_panel':
         restore_download_oauth_return()
 
-    # BLINGFIX 2026-06-13:
-    # O link atual da Home envia return_to=home_light_entry. Antes esse retorno não era tratado
-    # e o app caía em uma Home/tela intermediária até o usuário atualizar a página.
-    # Agora qualquer conexão iniciada pela Home/entrada do Bling volta direto para o mesmo wizard.
     if source_step in {'bling_connection_entry', 'home_same_tab_connection', 'home_light_entry'} or return_to in {'start', 'home_light_entry'}:
         _restore_unified_bling_flow(payload)
     store[RESTORED_AFTER_CALLBACK_KEY] = True
