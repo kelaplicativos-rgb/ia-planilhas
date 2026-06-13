@@ -8,9 +8,13 @@ import streamlit as st
 from bling_app_zero.core.files import read_uploaded_file
 from bling_app_zero.core.flow_spine_output import output_diagnostics, output_is_api, output_plan
 from bling_app_zero.ui.cadastro_wizard_state import (
+    CADASTRO_MAPPING_CONFIRMED_KEY,
+    CADASTRO_MAPPING_SIGNATURE_KEY,
     CADASTRO_MODELO_KEY,
     CADASTRO_ORIGEM_KEY,
     CADASTRO_ORIGEM_PRICED_KEY,
+    LEGACY_CADASTRO_FINAL_KEY,
+    UNIVERSAL_FINAL_KEY,
     cadastro_mapping_ready,
     ensure_api_direct_final_df,
     render_row_count_blocker,
@@ -18,6 +22,7 @@ from bling_app_zero.ui.cadastro_wizard_state import (
     valid_df,
     valid_model,
 )
+from bling_app_zero.ui.home_shared import df_signature
 from bling_app_zero.ui.shared_mapping import render_shared_cadastro_mapping
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/cadastro_mapping_step.py'
@@ -55,19 +60,6 @@ def _is_api_context() -> bool:
         return str(st.session_state.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower() == CONTEXT_BLING_API
 
 
-def _manual_mapping_required() -> bool:
-    """Bling conectado pode mudar só o destino final para API, mas o contrato ainda pode exigir mapeamento.
-
-    O bug era tratar qualquer destino api_bling como API direta e pular a tela de ligar colunas.
-    No fluxo universal_mapping_csv, o usuário ainda precisa revisar/mapear os 59 campos antes do envio.
-    """
-    try:
-        plan = output_plan()
-        return bool(getattr(plan, 'needs_mapping', False))
-    except Exception:
-        return True
-
-
 def _operation_label() -> str:
     try:
         plan = output_plan()
@@ -103,7 +95,7 @@ def _resolve_model_df() -> pd.DataFrame | None:
 
 
 def _current_final_df() -> pd.DataFrame | None:
-    for key in ('df_final_universal', 'df_final_cadastro'):
+    for key in ('df_final_bling_api', UNIVERSAL_FINAL_KEY, LEGACY_CADASTRO_FINAL_KEY, 'df_final_cadastro'):
         value = st.session_state.get(key)
         if isinstance(value, pd.DataFrame):
             return value
@@ -122,12 +114,12 @@ def _render_mapping_spine_caption() -> None:
 
 def _render_post_mapping_notice() -> None:
     if not cadastro_mapping_ready():
-        st.info('Confirme o mapeamento para liberar a revisão, a prévia e o download.')
+        st.info('A automação ainda está preparando os dados para liberar a revisão, a prévia e o envio.')
         return
 
     if _is_api_context():
         label = _operation_label() or 'enviar'
-        st.success(f'Mapeamento confirmado. Continue para a prévia e {label}.')
+        st.success(f'Automação preparada. Continue para a prévia e {label}.')
         return
 
     st.success('Mapeamento confirmado. O download será liberado no final, após a revisão e a prévia.')
@@ -138,6 +130,42 @@ def _df_for_mapping(df_origem: pd.DataFrame) -> pd.DataFrame:
     if isinstance(df_precificado, pd.DataFrame) and not df_precificado.empty:
         return df_precificado
     return df_origem
+
+
+def _api_automation_source_df(df_origem: pd.DataFrame) -> pd.DataFrame:
+    df_precificado = st.session_state.get(CADASTRO_ORIGEM_PRICED_KEY)
+    if isinstance(df_precificado, pd.DataFrame) and not df_precificado.empty:
+        return df_precificado.copy().fillna('')
+    return df_origem.copy().fillna('')
+
+
+def _prepare_bling_api_automation(df_origem: pd.DataFrame) -> pd.DataFrame | None:
+    """Prepara a base para API sem mapeamento manual.
+
+    Bling conectado significa mínima intervenção humana: o sistema preserva os campos
+    capturados/preparados, marca a etapa como resolvida tecnicamente e libera revisão.
+    """
+    df_final = ensure_api_direct_final_df()
+    if not valid_df(df_final):
+        df_final = _api_automation_source_df(df_origem)
+    if not valid_df(df_final):
+        return None
+
+    fixed = df_final.copy().fillna('')
+    signature = df_signature(fixed)
+    st.session_state['df_final_bling_api'] = fixed
+    st.session_state[UNIVERSAL_FINAL_KEY] = fixed
+    st.session_state[LEGACY_CADASTRO_FINAL_KEY] = fixed
+    st.session_state['mapping_bling_api'] = {str(column): str(column) for column in fixed.columns}
+    st.session_state['mapping_confidence_bling_api'] = {str(column): {'level': 'verde', 'score': 100, 'api_auto': True} for column in fixed.columns}
+    st.session_state['mapping_cadastro'] = st.session_state['mapping_bling_api']
+    st.session_state['mapping_confidence_cadastro'] = st.session_state['mapping_confidence_bling_api']
+    st.session_state[CADASTRO_MAPPING_CONFIRMED_KEY] = True
+    st.session_state[CADASTRO_MAPPING_SIGNATURE_KEY] = signature
+    st.session_state['bling_api_automation_mapping_skipped'] = True
+    st.session_state['bling_api_automation_rows'] = int(len(fixed))
+    st.session_state['bling_api_automation_columns'] = int(len(fixed.columns))
+    return fixed
 
 
 def render_cadastro_mapeamento_step() -> None:
@@ -151,17 +179,19 @@ def render_cadastro_mapeamento_step() -> None:
 
     store_expected_source_rows(df_origem)
 
-    if _is_api_context() and not _manual_mapping_required():
-        df_final = ensure_api_direct_final_df()
-        if valid_df(df_final):
+    if _is_api_context():
+        df_final_api = _prepare_bling_api_automation(df_origem)
+        if valid_df(df_final_api):
             col_a, col_b = st.columns(2)
             with col_a:
-                st.metric('Linhas carregadas', len(df_origem))
+                st.metric('Linhas preparadas', len(df_final_api))
             with col_b:
-                st.metric('Campos preparados', len(df_final.columns))
-            st.info('Modo API direta: mapeamento manual dispensado. O fluxo seguirá com os campos preparados.')
+                st.metric('Campos para API', len(df_final_api.columns))
+            st.info('Bling conectado: automação via API ativa. O sistema preparou os campos automaticamente; a próxima interação humana será revisar a prévia e enviar.')
             _render_post_mapping_notice()
             return
+        st.warning('A automação da API ainda não conseguiu preparar os dados. Volte para Dados importados e confira a origem.')
+        return
 
     if not valid_model(df_modelo):
         st.warning('Modelo para mapear ausente. Volte para Modelo para mapear.')
@@ -174,9 +204,6 @@ def render_cadastro_mapeamento_step() -> None:
         st.metric('Linhas encontradas', len(df_origem))
     with col_b:
         st.metric('Colunas do modelo', len(df_modelo.columns))
-
-    if _is_api_context() and _manual_mapping_required():
-        st.info('Bling conectado: o envio aparece no final, mas o mapeamento manual continua obrigatório para ligar todos os campos do modelo.')
 
     if bool(st.session_state.get('cadastro_preco_calculado_ativo', False)):
         st.success('Preço calculado na etapa anterior. O valor calculado está disponível para o mapeamento.')
