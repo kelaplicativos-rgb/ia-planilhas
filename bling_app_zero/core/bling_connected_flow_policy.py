@@ -26,6 +26,9 @@ CONNECTED_API_FLOW_KEY: Final[str] = 'bling_connected_api_flow_active'
 CONNECTED_OPERATION_KEY: Final[str] = 'bling_connected_api_operation'
 CONNECTED_ORIGIN_KIND_KEY: Final[str] = 'bling_connected_origin_kind'
 CONNECTED_HUMAN_STEP_KEY: Final[str] = 'bling_connected_next_human_step'
+EXPLICIT_API_SEND_KEY: Final[str] = 'home_bling_connected_same_flow_api_send'
+FINISH_MODE_KEY: Final[str] = 'bling_finish_mode'
+API_DESTINATION: Final[str] = 'api_bling'
 
 
 @dataclass(frozen=True)
@@ -65,10 +68,20 @@ def bling_connected() -> bool:
         return False
 
 
+def api_flow_explicitly_selected() -> bool:
+    """A conexão não escolhe o fluxo; a seleção explícita da Home escolhe."""
+    if bool(st.session_state.get(EXPLICIT_API_SEND_KEY)):
+        return True
+    finish_mode = str(st.session_state.get(FINISH_MODE_KEY) or '').strip().lower()
+    if finish_mode == 'api_direct':
+        return True
+    return False
+
+
 def policy_for(operation: object, origin_kind: object = '') -> ConnectedFlowPolicy:
     op = normalize_operation(operation)
     origin = str(origin_kind or st.session_state.get(CONNECTED_ORIGIN_KIND_KEY) or '').strip().lower()
-    api_enabled = bling_connected()
+    api_enabled = bool(bling_connected() and api_flow_explicitly_selected())
 
     if not api_enabled:
         return ConnectedFlowPolicy(
@@ -132,6 +145,8 @@ def activate_connected_flow(operation: object, origin_kind: object = '') -> Conn
         details={
             'operation': policy.operation,
             'origin_kind': policy.origin_kind,
+            'bling_connected': bling_connected(),
+            'api_explicitly_selected': api_flow_explicitly_selected(),
             'api_enabled': policy.api_enabled,
             'manual_mapping_allowed': policy.manual_mapping_allowed,
             'required_selector': policy.required_selector,
@@ -187,6 +202,7 @@ __all__ = [
     'ConnectedFlowPolicy',
     'activate_connected_flow',
     'annotate_dataframe_for_connected_flow',
+    'api_flow_explicitly_selected',
     'bling_connected',
     'must_run_ai_check',
     'normalize_operation',
