@@ -69,6 +69,19 @@ def _source_data_ready() -> bool:
         return False
 
 
+def _site_capture_ready() -> bool:
+    if bool(st.session_state.get('site_capture_finished')):
+        return True
+    if bool(st.session_state.get('blingsmartscan_ready_to_continue')):
+        return True
+    neutral_state = st.session_state.get('neutral_site_capture_state_v1')
+    if isinstance(neutral_state, dict):
+        result = neutral_state.get('result')
+        if isinstance(result, dict) and int(result.get('rows') or 0) > 0:
+            return True
+    return False
+
+
 def active_mode() -> str:
     if bool(st.session_state.get(UNIFIED_BLING_SEND_KEY)):
         return 'csv'
@@ -129,7 +142,7 @@ def feature_needs_model() -> bool:
     if not feature_requires_destination_model():
         return False
     current_step = _clean(st.session_state.get(WIZARD_STEP_KEY))
-    if current_step in SOURCE_FIRST_STEPS and not _source_data_ready():
+    if current_step in SOURCE_FIRST_STEPS and not (_source_data_ready() or _site_capture_ready()):
         return False
     return True
 
