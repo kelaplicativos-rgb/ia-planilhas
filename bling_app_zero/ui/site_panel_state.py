@@ -12,9 +12,8 @@ RESPONSIBLE_FILE = 'bling_app_zero/ui/site_panel_state.py'
 UNIVERSAL_OPERATION = 'universal'
 UNIVERSAL_ALIASES = {'universal', 'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}
 # Captura por site no Streamlit pode ser interrompida pela própria rerenderização.
-# O diagnóstico 80 mostrou cadastro/API preso em running por mais de 1 minuto,
-# sem erro e sem resultado. O watchdog precisa destravar antes de a tela ficar
-# parecendo quebrada para o usuário.
+# O watchdog não pode limpar origem parcial nem mandar o usuário recomeçar: deve
+# marcar retomada automática e preservar URL, modelo, operação e checkpoint.
 SITE_CAPTURE_STALE_SECONDS = 75
 SITE_CAPTURE_HARD_STALE_SECONDS = 420
 SITE_CAPTURE_PROGRESS_GRACE_SECONDS = 110
@@ -36,6 +35,13 @@ LEGACY_AUTH_KEYS = (
     'guided_login_remote_desktop_ready',
     'guided_login_remote_desktop_url_ready',
 )
+RAW_URL_STATE_KEYS = (
+    'site_capture_raw_urls',
+    'site_capture_raw_urls_universal',
+    'site_capture_raw_urls_cadastro',
+    'site_capture_raw_urls_estoque',
+    'site_capture_raw_urls_atualizacao_preco',
+)
 
 
 def query_param(name: str) -> str:
@@ -49,7 +55,14 @@ def query_param(name: str) -> str:
 
 
 def query_urls_default() -> str:
-    return query_param('urls') or query_param('url')
+    query_value = query_param('urls') or query_param('url')
+    if query_value:
+        return query_value
+    for key in RAW_URL_STATE_KEYS:
+        value = str(st.session_state.get(key) or '').strip()
+        if value:
+            return value
+    return ''
 
 
 def normalize_site_operation_value(value: object) -> str:
@@ -174,19 +187,36 @@ def set_capture_state(*, operation: str, running: bool, finished: bool, error: s
 
 
 def clear_stuck_capture(operation: str) -> None:
-    clear_site_df(operation, 'captura_travada_limpa_manualmente')
+    reason = 'Captura anterior travada. Retomada automática solicitada pelo destravamento manual.'
+    try:
+        from bling_app_zero.ui.site_resume_state import checkpoint_count, mark_resume_context, request_resume
+
+        if checkpoint_count(operation):
+            mark_resume_context(operation, reason, raw_urls=query_urls_default())
+            request_resume(operation, reason)
+            add_audit_event(
+                'site_capture_manual_unstuck_converted_to_resume',
+                area='SITE',
+                step='entrada',
+                status='OK',
+                details={'operation': operation, 'checkpoint_count': checkpoint_count(operation), 'responsible_file': RESPONSIBLE_FILE},
+            )
+            return
+    except Exception:
+        pass
+
     set_capture_state(
         operation=operation,
         running=False,
         finished=False,
-        error='Captura anterior destravada manualmente. Execute novamente.',
+        error='',
     )
     add_audit_event(
-        'site_capture_unstuck_manually',
+        'site_capture_unstuck_without_clearing_source',
         area='SITE',
         step='entrada',
         status='AVISO',
-        details={'operation': operation, 'responsible_file': RESPONSIBLE_FILE},
+        details={'operation': operation, 'reason': reason, 'source_preserved': True, 'responsible_file': RESPONSIBLE_FILE},
     )
 
 
@@ -207,6 +237,9 @@ def _last_progress_payload() -> dict:
         payload = st.session_state.get(key)
         if isinstance(payload, dict):
             return payload
+    neutral = st.session_state.get('neutral_site_progress_state_v1')
+    if isinstance(neutral, dict) and isinstance(neutral.get('last'), dict):
+        return dict(neutral.get('last') or {})
     return {}
 
 
@@ -240,7 +273,7 @@ def _progress_has_live_signal(now: float, *, started_at: float, max_age_seconds:
     message = str(last_payload.get('message') or '')
     stage = str(last_payload.get('stage') or '')
     found_products = max(
-        _payload_number(last_payload, 'urls_found', 'deep_capture_found_products', 'found_products', 'products_found'),
+        _payload_number(last_payload, 'urls_found', 'deep_capture_found_products', 'found_products', 'products_found', 'partial_checkpoint_found'),
         _extract_int_from_text(message, (r'(\d+)\s*produto', r'(\d+)\s*produto\(s\)', r'produto\(s\).*?(\d+)')),
     )
     scanned_pages = max(
@@ -300,18 +333,20 @@ def recover_stale_capture_if_needed(operation: str, *, max_age_seconds: int = SI
         )
         return False
 
-    clear_site_df(operation, 'captura_travada_auto_timeout_sem_progresso_recente')
-    set_capture_state(
-        operation=operation,
-        running=False,
-        finished=False,
-        error='A captura anterior ficou sem progresso recente e foi destravada. Execute novamente. O próximo lote será menor e mais rápido.',
-    )
+    reason = 'A captura anterior ficou sem sinal vivo. Retomada automática solicitada sem limpar checkpoint.'
+    try:
+        from bling_app_zero.ui.site_resume_state import mark_resume_context, request_resume
+
+        mark_resume_context(operation, reason, raw_urls=query_urls_default())
+        request_resume(operation, reason)
+    except Exception:
+        set_capture_state(operation=operation, running=False, finished=False, error='')
+
     add_audit_event(
-        'site_capture_unstuck_auto_timeout',
+        'site_capture_auto_timeout_resume_requested',
         area='SITE',
         step='entrada',
-        status='AVISO',
+        status='OK',
         details={
             'operation': operation,
             'age_seconds': round(age, 2),
@@ -320,6 +355,8 @@ def recover_stale_capture_if_needed(operation: str, *, max_age_seconds: int = SI
             'last_stage': last_payload.get('stage', ''),
             'last_message': last_payload.get('message', ''),
             'reason': live_reason,
+            'source_preserved': True,
+            'auto_resume': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
