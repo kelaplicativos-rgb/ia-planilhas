@@ -20,6 +20,7 @@ from bling_app_zero.ui.cadastro_wizard_state import (
 )
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/universal_wizard_state.py'
+API_DESTINATION = 'api_bling'
 
 ORIGIN_FALLBACK_KEYS = (
     UNIVERSAL_ORIGEM_KEY,
@@ -106,10 +107,51 @@ def _mapping_confirmed() -> bool:
     return bool(st.session_state.get(CADASTRO_MAPPING_CONFIRMED_KEY)) and bool(st.session_state.get(CADASTRO_MAPPING_SIGNATURE_KEY))
 
 
+def _api_destination_active() -> bool:
+    try:
+        from bling_app_zero.core.flow_spine_output import output_plan
+
+        plan = output_plan()
+        return str(getattr(plan, 'final_destination', '') or '').strip().lower() == API_DESTINATION
+    except Exception:
+        return bool(st.session_state.get('home_bling_connected_same_flow_api_send'))
+
+
+def _api_automation_ready() -> bool:
+    if not _api_destination_active():
+        return False
+    for key in ('df_final_bling_api', 'df_final_universal', 'df_final_cadastro'):
+        df = st.session_state.get(key)
+        if valid_df(df):
+            st.session_state[CADASTRO_MAPPING_CONFIRMED_KEY] = True
+            if not st.session_state.get(CADASTRO_MAPPING_SIGNATURE_KEY):
+                try:
+                    from bling_app_zero.ui.home_shared import df_signature
+                    st.session_state[CADASTRO_MAPPING_SIGNATURE_KEY] = df_signature(df)
+                except Exception:
+                    st.session_state[CADASTRO_MAPPING_SIGNATURE_KEY] = 'api_automation_ready'
+            st.session_state['bling_api_automation_mapping_skipped'] = True
+            return True
+    df = ensure_api_direct_final_df()
+    if valid_df(df):
+        st.session_state[CADASTRO_MAPPING_CONFIRMED_KEY] = True
+        if not st.session_state.get(CADASTRO_MAPPING_SIGNATURE_KEY):
+            try:
+                from bling_app_zero.ui.home_shared import df_signature
+                st.session_state[CADASTRO_MAPPING_SIGNATURE_KEY] = df_signature(df)
+            except Exception:
+                st.session_state[CADASTRO_MAPPING_SIGNATURE_KEY] = 'api_automation_ready'
+        st.session_state['bling_api_automation_mapping_skipped'] = True
+        return True
+    return False
+
+
 def universal_mapping_ready() -> bool:
     _force_universal_state()
-    # A IA pode preencher o dicionário de mapeamento logo na página 1, mas o usuário
-    # ainda precisa revisar/percorrer todas as páginas e confirmar no final.
+    # Bling conectado/API: mapeamento manual não deve bloquear automação.
+    # A validação humana fica na prévia final antes de enviar.
+    if _api_automation_ready():
+        return True
     if _cadastro_mapping_ready() and _mapping_confirmed():
         return True
     try:
