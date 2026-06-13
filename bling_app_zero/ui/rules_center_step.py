@@ -3,100 +3,50 @@ from __future__ import annotations
 import streamlit as st
 
 from bling_app_zero.core.user_rules import get_user_rules, set_user_rules
-from bling_app_zero.ui.home_wizard_rerun import safe_rerun
-from bling_app_zero.ui.rules_center_sections import PROTECTION_FIELDS
-from bling_app_zero.ui.rules_center_state import (
-    RULES_CENTER_AUTOSAVE_SIGNATURE_KEY,
-    RULES_CENTER_READY_KEY,
-    auto_save_rules_if_changed,
-    clear_mapping_rule_cache,
-    mark_rules_ready,
-    rules_center_ready,
-    rules_signature,
-)
+from bling_app_zero.ui.rules_center_state import RULES_CENTER_READY_KEY, rules_center_ready
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/rules_center_step.py'
+LEGACY_FINAL_PROTECTION_KEYS = (
+    'clean_invalid_gtin',
+    'normalize_image_separator',
+    'auto_product_code',
+    'unique_product_code',
+)
 
 
-def _safe_widget_scope(value: object) -> str:
-    text = str(value or '').strip().lower()
-    safe = ''.join(ch if ch.isalnum() else '_' for ch in text)
-    safe = '_'.join(part for part in safe.split('_') if part)
-    return safe or 'ia_real'
-
-
-def _render_rules_header() -> None:
-    st.markdown('### Conferir arquivo final')
-    st.caption(
-        'A IA Real confere o arquivo antes de mostrar o resultado. '
-        'Aqui você pode ligar ou desligar proteções simples, como limpar GTIN inválido e organizar imagens.'
-    )
-
-
-def _strip_fill_rules(rules: dict) -> dict:
-    updated = dict(rules or {})
-    updated['custom_rules'] = []
-    return updated
-
-
-def _render_protection_rules_scoped(rules: dict, widget_scope: str) -> dict:
-    updated = dict(rules or {})
-    prefix = f'rules_center_{_safe_widget_scope(widget_scope)}'
-    cols = st.columns(4)
-    for index, (key, label, help_text) in enumerate(PROTECTION_FIELDS):
-        with cols[index % 4]:
-            updated[key] = st.toggle(
-                label,
-                value=bool(updated.get(key, True)),
-                help=help_text,
-                key=f'{prefix}_{key}',
-            )
-    updated['normalize_measures_to_meters'] = False
-    updated['invalid_gtin_mode'] = 'limpar'
-    updated['image_separator'] = '|'
-    return updated
+def _disable_legacy_final_protections() -> dict:
+    rules = dict(get_user_rules())
+    for key in LEGACY_FINAL_PROTECTION_KEYS:
+        rules[key] = False
+    rules['custom_rules'] = []
+    normalized = set_user_rules(rules)
+    st.session_state[RULES_CENTER_READY_KEY] = True
+    return normalized
 
 
 def render_rules_center_step(key_scope: str = 'ia_real') -> None:
-    widget_scope = _safe_widget_scope(key_scope)
-    original_rules = _strip_fill_rules(get_user_rules())
-    previous_signature = rules_signature(original_rules)
-    st.session_state.setdefault(RULES_CENTER_AUTOSAVE_SIGNATURE_KEY, previous_signature)
+    """Mantém compatibilidade sem alterar o DataFrame final.
 
-    with st.container(border=True):
-        _render_rules_header()
-        rules = _render_protection_rules_scoped(original_rules, widget_scope)
-        rules = _strip_fill_rules(rules)
-        normalized = set_user_rules(rules)
-        auto_save_rules_if_changed(normalized, previous_signature)
-
-        st.info('Para preencher campos fixos, como Altura, Unidade ou Situação, use a opção “escrever valor fixo” ao ligar as colunas.')
-
-        st.divider()
-        col_save, col_reset = st.columns(2)
-        with col_save:
-            if st.button('Salvar conferência', use_container_width=True, key=f'rules_center_{widget_scope}_save'):
-                mark_rules_ready(_strip_fill_rules(normalized), source='save_button')
-                clear_mapping_rule_cache()
-                st.success('Conferência salva.')
-        with col_reset:
-            if st.button('Voltar ao padrão', use_container_width=True, key=f'rules_center_{widget_scope}_reset'):
-                restored = _strip_fill_rules(get_user_rules())
-                restored['clean_invalid_gtin'] = True
-                restored['normalize_image_separator'] = True
-                restored['auto_product_code'] = True
-                restored['unique_product_code'] = True
-                normalized = set_user_rules(restored)
-                st.session_state[RULES_CENTER_AUTOSAVE_SIGNATURE_KEY] = rules_signature(normalized)
-                st.session_state[RULES_CENTER_READY_KEY] = True
-                clear_mapping_rule_cache()
-                st.success('Padrão restaurado.')
-                safe_rerun('rules_center_reset_to_default')
-
-    st.caption('Depois disso, confira o resultado final antes de baixar.')
+    O arquivo final agora obedece somente ao mapeamento e aos valores fixos
+    escolhidos pelo usuário. As antigas proteções desta tela não podem limpar,
+    preencher ou deduplicar dados depois do mapeamento.
+    """
+    _ = key_scope
+    _disable_legacy_final_protections()
+    st.markdown(
+        '''
+<style>
+div[data-testid="stMarkdown"]:has(h4#ajustes-avancados-do-arquivo-final) {
+    display: none;
+}
+</style>
+''',
+        unsafe_allow_html=True,
+    )
 
 
 __all__ = [
+    'LEGACY_FINAL_PROTECTION_KEYS',
     'RULES_CENTER_READY_KEY',
     'render_rules_center_step',
     'rules_center_ready',
