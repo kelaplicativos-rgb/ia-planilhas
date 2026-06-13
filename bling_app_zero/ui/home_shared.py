@@ -111,9 +111,8 @@ def load_estoque_pipeline() -> Callable:
 
 @st.cache_resource(show_spinner=False)
 def load_site_pipeline() -> Callable:
-    # BLINGFIX: wrapper reforça nome/descrição/imagens por página individual
-    # antes do preview/envio ao Bling, principalmente em URL direta de produto.
-    from bling_app_zero.pipelines.site_pipeline_blingfix import run_pipeline
+    # BLINGFIX: reforça mídia e captura estoque quando o modelo solicitar.
+    from bling_app_zero.pipelines.site_pipeline_stockfix import run_pipeline
 
     return run_pipeline
 
