@@ -11,7 +11,6 @@ FINISH_MODE_KEY = 'bling_finish_mode'
 UNIFIED_BLING_SEND_KEY = 'home_bling_connected_same_flow_api_send'
 WIZARD_STEP_KEY = 'bling_wizard_step'
 
-API_CONTEXTS = {'bling', 'bling_api', 'api', 'api_direct'}
 API_FINISH_MODES = {'api_direct', 'api', 'bling_api'}
 SOURCE_FIRST_STEPS = {'origem', 'entrada'}
 SOURCE_DF_KEYS = (
@@ -83,14 +82,12 @@ def _site_capture_ready() -> bool:
 
 
 def active_mode() -> str:
+    # A conexão OAuth apenas libera recursos. Ela nunca escolhe o fluxo.
+    # O modo API curto exige uma escolha explícita registrada no finish mode.
     if bool(st.session_state.get(UNIFIED_BLING_SEND_KEY)):
         return 'csv'
-    context = _clean(st.session_state.get(HOME_ENTRY_CONTEXT_KEY))
     finish = _clean(st.session_state.get(FINISH_MODE_KEY))
-    destination = _clean(st.session_state.get('flow_spine_final_destination'))
-    if finish in API_FINISH_MODES or context in API_CONTEXTS or destination == 'api_bling':
-        return 'api'
-    return 'csv'
+    return 'api' if finish in API_FINISH_MODES else 'csv'
 
 
 def active_operation() -> str:
