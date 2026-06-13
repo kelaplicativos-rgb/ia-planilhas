@@ -70,9 +70,6 @@ def _source_data_ready() -> bool:
 
 
 def active_mode() -> str:
-    # BLINGFIX 2026-06-13:
-    # Quando o Bling está conectado no fluxo unificado, só o destino final vira API.
-    # O contrato do wizard precisa continuar CSV/universal para não abrir o fluxo curto.
     if bool(st.session_state.get(UNIFIED_BLING_SEND_KEY)):
         return 'csv'
     context = _clean(st.session_state.get(HOME_ENTRY_CONTEXT_KEY))
@@ -84,8 +81,6 @@ def active_mode() -> str:
 
 
 def active_operation() -> str:
-    # Para arquivos/planilhas/download, não existe mais contrato interno por tipo.
-    # O modelo anexado pelo usuário é o contrato universal absoluto.
     if active_mode() != 'api':
         return 'universal'
     return 'universal'
@@ -124,13 +119,11 @@ def step_allowed(step: str) -> bool:
 
 
 def feature_needs_model() -> bool:
+    if bool(st.session_state.get(UNIFIED_BLING_SEND_KEY)):
+        return False
     contract = active_contract()
     if not contract.needs_model:
         return False
-
-    # BLINGSCAN 2026-06-13:
-    # No fluxo origem-primeiro, modelo não pode bloquear Origem/Dados.
-    # Ele passa a ser obrigatório depois que a origem realmente gerou dados.
     current_step = _clean(st.session_state.get(WIZARD_STEP_KEY))
     if current_step in SOURCE_FIRST_STEPS and not _source_data_ready():
         return False
