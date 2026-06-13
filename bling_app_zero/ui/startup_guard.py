@@ -5,7 +5,7 @@ import time
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
-from bling_app_zero.ui.site_resume_state import checkpoint_count, request_resume
+from bling_app_zero.ui.site_resume_state import checkpoint_count, mark_resume_context, request_resume
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/startup_guard.py'
 BOOT_READY_KEY = 'bling_startup_guard_ready_v1'
@@ -45,6 +45,8 @@ def _safe_float(value: object) -> float:
 
 
 def _has_partial_site_result() -> bool:
+    if checkpoint_count() > 0:
+        return True
     try:
         import pandas as pd
     except Exception:
@@ -58,6 +60,16 @@ def _has_partial_site_result() -> bool:
 
 def _site_operation() -> str:
     return str(st.session_state.get('site_capture_operation') or st.session_state.get('operation_site') or st.session_state.get('tipo_operacao_site') or 'universal').strip().lower() or 'universal'
+
+
+def _site_raw_urls() -> str:
+    operation = _site_operation()
+    return str(
+        st.session_state.get(f'site_capture_raw_urls_{operation}')
+        or st.session_state.get('site_capture_raw_urls')
+        or st.session_state.get(f'urls_site_{operation}')
+        or ''
+    ).strip()
 
 
 def _reset_capture_flags(*, reason: str, manual: bool = False) -> list[str]:
@@ -99,11 +111,11 @@ def _recover_interrupted_capture() -> bool:
     has_partial = _has_partial_site_result()
 
     if has_partial and age >= RECOVERY_SOFT_SECONDS:
-        reason = 'Busca anterior tinha resultado parcial e será retomada automaticamente sem perder o que já foi lido.'
+        reason = 'Busca anterior tinha checkpoint e foi retomada automaticamente sem perder o que já foi lido.'
     elif idle >= RECOVERY_SOFT_SECONDS and age >= RECOVERY_SOFT_SECONDS:
-        reason = 'Busca anterior ficou sem sinal vivo. O sistema vai apertar continuar busca automaticamente.'
+        reason = 'Busca anterior ficou sem sinal vivo. O sistema retomou automaticamente o checkpoint.'
     elif age >= RECOVERY_HARD_SECONDS:
-        reason = 'Busca anterior passou do limite seguro. O sistema vai retomar a busca preservando o checkpoint.'
+        reason = 'Busca anterior passou do limite seguro. O sistema retomou automaticamente preservando o checkpoint.'
     else:
         return False
 
@@ -113,11 +125,13 @@ def _recover_interrupted_capture() -> bool:
     st.session_state[RECOVERY_MARK_KEY] = mark
 
     operation = _site_operation()
+    raw_urls = _site_raw_urls()
+    mark_resume_context(operation, reason, raw_urls=raw_urls)
     request_resume(operation, reason)
     st.session_state[RECOVERY_NOTICE_KEY] = reason
 
     add_audit_event(
-        'site_capture_interrupted_session_resume_requested',
+        'site_capture_interrupted_session_auto_resume_requested',
         area='APP',
         status='OK',
         details={
@@ -125,8 +139,9 @@ def _recover_interrupted_capture() -> bool:
             'age_seconds': round(age, 2),
             'idle_seconds': round(idle, 2),
             'has_partial_site_result': has_partial,
-            'checkpoint_count': checkpoint_count(),
+            'checkpoint_count': checkpoint_count(operation),
             'auto_continue_search': True,
+            'manual_button_required': False,
             'preserved_model_origin_url_and_progress': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
@@ -136,12 +151,12 @@ def _recover_interrupted_capture() -> bool:
 
 def _manual_unlock_capture_from_notice() -> None:
     operation = _site_operation()
-    reason = 'Usuário apertou continuar busca manualmente após aviso de sessão interrompida.'
+    reason = 'Usuário forçou retomada após aviso de sessão interrompida.'
     if request_resume(operation, reason):
-        st.session_state[MANUAL_UNLOCK_NOTICE_KEY] = 'Busca marcada para continuar. Produtos já lidos e URL/modelo/operação foram preservados.'
+        st.session_state[MANUAL_UNLOCK_NOTICE_KEY] = 'Busca marcada para retomada. Produtos já lidos e URL/modelo/operação foram preservados.'
     else:
         _reset_capture_flags(reason=reason, manual=True)
-        st.session_state[MANUAL_UNLOCK_NOTICE_KEY] = 'Busca destravada manualmente. Execute novamente quando quiser.'
+        st.session_state[MANUAL_UNLOCK_NOTICE_KEY] = 'Busca destravada. Revise o lote ou reduza a quantidade de links.'
     st.session_state.pop(RECOVERY_NOTICE_KEY, None)
 
 
@@ -157,22 +172,21 @@ def _render_recovery_notice() -> None:
     st.warning(notice)
     count = checkpoint_count()
     if count:
-        st.caption(f'Checkpoint preservado: {count} produto(s) já lidos. A busca continuará sem transformar isso em resultado final parcial.')
+        st.caption(f'Checkpoint preservado: {count} produto(s) já lidos. A retomada será automática e não vai virar resultado final parcial.')
     else:
-        st.caption('URL, modelo, operação e progresso foram preservados para continuar a busca.')
-    col_resume, col_keep = st.columns(2)
-    with col_resume:
-        if st.button('Continuar busca do ponto salvo', use_container_width=True, key='startup_guard_manual_unlock_capture'):
+        st.caption('URL, modelo, operação e progresso foram preservados para retomar automaticamente.')
+    st.caption('O botão manual fica apenas como emergência; o fluxo principal continua sozinho quando a tela de Site for renderizada.')
+    with st.expander('Emergência', expanded=False):
+        if st.button('Forçar retomada agora', use_container_width=True, key='startup_guard_manual_unlock_capture'):
             _manual_unlock_capture_from_notice()
             try:
                 st.rerun()
             except Exception:
                 pass
-    with col_keep:
-        if st.button('Manter assim e continuar', use_container_width=True, key='startup_guard_keep_recovered_capture'):
+        if st.button('Ocultar aviso', use_container_width=True, key='startup_guard_keep_recovered_capture'):
             st.session_state.pop(RECOVERY_NOTICE_KEY, None)
             add_audit_event(
-                'site_capture_recovery_notice_kept_by_user',
+                'site_capture_recovery_notice_hidden_by_user',
                 area='APP',
                 status='OK',
                 details={'responsible_file': RESPONSIBLE_FILE},
@@ -220,7 +234,7 @@ def ensure_app_ready() -> bool:
         'startup_guard_ready',
         area='APP',
         status='OK',
-        details={'elapsed_seconds': elapsed, 'no_startup_rerun': True, 'capture_recovery_enabled': True, 'continue_search_button': True, 'responsible_file': RESPONSIBLE_FILE},
+        details={'elapsed_seconds': elapsed, 'no_startup_rerun': True, 'capture_recovery_enabled': True, 'auto_resume_search': True, 'continue_search_button': 'emergency_only', 'responsible_file': RESPONSIBLE_FILE},
     )
     return True
 
