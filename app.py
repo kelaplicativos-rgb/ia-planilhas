@@ -22,6 +22,12 @@ RUNTIME_PATCH_KEYS_TO_REFRESH = (
     'blingfix_runtime_patches_installed_v8',
 )
 
+MOBILE_AUTO_ENTRY_KEY = 'mobile_connected_bling_auto_entry_done_v1'
+FLOW_WIZARD = 'wizard_cadastro_estoque'
+STEP_ORIGEM = 'origem'
+HOME_SCHEMA_KEY = 'home_source_first_flow_schema_v1'
+HOME_SCHEMA_VERSION = 'source_first_origin_start_v4_unified_bling_20260613'
+
 
 def _refresh_blingfix_runtime_patch_session() -> None:
     removed: list[str] = []
@@ -40,6 +46,60 @@ def _refresh_blingfix_runtime_patch_session() -> None:
                 'responsible_file': 'app.py',
             },
         )
+
+
+def _auto_enter_mobile_wizard_when_bling_connected() -> None:
+    """Evita parar na landing quando o Bling já está conectado.
+
+    A landing com os botões "Usar Bling conectado" e "Gerar arquivo sem API" é útil
+    só antes da escolha. Depois da conexão, no celular, o esperado é abrir direto
+    o fluxo mobile normal e deixar o envio ao Bling apenas para o final.
+    """
+    if st.session_state.get(MOBILE_AUTO_ENTRY_KEY):
+        return
+    if str(st.session_state.get('home_active_operation_v2') or '') == FLOW_WIZARD:
+        return
+    try:
+        connected = bool(bling_oauth.connection_status().get('connected'))
+    except Exception:
+        connected = False
+    if not connected:
+        return
+
+    st.session_state[MOBILE_AUTO_ENTRY_KEY] = True
+    st.session_state['home_active_operation_v2'] = FLOW_WIZARD
+    st.session_state['home_allow_operation_v2_session'] = True
+    st.session_state['home_single_page_flow_active'] = True
+    st.session_state['home_boot_landing_rendered_once'] = True
+    st.session_state['home_entry_context'] = 'universal'
+    st.session_state['home_slim_entry_context'] = 'universal'
+    st.session_state['bling_finish_mode'] = 'csv_download'
+    st.session_state['finish_mode'] = 'csv_download'
+    st.session_state['home_bling_connected_same_flow_api_send'] = True
+    st.session_state['bling_wizard_step'] = STEP_ORIGEM
+    st.session_state['home_wizard_step'] = STEP_ORIGEM
+    st.session_state[HOME_SCHEMA_KEY] = HOME_SCHEMA_VERSION
+    st.session_state.pop('home_bling_auth_ready_url', None)
+    try:
+        st.query_params['operation_v2'] = FLOW_WIZARD
+        st.query_params['step'] = STEP_ORIGEM
+        for key in ('flow', 'origem', 'operacao', 'operation'):
+            st.query_params.pop(key, None)
+    except Exception:
+        pass
+
+    add_audit_event(
+        'app_mobile_connected_bling_auto_entered_wizard',
+        area='HOME',
+        status='OK',
+        details={
+            'reason': 'Bling conectado; abrir fluxo mobile normal em vez da landing.',
+            'target_flow': FLOW_WIZARD,
+            'target_step': STEP_ORIGEM,
+            'api_send_flag': True,
+            'responsible_file': 'app.py',
+        },
+    )
 
 
 def _install_bling_api_verified_media_checkpoint(stage: str = 'startup') -> None:
@@ -89,6 +149,7 @@ def main() -> None:
     install_oauth_link_guard()
     _install_bling_api_verified_media_checkpoint('after_runtime_patches')
     bling_oauth.process_oauth_callback()
+    _auto_enter_mobile_wizard_when_bling_connected()
     add_audit_event('app_started', area='APP', details={'version': APP_VERSION, 'mode': 'session_guarded_start'})
 
     try:
