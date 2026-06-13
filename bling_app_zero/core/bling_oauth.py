@@ -32,6 +32,13 @@ RETURN_CONTEXT_KEY = 'bling_oauth_return_context'
 RESTORED_AFTER_CALLBACK_KEY = 'bling_oauth_restored_after_callback'
 STATE_SOURCE = 'ia_planilhas_bling'
 CONTEXT_BLING_API = 'bling_api'
+CONTEXT_UNIVERSAL = 'universal'
+FINISH_MODE_CSV = 'csv_download'
+FLOW_WIZARD = 'wizard_cadastro_estoque'
+STEP_ORIGEM = 'origem'
+HOME_FLOW_SCHEMA_KEY = 'home_source_first_flow_schema_v1'
+HOME_FLOW_SCHEMA_VERSION = 'source_first_origin_start_v4_unified_bling_20260613'
+UNIFIED_BLING_SEND_KEY = 'home_bling_connected_same_flow_api_send'
 _FALLBACK_STATE: dict[str, Any] = {}
 _FALLBACK_QUERY_PARAMS: dict[str, Any] = {}
 
@@ -400,19 +407,62 @@ def _state_is_trusted(state: str, expected: str, payload: dict[str, Any]) -> boo
     return not expected
 
 
+def _restore_unified_bling_flow(payload: dict[str, Any]) -> None:
+    store = _state_store()
+    store['home_active_operation_v2'] = FLOW_WIZARD
+    store['home_allow_operation_v2_session'] = True
+    store['home_single_page_flow_active'] = True
+    store['home_entry_context'] = CONTEXT_UNIVERSAL
+    store['home_slim_entry_context'] = CONTEXT_UNIVERSAL
+    store['bling_finish_mode'] = FINISH_MODE_CSV
+    store['finish_mode'] = FINISH_MODE_CSV
+    store[UNIFIED_BLING_SEND_KEY] = True
+    store['bling_wizard_step'] = STEP_ORIGEM
+    store['home_wizard_step'] = STEP_ORIGEM
+    store[HOME_FLOW_SCHEMA_KEY] = HOME_FLOW_SCHEMA_VERSION
+    store.pop('home_bling_auth_ready_url', None)
+
+    qp = _query_params_store()
+    try:
+        qp['operation_v2'] = FLOW_WIZARD
+        qp['step'] = STEP_ORIGEM
+        for key in ('flow', 'origem', 'operacao', 'operation'):
+            qp.pop(key, None)
+    except Exception:
+        pass
+
+    add_audit_event(
+        'bling_oauth_return_restored_to_unified_flow',
+        area='BLING_OAUTH',
+        status='OK',
+        details={
+            'return_to': payload.get('return_to') or '',
+            'source_step': payload.get('source_step') or '',
+            'operation_v2': FLOW_WIZARD,
+            'step': STEP_ORIGEM,
+            'home_entry_context': CONTEXT_UNIVERSAL,
+            'api_send_flag': True,
+            'schema_version': HOME_FLOW_SCHEMA_VERSION,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+
+
 def _restore_oauth_return_context(payload: dict[str, Any]) -> None:
     store = _state_store()
     if store.get(RESTORED_AFTER_CALLBACK_KEY):
         return
-    source_step = payload.get('source_step') or ''
-    return_to = payload.get('return_to') or ''
+    source_step = str(payload.get('source_step') or '')
+    return_to = str(payload.get('return_to') or '')
     if source_step == 'download_panel' or return_to == 'download_panel':
         restore_download_oauth_return()
-    if source_step in {'bling_connection_entry', 'home_same_tab_connection'} or return_to == 'start':
-        store['home_slim_entry_context'] = CONTEXT_BLING_API
-        store['home_entry_context'] = CONTEXT_BLING_API
-        store['finish_mode'] = 'api'
-        store['home_wizard_step'] = 'origem'
+
+    # BLINGFIX 2026-06-13:
+    # O link atual da Home envia return_to=home_light_entry. Antes esse retorno não era tratado
+    # e o app caía em uma Home/tela intermediária até o usuário atualizar a página.
+    # Agora qualquer conexão iniciada pela Home/entrada do Bling volta direto para o mesmo wizard.
+    if source_step in {'bling_connection_entry', 'home_same_tab_connection', 'home_light_entry'} or return_to in {'start', 'home_light_entry'}:
+        _restore_unified_bling_flow(payload)
     store[RESTORED_AFTER_CALLBACK_KEY] = True
 
 
