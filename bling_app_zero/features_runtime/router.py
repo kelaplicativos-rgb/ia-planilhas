@@ -8,6 +8,7 @@ from bling_app_zero.features_runtime.registry import get_feature_contract
 
 HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
 FINISH_MODE_KEY = 'bling_finish_mode'
+UNIFIED_BLING_SEND_KEY = 'home_bling_connected_same_flow_api_send'
 
 API_CONTEXTS = {'bling', 'bling_api', 'api', 'api_direct'}
 API_FINISH_MODES = {'api_direct', 'api', 'bling_api'}
@@ -27,6 +28,11 @@ def _safe_state_set(key: str, value: object) -> None:
 
 
 def active_mode() -> str:
+    # BLINGFIX 2026-06-13:
+    # Quando o Bling está conectado no fluxo unificado, só o destino final vira API.
+    # O contrato do wizard precisa continuar CSV/universal para não abrir o fluxo curto.
+    if bool(st.session_state.get(UNIFIED_BLING_SEND_KEY)):
+        return 'csv'
     context = _clean(st.session_state.get(HOME_ENTRY_CONTEXT_KEY))
     finish = _clean(st.session_state.get(FINISH_MODE_KEY))
     destination = _clean(st.session_state.get('flow_spine_final_destination'))
