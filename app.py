@@ -23,10 +23,13 @@ RUNTIME_PATCH_KEYS_TO_REFRESH = (
 )
 
 MOBILE_AUTO_ENTRY_KEY = 'mobile_connected_bling_auto_entry_done_v1'
+DEVICE_HINT_KEY = 'app_device_hint_v1'
 FLOW_WIZARD = 'wizard_cadastro_estoque'
 STEP_ORIGEM = 'origem'
 HOME_SCHEMA_KEY = 'home_source_first_flow_schema_v1'
 HOME_SCHEMA_VERSION = 'source_first_origin_start_v4_unified_bling_20260613'
+MOBILE_QUERY_VALUES = {'1', 'true', 'sim', 'yes', 'mobile', 'android', 'ios', 'phone', 'celular'}
+DESKTOP_QUERY_VALUES = {'0', 'false', 'nao', 'não', 'no', 'desktop', 'wide'}
 
 
 def _refresh_blingfix_runtime_patch_session() -> None:
@@ -48,16 +51,94 @@ def _refresh_blingfix_runtime_patch_session() -> None:
         )
 
 
-def _auto_enter_mobile_wizard_when_bling_connected() -> None:
-    """Evita parar na landing quando o Bling já está conectado.
+def _query_param(name: str) -> str:
+    try:
+        value = st.query_params.get(name)
+    except Exception:
+        return ''
+    if isinstance(value, list):
+        return str(value[0] if value else '').strip().lower()
+    return str(value or '').strip().lower()
 
-    A landing com os botões "Usar Bling conectado" e "Gerar arquivo sem API" é útil
-    só antes da escolha. Depois da conexão, no celular, o esperado é abrir direto
-    o fluxo mobile normal e deixar o envio ao Bling apenas para o final.
+
+def _install_device_autodetect_css() -> None:
+    st.markdown(
+        '''
+<style>
+:root{--mapeia-device-mode:desktop;}
+[data-testid="stAppViewContainer"] .main .block-container{max-width:1180px;}
+@media (max-width: 768px), (pointer: coarse) and (max-width: 980px){
+  :root{--mapeia-device-mode:mobile;}
+  [data-testid="stAppViewContainer"] .main .block-container,
+  [data-testid="stMainBlockContainer"],
+  section.main > div{
+    max-width: 100vw !important;
+    width: 100% !important;
+    padding-left: .62rem !important;
+    padding-right: .62rem !important;
+  }
+  div[data-testid="column"]{width:100% !important; flex: 1 1 100% !important; min-width:100% !important;}
+  div[data-testid="stHorizontalBlock"]{gap:.6rem !important; flex-wrap:wrap !important;}
+  .stButton > button, .stDownloadButton > button, a[data-testid="stLinkButton"]{min-height:48px !important; border-radius:14px !important; width:100% !important;}
+  h1{font-size:1.55rem !important; line-height:1.12 !important;}
+  h2{font-size:1.35rem !important; line-height:1.18 !important;}
+  h3{font-size:1.08rem !important; line-height:1.22 !important;}
+}
+</style>
+''',
+        unsafe_allow_html=True,
+    )
+
+
+def _device_hint() -> str:
+    query_hint = _query_param('device') or _query_param('layout') or _query_param('modo')
+    if query_hint in MOBILE_QUERY_VALUES:
+        st.session_state[DEVICE_HINT_KEY] = 'mobile'
+        return 'mobile'
+    if query_hint in DESKTOP_QUERY_VALUES:
+        st.session_state[DEVICE_HINT_KEY] = 'desktop'
+        return 'desktop'
+    stored = str(st.session_state.get(DEVICE_HINT_KEY) or '').strip().lower()
+    if stored in {'mobile', 'desktop'}:
+        return stored
+    # Sem JS confiável no primeiro render: usa o modo responsivo visual via CSS e mantém
+    # a rota neutra. Assim desktop não é tratado como mobile por engano.
+    return 'auto'
+
+
+def _should_skip_connected_landing_for_current_device() -> bool:
+    hint = _device_hint()
+    if hint == 'desktop':
+        return False
+    if hint == 'mobile':
+        return True
+    # Rotas/callbacks vindos do Android-safe OAuth devem continuar direto no wizard.
+    open_mode = _query_param('open_mode')
+    if open_mode in {'android_safe', 'mobile'}:
+        st.session_state[DEVICE_HINT_KEY] = 'mobile'
+        return True
+    if bool(st.session_state.get('home_single_page_flow_active')):
+        return True
+    # Em auto, não força desktop nem mobile; deixa a Home renderizar responsiva.
+    return False
+
+
+def _auto_enter_wizard_when_bling_connected_on_mobile() -> None:
+    """Pula a landing somente quando o contexto indica celular/fluxo mobile.
+
+    Desktop mantém a tela de escolha. Celular entra direto no fluxo responsivo.
     """
     if st.session_state.get(MOBILE_AUTO_ENTRY_KEY):
         return
     if str(st.session_state.get('home_active_operation_v2') or '') == FLOW_WIZARD:
+        return
+    if not _should_skip_connected_landing_for_current_device():
+        add_audit_event(
+            'app_connected_bling_landing_kept_for_device',
+            area='HOME',
+            status='INFO',
+            details={'device_hint': _device_hint(), 'responsible_file': 'app.py'},
+        )
         return
     try:
         connected = bool(bling_oauth.connection_status().get('connected'))
@@ -93,7 +174,8 @@ def _auto_enter_mobile_wizard_when_bling_connected() -> None:
         area='HOME',
         status='OK',
         details={
-            'reason': 'Bling conectado; abrir fluxo mobile normal em vez da landing.',
+            'reason': 'Bling conectado em contexto mobile; abrir fluxo responsivo normal em vez da landing.',
+            'device_hint': _device_hint(),
             'target_flow': FLOW_WIZARD,
             'target_step': STEP_ORIGEM,
             'api_send_flag': True,
@@ -134,6 +216,7 @@ def _install_bling_api_verified_media_checkpoint(stage: str = 'startup') -> None
 
 def main() -> None:
     st.set_page_config(**PAGE_CONFIG)
+    _install_device_autodetect_css()
     enforce_attention_alert_policy()
     inject_streamlit_toolbar_fix()
     clear_cache_once_per_version(APP_VERSION)
@@ -149,8 +232,8 @@ def main() -> None:
     install_oauth_link_guard()
     _install_bling_api_verified_media_checkpoint('after_runtime_patches')
     bling_oauth.process_oauth_callback()
-    _auto_enter_mobile_wizard_when_bling_connected()
-    add_audit_event('app_started', area='APP', details={'version': APP_VERSION, 'mode': 'session_guarded_start'})
+    _auto_enter_wizard_when_bling_connected_on_mobile()
+    add_audit_event('app_started', area='APP', details={'version': APP_VERSION, 'mode': 'session_guarded_start', 'device_hint': _device_hint()})
 
     try:
         render_sidebar_tools()
