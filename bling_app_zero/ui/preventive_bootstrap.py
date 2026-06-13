@@ -7,6 +7,23 @@ from bling_app_zero.core.operation_safety_guard import install_preventive_operat
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/preventive_bootstrap.py'
 MOBILE_CONNECTED_AUTO_ENTRY_KEY = 'mobile_connected_bling_auto_entry_done_v1'
+EXPLICIT_API_SEND_KEY = 'home_bling_connected_same_flow_api_send'
+FINISH_MODE_KEY = 'bling_finish_mode'
+API_SESSION_KEYS = (
+    'bling_connected_api_flow_active',
+    'bling_connected_api_operation',
+    'bling_connected_origin_kind',
+    'bling_connected_next_human_step',
+    'df_final_bling_api',
+    'mapping_bling_api',
+    'mapping_confidence_bling_api',
+    'bling_api_automation_mapping_skipped',
+    'bling_api_automation_rows',
+    'bling_api_automation_columns',
+    'bling_api_required_selector',
+    'bling_api_must_run_ai_check',
+    'bling_api_final_action',
+)
 
 
 def _disable_connection_driven_auto_entry() -> None:
@@ -27,6 +44,31 @@ def _disable_connection_driven_auto_entry() -> None:
         )
 
 
+def _clear_inactive_api_session() -> None:
+    explicit_api = bool(st.session_state.get(EXPLICIT_API_SEND_KEY))
+    finish_mode = str(st.session_state.get(FINISH_MODE_KEY) or '').strip().lower()
+    if explicit_api or finish_mode == 'api_direct':
+        return
+
+    removed: list[str] = []
+    for key in API_SESSION_KEYS:
+        if key in st.session_state:
+            st.session_state.pop(key, None)
+            removed.append(key)
+    if removed:
+        add_audit_event(
+            'inactive_api_session_cleared_for_manual_flow',
+            area='HOME',
+            step='startup',
+            status='OK',
+            details={
+                'removed_keys': removed,
+                'manual_mapping_preserved': True,
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+
+
 def install_preventive_bootstrap() -> None:
     """Executa proteções leves no boot sem derrubar a UI.
 
@@ -35,6 +77,7 @@ def install_preventive_bootstrap() -> None:
     operação presa deixe o usuário sem saída entre reruns do Streamlit.
     """
     _disable_connection_driven_auto_entry()
+    _clear_inactive_api_session()
     try:
         decision = install_preventive_operation_guard(st.session_state)
         if not decision.ok:
