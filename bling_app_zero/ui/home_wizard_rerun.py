@@ -95,6 +95,14 @@ def safe_rerun(reason: str, *, target_step: str = '') -> None:
         st.session_state[LAST_RERUN_TARGET_KEY] = 'home'
         st.rerun()
         return
+    if normalized_reason == 'wizard_reset':
+        from bling_app_zero.ui.master_reset import master_reset_to_home
+
+        master_reset_to_home()
+        st.session_state[LAST_RERUN_REASON_KEY] = normalized_reason
+        st.session_state[LAST_RERUN_TARGET_KEY] = 'home'
+        st.rerun()
+        return
 
     normalized_target = normalize_step(target_step or st.session_state.get(WIZARD_STEP_KEY) or '', api_mode=_current_api_mode())
 
