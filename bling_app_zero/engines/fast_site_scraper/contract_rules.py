@@ -11,7 +11,7 @@ def default_columns(operation: str) -> list[str]:
     return [
         'URL', 'Código', 'SKU', 'GTIN', 'Descrição', 'Descrição complementar',
         'Características', 'Ficha técnica', 'Nome', 'Preço', 'Preço unitário (OBRIGATÓRIO)',
-        'URL Imagens', 'Imagens', 'Marca', 'Categoria',
+        'URL Imagens', 'Imagens', 'Marca', 'Categoria', 'Estoque',
     ]
 
 
