@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass
 from typing import Callable
+from urllib.parse import urlsplit, urlunsplit
 
 import pandas as pd
 
@@ -47,14 +49,110 @@ def _should_try_api(strategy: str, platform: SitePlatformSignal) -> bool:
     return strategy.startswith('api_first') or platform.platform in {'stoqui', 'mega_center', 'shopify', 'woocommerce', 'loja_integrada', 'nuvemshop', 'tray'}
 
 
+def _url_lines(raw_urls: str) -> list[str]:
+    lines = [line.strip() for line in re.split(r'[\n,;]+', str(raw_urls or '')) if line.strip().startswith(('http://', 'https://'))]
+    return list(dict.fromkeys(lines))
+
+
 def _limit_raw_urls(raw_urls: str, *, max_products: int) -> tuple[str, int, int]:
-    lines = [line.strip() for line in str(raw_urls or '').splitlines() if line.strip()]
+    lines = _url_lines(raw_urls)
     original = len(lines)
     if not lines:
         return str(raw_urls or ''), 0, 0
     limit = max(1, min(int(max_products or SMARTSCAN_SAFE_URL_BATCH), SMARTSCAN_SAFE_URL_BATCH))
     limited = lines[:limit]
     return '\n'.join(limited), original, len(limited)
+
+
+def _url_key(value: object) -> str:
+    text = str(value or '').strip()
+    if not text.startswith(('http://', 'https://')):
+        return ''
+    try:
+        parts = urlsplit(text)
+        path = re.sub(r'/+$', '', parts.path or '')
+        return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, '', ''))
+    except Exception:
+        return text.rstrip('/').lower()
+
+
+def _url_column(df: pd.DataFrame) -> str:
+    if not isinstance(df, pd.DataFrame):
+        return ''
+    for column in df.columns:
+        key = re.sub(r'[^a-z0-9]+', ' ', str(column or '').strip().lower()).strip()
+        if key in {'url', 'link', 'produto url', 'url produto', 'link produto'}:
+            return str(column)
+    for column in df.columns:
+        key = str(column or '').strip().lower()
+        if 'url' in key or 'link' in key:
+            return str(column)
+    return ''
+
+
+def _pending_urls(raw_urls: str, df: pd.DataFrame) -> tuple[list[str], list[str]]:
+    source_urls = _url_lines(raw_urls)
+    if len(source_urls) <= 1 or not isinstance(df, pd.DataFrame) or df.empty:
+        return [], []
+    url_col = _url_column(df)
+    if not url_col:
+        return [], []
+    processed_keys = {_url_key(value) for value in df[url_col].tolist() if _url_key(value)}
+    processed_urls = [url for url in source_urls if _url_key(url) in processed_keys]
+    pending = [url for url in source_urls if _url_key(url) not in processed_keys]
+    return pending, processed_urls
+
+
+def _checkpoint_and_resume_if_partial(
+    *,
+    raw_urls: str,
+    df: pd.DataFrame,
+    operation: str,
+    requested_columns: list[str] | None,
+    progress_callback: Callable[[dict], None] | None,
+) -> None:
+    pending, processed_urls = _pending_urls(raw_urls, df)
+    if not pending:
+        return
+
+    rows = df.fillna('').to_dict(orient='records')
+    payload = {
+        'stage': 'Lote parcial preservado',
+        'message': f'{len(df)} produto(s) lido(s). Restam {len(pending)}; a busca continuará automaticamente.',
+        'progress': 0.88,
+        'processed': len(processed_urls),
+        'total': len(processed_urls) + len(pending),
+        'found': len(df),
+        'partial_checkpoint_enabled': True,
+        'partial_checkpoint_rows': rows,
+        'partial_checkpoint_columns': [str(column) for column in df.columns],
+        'partial_checkpoint_operation': operation,
+        'partial_checkpoint_found': len(df),
+        'partial_checkpoint_processed_urls': processed_urls,
+        'partial_checkpoint_pending_urls': pending,
+        'remaining_products': len(pending),
+    }
+    _emit(progress_callback, payload)
+    add_audit_event(
+        'blingsmartscan_partial_batch_resume_required',
+        area='SITE',
+        step='entrada',
+        status='AVISO',
+        details={
+            'operation': operation,
+            'source_urls': len(processed_urls) + len(pending),
+            'captured_rows': len(df),
+            'processed_urls': len(processed_urls),
+            'pending_urls': len(pending),
+            'requested_columns_count': len(requested_columns or []),
+            'auto_resume': True,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+    raise RuntimeError(
+        f'Lote parcial preservado: {len(df)} produto(s) lido(s) e {len(pending)} restante(s). '
+        'A continuação automática foi preparada.'
+    )
 
 
 def _run_engine(
@@ -182,6 +280,13 @@ def run_bling_smartscan(
             all_products=all_products,
             max_pages=max_pages,
             max_products=max_products,
+            progress_callback=progress_callback,
+        )
+        _checkpoint_and_resume_if_partial(
+            raw_urls=raw_urls,
+            df=df,
+            operation=operation,
+            requested_columns=requested_columns,
             progress_callback=progress_callback,
         )
 
