@@ -9,9 +9,9 @@ from bling_app_zero.features_runtime.contracts import FeatureContract
 from bling_app_zero.features_runtime.router import (
     active_contract,
     feature_needs_mapping,
-    feature_needs_model,
     feature_needs_pricing,
     feature_needs_rules_review,
+    feature_requires_destination_model,
 )
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/flow_spine.py'
@@ -153,9 +153,10 @@ def _final_caption_for(contract: FeatureContract) -> str:
 
 def build_flow_spine_plan(*, render_steps: Iterable[str] = DEFAULT_RENDER_STEPS) -> FlowSpinePlan:
     contract = active_contract()
+    requires_model = feature_requires_destination_model()
     allowed_render_steps = [str(step).strip().lower() for step in render_steps if str(step).strip()]
     steps = [step for step in contract.steps if step in allowed_render_steps]
-    if not feature_needs_model():
+    if not requires_model:
         steps = [step for step in steps if step != STEP_MODELO]
     if not feature_needs_pricing():
         steps = [step for step in steps if step != STEP_PRECIFICACAO]
@@ -180,7 +181,7 @@ def build_flow_spine_plan(*, render_steps: Iterable[str] = DEFAULT_RENDER_STEPS)
         final_title=final_title,
         final_caption=_final_caption_for(contract),
         backup_enabled=final_destination == DESTINATION_API,
-        needs_model=feature_needs_model(),
+        needs_model=requires_model,
         needs_pricing=feature_needs_pricing(),
         needs_mapping=feature_needs_mapping(),
         needs_rules_review=feature_needs_rules_review(),
