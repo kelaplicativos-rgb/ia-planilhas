@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from dataclasses import asdict
 
 import pandas as pd
 import streamlit as st
@@ -33,6 +32,16 @@ from bling_app_zero.ui.site_panel_state import (
     store_site_df,
 )
 from bling_app_zero.ui.site_progress import append_site_progress, make_site_progress_callback, reset_site_progress
+from bling_app_zero.ui.site_resume_state import (
+    checkpoint_count,
+    clear_checkpoint,
+    clear_resume_request,
+    mark_resume_context,
+    merge_checkpoint_with_result,
+    remember_capture_inputs,
+    request_resume,
+    resume_raw_urls,
+)
 
 ALL_PAGES_LIMIT = SAFE_CAPTURE_MAX_PAGES
 ALL_PRODUCTS_LIMIT = SAFE_CAPTURE_MAX_PRODUCTS
@@ -91,18 +100,18 @@ def _emit_capture_progress(stage: str, message: str, *, progress: float | None =
         pass
 
 
-def _is_stock_balance_only(operation: str, deep_options: dict[str, int | bool] | None) -> bool:
+def _is_stock_balance_only(operation: str, deep_options: dict[str, int | bool | str] | None) -> bool:
     contract = active_contract()
     options = deep_options or {}
     return bool(options.get('stock_balance_only') or (contract.is_api and contract.operation == 'estoque' and operation == 'estoque'))
 
 
-def _is_stock_full_site_scan(operation: str, deep_options: dict[str, int | bool] | None) -> bool:
+def _is_stock_full_site_scan(operation: str, deep_options: dict[str, int | bool | str] | None) -> bool:
     options = deep_options or {}
     return bool(_is_stock_balance_only(operation, options) and options.get('stock_full_site_scan', True))
 
 
-def _skip_predeep_discovery(operation: str, options: dict[str, int | bool]) -> bool:
+def _skip_predeep_discovery(operation: str, options: dict[str, int | bool | str]) -> bool:
     contract = active_contract()
     return bool(
         options.get('skip_predeep_discovery')
@@ -160,7 +169,7 @@ def _store_smartscan_notice(operation: str, report, *, rows: int) -> None:
     st.session_state['blingsmartscan_last_notice'] = payload
 
 
-def _progress_callback_for_capture(*, operation: str, options: dict[str, int | bool], progress_bar, status_box):
+def _progress_callback_for_capture(*, operation: str, options: dict[str, int | bool | str], progress_bar, status_box):
     return make_site_progress_callback(progress_bar, status_box)
 
 
@@ -227,7 +236,7 @@ def prepare_raw_urls_for_capture(
     *,
     operation: str,
     raw_urls: str,
-    deep_options: dict[str, int | bool] | None,
+    deep_options: dict[str, int | bool | str] | None,
     progress_bar,
     status_box,
 ) -> tuple[str, dict[str, object]]:
@@ -312,7 +321,7 @@ def prepare_raw_urls_for_capture(
     return result.raw_urls, base_details
 
 
-def capture_limits_for_operation(operation: str, deep_options: dict[str, int | bool] | None) -> tuple[int, int, bool]:
+def capture_limits_for_operation(operation: str, deep_options: dict[str, int | bool | str] | None) -> tuple[int, int, bool]:
     options = deep_options or {}
     if _is_stock_balance_only(operation, options):
         return (
@@ -372,6 +381,28 @@ def _capture_context(raw_urls: str, operation: str, max_pages: int = 0, max_prod
     }
 
 
+def _pause_for_auto_resume(operation: str, reason: str, *, raw_urls: str, progress_bar=None, status_box=None, audit_status: str = 'AVISO') -> None:
+    mark_resume_context(operation, reason, raw_urls=raw_urls)
+    request_resume(operation, reason)
+    set_capture_state(operation=operation, running=False, finished=False, error='')
+    finish_progress(progress_bar, status_box, text='BLINGSMARTSCAN pausado para retomada automática.')
+    add_audit_event(
+        'blingsmartscan_auto_resume_scheduled',
+        area='SITE',
+        step='entrada',
+        status=audit_status,
+        details={
+            'operation': operation,
+            'reason': reason,
+            'checkpoint_count': checkpoint_count(operation),
+            'source_preserved': True,
+            'auto_resume': True,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+    _orange_notice('A busca foi interrompida, mas o checkpoint foi preservado. O sistema vai retomar automaticamente do ponto salvo.')
+
+
 def run_site_capture(
     operation: str,
     raw_urls: str,
@@ -379,7 +410,7 @@ def run_site_capture(
     df_modelo_cadastro: pd.DataFrame | None,
     df_modelo_estoque: pd.DataFrame | None,
     df_modelo: pd.DataFrame | None,
-    deep_options: dict[str, int | bool] | None = None,
+    deep_options: dict[str, int | bool | str] | None = None,
 ) -> None:
     raw_urls = str(raw_urls or '').strip()
     if not raw_urls:
@@ -395,7 +426,9 @@ def run_site_capture(
         add_audit_event('site_capture_blocked_missing_model', area='SITE', step='entrada', status='BLOQUEADO', details={'operation': operation, 'feature_contract': active_contract().key, 'responsible_file': RESPONSIBLE_FILE})
         return
 
-    options = deep_options or {}
+    options = dict(deep_options or {})
+    resume_mode = bool(options.get('resume_capture'))
+    remember_capture_inputs(operation, raw_urls)
     started_at = time.time()
     stock_balance_only = _is_stock_balance_only(operation, options)
     stock_full_site_scan = _is_stock_full_site_scan(operation, options)
@@ -425,34 +458,41 @@ def run_site_capture(
             'progress_mode': progress_mode(),
             'neutral_capture_state': True,
             'capture_spine': 'site_capture_spine_v1',
+            'resume_mode': resume_mode,
+            'checkpoint_count': checkpoint_count(operation),
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
     reset_site_progress()
     _emit_capture_progress(
-        'Início da busca',
-        profile.started_message,
+        'Início da busca' if not resume_mode else 'Retomando busca',
+        profile.started_message if not resume_mode else 'Retomando automaticamente a busca por site a partir do checkpoint salvo.',
         progress=0.03,
         max_pages=int(max_pages),
         max_products=int(max_products),
         stock_balance_only=stock_balance_only,
         stock_full_site_scan=stock_full_site_scan,
+        resume_mode=resume_mode,
+        checkpoint_count=checkpoint_count(operation),
         progress_mode=progress_mode(),
     )
 
-    progress_bar = st.progress(3, text=profile.initial_progress_text)
+    progress_bar = st.progress(3, text=profile.initial_progress_text if not resume_mode else 'Retomando do checkpoint salvo...')
     status_box = st.empty()
-    _safe_status(status_box, profile.running_notice)
+    _safe_status(status_box, profile.running_notice if not resume_mode else 'Retomada automática em andamento. Os produtos já lidos foram preservados.')
 
     deep_details: dict[str, object] = {}
     smart_report = None
     try:
+        engine_raw_urls = resume_raw_urls(operation, raw_urls) if resume_mode else raw_urls
+        if resume_mode and engine_raw_urls != raw_urls:
+            _emit_capture_progress('Checkpoint carregado', 'Continuando pelos links pendentes ou origem preservada.', progress=0.07, checkpoint_count=checkpoint_count(operation))
         _safe_progress(progress_bar, 12, 'Localizando produtos no site...')
         _safe_status(status_box, 'Etapa 1 de 3: localizando links/produtos.')
         _emit_capture_progress('Etapa 1 de 3', profile.stage_1, progress=0.12, progress_mode=progress_mode())
         prepared_urls, deep_details = prepare_raw_urls_for_capture(
             operation=operation,
-            raw_urls=raw_urls,
+            raw_urls=engine_raw_urls,
             deep_options=options,
             progress_bar=progress_bar,
             status_box=status_box,
@@ -469,6 +509,7 @@ def run_site_capture(
             deep_capture_found_products=found,
             deep_capture_visited_pages=deep_details.get('deep_capture_visited_pages', ''),
             deep_capture_scanned_pages=deep_details.get('deep_capture_scanned_pages', ''),
+            resume_mode=resume_mode,
             progress_mode=progress_mode(),
         )
         capture_callback = _progress_callback_for_capture(operation=operation, options=options, progress_bar=progress_bar, status_box=status_box)
@@ -482,6 +523,10 @@ def run_site_capture(
             max_products=max_products,
             progress_callback=capture_callback,
         )
+        if resume_mode:
+            before_rows = len(df_site) if isinstance(df_site, pd.DataFrame) else 0
+            df_site = merge_checkpoint_with_result(operation, df_site, requested_columns)
+            add_audit_event('blingsmartscan_checkpoint_merged_after_resume', area='SITE', step='entrada', status='OK', details={'operation': operation, 'checkpoint_count': checkpoint_count(operation), 'new_rows': before_rows, 'merged_rows': len(df_site) if isinstance(df_site, pd.DataFrame) else 0, 'responsible_file': RESPONSIBLE_FILE})
         rows_now = len(df_site) if isinstance(df_site, pd.DataFrame) else 0
         _emit_capture_progress(
             'Extração concluída',
@@ -490,6 +535,7 @@ def run_site_capture(
             rows=rows_now,
             found=rows_now,
             elapsed_seconds=round(time.time() - started_at, 2),
+            resume_mode=resume_mode,
             progress_mode=progress_mode(),
         )
         _safe_progress(progress_bar, 82, 'Validando e salvando resultado da busca...')
@@ -497,19 +543,20 @@ def run_site_capture(
         _emit_capture_progress('Etapa 3 de 3', profile.stage_3, progress=0.86, rows=rows_now, progress_mode=progress_mode())
     except Exception as exc:
         message = str(exc) or exc.__class__.__name__
-        _emit_capture_progress('Erro na captura', message, progress=0.0, errors=1, elapsed_seconds=round(time.time() - started_at, 2), progress_mode=progress_mode())
-        clear_site_df(operation, 'blingsmartscan_exception')
-        set_capture_state(operation=operation, running=False, finished=False, error=message)
-        fail_site_capture(message, _capture_context(raw_urls, operation, max_pages, max_products))
-        finish_progress(progress_bar, status_box, text='BLINGSMARTSCAN encerrado com erro.')
-        add_audit_event('blingsmartscan_ui_failed', area='SITE', step='entrada', status='ERRO', details={'operation': operation, 'stock_balance_only': stock_balance_only, 'stock_full_site_scan': stock_full_site_scan, 'error': message, 'error_type': exc.__class__.__name__, 'elapsed_seconds': round(time.time() - started_at, 2), 'progress_mode': progress_mode(), 'neutral_capture_state': True, 'capture_spine': 'site_capture_spine_v1', 'responsible_file': RESPONSIBLE_FILE})
-        _orange_notice('O BLINGSMARTSCAN foi interrompido antes de finalizar. O sistema evitou queda total; baixe o log debug para diagnóstico.')
+        _emit_capture_progress('Erro na captura', message, progress=0.0, errors=1, elapsed_seconds=round(time.time() - started_at, 2), resume_mode=resume_mode, progress_mode=progress_mode())
+        reason = f'Captura interrompida durante a busca por site: {message}'
+        _pause_for_auto_resume(operation, reason, raw_urls=raw_urls, progress_bar=progress_bar, status_box=status_box, audit_status='ERRO')
+        add_audit_event('blingsmartscan_ui_interrupted_preserved_for_resume', area='SITE', step='entrada', status='ERRO', details={'operation': operation, 'stock_balance_only': stock_balance_only, 'stock_full_site_scan': stock_full_site_scan, 'error': message, 'error_type': exc.__class__.__name__, 'elapsed_seconds': round(time.time() - started_at, 2), 'progress_mode': progress_mode(), 'neutral_capture_state': True, 'capture_spine': 'site_capture_spine_v1', 'source_cleared': False, 'auto_resume': True, 'responsible_file': RESPONSIBLE_FILE})
         return
 
     rows = len(df_site) if isinstance(df_site, pd.DataFrame) else 0
     columns = len(df_site.columns) if isinstance(df_site, pd.DataFrame) else 0
     if not isinstance(df_site, pd.DataFrame) or df_site.empty:
         _emit_capture_progress('Sem dados válidos', 'Nenhuma linha válida foi gerada para este lote.', progress=0.0, rows=0, columns=0, progress_mode=progress_mode())
+        if resume_mode and checkpoint_count(operation):
+            reason = 'A retomada não gerou novas linhas neste lote; mantendo checkpoint para nova tentativa automática.'
+            _pause_for_auto_resume(operation, reason, raw_urls=raw_urls, progress_bar=progress_bar, status_box=status_box)
+            return
         clear_site_df(operation, 'blingsmartscan_vazio')
         empty_message = profile.empty_message
         set_capture_state(operation=operation, running=False, finished=False, error=empty_message, rows=0, columns=0)
@@ -521,6 +568,10 @@ def run_site_capture(
 
     flow_decision = _render_capture_decision(operation, smart_report, rows=rows)
     if bool(flow_decision.get('should_block')) or bool(flow_decision.get('should_recapture')):
+        if resume_mode and checkpoint_count(operation):
+            reason = str(flow_decision.get('message') or 'Decisão inteligente pediu recaptura; mantendo checkpoint e retomando automaticamente.')
+            _pause_for_auto_resume(operation, reason, raw_urls=raw_urls, progress_bar=progress_bar, status_box=status_box)
+            return
         clear_site_df(operation, 'blingsmartscan_decisao_bloqueada')
         set_capture_state(operation=operation, running=False, finished=False, error=str(flow_decision.get('message') or 'Decisão inteligente bloqueou o avanço.'), rows=rows, columns=columns)
         fail_site_capture(str(flow_decision.get('message') or 'Decisão inteligente bloqueou o avanço.'), _capture_context(raw_urls, operation, max_pages, max_products))
@@ -538,9 +589,14 @@ def run_site_capture(
     )
     _persist_operation_state(operation)
     set_capture_state(operation=operation, running=False, finished=True, rows=rows, columns=columns)
+    clear_resume_request(reset_attempts=True)
+    clear_checkpoint(operation)
     if smart_report is not None:
         _store_smartscan_notice(operation, smart_report, rows=rows)
     _mark_manual_continue(operation, rows, columns)
     finish_progress(progress_bar, status_box, text='BLINGSMARTSCAN concluído.')
-    add_audit_event('blingsmartscan_ui_finished_waiting_manual_continue', area='SITE', step='entrada', status='OK', details={'operation': operation, 'stock_balance_only': stock_balance_only, 'stock_full_site_scan': stock_full_site_scan, 'rows': rows, 'columns': columns, 'elapsed_seconds': round(time.time() - started_at, 2), 'target_step': _next_step_after_capture(), 'next_label': _next_step_label_after_capture(), 'progress_mode': progress_mode(), 'neutral_capture_state': True, 'capture_spine': 'site_capture_spine_v1', 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('blingsmartscan_ui_finished_waiting_manual_continue', area='SITE', step='entrada', status='OK', details={'operation': operation, 'stock_balance_only': stock_balance_only, 'stock_full_site_scan': stock_full_site_scan, 'rows': rows, 'columns': columns, 'elapsed_seconds': round(time.time() - started_at, 2), 'target_step': _next_step_after_capture(), 'next_label': _next_step_label_after_capture(), 'progress_mode': progress_mode(), 'neutral_capture_state': True, 'capture_spine': 'site_capture_spine_v1', 'resume_mode': resume_mode, 'responsible_file': RESPONSIBLE_FILE})
     st.success(f'BLINGSMARTSCAN concluiu e salvou {rows} produto(s). Toque em Continuar para {_next_step_label_after_capture()}.')
+
+
+__all__ = ['run_site_capture']
