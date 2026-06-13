@@ -27,6 +27,36 @@ def _current_api_mode() -> bool:
     return False
 
 
+def _return_to_home_after_bling_connection() -> None:
+    """Conectar ao Bling não equivale a selecionar o fluxo da API."""
+    for key in (
+        'home_allow_operation_v2_session',
+        'home_single_page_flow_active',
+        'home_entry_context',
+        'home_bling_connected_same_flow_api_send',
+        'bling_finish_mode',
+        WIZARD_STEP_KEY,
+        NEUTRAL_WIZARD_STATE_KEY,
+    ):
+        st.session_state.pop(key, None)
+    st.session_state['home_active_operation_v2'] = 'home'
+    try:
+        for key in ('operation_v2', 'step', 'flow', 'origem', 'operacao', 'operation'):
+            st.query_params.pop(key, None)
+    except Exception:
+        pass
+    add_audit_event(
+        'bling_connection_returned_to_home_without_api_selection',
+        area='HOME',
+        status='OK',
+        details={
+            'connection_only': True,
+            'api_flow_selected': False,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+
+
 def sync_neutral_wizard_step(step: str) -> None:
     """Mantém o estado neutro do Wizard sincronizado com os caminhos legados."""
     current = st.session_state.get(NEUTRAL_WIZARD_STATE_KEY)
@@ -58,8 +88,15 @@ def set_step_without_rerun(step: str) -> bool:
 
 def safe_rerun(reason: str, *, target_step: str = '') -> None:
     """Executa rerun só quando necessário e deixa trilha de auditoria."""
-    normalized_target = normalize_step(target_step or st.session_state.get(WIZARD_STEP_KEY) or '', api_mode=_current_api_mode())
     normalized_reason = str(reason or 'wizard_state_changed').strip() or 'wizard_state_changed'
+    if normalized_reason == 'home_bling_verify_connected':
+        _return_to_home_after_bling_connection()
+        st.session_state[LAST_RERUN_REASON_KEY] = normalized_reason
+        st.session_state[LAST_RERUN_TARGET_KEY] = 'home'
+        st.rerun()
+        return
+
+    normalized_target = normalize_step(target_step or st.session_state.get(WIZARD_STEP_KEY) or '', api_mode=_current_api_mode())
 
     if target_step:
         changed = set_step_without_rerun(target_step)
