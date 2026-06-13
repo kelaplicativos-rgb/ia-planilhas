@@ -12,6 +12,7 @@ BOOT_RENDERED_KEY = 'bling_startup_guard_rendered_once_v1'
 BOOT_STARTED_AT_KEY = 'bling_startup_guard_started_at_v1'
 RECOVERY_MARK_KEY = 'blingfix_capture_recovery_mark_v1'
 RECOVERY_NOTICE_KEY = 'blingfix_capture_recovery_notice_v1'
+MANUAL_UNLOCK_NOTICE_KEY = 'blingfix_capture_manual_unlock_notice_v1'
 RECOVERY_SOFT_SECONDS = 90
 RECOVERY_HARD_SECONDS = 240
 
@@ -61,6 +62,33 @@ def _has_partial_site_result() -> bool:
     return False
 
 
+def _reset_capture_flags(*, reason: str, manual: bool = False) -> list[str]:
+    removed: list[str] = []
+    for key in VOLATILE_CAPTURE_KEYS:
+        if key in st.session_state:
+            st.session_state.pop(key, None)
+            removed.append(key)
+
+    st.session_state['site_capture_running'] = False
+    st.session_state['site_capture_finished'] = False
+    st.session_state['site_capture_result_ready'] = False
+    st.session_state['site_capture_error'] = ''
+
+    add_audit_event(
+        'site_capture_manual_unlock_clicked' if manual else 'site_capture_recovery_flags_reset',
+        area='APP',
+        status='CORRIGIDO' if manual else 'OK',
+        details={
+            'reason': reason,
+            'manual': manual,
+            'removed_keys': removed,
+            'preserved_model_origin_and_url': True,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+    return removed
+
+
 def _recover_interrupted_capture() -> bool:
     if not bool(st.session_state.get('site_capture_running')):
         return False
@@ -86,16 +114,7 @@ def _recover_interrupted_capture() -> bool:
         return False
     st.session_state[RECOVERY_MARK_KEY] = mark
 
-    removed: list[str] = []
-    for key in VOLATILE_CAPTURE_KEYS:
-        if key in st.session_state:
-            st.session_state.pop(key, None)
-            removed.append(key)
-
-    st.session_state['site_capture_running'] = False
-    st.session_state['site_capture_finished'] = False
-    st.session_state['site_capture_result_ready'] = False
-    st.session_state['site_capture_error'] = ''
+    removed = _reset_capture_flags(reason=reason, manual=False)
     st.session_state[RECOVERY_NOTICE_KEY] = reason
 
     add_audit_event(
@@ -108,17 +127,52 @@ def _recover_interrupted_capture() -> bool:
             'has_partial_site_result': has_partial,
             'removed_keys': removed,
             'preserved_model_origin_and_url': True,
+            'manual_button_available': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
     return True
 
 
+def _manual_unlock_capture_from_notice() -> None:
+    reason = 'Usuário apertou o botão manual para destravar a busca após aviso de sessão interrompida.'
+    _reset_capture_flags(reason=reason, manual=True)
+    st.session_state[MANUAL_UNLOCK_NOTICE_KEY] = 'Busca destravada manualmente. URL, modelo, operação e arquivos foram preservados. Execute novamente quando quiser.'
+    st.session_state.pop(RECOVERY_NOTICE_KEY, None)
+
+
 def _render_recovery_notice() -> None:
-    notice = str(st.session_state.pop(RECOVERY_NOTICE_KEY, '') or '').strip()
-    if notice:
-        st.warning(notice)
-        st.caption('A limpeza foi parcial: modelo, URL, operação e arquivos foram preservados.')
+    manual_notice = str(st.session_state.pop(MANUAL_UNLOCK_NOTICE_KEY, '') or '').strip()
+    if manual_notice:
+        st.success(manual_notice)
+
+    notice = str(st.session_state.get(RECOVERY_NOTICE_KEY, '') or '').strip()
+    if not notice:
+        return
+
+    st.warning(notice)
+    st.caption('A limpeza foi parcial: modelo, URL, operação e arquivos foram preservados.')
+    col_unlock, col_keep = st.columns(2)
+    with col_unlock:
+        if st.button('Destravar busca manualmente', use_container_width=True, key='startup_guard_manual_unlock_capture'):
+            _manual_unlock_capture_from_notice()
+            try:
+                st.rerun()
+            except Exception:
+                pass
+    with col_keep:
+        if st.button('Manter assim e continuar', use_container_width=True, key='startup_guard_keep_recovered_capture'):
+            st.session_state.pop(RECOVERY_NOTICE_KEY, None)
+            add_audit_event(
+                'site_capture_recovery_notice_kept_by_user',
+                area='APP',
+                status='OK',
+                details={'responsible_file': RESPONSIBLE_FILE},
+            )
+            try:
+                st.rerun()
+            except Exception:
+                pass
 
 
 def ensure_app_ready() -> bool:
@@ -140,15 +194,15 @@ def ensure_app_ready() -> bool:
             status='INFO',
             details={'responsible_file': RESPONSIBLE_FILE},
         )
-        notice = st.empty()
+        notice_box = st.empty()
         progress = st.progress(20, text='Inicializando conexão segura da tela...')
-        notice.info('Preparando sessão do sistema...')
+        notice_box.info('Preparando sessão do sistema...')
         time.sleep(0.35)
         try:
             progress.progress(100, text='Sessão pronta.')
             time.sleep(0.05)
             progress.empty()
-            notice.empty()
+            notice_box.empty()
         except Exception:
             pass
 
@@ -158,7 +212,7 @@ def ensure_app_ready() -> bool:
         'startup_guard_ready',
         area='APP',
         status='OK',
-        details={'elapsed_seconds': elapsed, 'no_startup_rerun': True, 'capture_recovery_enabled': True, 'responsible_file': RESPONSIBLE_FILE},
+        details={'elapsed_seconds': elapsed, 'no_startup_rerun': True, 'capture_recovery_enabled': True, 'manual_unlock_button': True, 'responsible_file': RESPONSIBLE_FILE},
     )
     return True
 
