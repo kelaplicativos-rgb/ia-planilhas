@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-import time
 from collections.abc import Iterable, Mapping
 
 import pandas as pd
@@ -127,6 +126,16 @@ def checkpoint_payload(operation: str | None = None) -> dict:
     return best
 
 
+def _freeze_checkpoint(operation: str) -> None:
+    payload = checkpoint_payload(operation)
+    if not payload:
+        return
+    frozen = dict(payload)
+    frozen['partial_checkpoint_operation'] = frozen.get('partial_checkpoint_operation') or _normalize_operation(operation)
+    st.session_state[CHECKPOINT_KEY] = frozen
+    st.session_state[CHECKPOINT_OPERATION_KEY] = _normalize_operation(operation)
+
+
 def checkpoint_count(operation: str | None = None) -> int:
     payload = checkpoint_payload(operation)
     if not payload:
@@ -249,6 +258,7 @@ def resume_raw_urls(operation: str, fallback_raw_urls: str) -> str:
 def mark_resume_context(operation: str, reason: str, *, raw_urls: str = '') -> None:
     operation = _normalize_operation(operation)
     remember_capture_inputs(operation, raw_urls)
+    _freeze_checkpoint(operation)
     st.session_state['site_capture_running'] = False
     st.session_state['site_capture_finished'] = False
     st.session_state['site_capture_result_ready'] = False
