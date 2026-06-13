@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from typing import Callable, Iterable
 
 import pandas as pd
@@ -59,6 +59,7 @@ def _audit_contract(normalized_operation: str, columns: list[str], needed: set[s
             'needed_kinds': sorted(needed),
             'dynamic_render_fallback_enabled': True,
             'rich_description_enabled': 'descricao_complementar' in needed,
+            'partial_checkpoint_enabled': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -66,6 +67,32 @@ def _audit_contract(normalized_operation: str, columns: list[str], needed: set[s
 
 def _seconds_left(started: float, budget_seconds: float) -> float:
     return max(0.0, float(budget_seconds) - (time.perf_counter() - started))
+
+
+def _partial_checkpoint_payload(
+    *,
+    products_by_url: list[tuple[str, FastProductData]],
+    contract,
+    columns: list[str],
+    normalized_operation: str,
+) -> dict[str, object]:
+    if not products_by_url:
+        return {'partial_checkpoint_found': 0, 'partial_checkpoint_enabled': True}
+    rows: list[dict[str, object]] = []
+    for _url, product in products_by_url:
+        try:
+            rows.append(to_contract_row(product, contract))
+        except Exception:
+            continue
+    if not rows:
+        return {'partial_checkpoint_found': 0, 'partial_checkpoint_enabled': True}
+    return {
+        'partial_checkpoint_enabled': True,
+        'partial_checkpoint_rows': rows,
+        'partial_checkpoint_columns': columns,
+        'partial_checkpoint_operation': normalized_operation,
+        'partial_checkpoint_found': len(rows),
+    }
 
 
 def _read_products_parallel(
@@ -76,6 +103,9 @@ def _read_products_parallel(
     max_products: int,
     stop_early: bool,
     progress_callback: Callable[[dict], None] | None,
+    contract,
+    columns: list[str],
+    normalized_operation: str,
     budget_seconds: int | float = PRODUCT_READ_BUDGET_SECONDS,
 ) -> tuple[list[tuple[str, FastProductData]], int, int, int, str, list[dict[str, object]]]:
     products_by_url: list[tuple[str, FastProductData]] = []
@@ -102,6 +132,7 @@ def _read_products_parallel(
         'rich_description_enabled': 'descricao_complementar' in needed,
         'dynamic_render_fallback_enabled': True,
         'budget_seconds': int(budget_seconds),
+        'partial_checkpoint_enabled': True,
     })
 
     while pending_urls and processed < total:
@@ -159,7 +190,7 @@ def _read_products_parallel(
                         if should_stop:
                             stop_reason = reason
                             pending_urls = []
-                            emit(progress_callback, {
+                            payload = {
                                 'stage': 'Busca suficiente',
                                 'message': stop_reason,
                                 'progress': 0.86,
@@ -170,13 +201,15 @@ def _read_products_parallel(
                                 'errors': errors,
                                 'devtools': 0,
                                 'slow_links': slow_links[-5:],
-                            })
+                            }
+                            payload.update(_partial_checkpoint_payload(products_by_url=products_by_url, contract=contract, columns=columns, normalized_operation=normalized_operation))
+                            emit(progress_callback, payload)
                             break
 
                     now = time.perf_counter()
                     if now - last_emit >= 0.5 or processed == total:
                         ratio = processed / max(total, 1)
-                        emit(progress_callback, {
+                        payload = {
                             'stage': 'Lendo produtos em lote seguro',
                             'message': f'{processed}/{total} produto(s) lido(s). {len(products_by_url)} com dados úteis.',
                             'progress': 0.28 + (0.58 * ratio),
@@ -191,7 +224,9 @@ def _read_products_parallel(
                             'rich_description_enabled': 'descricao_complementar' in needed,
                             'dynamic_render_fallback_enabled': True,
                             'seconds_left': round(_seconds_left(started, budget_seconds), 1),
-                        })
+                        }
+                        payload.update(_partial_checkpoint_payload(products_by_url=products_by_url, contract=contract, columns=columns, normalized_operation=normalized_operation))
+                        emit(progress_callback, payload)
                         last_emit = now
 
                 if stop_reason:
@@ -211,6 +246,7 @@ def _read_products_parallel(
                         'processed': processed,
                         'found': len(products_by_url),
                         'reason': stop_reason or 'lote_sem_resposta',
+                        'partial_checkpoint_found': len(products_by_url),
                         'responsible_file': RESPONSIBLE_FILE,
                     },
                 )
@@ -218,6 +254,20 @@ def _read_products_parallel(
 
         if stop_reason:
             break
+
+    if products_by_url:
+        payload = {
+            'stage': 'Checkpoint preservado',
+            'message': f'{len(products_by_url)} produto(s) já preservado(s). Se a tela cair, será possível continuar com este resultado parcial.',
+            'progress': 0.86,
+            'processed': processed,
+            'total': total,
+            'found': len(products_by_url),
+            'complete': complete_count,
+            'errors': errors,
+        }
+        payload.update(_partial_checkpoint_payload(products_by_url=products_by_url, contract=contract, columns=columns, normalized_operation=normalized_operation))
+        emit(progress_callback, payload)
 
     if stop_reason and ('limite de tempo' in stop_reason or 'link lento' in stop_reason):
         add_audit_event(
@@ -232,6 +282,7 @@ def _read_products_parallel(
                 'errors': errors,
                 'budget_seconds': int(budget_seconds),
                 'stop_reason': stop_reason,
+                'partial_checkpoint_found': len(products_by_url),
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
@@ -263,6 +314,7 @@ def _audit_finished(
             'rich_description_empty': rich_empty,
             'devtools': rendered_fallbacks,
             'errors': errors,
+            'partial_checkpoint_enabled': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -312,6 +364,7 @@ def run_fast_site_scraper(
             'safe_limited': safe_limited,
             'flow_mode': flow_mode,
             'limit_mode': _limit_mode(normalized_operation, stop_early),
+            'partial_checkpoint_enabled': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -325,6 +378,7 @@ def run_fast_site_scraper(
         'max_products': max_products,
         'safe_limited': safe_limited,
         'flow_mode': flow_mode,
+        'partial_checkpoint_enabled': True,
     })
     discovery_started = time.perf_counter()
     urls = discover_product_urls(raw_urls, max_pages=max_pages, max_products=max_products)
@@ -342,6 +396,7 @@ def run_fast_site_scraper(
         'max_products': max_products,
         'safe_limited': safe_limited,
         'flow_mode': flow_mode,
+        'partial_checkpoint_enabled': True,
     })
     if not urls:
         emit(progress_callback, {'stage': 'Nada encontrado', 'message': 'Não encontrei produtos nos links informados. Confira se o link abre produtos ou categorias.', 'progress': 1.0, 'urls_found': 0})
@@ -358,6 +413,11 @@ def run_fast_site_scraper(
             'total_seconds': round(time.perf_counter() - total_started, 2),
             'safe_limited': safe_limited,
             'flow_mode': flow_mode,
+            'partial_checkpoint_enabled': True,
+            'partial_checkpoint_rows': rows,
+            'partial_checkpoint_columns': columns,
+            'partial_checkpoint_operation': normalized_operation,
+            'partial_checkpoint_found': len(rows),
         })
         return ensure_columns(pd.DataFrame(rows).fillna(''), columns)
 
@@ -369,6 +429,9 @@ def run_fast_site_scraper(
         max_products=max_products,
         stop_early=stop_early,
         progress_callback=progress_callback,
+        contract=contract,
+        columns=columns,
+        normalized_operation=normalized_operation,
         budget_seconds=remaining_budget,
     )
 
@@ -407,6 +470,11 @@ def run_fast_site_scraper(
         'safe_limited': safe_limited,
         'flow_mode': flow_mode,
         'stop_reason': stop_reason,
+        'partial_checkpoint_enabled': True,
+        'partial_checkpoint_rows': rows,
+        'partial_checkpoint_columns': columns,
+        'partial_checkpoint_operation': normalized_operation,
+        'partial_checkpoint_found': len(rows),
     })
     return ensure_columns(pd.DataFrame(rows).fillna(''), columns)
 
