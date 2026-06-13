@@ -8,7 +8,7 @@ from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 from bling_app_zero.ui.mapping_constants import MAPPING_PAGE_SIZE
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/mapping_pagination.py'
-MOBILE_MAPPING_PAGE_SIZE = 6
+MOBILE_MAPPING_PAGE_SIZE = 10
 
 
 def mapping_page_key(mapping_key: str) -> str:
