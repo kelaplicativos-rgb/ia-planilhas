@@ -36,6 +36,7 @@ CONTEXT_UNIVERSAL = 'universal'
 FINISH_MODE_CSV = 'csv_download'
 FLOW_WIZARD = 'wizard_cadastro_estoque'
 STEP_ORIGEM = 'origem'
+HOME_BOOT_LOCK_KEY = 'home_boot_landing_rendered_once'
 HOME_FLOW_SCHEMA_KEY = 'home_source_first_flow_schema_v1'
 HOME_FLOW_SCHEMA_VERSION = 'source_first_origin_start_v4_unified_bling_20260613'
 UNIFIED_BLING_SEND_KEY = 'home_bling_connected_same_flow_api_send'
@@ -412,6 +413,7 @@ def _restore_unified_bling_flow(payload: dict[str, Any]) -> None:
     store['home_active_operation_v2'] = FLOW_WIZARD
     store['home_allow_operation_v2_session'] = True
     store['home_single_page_flow_active'] = True
+    store[HOME_BOOT_LOCK_KEY] = True
     store['home_entry_context'] = CONTEXT_UNIVERSAL
     store['home_slim_entry_context'] = CONTEXT_UNIVERSAL
     store['bling_finish_mode'] = FINISH_MODE_CSV
@@ -442,6 +444,7 @@ def _restore_unified_bling_flow(payload: dict[str, Any]) -> None:
             'step': STEP_ORIGEM,
             'home_entry_context': CONTEXT_UNIVERSAL,
             'api_send_flag': True,
+            'boot_lock_preserved': True,
             'schema_version': HOME_FLOW_SCHEMA_VERSION,
             'responsible_file': RESPONSIBLE_FILE,
         },
