@@ -55,6 +55,19 @@ def _is_api_context() -> bool:
         return str(st.session_state.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower() == CONTEXT_BLING_API
 
 
+def _manual_mapping_required() -> bool:
+    """Bling conectado pode mudar só o destino final para API, mas o contrato ainda pode exigir mapeamento.
+
+    O bug era tratar qualquer destino api_bling como API direta e pular a tela de ligar colunas.
+    No fluxo universal_mapping_csv, o usuário ainda precisa revisar/mapear os 59 campos antes do envio.
+    """
+    try:
+        plan = output_plan()
+        return bool(getattr(plan, 'needs_mapping', False))
+    except Exception:
+        return True
+
+
 def _operation_label() -> str:
     try:
         plan = output_plan()
@@ -138,7 +151,7 @@ def render_cadastro_mapeamento_step() -> None:
 
     store_expected_source_rows(df_origem)
 
-    if _is_api_context():
+    if _is_api_context() and not _manual_mapping_required():
         df_final = ensure_api_direct_final_df()
         if valid_df(df_final):
             col_a, col_b = st.columns(2)
@@ -146,7 +159,7 @@ def render_cadastro_mapeamento_step() -> None:
                 st.metric('Linhas carregadas', len(df_origem))
             with col_b:
                 st.metric('Campos preparados', len(df_final.columns))
-            st.info('Modo de envio: mapeamento manual dispensado. O fluxo seguirá com os campos preparados.')
+            st.info('Modo API direta: mapeamento manual dispensado. O fluxo seguirá com os campos preparados.')
             _render_post_mapping_notice()
             return
 
@@ -161,6 +174,9 @@ def render_cadastro_mapeamento_step() -> None:
         st.metric('Linhas encontradas', len(df_origem))
     with col_b:
         st.metric('Colunas do modelo', len(df_modelo.columns))
+
+    if _is_api_context() and _manual_mapping_required():
+        st.info('Bling conectado: o envio aparece no final, mas o mapeamento manual continua obrigatório para ligar todos os campos do modelo.')
 
     if bool(st.session_state.get('cadastro_preco_calculado_ativo', False)):
         st.success('Preço calculado na etapa anterior. O valor calculado está disponível para o mapeamento.')
