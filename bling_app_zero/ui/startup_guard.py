@@ -5,6 +5,7 @@ import time
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.ui.site_resume_state import checkpoint_count, request_resume
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/startup_guard.py'
 BOOT_READY_KEY = 'bling_startup_guard_ready_v1'
@@ -23,13 +24,6 @@ VOLATILE_CAPTURE_KEYS = (
     'site_capture_result_ready',
     'site_capture_rows',
     'site_capture_columns',
-    'site_progress_log',
-    'site_progress_last',
-    'site_progress_last_seen_at',
-    'neutral_site_progress_state_v1',
-    'site_progress_callback_last_render_at',
-    'site_progress_callback_last_percent',
-    'live_operation_progress_last_v1',
     'blingsmartscan_manual_continue_required',
     'blingsmartscan_ready_to_continue',
     'blingsmartscan_continue_target_step',
@@ -62,6 +56,10 @@ def _has_partial_site_result() -> bool:
     return False
 
 
+def _site_operation() -> str:
+    return str(st.session_state.get('site_capture_operation') or st.session_state.get('operation_site') or st.session_state.get('tipo_operacao_site') or 'universal').strip().lower() or 'universal'
+
+
 def _reset_capture_flags(*, reason: str, manual: bool = False) -> list[str]:
     removed: list[str] = []
     for key in VOLATILE_CAPTURE_KEYS:
@@ -82,7 +80,7 @@ def _reset_capture_flags(*, reason: str, manual: bool = False) -> list[str]:
             'reason': reason,
             'manual': manual,
             'removed_keys': removed,
-            'preserved_model_origin_and_url': True,
+            'preserved_model_origin_url_and_progress': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -101,33 +99,35 @@ def _recover_interrupted_capture() -> bool:
     has_partial = _has_partial_site_result()
 
     if has_partial and age >= RECOVERY_SOFT_SECONDS:
-        reason = 'Busca anterior tinha resultado parcial e foi destravada automaticamente. Confira o resultado salvo ou execute novo lote.'
+        reason = 'Busca anterior tinha resultado parcial e será retomada automaticamente sem perder o que já foi lido.'
     elif idle >= RECOVERY_SOFT_SECONDS and age >= RECOVERY_SOFT_SECONDS:
-        reason = 'Busca anterior ficou sem sinal vivo e foi destravada automaticamente.'
+        reason = 'Busca anterior ficou sem sinal vivo. O sistema vai apertar continuar busca automaticamente.'
     elif age >= RECOVERY_HARD_SECONDS:
-        reason = 'Busca anterior passou do limite seguro e foi destravada automaticamente.'
+        reason = 'Busca anterior passou do limite seguro. O sistema vai retomar a busca preservando o checkpoint.'
     else:
         return False
 
-    mark = f'{int(started_at)}:{int(age)}:{int(idle)}:{has_partial}'
+    mark = f'{int(started_at)}:{int(age)}:{int(idle)}:{has_partial}:{checkpoint_count()}'
     if st.session_state.get(RECOVERY_MARK_KEY) == mark:
         return False
     st.session_state[RECOVERY_MARK_KEY] = mark
 
-    removed = _reset_capture_flags(reason=reason, manual=False)
+    operation = _site_operation()
+    request_resume(operation, reason)
     st.session_state[RECOVERY_NOTICE_KEY] = reason
 
     add_audit_event(
-        'site_capture_interrupted_session_recovered',
+        'site_capture_interrupted_session_resume_requested',
         area='APP',
         status='OK',
         details={
+            'operation': operation,
             'age_seconds': round(age, 2),
             'idle_seconds': round(idle, 2),
             'has_partial_site_result': has_partial,
-            'removed_keys': removed,
-            'preserved_model_origin_and_url': True,
-            'manual_button_available': True,
+            'checkpoint_count': checkpoint_count(),
+            'auto_continue_search': True,
+            'preserved_model_origin_url_and_progress': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -135,9 +135,13 @@ def _recover_interrupted_capture() -> bool:
 
 
 def _manual_unlock_capture_from_notice() -> None:
-    reason = 'Usuário apertou o botão manual para destravar a busca após aviso de sessão interrompida.'
-    _reset_capture_flags(reason=reason, manual=True)
-    st.session_state[MANUAL_UNLOCK_NOTICE_KEY] = 'Busca destravada manualmente. URL, modelo, operação e arquivos foram preservados. Execute novamente quando quiser.'
+    operation = _site_operation()
+    reason = 'Usuário apertou continuar busca manualmente após aviso de sessão interrompida.'
+    if request_resume(operation, reason):
+        st.session_state[MANUAL_UNLOCK_NOTICE_KEY] = 'Busca marcada para continuar. Produtos já lidos e URL/modelo/operação foram preservados.'
+    else:
+        _reset_capture_flags(reason=reason, manual=True)
+        st.session_state[MANUAL_UNLOCK_NOTICE_KEY] = 'Busca destravada manualmente. Execute novamente quando quiser.'
     st.session_state.pop(RECOVERY_NOTICE_KEY, None)
 
 
@@ -151,10 +155,14 @@ def _render_recovery_notice() -> None:
         return
 
     st.warning(notice)
-    st.caption('A limpeza foi parcial: modelo, URL, operação e arquivos foram preservados.')
-    col_unlock, col_keep = st.columns(2)
-    with col_unlock:
-        if st.button('Destravar busca manualmente', use_container_width=True, key='startup_guard_manual_unlock_capture'):
+    count = checkpoint_count()
+    if count:
+        st.caption(f'Checkpoint preservado: {count} produto(s) já lidos. A busca continuará sem transformar isso em resultado final parcial.')
+    else:
+        st.caption('URL, modelo, operação e progresso foram preservados para continuar a busca.')
+    col_resume, col_keep = st.columns(2)
+    with col_resume:
+        if st.button('Continuar busca do ponto salvo', use_container_width=True, key='startup_guard_manual_unlock_capture'):
             _manual_unlock_capture_from_notice()
             try:
                 st.rerun()
@@ -212,7 +220,7 @@ def ensure_app_ready() -> bool:
         'startup_guard_ready',
         area='APP',
         status='OK',
-        details={'elapsed_seconds': elapsed, 'no_startup_rerun': True, 'capture_recovery_enabled': True, 'manual_unlock_button': True, 'responsible_file': RESPONSIBLE_FILE},
+        details={'elapsed_seconds': elapsed, 'no_startup_rerun': True, 'capture_recovery_enabled': True, 'continue_search_button': True, 'responsible_file': RESPONSIBLE_FILE},
     )
     return True
 
