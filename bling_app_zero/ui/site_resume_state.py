@@ -178,14 +178,14 @@ def _dedupe_columns(df: pd.DataFrame) -> list[str]:
     priority_signals = ('url', 'link', 'produto_url', 'url_produto', 'codigo', 'sku', 'id_produto', 'gtin', 'ean')
     out: list[str] = []
     for signal in priority_signals:
-        for column, key in zip(df.columns, keys, strict=False):
+        for column, key in zip(df.columns, keys):
             if signal == key or signal in key:
                 text = str(column)
                 if text not in out:
                     out.append(text)
         if out:
             return out[:2]
-    for column, key in zip(df.columns, keys, strict=False):
+    for column, key in zip(df.columns, keys):
         if 'descricao' in key or 'nome' in key or 'produto' in key:
             out.append(str(column))
             break
