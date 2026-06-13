@@ -8,7 +8,7 @@ import streamlit as st
 from bling_app_zero.core.bling_connected_flow_policy import (
     activate_connected_flow,
     annotate_dataframe_for_connected_flow,
-    bling_connected,
+    api_flow_explicitly_selected,
 )
 from bling_app_zero.core.files import read_uploaded_file
 from bling_app_zero.core.flow_spine_output import output_diagnostics, output_is_api, output_operation, output_plan
@@ -59,16 +59,20 @@ class _NamedBytesIO(BytesIO):
 
 
 def _is_api_context() -> bool:
-    if bling_connected():
-        return True
+    """API exige escolha explícita; conexão isolada não altera o mapeamento."""
+    if not api_flow_explicitly_selected():
+        return False
     try:
-        return output_is_api()
+        return bool(output_is_api())
     except Exception:
-        return str(st.session_state.get(HOME_ENTRY_CONTEXT_KEY) or '').strip().lower() == CONTEXT_BLING_API
+        return False
 
 
 def _current_operation() -> str:
-    for key in ('bling_connected_api_operation', 'active_feature_operation', 'flow_spine_operation', 'operacao_final', 'operation', 'selected_operation'):
+    keys = ['active_feature_operation', 'flow_spine_operation', 'operacao_final', 'operation', 'selected_operation']
+    if _is_api_context():
+        keys.insert(0, 'bling_connected_api_operation')
+    for key in keys:
         value = str(st.session_state.get(key) or '').strip()
         if value:
             return value
@@ -176,9 +180,11 @@ def _api_automation_source_df(df_origem: pd.DataFrame) -> pd.DataFrame:
 
 
 def _prepare_bling_api_automation(df_origem: pd.DataFrame) -> pd.DataFrame | None:
-    """Prepara a base para API sem mapeamento manual."""
+    """Prepara a base para API sem mapeamento manual, apenas quando escolhida."""
     operation = _current_operation()
     policy = activate_connected_flow(operation, _origin_kind())
+    if not policy.api_enabled:
+        return None
 
     df_final = ensure_api_direct_final_df()
     if not valid_df(df_final):
@@ -238,7 +244,7 @@ def render_cadastro_mapeamento_step() -> None:
                 st.metric('Linhas preparadas', len(df_final_api))
             with col_b:
                 st.metric('Campos para API', len(df_final_api.columns))
-            st.info('Bling conectado: automação via API ativa. O sistema preparou os campos automaticamente; o usuário não precisa mapear manualmente.')
+            st.info('Fluxo API escolhido na Home: o sistema preparou os campos automaticamente; o usuário não precisa mapear manualmente.')
             _render_connected_policy_notice()
             _render_post_mapping_notice()
             return
