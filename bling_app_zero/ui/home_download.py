@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.bling_api_send_guard import validate_before_bling_send
 from bling_app_zero.core.exporter import enforce_export_contract, filename_for_operation, to_bling_csv_bytes
 from bling_app_zero.core.files import read_uploaded_file
 from bling_app_zero.core.flow_spine_output import output_diagnostics, output_is_api, output_operation
@@ -22,6 +23,7 @@ from bling_app_zero.core.rules_signature import rules_signature
 from bling_app_zero.core.text import normalize_key
 from bling_app_zero.core.validators import validate_final_df
 from bling_app_zero.ui.bling_api_batch_panel import render_bling_api_batch_panel
+from bling_app_zero.ui.bling_price_channel_selector import render_price_channel_selector
 from bling_app_zero.ui.flow_context import (
     entry_context as _entry_context,
     is_bling_api_context as _legacy_is_api_context,
@@ -299,15 +301,57 @@ def save_download_snapshot(
     st.session_state['flow_spine_sender_destination'] = 'api_bling' if _is_api_context() else 'mapped_model_download'
 
 
+def _render_stock_deposit_target(download_df: pd.DataFrame) -> pd.DataFrame | None:
+    st.markdown('### Depósito do estoque no Bling')
+    st.caption('Selecione/informe o depósito que receberá a atualização de estoque.')
+    deposit_id = st.text_input('ID do depósito no Bling', value=str(st.session_state.get('bling_stock_deposit_id') or ''), key='final_bling_stock_deposit_id')
+    deposit_name = st.text_input('Nome do depósito', value=str(st.session_state.get('bling_stock_deposit_name') or ''), key='final_bling_stock_deposit_name')
+    if not str(deposit_id or '').strip():
+        st.warning('Depósito obrigatório para atualização de estoque. Informe o ID do depósito antes de enviar ao Bling.')
+        return None
+    out = download_df.copy().fillna('')
+    st.session_state['bling_stock_deposit_id'] = str(deposit_id).strip()
+    st.session_state['bling_stock_deposit_name'] = str(deposit_name or deposit_id).strip()
+    out['Bling depósito id'] = st.session_state['bling_stock_deposit_id']
+    out['Bling depósito nome'] = st.session_state['bling_stock_deposit_name']
+    return out
+
+
+def _apply_required_api_target(download_df: pd.DataFrame, operation: str) -> pd.DataFrame | None:
+    op = normalize_operation(operation)
+    if op == OP_ATUALIZACAO_PRECO:
+        return render_price_channel_selector(download_df, op)
+    if op == OP_ESTOQUE:
+        return _render_stock_deposit_target(download_df)
+    return download_df
+
+
+def _guard_before_api_send(download_df: pd.DataFrame, operation: str) -> bool:
+    result = validate_before_bling_send(download_df, operation)
+    st.session_state['final_bling_api_send_guard'] = result.to_dict()
+    if result.ok:
+        st.success('Destino da API validado antes do BLINGSCAN.')
+        return True
+    for message in result.messages:
+        st.error(message)
+    add_audit_event('final_api_send_guard_blocked', area='DOWNLOAD', status='BLOQUEADO', details=result.to_dict())
+    return False
+
+
 def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: str, signature: str, rules_sig: str) -> None:
     operation = _spine_operation_or(operation)
     if not _is_api_context():
         add_audit_event('final_api_send_skipped_by_flow_spine', area='DOWNLOAD', status='PULADO', details={'operation': operation, 'flow_spine': output_diagnostics(), 'responsible_file': RESPONSIBLE_FILE})
         return
+    targeted_df = _apply_required_api_target(download_df, operation)
+    if not isinstance(targeted_df, pd.DataFrame) or targeted_df.empty:
+        return
+    if not _guard_before_api_send(targeted_df, operation):
+        return
     st.session_state['flow_spine_sender_operation'] = operation
     st.session_state['flow_spine_sender_destination'] = 'api_bling'
-    add_audit_event('final_api_send_rendered_by_flow_spine', area='DOWNLOAD', status='OK', details={'operation': operation, 'rows': len(download_df), 'columns': len(download_df.columns), 'flow_spine': output_diagnostics(), 'responsible_file': RESPONSIBLE_FILE})
-    render_bling_api_batch_panel(download_df, operation, key, signature, rules_sig)
+    add_audit_event('final_api_send_rendered_by_flow_spine', area='DOWNLOAD', status='OK', details={'operation': operation, 'rows': len(targeted_df), 'columns': len(targeted_df.columns), 'flow_spine': output_diagnostics(), 'responsible_file': RESPONSIBLE_FILE})
+    render_bling_api_batch_panel(targeted_df, operation, key, df_signature(targeted_df), rules_sig)
 
 
 def _render_api_final(df_final: pd.DataFrame, operation: str, key: str = 'api_final') -> None:
