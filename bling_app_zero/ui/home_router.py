@@ -59,6 +59,7 @@ STALE_FLOW_KEYS = (
     HOME_ENTRY_CONTEXT_KEY,
     WIZARD_STEP_KEY,
     UNIFIED_BLING_SEND_KEY,
+    BLING_AUTH_READY_KEY,
     'home_single_page_flow_active',
     'home_slim_flow_origin',
     'home_slim_flow_operation',
@@ -184,6 +185,7 @@ def _set_home_flow() -> None:
     st.session_state['home_single_page_flow_active'] = False
     st.session_state.pop(HOME_ENTRY_CONTEXT_KEY, None)
     st.session_state.pop(UNIFIED_BLING_SEND_KEY, None)
+    st.session_state.pop(BLING_AUTH_READY_KEY, None)
     _clear_navigation_params()
 
 
@@ -284,6 +286,33 @@ def _clean_oauth_url(url: str) -> str:
     return unescape(str(url or '').strip()).replace('&amp;', '&')
 
 
+def _oauth_url_looks_unsafe(url: str) -> bool:
+    text = _clean_oauth_url(url).lower()
+    if not text:
+        return False
+    if '/oauth/authorize' in text:
+        return False
+    if '/oauth/token' in text:
+        return True
+    if 'bling.com.br/api/' in text or 'bling.com.br/api?' in text or 'bling.com.br/api/v' in text:
+        return True
+    return False
+
+
+def _discard_unsafe_ready_url(reason: str, url: str) -> None:
+    st.session_state.pop(BLING_AUTH_READY_KEY, None)
+    add_audit_event(
+        'home_router_bling_auth_ready_url_discarded',
+        area='BLING_OAUTH',
+        status='AVISO',
+        details={
+            'reason': reason,
+            'url_preview': _clean_oauth_url(url)[:140],
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+
+
 def _android_safe_oauth_links(label: str, url: str) -> None:
     raw_url = _clean_oauth_url(url)
     if not raw_url:
@@ -311,7 +340,12 @@ def _same_tab_link(label: str, url: str) -> None:
 
 
 def _request_bling_link(auth_url: str) -> None:
-    st.session_state[BLING_AUTH_READY_KEY] = _clean_oauth_url(auth_url)
+    cleaned_url = _clean_oauth_url(auth_url)
+    if _oauth_url_looks_unsafe(cleaned_url):
+        _discard_unsafe_ready_url('generated_auth_url_unsafe_api_endpoint', cleaned_url)
+        st.warning('O link gerado ainda aponta para um endpoint técnico do Bling. Recarregue o app após o deploy e tente novamente.')
+        return
+    st.session_state[BLING_AUTH_READY_KEY] = cleaned_url
     add_audit_event(
         'home_router_bling_auth_link_requested',
         area='HOME',
@@ -324,6 +358,10 @@ def _request_bling_link(auth_url: str) -> None:
 def _render_open_bling_link(url: str) -> None:
     raw_url = _clean_oauth_url(url)
     if not raw_url:
+        return
+    if _oauth_url_looks_unsafe(raw_url):
+        _discard_unsafe_ready_url('render_ready_url_unsafe_api_endpoint', raw_url)
+        st.warning('Descartei um link antigo do Bling que apontava para a API técnica. Toque em preparar conexão novamente.')
         return
     st.success('Link oficial do Bling pronto. Toque abaixo para abrir a autorização.')
     _android_safe_oauth_links('Abrir tela oficial do Bling', raw_url)
@@ -405,8 +443,15 @@ def _render_bling_connection(auth_url: str) -> None:
     if not url:
         st.warning('Não consegui gerar a autorização do Bling agora.')
         return
+    if _oauth_url_looks_unsafe(url):
+        _discard_unsafe_ready_url('fresh_auth_url_unsafe_api_endpoint', url)
+        st.warning('O link do Bling ainda veio como endpoint técnico. Atualize o deploy e tente preparar a conexão novamente.')
+        return
 
     ready_url = _clean_oauth_url(st.session_state.get(BLING_AUTH_READY_KEY) or '')
+    if _oauth_url_looks_unsafe(ready_url):
+        _discard_unsafe_ready_url('cached_ready_url_unsafe_api_endpoint', ready_url)
+        ready_url = ''
     if ready_url:
         _render_open_bling_link(ready_url)
     else:
@@ -502,7 +547,7 @@ def _render_professional_home() -> None:
         '''
 <style>
 .bling-home-hero{border:1px solid rgba(15,23,42,.10);background:linear-gradient(135deg,#ffffff 0%,#f8fafc 100%);border-radius:22px;padding:1.05rem 1rem;margin:.35rem 0 1rem 0;box-shadow:0 14px 34px rgba(15,23,42,.06)}
-.bling-home-eyebrow{font-size:.78rem;font-weight:800;color:#2563eb;text-transform:uppercase;letter-spacing:.08em;margin-bottom:.35rem}.bling-home-title{font-size:1.55rem;line-height:1.08;font-weight:950;color:#0f172a;margin:0}.bling-home-subtitle{font-size:.95rem;line-height:1.38;color:#475569;margin:.65rem 0 0 0}.bling-home-section-title{font-size:1.05rem;font-weight:900;color:#0f172a;margin:1rem 0 .25rem}.bling-home-section-subtitle{font-size:.88rem;color:#64748b;margin:0 0 .75rem}.bling-home-card{border:1px solid rgba(15,23,42,.08);background:#fff;border-radius:18px;padding:.95rem;margin:.65rem 0}.bling-home-alert{border:1px solid rgba(234,88,12,.30);background:rgba(255,237,213,.75);color:#7c2d12;border-radius:16px;padding:.85rem .9rem;font-weight:700;line-height:1.35}.bling-home-muted{font-size:.82rem;color:#64748b;line-height:1.35}
+.bling-home-eyebrow{font-size:.78rem;font-weight:800;color:#2563eb;text-transform:uppercase;letter-spacing:.08em;margin-bottom:.35em}.bling-home-title{font-size:1.55rem;line-height:1.08;font-weight:950;color:#0f172a;margin:0}.bling-home-subtitle{font-size:.95rem;line-height:1.38;color:#475569;margin:.65rem 0 0 0}.bling-home-section-title{font-size:1.05rem;font-weight:900;color:#0f172a;margin:1rem 0 .25rem}.bling-home-section-subtitle{font-size:.88rem;color:#64748b;margin:0 0 .75rem}.bling-home-card{border:1px solid rgba(15,23,42,.08);background:#fff;border-radius:18px;padding:.95rem;margin:.65rem 0}.bling-home-alert{border:1px solid rgba(234,88,12,.30);background:rgba(255,237,213,.75);color:#7c2d12;border-radius:16px;padding:.85rem .9rem;font-weight:700;line-height:1.35}.bling-home-muted{font-size:.82rem;color:#64748b;line-height:1.35}
 </style>
 <div class="bling-home-hero">
   <div class="bling-home-eyebrow">MapeiaAI · Bling</div>
