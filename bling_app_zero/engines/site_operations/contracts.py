@@ -18,6 +18,10 @@ CADASTRO_DEFAULT_COLUMNS = [
     'Imagens',
     'Marca',
     'Categoria',
+    # A busca pode acontecer antes de o modelo final ser anexado. Mantemos
+    # estoque no contrato de origem para o submotor existente capturar o saldo
+    # e deixá-lo disponível no mapeamento posterior.
+    'Estoque',
 ]
 
 
