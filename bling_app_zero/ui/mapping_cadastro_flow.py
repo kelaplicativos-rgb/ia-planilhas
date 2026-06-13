@@ -20,7 +20,7 @@ from bling_app_zero.ui.mapping_constants import (
 from bling_app_zero.ui.mapping_field_widget import render_mapping_select
 from bling_app_zero.ui.mapping_filters import filter_targets
 from bling_app_zero.ui.mapping_models import cadastro_model, source_columns_from_df, target_columns_from_model
-from bling_app_zero.ui.mapping_pagination import render_mapping_page_arrows, visible_targets
+from bling_app_zero.ui.mapping_pagination import go_to_next_mapping_page, mapping_has_more_pages, render_mapping_page_arrows, visible_targets
 from bling_app_zero.ui.mapping_preview_builder import build_cadastro_preview
 from bling_app_zero.ui.mapping_widget_state import clear_mapping_widgets, clear_stale_mapping_widgets, is_manual_value, mapping_base
 
@@ -110,10 +110,21 @@ def _render_compact_mapping_header(df_source: pd.DataFrame) -> None:
     st.markdown('### Ligar colunas')
     st.caption(
         f'{len(df_source)} linha(s) carregada(s). Modelo: {_context_label()}. '
-        'O sistema tenta ligar as colunas automaticamente lendo os nomes das colunas e o conteúdo. Confira antes de continuar.'
+        'O sistema tenta ligar as colunas automaticamente lendo os nomes das colunas e o conteúdo. Confira todas as páginas antes de continuar.'
     )
     with st.expander('Ver dados enviados', expanded=False):
         preview_df('Dados enviados', df_source)
+
+
+def _render_continue_mapping_pages(mapping_key: str) -> bool:
+    if not mapping_has_more_pages(mapping_key):
+        return False
+    st.warning('Ainda existem páginas de campos para revisar. O fluxo não seguirá para a próxima etapa até passar por todas.')
+    if st.button('Salvar esta etapa e ir para próximos campos', use_container_width=True, key=f'{mapping_key}_save_and_next_fields'):
+        pause_home_autofluxo_for_manual_review('mapeamento', reason='mapping_next_page_required')
+        go_to_next_mapping_page(mapping_key, reason='save_current_page_and_continue_mapping')
+        return True
+    return True
 
 
 def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | None) -> None:
@@ -180,6 +191,10 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
     duplicated = _duplicated_source_columns(edited_mapping)
     if duplicated:
         st.warning('Coluna repetida: ' + ', '.join(duplicated))
+
+    if _render_continue_mapping_pages(mapping_key):
+        _render_cadastro_actions(mapping_key, order_key, df_source, model, source_columns)
+        return
 
     render_confirm_mapping_button(edited_mapping, df_preview_manual, mapping_key, target_columns)
     _render_cadastro_actions(mapping_key, order_key, df_source, model, source_columns)
