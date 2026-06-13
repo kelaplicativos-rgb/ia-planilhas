@@ -24,6 +24,7 @@ from bling_app_zero.core.text import normalize_key
 from bling_app_zero.core.validators import validate_final_df
 from bling_app_zero.ui.bling_api_batch_panel import render_bling_api_batch_panel
 from bling_app_zero.ui.bling_price_channel_selector import render_price_channel_selector
+from bling_app_zero.ui.bling_stock_target_panel import render_stock_target_panel
 from bling_app_zero.ui.flow_context import (
     entry_context as _entry_context,
     is_bling_api_context as _legacy_is_api_context,
@@ -301,28 +302,12 @@ def save_download_snapshot(
     st.session_state['flow_spine_sender_destination'] = 'api_bling' if _is_api_context() else 'mapped_model_download'
 
 
-def _render_stock_deposit_target(download_df: pd.DataFrame) -> pd.DataFrame | None:
-    st.markdown('### Depósito do estoque no Bling')
-    st.caption('Selecione/informe o depósito que receberá a atualização de estoque.')
-    deposit_id = st.text_input('ID do depósito no Bling', value=str(st.session_state.get('bling_stock_deposit_id') or ''), key='final_bling_stock_deposit_id')
-    deposit_name = st.text_input('Nome do depósito', value=str(st.session_state.get('bling_stock_deposit_name') or ''), key='final_bling_stock_deposit_name')
-    if not str(deposit_id or '').strip():
-        st.warning('Depósito obrigatório para atualização de estoque. Informe o ID do depósito antes de enviar ao Bling.')
-        return None
-    out = download_df.copy().fillna('')
-    st.session_state['bling_stock_deposit_id'] = str(deposit_id).strip()
-    st.session_state['bling_stock_deposit_name'] = str(deposit_name or deposit_id).strip()
-    out['Bling depósito id'] = st.session_state['bling_stock_deposit_id']
-    out['Bling depósito nome'] = st.session_state['bling_stock_deposit_name']
-    return out
-
-
 def _apply_required_api_target(download_df: pd.DataFrame, operation: str) -> pd.DataFrame | None:
     op = normalize_operation(operation)
     if op == OP_ATUALIZACAO_PRECO:
         return render_price_channel_selector(download_df, op)
     if op == OP_ESTOQUE:
-        return _render_stock_deposit_target(download_df)
+        return render_stock_target_panel(download_df)
     return download_df
 
 
@@ -330,7 +315,7 @@ def _guard_before_api_send(download_df: pd.DataFrame, operation: str) -> bool:
     result = validate_before_bling_send(download_df, operation)
     st.session_state['final_bling_api_send_guard'] = result.to_dict()
     if result.ok:
-        st.success('Destino da API validado antes do BLINGSCAN.')
+        st.success('Destino da API validado antes da verificação de envio.')
         return True
     for message in result.messages:
         st.error(message)
