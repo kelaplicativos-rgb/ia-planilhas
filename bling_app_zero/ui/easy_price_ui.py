@@ -7,7 +7,7 @@ import streamlit as st
 
 from bling_app_zero.core.easy_reprice import calc_easy_promo_price, calc_easy_sale_price
 from bling_app_zero.core.price_calculator_plugin import best_cost_column
-from bling_app_zero.v2.marketplace_calculator import money
+from bling_app_zero.v2.marketplace_calculator import D, money
 from bling_app_zero.v2.price_multistore.quick_ui import (
     GLOBAL_PRICE_CONFIG_KEY,
     GLOBAL_PRICE_READY_KEY,
@@ -31,11 +31,7 @@ def _has_df(df: pd.DataFrame | None) -> bool:
 
 
 def _to_decimal(value) -> Decimal:
-    text = str(value or '').replace('R$', '').replace('.', '').replace(',', '.').strip()
-    try:
-        return Decimal(text)
-    except Exception:
-        return Decimal('0')
+    return D(value)
 
 
 def _first_value(df: pd.DataFrame, column: str) -> Decimal:
