@@ -4,6 +4,8 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.ui.cadastro_wizard_state import (
+    CADASTRO_MAPPING_CONFIRMED_KEY,
+    CADASTRO_MAPPING_SIGNATURE_KEY,
     CADASTRO_MODELO_KEY as UNIVERSAL_MODELO_KEY,
     CADASTRO_ORIGEM_KEY as UNIVERSAL_ORIGEM_KEY,
     CADASTRO_ORIGEM_PRICED_KEY as UNIVERSAL_ORIGEM_PRICED_KEY,
@@ -100,14 +102,20 @@ def universal_context_ready() -> bool:
     return False
 
 
+def _mapping_confirmed() -> bool:
+    return bool(st.session_state.get(CADASTRO_MAPPING_CONFIRMED_KEY)) and bool(st.session_state.get(CADASTRO_MAPPING_SIGNATURE_KEY))
+
+
 def universal_mapping_ready() -> bool:
     _force_universal_state()
-    if _cadastro_mapping_ready():
+    # A IA pode preencher o dicionário de mapeamento logo na página 1, mas o usuário
+    # ainda precisa revisar/percorrer todas as páginas e confirmar no final.
+    if _cadastro_mapping_ready() and _mapping_confirmed():
         return True
     try:
         from bling_app_zero.ui.estoque_wizard_state import estoque_output_ready
 
-        if bool(estoque_output_ready()):
+        if bool(estoque_output_ready()) and _mapping_confirmed():
             return True
     except Exception:
         pass
