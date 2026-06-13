@@ -35,7 +35,6 @@ HTML_DISCOVERY_BATCH = 36
 FEED_BATCH = 36
 SMART_URL_TARGET = 220
 FULL_SCAN_URL_TARGET = 2500
-MIN_HTML_PRODUCTS_TO_SKIP_FEED = 60
 
 
 def split_urls(raw: str) -> list[str]:
@@ -213,6 +212,10 @@ def _extend_unique(target: list[str], items: list[str], limit: int) -> list[str]
     return target
 
 
+def _remaining_target(urls: list[str], smart_target: int) -> int:
+    return max(0, int(smart_target) - len(urls))
+
+
 def discover_product_urls(raw_urls: str, max_pages: int, max_products: int) -> list[str]:
     starts = [norm_url(url) for url in split_urls(raw_urls) if norm_url(url)]
     if not starts:
@@ -232,13 +235,19 @@ def discover_product_urls(raw_urls: str, max_pages: int, max_products: int) -> l
     if len(urls) >= smart_target:
         return urls[:smart_target]
 
-    html_urls = discover_from_html(starts, max_pages=max_pages, max_products=smart_target)
-    _extend_unique(urls, html_urls, smart_target)
+    # Para varredura completa, não pare só porque o HTML achou alguns produtos.
+    # Feeds/sitemaps costumam ter o catálogo inteiro e devem sempre complementar
+    # enquanto ainda houver espaço até max_products.
+    feed_limit = _remaining_target(urls, smart_target)
+    if feed_limit:
+        feed_urls = discover_from_feeds(starts, max_products=feed_limit)
+        _extend_unique(urls, feed_urls, smart_target)
     if len(urls) >= smart_target:
         return urls[:smart_target]
 
-    if len(html_urls) < MIN_HTML_PRODUCTS_TO_SKIP_FEED:
-        feed_urls = discover_from_feeds(starts, max_products=smart_target - len(urls))
-        _extend_unique(urls, feed_urls, smart_target)
+    html_limit = _remaining_target(urls, smart_target)
+    if html_limit:
+        html_urls = discover_from_html(starts, max_pages=max_pages, max_products=html_limit)
+        _extend_unique(urls, html_urls, smart_target)
 
     return urls[:smart_target]
