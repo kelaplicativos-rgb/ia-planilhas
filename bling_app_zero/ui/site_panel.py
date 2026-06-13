@@ -40,7 +40,7 @@ from bling_app_zero.ui.site_panel_state import (
     recover_stale_capture_if_needed,
 )
 from bling_app_zero.ui.site_progress import render_live_site_operation_panel, render_site_progress_history
-from bling_app_zero.ui.site_resume_state import checkpoint_count, clear_resume_request, request_resume, resume_requested
+from bling_app_zero.ui.site_resume_state import checkpoint_count, request_resume, resume_requested
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/site_panel.py'
 
@@ -220,8 +220,8 @@ def _render_scan_total_notice(operation: str) -> None:
 def _render_running_state(operation: str) -> None:
     recovered = recover_stale_capture_if_needed(operation)
     if recovered:
-        count = checkpoint_count()
-        orange_warning(f'A busca anterior travou e foi marcada para continuar automaticamente. Checkpoint atual: {count} produto(s).')
+        count = checkpoint_count(operation)
+        orange_warning(f'A busca anterior travou e foi marcada para retomada automática. Checkpoint atual: {count} produto(s).')
         return
     profile = capture_profile(operation, stock_balance_only=_is_stock_api_balance_mode(operation))
     st.markdown(f'### {profile.running_title}')
@@ -229,27 +229,27 @@ def _render_running_state(operation: str) -> None:
     render_live_site_operation_panel()
     with st.expander('Plano e histórico leve da busca', expanded=False):
         render_site_progress_history()
-    st.info('A tela está em modo seguro enquanto a busca roda. A execução atual tenta completar o site até o teto técnico configurado.')
-    count = checkpoint_count()
-    with st.expander('Busca parece travada?', expanded=False):
+    st.info('A tela está em modo seguro enquanto a busca roda. Se houver queda de conexão, a retomada será automática.')
+    count = checkpoint_count(operation)
+    with st.expander('Retomada automática', expanded=False):
         if count:
-            st.caption(f'Checkpoint disponível: {count} produto(s) já lidos. O botão abaixo continua a busca, não finaliza o fluxo parcial.')
+            st.caption(f'Checkpoint disponível: {count} produto(s) já lidos. O sistema usará esse ponto salvo automaticamente se a sessão cair.')
         else:
-            st.caption('Use esta opção apenas se a busca ficou sem sinal vivo por muito tempo ou se a conexão caiu.')
-        if st.button('Continuar busca do ponto salvo', use_container_width=True, key=f'continuar_busca_checkpoint_{operation}'):
-            request_resume(operation, 'usuario_clicou_continuar_busca_do_ponto_salvo')
+            st.caption('O sistema monitora sinal vivo e preserva URL/modelo/operação para retomar sem voltar à Home.')
+        if st.button('Forçar retomada agora', use_container_width=True, key=f'continuar_busca_checkpoint_{operation}'):
+            request_resume(operation, 'usuario_forcou_retomada_automatica_do_checkpoint')
             safe_rerun('site_capture_resume_requested', target_step=STEP_ENTRADA)
     add_audit_event(
         'site_panel_running_guard_rendered',
         area='SITE',
         step='entrada',
         status='INFO',
-        details={'operation': operation, 'checkpoint_count': count, 'responsible_file': RESPONSIBLE_FILE, 'capture_spine': 'site_capture_spine_v1', 'live_panel': True, 'full_site_scan': True},
+        details={'operation': operation, 'checkpoint_count': count, 'responsible_file': RESPONSIBLE_FILE, 'capture_spine': 'site_capture_spine_v1', 'live_panel': True, 'full_site_scan': True, 'auto_resume': True},
     )
 
 
 def _render_last_error(error: str, operation: str) -> None:
-    if not error:
+    if not error or resume_requested(operation):
         return
     st.error('A última busca por site não conseguiu finalizar.')
     if _is_stock_api_balance_mode(operation):
@@ -302,8 +302,12 @@ def _render_universal_fallback(*, operation: str, requested_columns: list[str] |
 
 
 def _run_or_resume_site_capture(*, operation: str, raw_urls: str, requested_columns: list[str] | None, df_modelo_cadastro: pd.DataFrame | None, df_modelo_estoque: pd.DataFrame | None, df_modelo: pd.DataFrame | None, deep_options: dict[str, int | bool | str], reason: str) -> None:
-    add_audit_event('site_capture_resume_or_start_triggered', area='SITE', step='entrada', status='OK', details={'operation': operation, 'reason': reason, 'checkpoint_count': checkpoint_count(), 'responsible_file': RESPONSIBLE_FILE})
-    run_site_capture(operation=operation, raw_urls=raw_urls, requested_columns=requested_columns, df_modelo_cadastro=df_modelo_cadastro, df_modelo_estoque=df_modelo_estoque, df_modelo=df_modelo, deep_options=deep_options)
+    resume_mode = bool(resume_requested(operation) or 'resume' in reason or 'retom' in reason or reason.startswith('auto_'))
+    run_options = dict(deep_options or {})
+    if resume_mode:
+        run_options['resume_capture'] = True
+    add_audit_event('site_capture_resume_or_start_triggered', area='SITE', step='entrada', status='OK', details={'operation': operation, 'reason': reason, 'checkpoint_count': checkpoint_count(operation), 'resume_mode': resume_mode, 'responsible_file': RESPONSIBLE_FILE})
+    run_site_capture(operation=operation, raw_urls=raw_urls, requested_columns=requested_columns, df_modelo_cadastro=df_modelo_cadastro, df_modelo_estoque=df_modelo_estoque, df_modelo=df_modelo, deep_options=run_options)
     safe_rerun('site_capture_finished_or_started', target_step=STEP_ENTRADA)
 
 
@@ -315,14 +319,15 @@ def render_site_panel() -> None:
 
     recovered = recover_stale_capture_if_needed(operation)
     if recovered:
-        orange_warning('A busca anterior ficou sem sinal vivo. O sistema vai continuar a busca automaticamente preservando o checkpoint.')
+        orange_warning('A busca anterior ficou sem sinal vivo. O sistema vai continuar automaticamente preservando o checkpoint.')
 
     if bool(st.session_state.get('site_capture_running')):
         _render_running_state(operation)
         return
 
+    auto_resume_pending = resume_requested(operation)
     df_site_bruto = get_site_df(operation)
-    if isinstance(df_site_bruto, pd.DataFrame) and not df_site_bruto.empty:
+    if not auto_resume_pending and isinstance(df_site_bruto, pd.DataFrame) and not df_site_bruto.empty:
         add_audit_event('site_panel_ready_after_origin_capture', area='SITE', step='entrada', status='OK', details={'operation': operation, 'rows': len(df_site_bruto), 'columns': len(df_site_bruto.columns), 'stock_balance_only': stock_balance_only, 'manual_continue': True, 'target_step': _next_step_after_site_capture(), 'responsible_file': RESPONSIBLE_FILE, 'capture_spine': 'site_capture_spine_v1', 'full_site_scan': True})
         _render_ready_state(operation, df_site_bruto, stock_balance_only)
         return
@@ -349,22 +354,22 @@ def render_site_panel() -> None:
         orange_warning('Modelo de destino necessário: envie o modelo para o sistema saber quais campos buscar.')
 
     if resume_requested(operation) and not button_disabled:
-        count = checkpoint_count()
-        clear_resume_request()
-        st.info(f'Continuando busca automaticamente. Produtos já lidos preservados: {count}.')
+        count = checkpoint_count(operation)
+        st.info(f'Retomando automaticamente do checkpoint. Produtos já preservados: {count}.')
         _run_or_resume_site_capture(operation=operation, raw_urls=raw_urls, requested_columns=requested_columns, df_modelo_cadastro=df_modelo_cadastro, df_modelo_estoque=df_modelo_estoque, df_modelo=df_modelo, deep_options=deep_options, reason='auto_resume_after_stall')
         return
 
     if resume_requested(operation) and button_disabled:
-        orange_warning('A busca precisa continuar, mas falta link ou modelo obrigatório. Corrija acima e toque em continuar busca do ponto salvo.')
+        orange_warning('A busca está marcada para retomada automática, mas ainda falta link ou modelo obrigatório nesta tela. Assim que esses dados estiverem disponíveis, o sistema continua sozinho.')
 
     if st.button(profile.button_label, use_container_width=True, disabled=button_disabled, key=f'buscar_site_{operation}'):
         _run_or_resume_site_capture(operation=operation, raw_urls=raw_urls, requested_columns=requested_columns, df_modelo_cadastro=df_modelo_cadastro, df_modelo_estoque=df_modelo_estoque, df_modelo=df_modelo, deep_options=deep_options, reason='main_button')
 
     if resume_requested(operation) and not button_disabled:
-        if st.button('Continuar busca do ponto salvo', use_container_width=True, key=f'continuar_busca_ponto_salvo_{operation}'):
-            clear_resume_request()
-            _run_or_resume_site_capture(operation=operation, raw_urls=raw_urls, requested_columns=requested_columns, df_modelo_cadastro=df_modelo_cadastro, df_modelo_estoque=df_modelo_estoque, df_modelo=df_modelo, deep_options=deep_options, reason='manual_resume_button')
+        with st.expander('Retomada manual de emergência', expanded=False):
+            st.caption('A retomada principal é automática. Use este botão somente se quiser forçar uma nova tentativa agora.')
+            if st.button('Forçar retomada do ponto salvo', use_container_width=True, key=f'continuar_busca_ponto_salvo_{operation}'):
+                _run_or_resume_site_capture(operation=operation, raw_urls=raw_urls, requested_columns=requested_columns, df_modelo_cadastro=df_modelo_cadastro, df_modelo_estoque=df_modelo_estoque, df_modelo=df_modelo, deep_options=deep_options, reason='manual_resume_button')
 
     _render_universal_fallback(operation=operation, requested_columns=requested_columns, df_modelo_cadastro=df_modelo_cadastro, df_modelo_estoque=df_modelo_estoque, df_modelo=df_modelo)
 
