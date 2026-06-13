@@ -20,7 +20,7 @@ from bling_app_zero.core.workflow_engine import (
     go_home as workflow_go_home,
     set_wizard,
 )
-from bling_app_zero.ui.flow_context import CONTEXT_BLING_API, CONTEXT_UNIVERSAL, activate_api_finish_mode, activate_csv_finish_mode, set_entry_context
+from bling_app_zero.ui.flow_context import CONTEXT_BLING_API, CONTEXT_UNIVERSAL, activate_csv_finish_mode, set_entry_context
 from bling_app_zero.ui.home_wizard_rerun import set_step_without_rerun
 from bling_app_zero.ui.scroll_position import request_scroll_top
 
@@ -28,6 +28,7 @@ RESPONSIBLE_FILE = 'bling_app_zero/adapters/streamlit_shortcut_executor.py'
 
 ACTIVE_FLOW_KEY = 'home_active_operation_v2'
 HOME_ALLOW_FLOW_KEY = 'home_allow_operation_v2_session'
+UNIFIED_BLING_SEND_KEY = 'home_bling_connected_same_flow_api_send'
 FLOW_HOME = 'home'
 FLOW_WIZARD = 'wizard_cadastro_estoque'
 
@@ -41,12 +42,15 @@ class ShortcutExecutionResult:
 
 def _apply_legacy_streamlit_side_effects(*, context: str = '', step: str = '', api_mode: bool = False) -> None:
     request_scroll_top()
+    api_requested = bool(api_mode or context == WORKFLOW_CONTEXT_API)
     if context:
-        set_entry_context(CONTEXT_BLING_API if context == WORKFLOW_CONTEXT_API else CONTEXT_UNIVERSAL)
-    if api_mode:
-        activate_api_finish_mode()
+        # BLINGFIX 2026-06-13: atalhos API também usam o fluxo universal.
+        set_entry_context(CONTEXT_UNIVERSAL)
+    activate_csv_finish_mode()
+    if api_requested:
+        st.session_state[UNIFIED_BLING_SEND_KEY] = True
     else:
-        activate_csv_finish_mode()
+        st.session_state.pop(UNIFIED_BLING_SEND_KEY, None)
     if step:
         set_step_without_rerun(step)
 
@@ -65,6 +69,7 @@ def go_home() -> ShortcutExecutionResult:
     sync_app_state_to_streamlit(result.state)
     sync_navigation_to_streamlit(result.navigation)
     request_scroll_top()
+    st.session_state.pop(UNIFIED_BLING_SEND_KEY, None)
     return ShortcutExecutionResult(result.needs_rerun, result.needs_rerun, result.message)
 
 
@@ -73,7 +78,7 @@ def current_operation_adapter(default: str = 'cadastro') -> str:
 
 
 def current_context_is_api_adapter() -> bool:
-    return current_context_is_api(app_state_from_streamlit())
+    return bool(st.session_state.get(UNIFIED_BLING_SEND_KEY)) or current_context_is_api(app_state_from_streamlit())
 
 
 def set_wizard_base(*, context: str, step: str, operation: str | None = None, origin: str | None = None, api_mode: bool = False) -> None:
