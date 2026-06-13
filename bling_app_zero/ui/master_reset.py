@@ -25,6 +25,9 @@ RESET_EXACT_KEYS = {
     'bling_wizard_step',
     'home_wizard_step',
     'neutral_wizard_state_v1',
+    'home_wizard_last_rerun_reason',
+    'home_wizard_last_rerun_target',
+    'home_wizard_scroll_target_step',
     'frontpage_origin_radio',
     'frontpage_origin_radio_universal',
     'origem_final',
@@ -147,6 +150,7 @@ def master_reset_to_home() -> list[str]:
             'removed_count': len(removed),
             'removed_keys': removed[:120],
             'bling_connection_preserved': True,
+            'navigation_history_cleared': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
