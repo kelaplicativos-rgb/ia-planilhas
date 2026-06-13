@@ -71,6 +71,10 @@ def render_cadastro_download_step() -> None:
     else:
         st.success('Modelo mapeado pronto para download.')
     download_final(df_final, operation, f'{_entry_context()}_{operation}')
+    st.info(
+        'Terminou esta operação? Use “Recomeçar fluxo” abaixo para voltar à tela inicial com os dados, '
+        'modelo, mapeamento e precificação anteriores totalmente limpos. A conexão com o Bling será mantida.'
+    )
 
 
 __all__ = ['render_cadastro_download_step']
