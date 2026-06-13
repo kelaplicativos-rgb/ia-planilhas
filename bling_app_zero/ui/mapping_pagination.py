@@ -5,7 +5,6 @@ import streamlit.components.v1 as components
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.home_wizard_rerun import safe_rerun
-from bling_app_zero.ui.mapping_constants import MAPPING_PAGE_SIZE
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/mapping_pagination.py'
 MOBILE_MAPPING_PAGE_SIZE = 10
@@ -21,6 +20,14 @@ def mapping_page_meta_key(mapping_key: str) -> str:
 
 def mapping_page_scroll_key(mapping_key: str) -> str:
     return f'{mapping_key}_scroll_to_page_top'
+
+
+def mapping_page_pending_key(mapping_key: str) -> str:
+    return f'{mapping_key}_pending_page_index'
+
+
+def mapping_page_select_key(mapping_key: str) -> str:
+    return f'{mapping_key}_page_selector'
 
 
 def mapping_page_anchor_id(mapping_key: str) -> str:
@@ -62,6 +69,101 @@ def _scroll_script(anchor_id: str) -> str:
     """
 
 
+def _safe_int(value: object, default: int = 0) -> int:
+    try:
+        return int(value or default)
+    except Exception:
+        return default
+
+
+def _query_page_index(mapping_key: str) -> int | None:
+    try:
+        raw = st.query_params.get('mapping_page') or st.query_params.get(f'{mapping_key}_page')
+    except Exception:
+        raw = ''
+    if isinstance(raw, list):
+        raw = raw[0] if raw else ''
+    text = str(raw or '').strip()
+    if not text:
+        return None
+    value = _safe_int(text, 1)
+    return max(0, value - 1)
+
+
+def _set_query_page(mapping_key: str, page_index: int) -> None:
+    try:
+        st.query_params['mapping_page'] = str(int(page_index) + 1)
+        st.query_params[f'{mapping_key}_page'] = str(int(page_index) + 1)
+    except Exception:
+        pass
+
+
+def _clamp_page(index: object, total_pages: int) -> int:
+    return max(0, min(max(1, int(total_pages)) - 1, _safe_int(index, 0)))
+
+
+def _current_page_index(mapping_key: str, total_pages: int) -> int:
+    page_key = mapping_page_key(mapping_key)
+    pending_key = mapping_page_pending_key(mapping_key)
+    pending = st.session_state.pop(pending_key, None)
+    if pending is not None:
+        page_index = _clamp_page(pending, total_pages)
+        st.session_state[page_key] = page_index
+        _set_query_page(mapping_key, page_index)
+        return page_index
+
+    query_index = _query_page_index(mapping_key)
+    if query_index is not None:
+        page_index = _clamp_page(query_index, total_pages)
+        st.session_state[page_key] = page_index
+        return page_index
+
+    page_index = _clamp_page(st.session_state.get(page_key, 0), total_pages)
+    st.session_state[page_key] = page_index
+    return page_index
+
+
+def _page_option_labels(total_pages: int) -> list[str]:
+    return [f'Página {index + 1}' for index in range(max(1, total_pages))]
+
+
+def _render_direct_page_selector(mapping_key: str, page_index: int, total_pages: int, total_targets: int) -> int:
+    if total_pages <= 1:
+        return page_index
+    labels = _page_option_labels(total_pages)
+    selector_key = mapping_page_select_key(mapping_key)
+    current_label = labels[_clamp_page(page_index, total_pages)]
+    st.caption('Navegação do mapeamento')
+    selected = st.selectbox(
+        'Escolher página de campos',
+        labels,
+        index=labels.index(current_label),
+        key=selector_key,
+        label_visibility='collapsed',
+        help='Use este seletor se o botão Próximos campos não mudar a tela no celular.',
+    )
+    selected_index = labels.index(selected)
+    if selected_index != page_index:
+        st.session_state[mapping_page_key(mapping_key)] = selected_index
+        st.session_state[mapping_page_scroll_key(mapping_key)] = True
+        _set_query_page(mapping_key, selected_index)
+        add_audit_event(
+            'mapping_page_selector_changed',
+            area='MAPEAMENTO',
+            status='OK',
+            details={
+                'mapping_key': mapping_key,
+                'from_page': page_index + 1,
+                'to_page': selected_index + 1,
+                'total_pages': total_pages,
+                'total_targets': total_targets,
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+        return selected_index
+    return page_index
+
+
 def render_mapping_page_scroll_anchor(mapping_key: str) -> None:
     anchor_id = mapping_page_anchor_id(mapping_key)
     should_scroll = bool(st.session_state.pop(mapping_page_scroll_key(mapping_key), False))
@@ -76,13 +178,11 @@ def visible_targets(mapping_key: str, targets: list[str]) -> list[str]:
     page_size = _page_size()
     total_targets = len(targets)
     total_pages = max(1, (total_targets + page_size - 1) // page_size)
-    page_key = mapping_page_key(mapping_key)
-    try:
-        page_index = int(st.session_state.get(page_key, 0) or 0)
-    except Exception:
-        page_index = 0
-    page_index = max(0, min(page_index, total_pages - 1))
-    st.session_state[page_key] = page_index
+    page_index = _current_page_index(mapping_key, total_pages)
+    page_index = _render_direct_page_selector(mapping_key, page_index, total_pages, total_targets)
+    page_index = _clamp_page(page_index, total_pages)
+    st.session_state[mapping_page_key(mapping_key)] = page_index
+    _set_query_page(mapping_key, page_index)
 
     start = page_index * page_size
     end = min(start + page_size, total_targets)
@@ -111,6 +211,8 @@ def visible_targets(mapping_key: str, targets: list[str]) -> list[str]:
             'visible_end': end,
             'total_targets': total_targets,
             'page_size': page_size,
+            'selector_enabled': total_pages > 1,
+            'query_page_synced': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -119,11 +221,14 @@ def visible_targets(mapping_key: str, targets: list[str]) -> list[str]:
 
 def _change_mapping_page(mapping_key: str, next_index: int, *, direction: str, total_pages: int) -> None:
     page_key = mapping_page_key(mapping_key)
+    pending_key = mapping_page_pending_key(mapping_key)
     scroll_key = mapping_page_scroll_key(mapping_key)
-    previous_index = int(st.session_state.get(page_key, 0) or 0)
-    safe_next = max(0, min(total_pages - 1, int(next_index)))
+    previous_index = _safe_int(st.session_state.get(page_key, 0), 0)
+    safe_next = _clamp_page(next_index, total_pages)
     st.session_state[page_key] = safe_next
+    st.session_state[pending_key] = safe_next
     st.session_state[scroll_key] = True
+    _set_query_page(mapping_key, safe_next)
     st.session_state['mapping_last_interruption_point'] = {
         'mapping_key': mapping_key,
         'from_page': previous_index + 1,
@@ -133,7 +238,7 @@ def _change_mapping_page(mapping_key: str, next_index: int, *, direction: str, t
         'reason': 'usuario_navegou_campos_mapeamento',
         'responsible_file': RESPONSIBLE_FILE,
     }
-    add_audit_event('mapping_page_changed', area='MAPEAMENTO', details={'mapping_key': mapping_key, 'direction': direction, 'from_page': previous_index + 1, 'to_page': safe_next + 1, 'total_pages': total_pages, 'scroll_to_top': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('mapping_page_changed', area='MAPEAMENTO', details={'mapping_key': mapping_key, 'direction': direction, 'from_page': previous_index + 1, 'to_page': safe_next + 1, 'total_pages': total_pages, 'scroll_to_top': True, 'query_page_synced': True, 'responsible_file': RESPONSIBLE_FILE})
     safe_rerun('mapping_page_changed')
 
 
@@ -141,17 +246,16 @@ def go_to_next_mapping_page(mapping_key: str, *, reason: str = 'mapping_continue
     meta = st.session_state.get(mapping_page_meta_key(mapping_key))
     if not isinstance(meta, dict):
         return False
-    page_index = int(meta.get('page_index') or 0)
-    total_pages = max(1, int(meta.get('total_pages') or 1))
+    page_index = _safe_int(meta.get('page_index'), 0)
+    total_pages = max(1, _safe_int(meta.get('total_pages'), 1))
     if page_index >= total_pages - 1:
         return False
-    st.session_state.setdefault(f'{mapping_key}_visited_pages', set())
-    visited = st.session_state.get(f'{mapping_key}_visited_pages')
-    if not isinstance(visited, set):
-        visited = set(visited or []) if isinstance(visited, (list, tuple)) else set()
+    visited_key = f'{mapping_key}_visited_pages'
+    visited_raw = st.session_state.get(visited_key)
+    visited = set(visited_raw or []) if isinstance(visited_raw, (list, tuple, set)) else set()
     visited.add(page_index)
     visited.add(page_index + 1)
-    st.session_state[f'{mapping_key}_visited_pages'] = visited
+    st.session_state[visited_key] = sorted(visited)
     add_audit_event(
         'mapping_continue_to_next_fields_clicked',
         area='MAPEAMENTO',
@@ -173,17 +277,17 @@ def mapping_has_more_pages(mapping_key: str) -> bool:
     meta = st.session_state.get(mapping_page_meta_key(mapping_key))
     if not isinstance(meta, dict):
         return False
-    page_index = int(meta.get('page_index') or 0)
-    total_pages = max(1, int(meta.get('total_pages') or 1))
+    page_index = _safe_int(meta.get('page_index'), 0)
+    total_pages = max(1, _safe_int(meta.get('total_pages'), 1))
     return page_index < total_pages - 1
 
 
 def _page_label(meta: dict) -> str:
-    page_index = int(meta.get('page_index') or 0)
-    total_pages = max(1, int(meta.get('total_pages') or 1))
-    start = int(meta.get('visible_start') or 0)
-    end = int(meta.get('visible_end') or 0)
-    total = int(meta.get('total_targets') or 0)
+    page_index = _safe_int(meta.get('page_index'), 0)
+    total_pages = max(1, _safe_int(meta.get('total_pages'), 1))
+    start = _safe_int(meta.get('visible_start'), 0)
+    end = _safe_int(meta.get('visible_end'), 0)
+    total = _safe_int(meta.get('total_targets'), 0)
     if total <= 0:
         return 'Nenhum campo neste filtro.'
     return f'Página {page_index + 1}/{total_pages} · Campos {start} a {end} de {total}'
@@ -193,9 +297,9 @@ def render_mapping_page_arrows(mapping_key: str, *, position: str = 'bottom') ->
     meta = st.session_state.get(mapping_page_meta_key(mapping_key))
     if not isinstance(meta, dict):
         return
-    page_index = int(meta.get('page_index') or 0)
-    total_pages = max(1, int(meta.get('total_pages') or 1))
-    total_targets = int(meta.get('total_targets') or 0)
+    page_index = _safe_int(meta.get('page_index'), 0)
+    total_pages = max(1, _safe_int(meta.get('total_pages'), 1))
+    total_targets = _safe_int(meta.get('total_targets'), 0)
 
     st.caption(_page_label(meta))
     col_prev, col_next = st.columns(2)
@@ -216,7 +320,9 @@ __all__ = [
     'mapping_page_anchor_id',
     'mapping_page_key',
     'mapping_page_meta_key',
+    'mapping_page_pending_key',
     'mapping_page_scroll_key',
+    'mapping_page_select_key',
     'render_mapping_page_arrows',
     'render_mapping_page_scroll_anchor',
     'visible_targets',
