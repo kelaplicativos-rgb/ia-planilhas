@@ -25,9 +25,10 @@ HOME_ALLOW_FLOW_KEY = 'home_allow_operation_v2_session'
 HOME_BOOT_LOCK_KEY = 'home_boot_landing_rendered_once'
 HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
 HOME_FLOW_SCHEMA_KEY = 'home_source_first_flow_schema_v1'
-HOME_FLOW_SCHEMA_VERSION = 'source_first_origin_start_v3_20260610'
+HOME_FLOW_SCHEMA_VERSION = 'source_first_origin_start_v4_unified_bling_20260613'
 BLING_AUTH_READY_KEY = 'home_bling_auth_ready_url'
 BLING_BACKEND_LAST_STATUS_KEY = 'home_bling_backend_last_status'
+UNIFIED_BLING_SEND_KEY = 'home_bling_connected_same_flow_api_send'
 FLOW_HOME = 'home'
 FLOW_WIZARD = 'wizard_cadastro_estoque'
 
@@ -57,6 +58,7 @@ STALE_FLOW_KEYS = (
     HOME_BOOT_LOCK_KEY,
     HOME_ENTRY_CONTEXT_KEY,
     WIZARD_STEP_KEY,
+    UNIFIED_BLING_SEND_KEY,
     'home_single_page_flow_active',
     'home_slim_flow_origin',
     'home_slim_flow_operation',
@@ -144,7 +146,7 @@ def _reset_stale_flow_session_if_needed() -> None:
 
     O Streamlit preserva session_state entre reruns. Depois da mudança para
     fluxo Origem -> Entrada -> Modelo, sessões antigas podem continuar abrindo
-    direto em Entrada/Site/Estoque. Este reset roda uma única vez por versão.
+    direto em Entrada/Site/Estoque ou no painel curto de Bling conectado.
     """
     if st.session_state.get(HOME_FLOW_SCHEMA_KEY) == HOME_FLOW_SCHEMA_VERSION:
         return
@@ -171,7 +173,7 @@ def _reset_stale_flow_session_if_needed() -> None:
             'schema_version': HOME_FLOW_SCHEMA_VERSION,
             'removed_count': len(removed),
             'removed_keys': removed[:80],
-            'reason': 'force_home_after_source_first_deploy',
+            'reason': 'force_home_after_unified_bling_flow_deploy',
         },
     )
 
@@ -181,33 +183,57 @@ def _set_home_flow() -> None:
     st.session_state[HOME_ALLOW_FLOW_KEY] = False
     st.session_state['home_single_page_flow_active'] = False
     st.session_state.pop(HOME_ENTRY_CONTEXT_KEY, None)
+    st.session_state.pop(UNIFIED_BLING_SEND_KEY, None)
     _clear_navigation_params()
 
 
-def _start_wizard_context(context: str, *, step: str | None = None) -> None:
+def _enable_unified_bling_send(enabled: bool) -> None:
+    if enabled:
+        st.session_state[UNIFIED_BLING_SEND_KEY] = True
+    else:
+        st.session_state.pop(UNIFIED_BLING_SEND_KEY, None)
+
+
+def _start_wizard_context(context: str, *, step: str | None = None, api_send: bool = False) -> None:
     request_scroll_top()
     st.session_state[ACTIVE_FLOW_KEY] = FLOW_WIZARD
     st.session_state[HOME_ALLOW_FLOW_KEY] = True
     st.session_state['home_single_page_flow_active'] = True
-    normalized_context = CONTEXT_UNIVERSAL if context == CONTEXT_BLING_CSV else context
+
+    # BLINGFIX 2026-06-13:
+    # Bling conectado não pode abrir outro dashboard/fluxo curto.
+    # Ele entra no MESMO fluxo universal e apenas marca o destino final como envio API.
+    connected_bling_flow = bool(api_send or context == CONTEXT_BLING_API)
+    normalized_context = CONTEXT_UNIVERSAL if context in {CONTEXT_BLING_CSV, CONTEXT_BLING_API} else context
     set_entry_context(normalized_context)
-    if normalized_context == CONTEXT_BLING_API:
-        clear_finish_mode()
-        clear_api_skip_flag()
-        st.session_state.pop(WIZARD_STEP_KEY, None)
-    elif normalized_context == CONTEXT_UNIVERSAL:
+
+    if normalized_context == CONTEXT_UNIVERSAL:
         activate_csv_finish_mode()
+        if connected_bling_flow:
+            clear_api_skip_flag()
+        _enable_unified_bling_send(connected_bling_flow)
         set_step_without_rerun(step or STEP_ORIGEM)
     elif step:
+        _enable_unified_bling_send(False)
         set_step_without_rerun(step)
     else:
+        _enable_unified_bling_send(False)
+        clear_finish_mode()
         st.session_state.pop(WIZARD_STEP_KEY, None)
+
     if context == CONTEXT_BLING_CSV:
         add_audit_event(
             'home_router_bling_csv_legacy_redirected_to_universal',
             area='HOME',
             status='LEGADO_REDIRECIONADO',
             details={'responsible_file': RESPONSIBLE_FILE},
+        )
+    if connected_bling_flow:
+        add_audit_event(
+            'home_router_bling_api_redirected_to_unified_flow',
+            area='HOME',
+            status='OK',
+            details={'responsible_file': RESPONSIBLE_FILE, 'step': step or STEP_ORIGEM},
         )
     try:
         st.query_params['operation_v2'] = FLOW_WIZARD
@@ -395,7 +421,7 @@ def _render_bling_connection(auth_url: str) -> None:
         effective_status = _effective_bling_status(try_sync=True)
         if bool(effective_status.get('connected')):
             st.session_state.pop(BLING_AUTH_READY_KEY, None)
-            _start_wizard_context(CONTEXT_BLING_API)
+            _start_wizard_context(CONTEXT_BLING_API, step=STEP_ORIGEM, api_send=True)
             safe_rerun('home_bling_verify_connected')
         else:
             add_audit_event(
@@ -424,20 +450,20 @@ def _render_light_entry_home() -> None:
     connected = bool(effective_status.get('connected'))
     st.markdown('<div class="bling-home-section-title">Começar</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="bling-home-section-subtitle">Conecte ao Bling para enviar por API ou continue sem conectar.</div>',
+        '<div class="bling-home-section-subtitle">Use o mesmo fluxo sempre. Se o Bling estiver conectado, o envio aparece somente no final.</div>',
         unsafe_allow_html=True,
     )
 
     if connected:
-        st.success('Bling conectado. Você pode iniciar o fluxo com envio por API.')
+        st.success('Bling conectado. O fluxo continua igual; no final você poderá enviar ao Bling ou baixar o backup.')
         col_api, col_file = st.columns(2)
         with col_api:
             if st.button('Usar Bling conectado', use_container_width=True, key='home_use_connected_bling'):
-                _start_wizard_context(CONTEXT_BLING_API)
-                safe_rerun('home_use_connected_bling')
+                _start_wizard_context(CONTEXT_BLING_API, step=STEP_ORIGEM, api_send=True)
+                safe_rerun('home_use_connected_bling_unified')
         with col_file:
             if st.button('Gerar arquivo sem API', use_container_width=True, key='home_continue_without_bling_connected'):
-                _start_wizard_context(CONTEXT_UNIVERSAL, step=STEP_ORIGEM)
+                _start_wizard_context(CONTEXT_UNIVERSAL, step=STEP_ORIGEM, api_send=False)
                 safe_rerun('home_continue_without_bling_connected')
         return
 
@@ -451,7 +477,7 @@ def _render_light_entry_home() -> None:
 
     st.divider()
     if st.button('Continuar sem conectar ao Bling', use_container_width=True, key='home_continue_without_bling'):
-        _start_wizard_context(CONTEXT_UNIVERSAL, step=STEP_ORIGEM)
+        _start_wizard_context(CONTEXT_UNIVERSAL, step=STEP_ORIGEM, api_send=False)
         safe_rerun('home_continue_without_bling')
 
     add_audit_event(
@@ -463,7 +489,7 @@ def _render_light_entry_home() -> None:
             'connected': connected,
             'backend_connected': bool(effective_status.get('backend_connected')),
             'local_connected': bool(effective_status.get('local_connected')),
-            'home_order': 'android_safe_bling_or_continue_without',
+            'home_order': 'same_flow_bling_connected_or_csv',
             'lazy_flow_entry': True,
             'csv_first_step': STEP_ORIGEM,
             'schema_version': HOME_FLOW_SCHEMA_VERSION,
@@ -480,8 +506,8 @@ def _render_professional_home() -> None:
 </style>
 <div class="bling-home-hero">
   <div class="bling-home-eyebrow">MapeiaAI · Bling</div>
-  <h1 class="bling-home-title">Envie produtos para o Bling ou gere arquivo pronto.</h1>
-  <p class="bling-home-subtitle">Fluxo enxuto: conecte ao Bling para API direta ou continue sem conectar para gerar planilha/modelo.</p>
+  <h1 class="bling-home-title">Mapeie uma vez. Envie ao Bling ou baixe o arquivo.</h1>
+  <p class="bling-home-subtitle">Fluxo único: origem, dados, modelo, mapeamento, prévia final e saída. Conectar ao Bling não muda a dashboard.</p>
 </div>
 ''',
         unsafe_allow_html=True,
@@ -493,7 +519,7 @@ def _render_professional_home() -> None:
         status='OK',
         details={
             'responsible_file': RESPONSIBLE_FILE,
-            'home_order': 'android_safe_bling_or_continue_without',
+            'home_order': 'same_flow_bling_connected_or_csv',
             'style': 'clean_connection_entry_no_iframe',
             'bling_oauth_target': 'android_safe_top_or_copy',
             'legacy_routes_removed': True,
