@@ -33,6 +33,18 @@ class TestMasterReset(unittest.TestCase):
         self.assertIn('bling_refresh_token', state)
         self.assertNotIn('df_final_cadastro', state)
 
+    def test_clears_navigation_deduplication_after_reset(self) -> None:
+        state = {
+            'home_wizard_last_rerun_reason': 'origin_selected',
+            'home_wizard_last_rerun_target': 'entrada',
+            'home_wizard_scroll_target_step': 'download',
+            'unrelated_setting': 'keep',
+        }
+
+        clear_operation_state(state)
+
+        self.assertEqual(state, {'unrelated_setting': 'keep'})
+
     def test_recognizes_dynamic_mapping_and_upload_keys(self) -> None:
         self.assertTrue(should_clear_for_new_operation('mapping_universal_page_2'))
         self.assertTrue(should_clear_for_new_operation('destination_model_upload_bytes'))
