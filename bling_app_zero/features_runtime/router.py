@@ -118,11 +118,15 @@ def step_allowed(step: str) -> bool:
     return str(step or '').strip().lower() in active_steps()
 
 
-def feature_needs_model() -> bool:
+def feature_requires_destination_model() -> bool:
+    """Retorna o requisito permanente do contrato, sem depender da etapa atual."""
     if bool(st.session_state.get(UNIFIED_BLING_SEND_KEY)):
         return False
-    contract = active_contract()
-    if not contract.needs_model:
+    return bool(active_contract().needs_model)
+
+
+def feature_needs_model() -> bool:
+    if not feature_requires_destination_model():
         return False
     current_step = _clean(st.session_state.get(WIZARD_STEP_KEY))
     if current_step in SOURCE_FIRST_STEPS and not _source_data_ready():
@@ -161,5 +165,6 @@ __all__ = [
     'feature_needs_pricing',
     'feature_needs_rules_review',
     'feature_primary_action_label',
+    'feature_requires_destination_model',
     'step_allowed',
 ]
