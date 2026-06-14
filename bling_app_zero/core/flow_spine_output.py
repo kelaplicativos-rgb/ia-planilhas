@@ -68,7 +68,8 @@ def _state_text(key: str) -> str:
 
 def _normalized_column_names(df: Any) -> list[str]:
     try:
-        columns = list(getattr(df, 'columns', []) or [])
+        columns_obj = getattr(df, 'columns', [])
+        columns = list(columns_obj)
     except Exception:
         return []
     normalized: list[str] = []
