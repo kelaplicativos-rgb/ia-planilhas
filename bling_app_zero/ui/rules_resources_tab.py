@@ -50,11 +50,19 @@ def _render_resource_flags(updated: dict[str, Any]) -> None:
         'Limpar GTIN inválido',
         bool(updated.get('clean_invalid_gtin', True)),
         'resource_clean_invalid_gtin_checkbox',
+        'GTIN/EAN fora do padrão fica vazio antes da saída final.',
     )
     updated['normalize_image_separator'] = _resource_checkbox(
         'Separar imagens por |',
         bool(updated.get('normalize_image_separator', True)),
         'resource_normalize_images_checkbox',
+        'Padroniza múltiplas imagens como img1|img2|img3.',
+    )
+    updated['limit_bling_images'] = _resource_checkbox(
+        'Limitar imagens para Bling',
+        bool(updated.get('limit_bling_images', True)),
+        'resource_limit_bling_images_checkbox',
+        'O Bling aceita no máximo 6 imagens por produto. Mantém as 6 primeiras válidas e ignora o restante.',
     )
     _render_measure_normalizer(updated)
     updated['auto_product_code'] = _resource_checkbox(
