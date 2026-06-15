@@ -118,6 +118,21 @@ def _limit_payload_images(payload: Any) -> Any:
     return updated
 
 
+def _limit_payload_variant(value: Any) -> Any:
+    """Protege variantes do sender inteligente.
+
+    O sender smart retorna tuplas no formato (estratégia, payload, meta). O
+    guard antigo tentava limitar a tupla inteira e não entrava no payload. Esta
+    função preserva a estrutura e limita apenas o dicionário do payload.
+    """
+    if isinstance(value, tuple) and len(value) >= 2 and isinstance(value[1], dict):
+        limited_payload = _limit_payload_images(value[1])
+        return (value[0], limited_payload, *value[2:])
+    if isinstance(value, list):
+        return [_limit_payload_variant(item) for item in value]
+    return _limit_payload_images(value)
+
+
 def _patch_pre_send_defaults(module: Any) -> None:
     original = getattr(module, 'apply_product_send_defaults', None)
     if not callable(original) or getattr(original, '_bling_image_limit_guard', False):
@@ -136,8 +151,10 @@ def _patch_payload_variants(module: Any) -> None:
         return
 
     def guarded_payload_variants(*args: Any, **kwargs: Any) -> Any:
-        for payload in original(*args, **kwargs):
-            yield _limit_payload_images(payload)
+        variants = original(*args, **kwargs)
+        if isinstance(variants, list):
+            return [_limit_payload_variant(item) for item in variants]
+        return [_limit_payload_variant(item) for item in variants]
 
     guarded_payload_variants._bling_image_limit_guard = True  # type: ignore[attr-defined]
     module._payload_variants = guarded_payload_variants
