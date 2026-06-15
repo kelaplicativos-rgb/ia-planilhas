@@ -6,8 +6,10 @@ import pandas as pd
 
 from bling_app_zero.core.gtin import clean_gtin, looks_like_gtin_column
 from bling_app_zero.core.text import clean_cell, normalize_key
+from bling_app_zero.core.user_rules import get_user_rules
 
 TITLE_MAX_CHARS = 59
+MAX_BLING_IMAGES = 6
 DESCRIPTION_NOISE_TERMS = (
     'ainda nao ha para este produto',
     'ainda não há para este produto',
@@ -37,6 +39,13 @@ def _safe_columns(df: pd.DataFrame | None) -> list[str]:
 
 def _column_key(column: object) -> str:
     return normalize_key(str(column or '')).replace(' ', '_')
+
+
+def _rule_enabled(key: str, default: bool = True) -> bool:
+    try:
+        return bool(get_user_rules().get(key, default))
+    except Exception:
+        return default
 
 
 def _is_title_column(column: object) -> bool:
@@ -85,6 +94,22 @@ def _clean_description_noise(text: object) -> str:
     return value[:approx].strip(' -|,.;') or value
 
 
+def _image_parts(text: object) -> list[str]:
+    value = _compact_spaces(text)
+    if not value:
+        return []
+    normalized = value.replace(';', '|').replace(',', '|')
+    raw_parts = [part.strip().strip('"\'[]()') for part in normalized.split('|')]
+    parts: list[str] = []
+    seen: set[str] = set()
+    for part in raw_parts:
+        if not part or not part.lower().startswith(('http://', 'https://')) or part in seen:
+            continue
+        seen.add(part)
+        parts.append(part)
+    return parts
+
+
 def _fix_image_separator(text: object) -> str:
     value = _compact_spaces(text)
     if not value or '|' in value or ',' not in value:
@@ -99,11 +124,24 @@ def _fix_image_separator(text: object) -> str:
     return '|'.join(parts)
 
 
+def _limit_images_to_bling(text: object, *, max_images: int = MAX_BLING_IMAGES) -> str:
+    parts = _image_parts(text)
+    if not parts:
+        return _compact_spaces(text)
+    return '|'.join(parts[:max_images])
+
+
+def _needs_bling_image_limit(text: object, *, max_images: int = MAX_BLING_IMAGES) -> bool:
+    return len(_image_parts(text)) > max_images
+
+
 def build_safe_fix_suggestions(df_final_universal: pd.DataFrame | None) -> list[SafeFixSuggestion]:
     if not isinstance(df_final_universal, pd.DataFrame) or df_final_universal.empty:
         return []
 
     suggestions: list[SafeFixSuggestion] = []
+    limit_images_enabled = _rule_enabled('limit_bling_images', True)
+
     for column in _safe_columns(df_final_universal):
         if column not in df_final_universal.columns:
             continue
@@ -123,6 +161,10 @@ def build_safe_fix_suggestions(df_final_universal: pd.DataFrame | None) -> list[
             if rows:
                 suggestions.append(SafeFixSuggestion('fix_image_separator', 'image', 'Corrigir separador de imagens', f'Troca vírgula por | em URLs de imagem na coluna "{column}".', column, rows))
 
+            limit_rows = sum(1 for value in series.tolist() if _needs_bling_image_limit(value)) if limit_images_enabled else 0
+            if limit_rows:
+                suggestions.append(SafeFixSuggestion('fix_bling_image_limit', 'image_limit', 'Limitar imagens para Bling', f'Mantém no máximo {MAX_BLING_IMAGES} imagens por produto na coluna "{column}" para evitar rejeição no Bling.', column, limit_rows))
+
         if _is_title_column(column):
             rows = sum(1 for value in series.tolist() if len(_compact_spaces(value)) > TITLE_MAX_CHARS)
             if rows:
@@ -132,7 +174,6 @@ def build_safe_fix_suggestions(df_final_universal: pd.DataFrame | None) -> list[
             rows = sum(1 for value in series.tolist() if _clean_description_noise(value) != _compact_spaces(value))
             if rows:
                 suggestions.append(SafeFixSuggestion('fix_description_noise', 'description', 'Limpar ruído em descrições', f'Remove trechos de avaliação, frete e compra da coluna "{column}".', column, rows))
-
     return suggestions
 
 
@@ -156,6 +197,8 @@ def apply_safe_fixes(df_final_universal: pd.DataFrame | None, selected_ids: list
             out[column] = out[column].map(lambda value: clean_gtin(value) if _compact_spaces(value) else '')
         if 'fix_image_separator' in active_ids and _is_image_column(column):
             out[column] = out[column].map(_fix_image_separator)
+        if 'fix_bling_image_limit' in active_ids and _is_image_column(column):
+            out[column] = out[column].map(_limit_images_to_bling)
         if 'fix_title_length' in active_ids and _is_title_column(column):
             out[column] = out[column].map(_smart_title)
         if 'fix_description_noise' in active_ids and _is_description_column(column):
