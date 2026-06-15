@@ -15,6 +15,7 @@ from bling_app_zero.ui.estoque_wizard_state import (
 )
 from bling_app_zero.ui.home_autofluxo import pause_home_autofluxo_for_manual_review
 from bling_app_zero.ui.home_shared import df_signature, download_final, preview_df
+from bling_app_zero.ui.home_wizard_scroll import render_mapping_fields_anchor
 from bling_app_zero.ui.layout import inject_mapping_css
 from bling_app_zero.ui.mapping_auto_suggestions import build_stock_auto_mapping
 from bling_app_zero.ui.mapping_confidence_state import current_confidence_from_widgets, ordered_targets_once, required_targets
@@ -82,6 +83,7 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
     ordered_targets = ordered_targets_once(order_key, target_columns, current_confidence)
     required = required_targets(target_columns)
     filtered_targets = filter_targets(mapping_key, ordered_targets, current_confidence, required, sidebar_rule_targets)
+    render_mapping_fields_anchor()
     visible = visible_targets(mapping_key, filtered_targets)
 
     target_index_by_name = {target: index for index, target in enumerate(target_columns)}
