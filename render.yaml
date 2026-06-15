@@ -20,3 +20,22 @@ services:
         value: https://ia-planilhas.streamlit.app/
       - key: BLING_BACKEND_TOKEN_DIR
         value: /tmp/bling_tokens
+
+  - type: worker
+    name: ia-planilhas-bling-worker
+    env: python
+    plan: starter
+    region: oregon
+    rootDir: .
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m bling_app_zero.workers.bling_background_daemon
+    autoDeploy: true
+    envVars:
+      - key: BLING_BACKGROUND_WORKER_INTERVAL_SECONDS
+        value: "30"
+      - key: BLING_BACKGROUND_WORKER_MAX_JOBS
+        value: "3"
+      - key: BLING_BACKGROUND_WORKER_MAX_BATCHES_PER_JOB
+        value: "1000"
+      - key: BLING_TOKEN_STORE_MODE
+        value: firestore
