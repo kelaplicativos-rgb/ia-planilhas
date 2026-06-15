@@ -5,10 +5,13 @@ from typing import Any
 
 import pandas as pd
 
+from bling_app_zero.core.final_download_resources import MAX_IMAGE_URLS_PER_PRODUCT, image_url_parts
 from bling_app_zero.core.operation_contract import OP_ATUALIZACAO_PRECO, OP_CADASTRO, OP_ESTOQUE, normalize_operation
 from bling_app_zero.core.text import normalize_key
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_preflight_scan.py'
+PENDING_IMAGE_LIMIT = 'PRODUTO_COM_MAIS_DE_6_IMAGENS'
+PENDING_REQUIRED_FIELDS = 'CAMPO_OBRIGATORIO'
 
 _CODE_TERMS = ('codigo', 'código', 'sku', 'referencia', 'referência', 'id produto', 'id bling')
 _GTIN_TERMS = ('gtin', 'ean', 'codigo de barras', 'código de barras')
@@ -38,6 +41,7 @@ class BlingPreflightReport:
     missing_identifier_rows: int
     missing_required_rows: int
     rows_with_images: int
+    rows_over_image_limit: int
     estimated_batches: int
     batch_size: int
     block_send: bool
@@ -82,6 +86,27 @@ def _safe_value(row: pd.Series, column: str) -> str:
     return str(value or '').strip()
 
 
+def _image_count(value: object) -> int:
+    return len(image_url_parts(value))
+
+
+def _image_count_for_row(row: pd.Series, columns: dict[str, str]) -> int:
+    image_column = columns.get('imagem', '')
+    if not image_column or image_column not in row.index:
+        return 0
+    return _image_count(row.get(image_column, ''))
+
+
+def _image_excess_mask(df: pd.DataFrame, columns: dict[str, str] | None = None) -> pd.Series:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.Series([], dtype=bool)
+    columns = columns or _operation_columns(df)
+    image_column = columns.get('imagem', '')
+    if not image_column or image_column not in df.columns:
+        return pd.Series([False] * len(df), index=df.index)
+    return df[image_column].fillna('').map(lambda value: _image_count(value) > MAX_IMAGE_URLS_PER_PRODUCT)
+
+
 def _operation_columns(df: pd.DataFrame) -> dict[str, str]:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return {'codigo': '', 'gtin': '', 'nome': '', 'quantidade': '', 'preco': '', 'imagem': '', 'id_bling': ''}
@@ -96,12 +121,12 @@ def _operation_columns(df: pd.DataFrame) -> dict[str, str]:
     }
 
 
-def _sendable_mask(df: pd.DataFrame, operation: str) -> pd.Series:
+def _required_mask(df: pd.DataFrame, operation: str, columns: dict[str, str] | None = None) -> pd.Series:
     op = normalize_operation(operation)
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.Series([], dtype=bool)
 
-    columns = _operation_columns(df)
+    columns = columns or _operation_columns(df)
     has_identifier = _filled_mask(df, columns['codigo']) | _filled_mask(df, columns['gtin']) | _filled_mask(df, columns['id_bling'])
     has_name = _filled_mask(df, columns['nome'])
     has_qty = _filled_mask(df, columns['quantidade'])
@@ -114,8 +139,23 @@ def _sendable_mask(df: pd.DataFrame, operation: str) -> pd.Series:
     return has_identifier | has_name
 
 
+def _sendable_mask(df: pd.DataFrame, operation: str) -> pd.Series:
+    op = normalize_operation(operation)
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.Series([], dtype=bool)
+    columns = _operation_columns(df)
+    required_ok = _required_mask(df, op, columns)
+    if op == OP_CADASTRO:
+        return required_ok & ~_image_excess_mask(df, columns)
+    return required_ok
+
+
 def pending_reason_for_row(row: pd.Series, operation: str, columns: dict[str, str]) -> str:
     op = normalize_operation(operation)
+    image_count = _image_count_for_row(row, columns)
+    if op == OP_CADASTRO and image_count > MAX_IMAGE_URLS_PER_PRODUCT:
+        return f'{PENDING_IMAGE_LIMIT}: produto tem {image_count} imagens; o Bling aceita no máximo {MAX_IMAGE_URLS_PER_PRODUCT}.'
+
     has_code = bool(_safe_value(row, columns.get('codigo', '')))
     has_gtin = bool(_safe_value(row, columns.get('gtin', '')))
     has_id_bling = bool(_safe_value(row, columns.get('id_bling', '')))
@@ -145,6 +185,12 @@ def pending_reason_for_row(row: pd.Series, operation: str, columns: dict[str, st
     return ''
 
 
+def _pending_kind_for_row(row: pd.Series, operation: str, columns: dict[str, str]) -> str:
+    if normalize_operation(operation) == OP_CADASTRO and _image_count_for_row(row, columns) > MAX_IMAGE_URLS_PER_PRODUCT:
+        return PENDING_IMAGE_LIMIT
+    return PENDING_REQUIRED_FIELDS
+
+
 def filter_sendable_dataframe(df: pd.DataFrame, operation: str) -> pd.DataFrame:
     """Mantém apenas linhas que podem ser enviadas com segurança ao Bling."""
     if not isinstance(df, pd.DataFrame) or df.empty:
@@ -157,7 +203,7 @@ def filter_sendable_dataframe(df: pd.DataFrame, operation: str) -> pd.DataFrame:
 
 def build_pending_rows_dataframe(df: pd.DataFrame, operation: str, *, limit: int = 100) -> pd.DataFrame:
     """Monta uma tabela curta com as linhas que foram bloqueadas pela pré-varredura."""
-    columns_out = ['linha', 'codigo', 'gtin', 'id_bling', 'produto', 'quantidade', 'preco', 'motivo']
+    columns_out = ['linha', 'tipo_pendencia', 'codigo', 'gtin', 'id_bling', 'produto', 'quantidade', 'preco', 'imagens', 'motivo']
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame(columns=columns_out)
 
@@ -174,12 +220,14 @@ def build_pending_rows_dataframe(df: pd.DataFrame, operation: str, *, limit: int
         rows.append(
             {
                 'linha': str(int(index) + 1 if isinstance(index, int) else index),
+                'tipo_pendencia': _pending_kind_for_row(row, operation, columns),
                 'codigo': _safe_value(row, columns['codigo']),
                 'gtin': _safe_value(row, columns['gtin']),
                 'id_bling': _safe_value(row, columns['id_bling']),
                 'produto': _safe_value(row, columns['nome']),
                 'quantidade': _safe_value(row, columns['quantidade']),
                 'preco': _safe_value(row, columns['preco']),
+                'imagens': str(_image_count_for_row(row, columns)),
                 'motivo': pending_reason_for_row(row, operation, columns),
             }
         )
@@ -198,6 +246,7 @@ def build_bling_preflight_report(df: pd.DataFrame, operation: str, *, batch_size
             missing_identifier_rows=0,
             missing_required_rows=0,
             rows_with_images=0,
+            rows_over_image_limit=0,
             estimated_batches=0,
             batch_size=safe_batch,
             block_send=True,
@@ -209,16 +258,19 @@ def build_bling_preflight_report(df: pd.DataFrame, operation: str, *, batch_size
     total = int(len(df))
     columns = _operation_columns(df)
     has_identifier = _filled_mask(df, columns['codigo']) | _filled_mask(df, columns['gtin']) | _filled_mask(df, columns['id_bling'])
-    required_ok = _sendable_mask(df, op)
+    required_ok = _required_mask(df, op, columns)
+    image_excess = _image_excess_mask(df, columns) if op == OP_CADASTRO else pd.Series([False] * len(df), index=df.index)
+    sendable = required_ok & ~image_excess
 
-    safe_rows = int(required_ok.sum())
+    safe_rows = int(sendable.sum())
     blocked_rows = int(total - safe_rows)
     missing_identifier = int((~has_identifier).sum())
     missing_required = int((~required_ok).sum())
     rows_with_images = int(_filled_mask(df, columns['imagem']).sum()) if columns['imagem'] else 0
+    rows_over_image_limit = int(image_excess.sum()) if len(image_excess) == len(df) else 0
     estimated_batches = int((safe_rows + safe_batch - 1) // safe_batch) if safe_rows else 0
-    sendable_labels = tuple(df.index[required_ok].tolist())
-    blocked_labels = tuple(df.index[~required_ok].tolist())
+    sendable_labels = tuple(df.index[sendable].tolist())
+    blocked_labels = tuple(df.index[~sendable].tolist())
     block_send = safe_rows <= 0
 
     warnings: list[str] = []
@@ -226,6 +278,8 @@ def build_bling_preflight_report(df: pd.DataFrame, operation: str, *, batch_size
         warnings.append('Envio bloqueado: nenhuma linha tem os campos mínimos para a API do Bling.')
     if total > 300:
         warnings.append('Muitas linhas detectadas; o envio será filtrado, protegido por lotes menores e checkpoint.')
+    if rows_over_image_limit:
+        warnings.append(f'{rows_over_image_limit} produto(s) ficaram como pendência {PENDING_IMAGE_LIMIT}.')
     if blocked_rows:
         warnings.append(f'{blocked_rows} linha(s) serão mantidas como pendência e não entrarão no lote da API.')
     if missing_identifier:
@@ -247,6 +301,7 @@ def build_bling_preflight_report(df: pd.DataFrame, operation: str, *, batch_size
         missing_identifier_rows=missing_identifier,
         missing_required_rows=missing_required,
         rows_with_images=rows_with_images,
+        rows_over_image_limit=rows_over_image_limit,
         estimated_batches=estimated_batches,
         batch_size=safe_batch,
         block_send=block_send,
@@ -258,6 +313,8 @@ def build_bling_preflight_report(df: pd.DataFrame, operation: str, *, batch_size
 
 __all__ = [
     'BlingPreflightReport',
+    'PENDING_IMAGE_LIMIT',
+    'PENDING_REQUIRED_FIELDS',
     'build_bling_preflight_report',
     'build_pending_rows_dataframe',
     'filter_sendable_dataframe',
