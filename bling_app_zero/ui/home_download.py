@@ -10,6 +10,7 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_api_send_guard import validate_before_bling_send
 from bling_app_zero.core.exporter import enforce_export_contract, filename_for_operation, to_bling_csv_bytes
 from bling_app_zero.core.files import read_uploaded_file
+from bling_app_zero.core.final_output_rule_engine import FinalOutputRuleReport, apply_final_output_rules
 from bling_app_zero.core.flow_spine_output import output_diagnostics, output_is_api, output_operation
 from bling_app_zero.core.operation_contract import (
     OP_ATUALIZACAO_PRECO,
@@ -281,6 +282,25 @@ def download_dataframe_for_contract(df: pd.DataFrame, operation: str) -> tuple[p
     return adapted, applied, model_columns
 
 
+def _render_final_output_rule_report(report: FinalOutputRuleReport) -> bool:
+    """Mostra o efeito das regras finais. Retorna False quando deve bloquear."""
+    st.session_state['final_output_rule_report'] = report.to_dict()
+    if report.changed_cells:
+        if report.rows_limited:
+            st.success(f'Regra aplicada: {report.rows_limited} produto(s) limitado(s) ao máximo de 6 imagens para o Bling.')
+        else:
+            st.caption(f'Regras finais aplicadas em {report.changed_cells} célula(s).')
+    for warning in report.warnings:
+        if report.blocked_for_api:
+            st.error(warning)
+        else:
+            st.warning(warning)
+    if report.blocked_for_api:
+        st.info('Ligue a regra “Limitar imagens para Bling” no centro de regras ou aplique a correção segura antes de enviar pela API.')
+        return False
+    return True
+
+
 def save_download_snapshot(
     *,
     download_df: pd.DataFrame,
@@ -355,6 +375,12 @@ def render_download(df_final: pd.DataFrame, operation: str, key: str = 'final') 
     if not isinstance(download_df, pd.DataFrame) or download_df.empty:
         st.warning('Nada para baixar/enviar após aplicar o contrato da operação.')
         return
+
+    api_context = _is_api_context()
+    download_df, rule_report = apply_final_output_rules(download_df, context='api' if api_context else 'download')
+    if not _render_final_output_rule_report(rule_report):
+        return
+
     mismatch_error = _operation_contract_mismatch_error(raw_df, download_df, operation)
     if mismatch_error:
         st.error(mismatch_error)
@@ -378,7 +404,7 @@ def render_download(df_final: pd.DataFrame, operation: str, key: str = 'final') 
     save_download_snapshot(download_df=download_df, file_bytes=file_bytes, file_name=file_name, mime=mime, operation=operation, signature=signature, rules_sig=rules_sig, widget_key=key)
     if contract_applied:
         st.success(f'Modelo aplicado: {len(model_columns)} coluna(s).')
-    if _is_api_context():
+    if api_context:
         _render_direct_bling_send(download_df, operation, key, signature, rules_sig)
         st.caption('Backup opcional do modelo mapeado')
         st.download_button(
