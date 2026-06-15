@@ -22,7 +22,7 @@ from bling_app_zero.core.bling_send_engine import (
     start_auto_send,
 )
 from bling_app_zero.core.bling_send_state import batch_size_for_operation
-from bling_app_zero.core.blingsmartcore_autocadastro import render_autocadastro_panel, render_stock_pending_panel
+from bling_app_zero.core.blingsmartcore_autocadastro import render_autocadastro_panel, render_price_pending_panel, render_stock_pending_panel
 from bling_app_zero.core.flow_spine_output import output_diagnostics, output_operation
 from bling_app_zero.core.intelligent_flow_decision import decide_before_api_send
 from bling_app_zero.core.operation_contract import OP_ATUALIZACAO_PRECO, OP_CADASTRO, OP_ESTOQUE, normalize_operation
@@ -359,7 +359,8 @@ def _render_final_result(download_df: pd.DataFrame, state: dict[str, Any], key: 
     if operation == OP_ESTOQUE:
         render_stock_pending_panel(download_df, payload, key=key)
     elif operation == OP_ATUALIZACAO_PRECO:
-        st.caption('Pendências de preço aparecem na pré-varredura. Confira ID/SKU/GTIN e preço nas linhas bloqueadas.')
+        render_price_pending_panel(download_df, payload, key=key)
+        st.caption('Produtos sem vínculo no canal ficam separados em relatório próprio. Confira ID/SKU/GTIN, preço e vínculo produto-canal antes de reenviar.')
     else:
         render_autocadastro_panel(download_df, payload, key=key)
 
