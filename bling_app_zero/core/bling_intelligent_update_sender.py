@@ -10,7 +10,7 @@ from bling_app_zero.core.bling_direct_sender import DirectSendResult
 from bling_app_zero.core.bling_direct_sender_smart_diff import send_dataframe_to_bling as _smart_diff_send_dataframe_to_bling
 from bling_app_zero.core.bling_pre_send_defaults import apply_dataframe_send_defaults, apply_product_send_defaults
 from bling_app_zero.core.bling_product_update_intelligence import ACTION_PENDING, analyze_stock_update_need
-from bling_app_zero.core.operation_contract import OP_CADASTRO, OP_ESTOQUE, normalize_operation
+from bling_app_zero.core.operation_contract import OP_ATUALIZACAO_PRECO, OP_CADASTRO, OP_ESTOQUE, normalize_operation
 from bling_app_zero.core.operation_safety_guard import require_rows_before_api
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_intelligent_update_sender.py'
@@ -166,6 +166,58 @@ def _block_empty_before_api(operation: str, progress_callback: Callable[[dict[st
     return DirectSendResult(0, 0, 0, 0, (message,), tuple())
 
 
+def _send_allowed_rows_to_bling(
+    allowed_df: pd.DataFrame,
+    op: str,
+    *,
+    limit: int | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> DirectSendResult:
+    if op == OP_CADASTRO:
+        from bling_app_zero.core.verified_api_sender_guarded import send_verified_products
+
+        add_audit_event(
+            'bling_intelligent_update_routed_to_verified_sender_guarded',
+            area='BLING_ENVIO',
+            status='OK',
+            details={
+                'operation': op,
+                'rows': len(allowed_df),
+                'unit_forced': 'UN',
+                'measure_unit_forced': 'Centímetros',
+                'production_forced': 'Terceiros',
+                'gtin_tax_equals_gtin': True,
+                'link_externo_product_page_only': True,
+                'sender_guard': 'verified_api_sender_guarded.py',
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+        return send_verified_products(allowed_df, limit=limit, progress_callback=progress_callback)
+
+    if op == OP_ATUALIZACAO_PRECO:
+        from bling_app_zero.core.bling_price_sender_guarded import send_dataframe_to_bling_price
+
+        add_audit_event(
+            'bling_intelligent_update_routed_to_guarded_price_sender',
+            area='BLING_ENVIO',
+            status='OK',
+            details={
+                'operation': op,
+                'rows': len(allowed_df),
+                'price_payload_guard': 'idProdutoLoja_first_for_channel_price',
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+        return send_dataframe_to_bling_price(allowed_df, limit=limit, progress_callback=progress_callback)
+
+    return _smart_diff_send_dataframe_to_bling(
+        allowed_df,
+        op,
+        limit=limit,
+        progress_callback=progress_callback,
+    )
+
+
 def send_dataframe_to_bling_intelligent(
     df: pd.DataFrame,
     operation: str,
@@ -204,7 +256,7 @@ def send_dataframe_to_bling_intelligent(
             'stock_quality_mode': op == OP_ESTOQUE,
             'verified_product_mode': op != OP_ESTOQUE,
             'pre_send_defaults_applied': True,
-            'sender_guard': 'verified_api_sender_guarded.py',
+            'sender_guard': 'guarded_price_sender.py' if op == OP_ATUALIZACAO_PRECO else 'verified_api_sender_guarded.py',
         },
     )
 
@@ -219,32 +271,12 @@ def send_dataframe_to_bling_intelligent(
         )
         return DirectSendResult(len(df), 0, 0, skipped_before_api, tuple([message] + pending_errors), tuple())
 
-    if op == OP_CADASTRO:
-        from bling_app_zero.core.verified_api_sender_guarded import send_verified_products
-        add_audit_event(
-            'bling_intelligent_update_routed_to_verified_sender_guarded',
-            area='BLING_ENVIO',
-            status='OK',
-            details={
-                'operation': op,
-                'rows': len(allowed_df),
-                'unit_forced': 'UN',
-                'measure_unit_forced': 'Centímetros',
-                'production_forced': 'Terceiros',
-                'gtin_tax_equals_gtin': True,
-                'link_externo_product_page_only': True,
-                'sender_guard': 'verified_api_sender_guarded.py',
-                'responsible_file': RESPONSIBLE_FILE,
-            },
-        )
-        result = send_verified_products(allowed_df, limit=limit, progress_callback=progress_callback)
-    else:
-        result = _smart_diff_send_dataframe_to_bling(
-            allowed_df,
-            op,
-            limit=limit,
-            progress_callback=progress_callback,
-        )
+    result = _send_allowed_rows_to_bling(
+        allowed_df,
+        op,
+        limit=limit,
+        progress_callback=progress_callback,
+    )
 
     attempted_after_api = _safe_int_attr(result, 'attempted', 'total', default=len(allowed_df))
     sent = _safe_int_attr(result, 'sent', default=0)
@@ -275,9 +307,10 @@ def send_dataframe_to_bling_intelligent(
             'skipped_total': skipped_total,
             'stock_quality_mode': op == OP_ESTOQUE,
             'verified_product_mode': op != OP_ESTOQUE,
+            'price_payload_guard': op == OP_ATUALIZACAO_PRECO,
             'api_base_patch_enabled': True,
             'pre_send_defaults_applied': True,
-            'sender_guard': 'verified_api_sender_guarded.py',
+            'sender_guard': 'guarded_price_sender.py' if op == OP_ATUALIZACAO_PRECO else 'verified_api_sender_guarded.py',
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
