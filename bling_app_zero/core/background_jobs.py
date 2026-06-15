@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import gzip
 import json
+import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
@@ -73,7 +74,7 @@ def _job_store_mode() -> str:
 
 
 def _collection_name() -> str:
-    return DEFAULT_FIRESTORE_COLLECTION
+    return str(os.environ.get('BLING_BACKGROUND_JOBS_COLLECTION') or DEFAULT_FIRESTORE_COLLECTION).strip() or DEFAULT_FIRESTORE_COLLECTION
 
 
 def _sqlite_path() -> Path:
@@ -185,7 +186,7 @@ def create_background_bling_job(
         'responsible_file': RESPONSIBLE_FILE,
     }
     _save_job_payload(payload)
-    add_audit_event('background_bling_job_created', area='BACKGROUND_JOBS', status='OK', details={'job_id': job_id, 'operation': normalized, 'rows': len(df), 'store_mode': _job_store_mode(), 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('background_bling_job_created', area='BACKGROUND_JOBS', status='OK', details={'job_id': job_id, 'operation': normalized, 'rows': len(df), 'store_mode': _job_store_mode(), 'collection': _collection_name(), 'responsible_file': RESPONSIBLE_FILE})
     return _safe_payload_for_snapshot(payload)
 
 
@@ -260,14 +261,24 @@ def update_job_payload(job_id: str, changes: dict[str, Any]) -> dict[str, Any] |
     return payload
 
 
+def _sort_recent_rows(rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    return sorted(rows, key=lambda item: str(item.get('created_at') or ''), reverse=True)[:limit]
+
+
+def _sort_active_rows(rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    return sorted(rows, key=lambda item: str(item.get('created_at') or ''))[:limit]
+
+
 def list_my_background_jobs(limit: int = 20) -> list[BackgroundJobSnapshot]:
     user_session_id = get_user_session_id()
     limit = max(1, min(int(limit or 20), 50))
     rows: list[dict[str, Any]] = []
     if _job_store_mode() == 'firestore':
+        # Sem order_by para evitar exigência de índice composto no Firestore.
         client = _firestore_client()
-        query = client.collection(_collection_name()).where('user_session_id', '==', user_session_id).order_by('created_at', direction='DESCENDING').limit(limit)
+        query = client.collection(_collection_name()).where('user_session_id', '==', user_session_id).limit(max(limit * 3, limit))
         rows = [snapshot.to_dict() or {} for snapshot in query.stream()]
+        rows = _sort_recent_rows(rows, limit)
     else:
         path = _ensure_sqlite()
         with sqlite3.connect(path) as conn:
@@ -280,26 +291,20 @@ def list_my_background_jobs(limit: int = 20) -> list[BackgroundJobSnapshot]:
     return [_safe_payload_for_snapshot(row) for row in rows]
 
 
-def _sort_active_rows(rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
-    return sorted(rows, key=lambda item: str(item.get('created_at') or ''))[:limit]
-
-
 def list_queued_jobs(limit: int = 10) -> list[dict[str, Any]]:
     # Retoma tanto queued quanto running. Se o worker reiniciar no meio, a tarefa running volta do offset salvo.
     limit = max(1, min(int(limit or 10), 50))
     rows: list[dict[str, Any]] = []
     if _job_store_mode() == 'firestore':
+        # Sem order_by para evitar índice manual. A ordenação é local.
         client = _firestore_client()
         for status in ACTIVE_JOB_STATUSES:
-            query = client.collection(_collection_name()).where('status', '==', status).order_by('created_at').limit(limit)
+            query = client.collection(_collection_name()).where('status', '==', status).limit(limit)
             rows.extend([snapshot.to_dict() or {} for snapshot in query.stream()])
         return _sort_active_rows(rows, limit)
     path = _ensure_sqlite()
     with sqlite3.connect(path) as conn:
-        result = conn.execute(
-            'SELECT payload_json FROM bling_background_jobs WHERE status IN (?, ?) ORDER BY created_at ASC LIMIT ?',
-            (JOB_STATUS_QUEUED, JOB_STATUS_RUNNING, limit),
-        ).fetchall()
+        result = conn.execute('SELECT payload_json FROM bling_background_jobs WHERE status IN (?, ?) ORDER BY created_at ASC LIMIT ?', (JOB_STATUS_QUEUED, JOB_STATUS_RUNNING, limit)).fetchall()
     for row in result:
         try:
             rows.append(json.loads(row[0]))
