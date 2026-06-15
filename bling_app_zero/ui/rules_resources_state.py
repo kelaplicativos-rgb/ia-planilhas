@@ -5,6 +5,7 @@ from typing import Any
 WATCHED_RESOURCES = [
     'clean_invalid_gtin',
     'normalize_image_separator',
+    'limit_bling_images',
     'normalize_measures_to_meters',
     'auto_product_code',
     'unique_product_code',
