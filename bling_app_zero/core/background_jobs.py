@@ -26,6 +26,7 @@ JOB_STATUS_DONE = 'done'
 JOB_STATUS_ERROR = 'error'
 JOB_STATUS_PAUSED = 'paused'
 SUPPORTED_JOB_OPERATIONS = {OP_CADASTRO, OP_ESTOQUE, OP_ATUALIZACAO_PRECO}
+ACTIVE_JOB_STATUSES = (JOB_STATUS_QUEUED, JOB_STATUS_RUNNING)
 
 
 @dataclass(frozen=True)
@@ -65,8 +66,6 @@ def _now() -> str:
 
 
 def _job_store_mode() -> str:
-    # Firestore é o único modo realmente persistente para continuar fora da aba no Streamlit Cloud.
-    # SQLite fica como fallback local/dev, mas não é recomendado para produção Cloud.
     try:
         return token_store_mode()
     except Exception:
@@ -186,12 +185,7 @@ def create_background_bling_job(
         'responsible_file': RESPONSIBLE_FILE,
     }
     _save_job_payload(payload)
-    add_audit_event(
-        'background_bling_job_created',
-        area='BACKGROUND_JOBS',
-        status='OK',
-        details={'job_id': job_id, 'operation': normalized, 'rows': len(df), 'store_mode': _job_store_mode(), 'responsible_file': RESPONSIBLE_FILE},
-    )
+    add_audit_event('background_bling_job_created', area='BACKGROUND_JOBS', status='OK', details={'job_id': job_id, 'operation': normalized, 'rows': len(df), 'store_mode': _job_store_mode(), 'responsible_file': RESPONSIBLE_FILE})
     return _safe_payload_for_snapshot(payload)
 
 
@@ -277,10 +271,7 @@ def list_my_background_jobs(limit: int = 20) -> list[BackgroundJobSnapshot]:
     else:
         path = _ensure_sqlite()
         with sqlite3.connect(path) as conn:
-            result = conn.execute(
-                'SELECT payload_json FROM bling_background_jobs WHERE user_session_id = ? ORDER BY created_at DESC LIMIT ?',
-                (user_session_id, limit),
-            ).fetchall()
+            result = conn.execute('SELECT payload_json FROM bling_background_jobs WHERE user_session_id = ? ORDER BY created_at DESC LIMIT ?', (user_session_id, limit)).fetchall()
         for row in result:
             try:
                 rows.append(json.loads(row[0]))
@@ -289,18 +280,25 @@ def list_my_background_jobs(limit: int = 20) -> list[BackgroundJobSnapshot]:
     return [_safe_payload_for_snapshot(row) for row in rows]
 
 
+def _sort_active_rows(rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    return sorted(rows, key=lambda item: str(item.get('created_at') or ''))[:limit]
+
+
 def list_queued_jobs(limit: int = 10) -> list[dict[str, Any]]:
+    # Retoma tanto queued quanto running. Se o worker reiniciar no meio, a tarefa running volta do offset salvo.
     limit = max(1, min(int(limit or 10), 50))
+    rows: list[dict[str, Any]] = []
     if _job_store_mode() == 'firestore':
         client = _firestore_client()
-        query = client.collection(_collection_name()).where('status', '==', JOB_STATUS_QUEUED).order_by('created_at').limit(limit)
-        return [snapshot.to_dict() or {} for snapshot in query.stream()]
+        for status in ACTIVE_JOB_STATUSES:
+            query = client.collection(_collection_name()).where('status', '==', status).order_by('created_at').limit(limit)
+            rows.extend([snapshot.to_dict() or {} for snapshot in query.stream()])
+        return _sort_active_rows(rows, limit)
     path = _ensure_sqlite()
-    rows: list[dict[str, Any]] = []
     with sqlite3.connect(path) as conn:
         result = conn.execute(
-            'SELECT payload_json FROM bling_background_jobs WHERE status = ? ORDER BY created_at ASC LIMIT ?',
-            (JOB_STATUS_QUEUED, limit),
+            'SELECT payload_json FROM bling_background_jobs WHERE status IN (?, ?) ORDER BY created_at ASC LIMIT ?',
+            (JOB_STATUS_QUEUED, JOB_STATUS_RUNNING, limit),
         ).fetchall()
     for row in result:
         try:
