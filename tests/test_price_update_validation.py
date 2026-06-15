@@ -37,6 +37,20 @@ class TestPriceUpdateValidation(unittest.TestCase):
         self.assertIn('3 produto(s)', errors[0])
         self.assertIn('Linhas: 1, 2, 3', errors[0])
 
+    def test_primary_price_zero_is_not_hidden_by_promotional_price(self) -> None:
+        df = pd.DataFrame(
+            {
+                'Código': ['A'],
+                'Preço': ['0'],
+                'Preço promocional': ['19,90'],
+            }
+        )
+
+        details = price_validation_details(df)
+
+        self.assertEqual(details['price_columns'], ['Preço'])
+        self.assertEqual(details['invalid_rows'], [1])
+
     def test_ignores_cost_and_bling_destination_metadata_as_sale_price(self) -> None:
         df = pd.DataFrame(
             {
