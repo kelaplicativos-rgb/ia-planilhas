@@ -19,6 +19,7 @@ class TestPriceUpdateValidation(unittest.TestCase):
 
         self.assertEqual(validate_price_update_values(df), [])
         self.assertEqual(validate_final_df(df, 'atualizacao_preco'), [])
+        self.assertEqual(validate_final_df(df, 'universal'), [])
 
     def test_blocks_zero_blank_and_invalid_prices(self) -> None:
         df = pd.DataFrame(
@@ -36,6 +37,21 @@ class TestPriceUpdateValidation(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn('3 produto(s)', errors[0])
         self.assertIn('Linhas: 1, 2, 3', errors[0])
+
+    def test_universal_model_blocks_zero_price_without_classifying_layout(self) -> None:
+        df = pd.DataFrame(
+            {
+                'Meu identificador': ['A', 'B'],
+                'Preço da loja': ['10,00', '0'],
+                'Campo personalizado': ['X', 'Y'],
+            }
+        )
+
+        errors = validate_final_df(df, 'universal')
+
+        self.assertEqual(len(errors), 1)
+        self.assertIn('Modelo final bloqueado', errors[0])
+        self.assertIn('1 produto(s)', errors[0])
 
     def test_primary_price_zero_is_not_hidden_by_promotional_price(self) -> None:
         df = pd.DataFrame(
@@ -64,6 +80,7 @@ class TestPriceUpdateValidation(unittest.TestCase):
 
         self.assertEqual(len(errors), 1)
         self.assertIn('nenhuma coluna de preço de venda', errors[0])
+        self.assertEqual(validate_final_df(df, 'universal'), [])
 
     def test_api_guard_blocks_before_send_when_any_price_is_zero(self) -> None:
         df = pd.DataFrame(
