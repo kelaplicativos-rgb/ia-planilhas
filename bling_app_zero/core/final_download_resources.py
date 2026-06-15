@@ -128,22 +128,51 @@ def normalize_image_separator_resource(
     *,
     enabled: bool = True,
     max_urls: int = MAX_IMAGE_URLS_PER_PRODUCT,
+    limit_to_bling_max: bool = False,
 ) -> ResourceResult:
     out = _df(df)
     if out.empty or not enabled:
         return ResourceResult(out, message='Normalização de imagens desativada ou sem dados.')
     columns = [str(column) for column in out.columns if looks_like_image_column(column)]
+    effective_max = max_urls if limit_to_bling_max else 0
     clipped_rows = 0
+    for column in columns:
+        before_counts = out[column].apply(lambda value: len(image_url_parts(value)))
+        out[column] = out[column].apply(lambda value: normalize_image_urls(value, max_urls=effective_max))
+        after_counts = out[column].apply(lambda value: len(image_url_parts(value)))
+        if limit_to_bling_max and max_urls and max_urls > 0:
+            clipped_rows += int(((before_counts > after_counts) & (before_counts > max_urls)).sum())
+    if clipped_rows:
+        message = f'Imagens normalizadas em {len(columns)} coluna(s); {clipped_rows} produto(s) foram limitados a {max_urls} imagem(ns).'
+    elif limit_to_bling_max:
+        message = f'Imagens normalizadas em {len(columns)} coluna(s). Limite por produto: {max_urls}.'
+    else:
+        message = f'Imagens normalizadas em {len(columns)} coluna(s). Sem aplicar limite de quantidade.'
+    return ResourceResult(out, changed=len(columns), columns=tuple(columns), message=message)
+
+
+def limit_bling_images_resource(
+    df: pd.DataFrame | None,
+    *,
+    enabled: bool = True,
+    max_urls: int = MAX_IMAGE_URLS_PER_PRODUCT,
+) -> ResourceResult:
+    out = _df(df)
+    if out.empty or not enabled:
+        return ResourceResult(out, message='Limite de imagens para Bling desativado ou sem dados.')
+    columns = [str(column) for column in out.columns if looks_like_image_column(column)]
+    changed_rows = 0
     for column in columns:
         before_counts = out[column].apply(lambda value: len(image_url_parts(value)))
         out[column] = out[column].apply(lambda value: normalize_image_urls(value, max_urls=max_urls))
         after_counts = out[column].apply(lambda value: len(image_url_parts(value)))
-        clipped_rows += int(((before_counts > after_counts) & (before_counts > max_urls)).sum()) if max_urls and max_urls > 0 else 0
-    if clipped_rows:
-        message = f'Imagens normalizadas em {len(columns)} coluna(s); {clipped_rows} produto(s) foram limitados a {max_urls} imagem(ns).'
-    else:
-        message = f'Imagens normalizadas em {len(columns)} coluna(s). Limite por produto: {max_urls}.'
-    return ResourceResult(out, changed=len(columns), columns=tuple(columns), message=message)
+        changed_rows += int(((before_counts > after_counts) & (before_counts > max_urls)).sum()) if max_urls and max_urls > 0 else 0
+    return ResourceResult(
+        out,
+        changed=changed_rows,
+        columns=tuple(columns),
+        message=f'{changed_rows} produto(s) limitado(s) ao máximo de {max_urls} imagens aceito pelo Bling.',
+    )
 
 
 def stock_status_to_quantity(value: object, defaults: dict[str, str] | None = None) -> str:
@@ -278,6 +307,7 @@ __all__ = [
     'gtin_code_from_row',
     'image_url_parts',
     'is_empty_text',
+    'limit_bling_images_resource',
     'looks_like_image_column',
     'looks_like_product_code_column',
     'looks_like_product_name_column',
