@@ -14,6 +14,7 @@ from bling_app_zero.core.background_jobs import (
 )
 from bling_app_zero.core.bling_intelligent_update_sender import send_dataframe_to_bling_intelligent
 from bling_app_zero.core.bling_send_state import batch_size_for_operation
+from bling_app_zero.core.bling_token_store import SESSION_ID_KEY, state_store
 from bling_app_zero.core.operation_contract import normalize_operation
 
 RESPONSIBLE_FILE = 'bling_app_zero/workers/bling_background_worker.py'
@@ -30,16 +31,22 @@ def _mark_error(job_id: str, error: str, payload: dict[str, Any] | None = None) 
     if isinstance(payload, dict):
         changes.setdefault('attempted', int(payload.get('attempted') or 0))
     update_job_payload(job_id, changes)
-    add_audit_event(
-        'background_bling_job_error',
-        area='BACKGROUND_JOBS',
-        status='ERRO',
-        details={'job_id': job_id, 'error': str(error)[:300], 'responsible_file': RESPONSIBLE_FILE},
-    )
+    add_audit_event('background_bling_job_error', area='BACKGROUND_JOBS', status='ERRO', details={'job_id': job_id, 'error': str(error)[:300], 'responsible_file': RESPONSIBLE_FILE})
 
 
 def _now_from_time() -> str:
     return time.strftime('%Y-%m-%d %H:%M:%S')
+
+
+def _activate_job_token_context(job: dict[str, Any]) -> None:
+    user_session_id = str(job.get('user_session_id') or '').strip()
+    if not user_session_id:
+        return
+    store = state_store()
+    store[SESSION_ID_KEY] = user_session_id
+    # Remove token carregado de outro job/sessão para forçar load_token a buscar pelo user_session_id correto.
+    store.pop('bling_oauth_token_response', None)
+    store.pop('bling_oauth_connected_at', None)
 
 
 def run_one_background_job(job: dict[str, Any], *, max_batches: int = DEFAULT_MAX_BATCHES_PER_JOB) -> dict[str, Any]:
@@ -47,6 +54,7 @@ def run_one_background_job(job: dict[str, Any], *, max_batches: int = DEFAULT_MA
     if not job_id:
         return {'ok': False, 'error': 'job_id ausente'}
 
+    _activate_job_token_context(job)
     operation = normalize_operation(job.get('operation'))
     df = decode_dataframe(job.get('dataframe') if isinstance(job.get('dataframe'), dict) else {})
     if df.empty:
@@ -75,6 +83,7 @@ def run_one_background_job(job: dict[str, Any], *, max_batches: int = DEFAULT_MA
 
     batches = 0
     while offset < total and batches < max_batches:
+        _activate_job_token_context(job)
         batch_end = min(offset + batch_size, total)
         batch_df = df.iloc[offset:batch_end].copy().fillna('')
         started = time.monotonic()
@@ -125,6 +134,7 @@ def run_one_background_job(job: dict[str, Any], *, max_batches: int = DEFAULT_MA
             details={
                 'job_id': job_id,
                 'operation': operation,
+                'user_session_id': str(job.get('user_session_id') or ''),
                 'offset': offset,
                 'total': total,
                 'sent': int(result.sent),
@@ -136,23 +146,12 @@ def run_one_background_job(job: dict[str, Any], *, max_batches: int = DEFAULT_MA
         )
 
         if int(result.failed) > 0 and sent_total == 0:
-            # Evita insistir em centenas de lotes quando a API/permissão falhou logo no início.
             break
 
     done = offset >= total
     final_status = JOB_STATUS_DONE if done else JOB_STATUS_RUNNING
     update_job_payload(job_id, {'status': final_status, 'finished_at': _now_from_time() if done else ''})
-    return {
-        'ok': True,
-        'job_id': job_id,
-        'status': final_status,
-        'offset': offset,
-        'total': total,
-        'sent': sent_total,
-        'failed': failed_total,
-        'skipped': skipped_total,
-        'batches': batches,
-    }
+    return {'ok': True, 'job_id': job_id, 'status': final_status, 'offset': offset, 'total': total, 'sent': sent_total, 'failed': failed_total, 'skipped': skipped_total, 'batches': batches}
 
 
 def run_queued_background_jobs(*, max_jobs: int = DEFAULT_MAX_JOBS, max_batches_per_job: int = DEFAULT_MAX_BATCHES_PER_JOB) -> list[dict[str, Any]]:
