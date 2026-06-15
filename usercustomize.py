@@ -4,9 +4,9 @@ Bling rejects product creation when more than 6 images are sent. This module is
 loaded automatically by Python in normal app startup and patches only the Bling
 product preparation/sending paths.
 
-The preferred flow is the visible rule inside IA Real. The runtime guard remains
-as a last safety net, but it respects the explicit user decision stored by the
-IA Real panel when the user chooses not to apply the image-limit rule.
+The preferred flow is the visible rule in the same rules/resources group as
+GTIN and image separator. The runtime guard remains as a last safety net and
+respects the central user rule ``limit_bling_images``.
 """
 from __future__ import annotations
 
@@ -26,6 +26,8 @@ _TARGET_MODULES = {
 }
 _IMAGE_KEY_HINTS = ('imagem', 'imagens', 'image', 'images', 'foto', 'fotos', 'midia')
 _URL_SPLIT_RE = re.compile(r'[|;,\n\r]+')
+_RULES_SESSION_KEY = 'bling_user_rules'
+_CENTRAL_LIMIT_KEY = 'limit_bling_images'
 _DECISION_SESSION_KEY = 'ai_real_bling_image_limit_decision'
 _GUARD_SESSION_KEY = 'bling_image_limit_guard_enabled'
 _SKIP_DECISIONS = {'nao_aplicar', 'não_aplicar', 'skip', 'skipped', 'disabled', 'false'}
@@ -37,6 +39,11 @@ def _image_limit_guard_enabled() -> bool:
         state = getattr(st, 'session_state', None)
         if state is None:
             return True
+
+        rules = state.get(_RULES_SESSION_KEY)
+        if isinstance(rules, dict) and _CENTRAL_LIMIT_KEY in rules:
+            return bool(rules.get(_CENTRAL_LIMIT_KEY, True))
+
         decision = str(state.get(_DECISION_SESSION_KEY) or '').strip().lower()
         if decision in _SKIP_DECISIONS:
             return False
