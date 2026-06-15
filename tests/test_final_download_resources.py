@@ -5,6 +5,7 @@ import pandas as pd
 from bling_app_zero.core.final_download_resources import (
     clean_invalid_gtin_resource,
     fallback_code_from_row,
+    limit_bling_images_resource,
     normalize_image_separator_resource,
     unique_product_codes_resource,
 )
@@ -20,6 +21,17 @@ def test_final_resource_normalizes_images_with_pipe() -> None:
     result = normalize_image_separator_resource(df)
 
     assert result.df['URL Imagens Externas'].tolist() == ['https://a.com/1.jpg|https://a.com/2.jpg']
+
+
+def test_final_resource_limit_images_is_separate_from_separator() -> None:
+    urls = ', '.join(f'https://a.com/{index}.jpg' for index in range(1, 9))
+    df = pd.DataFrame([{'URL Imagens Externas': urls}])
+
+    separated = normalize_image_separator_resource(df)
+    limited = limit_bling_images_resource(separated.df)
+
+    assert len(separated.df['URL Imagens Externas'].iloc[0].split('|')) == 8
+    assert len(limited.df['URL Imagens Externas'].iloc[0].split('|')) == 6
 
 
 def test_final_resource_cleans_invalid_gtin() -> None:
