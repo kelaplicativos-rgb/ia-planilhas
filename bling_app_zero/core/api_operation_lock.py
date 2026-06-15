@@ -15,7 +15,7 @@ API_CONTEXT_KEYS: Final[tuple[str, ...]] = (
     'bling_connected_api_flow_active',
     'direct_bling_api_contract_active',
 )
-API_OPERATION_KEYS: Final[tuple[str, ...]] = (
+API_OPERATION_READ_KEYS: Final[tuple[str, ...]] = (
     'api_operation',
     'bling_api_operation',
     'home_bling_api_operation_choice',
@@ -34,6 +34,24 @@ API_OPERATION_KEYS: Final[tuple[str, ...]] = (
     'tipo_operacao_final',
     'site_capture_operation',
 )
+API_OPERATION_WRITE_KEYS: Final[tuple[str, ...]] = (
+    'api_operation',
+    'bling_api_operation',
+    'bling_connected_api_operation',
+    'direct_bling_operation_applied',
+    'flow_spine_sender_operation',
+    'flow_spine_operation_resolved_for_api',
+    'flow_spine_api_batch_operation',
+    'final_download_operation',
+    'df_final_download_operation',
+    'df_final_preview_operation',
+    'home_slim_flow_operation',
+    'home_detected_operation',
+    'operacao_final',
+    'tipo_operacao_final',
+    'site_capture_operation',
+)
+API_OPERATION_KEYS = API_OPERATION_READ_KEYS
 
 
 def concrete_api_operation(value: object, *, default: str = '') -> str:
@@ -56,7 +74,7 @@ def api_context_active() -> bool:
 
 def resolve_api_operation(default: str = '') -> str:
     try:
-        for key in API_OPERATION_KEYS:
+        for key in API_OPERATION_READ_KEYS:
             op = concrete_api_operation(st.session_state.get(key))
             if op:
                 return op
@@ -72,14 +90,19 @@ def lock_api_operation(operation: object, *, source: str = '', force: bool = Fal
     if not force and not api_context_active():
         return op
 
-    try:
-        for key in API_OPERATION_KEYS:
+    written: list[str] = []
+    for key in API_OPERATION_WRITE_KEYS:
+        try:
             st.session_state[key] = op
+            written.append(key)
+        except Exception:
+            continue
+    try:
         st.session_state['flow_spine_operation_resolution_source'] = source or RESPONSIBLE_FILE
         st.session_state['api_operation_lock_active'] = True
         st.session_state['api_operation_lock_source'] = source or RESPONSIBLE_FILE
     except Exception:
-        return op
+        pass
 
     add_audit_event(
         'api_operation_locked_for_api_flow',
@@ -90,11 +113,20 @@ def lock_api_operation(operation: object, *, source: str = '', force: bool = Fal
             'source': source or RESPONSIBLE_FILE,
             'force': bool(force),
             'api_context_active': api_context_active(),
-            'keys_locked': list(API_OPERATION_KEYS),
+            'keys_locked': written,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
     return op
 
 
-__all__ = ['API_OPERATION_KEYS', 'CONCRETE_API_OPERATIONS', 'api_context_active', 'concrete_api_operation', 'lock_api_operation', 'resolve_api_operation']
+__all__ = [
+    'API_OPERATION_KEYS',
+    'API_OPERATION_READ_KEYS',
+    'API_OPERATION_WRITE_KEYS',
+    'CONCRETE_API_OPERATIONS',
+    'api_context_active',
+    'concrete_api_operation',
+    'lock_api_operation',
+    'resolve_api_operation',
+]
