@@ -10,6 +10,7 @@ from bling_app_zero.core.user_rules import remove_custom_rule_by_id
 PROTECTION_FIELDS = [
     ('clean_invalid_gtin', 'GTIN inválido', 'GTIN fora do padrão sai vazio no arquivo final.'),
     ('normalize_image_separator', 'Imagens por |', 'Múltiplas imagens saem como img1|img2|img3.'),
+    ('limit_bling_images', 'Máx. 6 imagens Bling', 'Mantém no máximo 6 imagens por produto para evitar rejeição no Bling.'),
     ('auto_product_code', 'Código automático', 'Preenche código/SKU somente quando o campo estiver vazio.'),
     ('unique_product_code', 'Código único', 'Ajusta códigos repetidos quando o recurso estiver ativo.'),
 ]
@@ -167,9 +168,9 @@ def _disable_all_default_rules(custom_rules: list[dict[str, Any]]) -> list[dict[
 
 def render_protection_rules(rules: dict[str, Any]) -> dict[str, Any]:
     updated = dict(rules)
-    cols = st.columns(4)
+    cols = st.columns(5)
     for index, (key, label, help_text) in enumerate(PROTECTION_FIELDS):
-        with cols[index % 4]:
+        with cols[index % 5]:
             updated[key] = st.toggle(label, value=bool(updated.get(key, True)), help=help_text, key=f'rules_center_{key}')
     updated['normalize_measures_to_meters'] = False
     updated['invalid_gtin_mode'] = 'limpar'
@@ -257,133 +258,3 @@ def render_extra_default_rules(custom_rules: list[dict[str, Any]], master_enable
                 render_rule_value_warning(target, value)
             custom_rules = upsert_system_rule(custom_rules, target, value, bool(master_enabled and enabled))
     return custom_rules
-
-
-def _render_default_rules_body(updated: dict[str, Any], custom_rules: list[dict[str, Any]], master_enabled: bool) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    if not master_enabled:
-        return updated, _disable_all_default_rules(custom_rules)
-    updated, custom_rules = render_measure_rules(updated, custom_rules, master_enabled=True)
-    updated, custom_rules = render_basic_defaults(updated, custom_rules, master_enabled=True)
-    updated, custom_rules = render_stock_defaults(updated, custom_rules, master_enabled=True)
-    custom_rules = render_extra_default_rules(custom_rules, master_enabled=True)
-    return updated, custom_rules
-
-
-def _render_custom_rule_card(rule: dict[str, Any], index: int, master_enabled: bool) -> dict[str, Any] | None:
-    current = dict(rule)
-    key = _rule_key(current, index)
-    target = str(current.get('target_column') or current.get('condition') or '').strip()
-    value = str(current.get('fill_value') or '')
-    enabled = bool(current.get('enabled', True))
-    only_empty = bool(current.get('only_when_empty', False))
-
-    with st.container(border=True):
-        col_status, col_delete = st.columns([3, 1])
-        with col_status:
-            enabled = st.toggle('Aplicar', value=bool(master_enabled and enabled), disabled=not master_enabled, key=f'rules_center_user_enabled_{key}')
-        with col_delete:
-            if st.button('Excluir', use_container_width=True, key=f'rules_center_user_delete_{key}'):
-                remove_custom_rule_by_id(str(current.get('id') or key))
-                st.session_state[CUSTOM_RULE_NOTICE_KEY] = 'Regra excluída.'
-                st.rerun()
-
-        target = st.text_input('Coluna no Bling', value=target, key=f'rules_center_user_target_{key}', disabled=not master_enabled)
-        value = st.text_input('Valor', value=value, key=f'rules_center_user_value_{key}', disabled=not master_enabled)
-        only_empty = st.toggle('Só se estiver vazio', value=only_empty, disabled=not master_enabled, key=f'rules_center_user_empty_{key}')
-        render_rule_value_warning(target, value)
-
-    target = str(target or '').strip()
-    if not target:
-        st.warning('Regra sem coluna de destino será ignorada.')
-        return None
-
-    current['id'] = str(current.get('id') or key)
-    current['condition'] = target
-    current['target_column'] = target
-    current['fill_value'] = str(value or '')
-    current['only_when_empty'] = bool(only_empty)
-    current['enabled'] = bool(master_enabled and enabled)
-    current['source'] = 'user'
-    return current
-
-
-def render_custom_rules(custom_rules: list[dict[str, Any]], master_enabled: bool = True) -> list[dict[str, Any]]:
-    with st.container(border=True):
-        st.markdown('##### Regras personalizadas')
-        st.caption('Crie, edite ou exclua regras específicas.')
-
-        notice = st.session_state.pop(CUSTOM_RULE_NOTICE_KEY, '')
-        if notice:
-            st.success(notice)
-
-        system_rules = [dict(rule) for rule in custom_rules if isinstance(rule, dict) and _is_system_rule(rule)]
-        user_rules = [dict(rule) for rule in custom_rules if isinstance(rule, dict) and not _is_system_rule(rule)]
-
-        updated_user_rules: list[dict[str, Any]] = []
-        if user_rules:
-            for index, rule in enumerate(user_rules):
-                rendered = _render_custom_rule_card(rule, index, master_enabled)
-                if rendered:
-                    updated_user_rules.append(rendered)
-        else:
-            st.caption('Nenhuma regra personalizada criada.')
-
-        version = int(st.session_state.get(NEW_RULE_VERSION_KEY, 0) or 0)
-        target_key = f'rules_center_new_rule_target_{version}'
-        value_key = f'rules_center_new_rule_value_{version}'
-        empty_key = f'rules_center_new_rule_only_empty_{version}'
-
-        with st.container(border=True):
-            st.markdown('**Nova regra**')
-            new_target = st.text_input('Coluna', key=target_key, placeholder='Ex: Tipo')
-            new_value = st.text_input('Valor', key=value_key, placeholder='Ex: Produto')
-            new_only_empty = st.toggle('Somente quando estiver vazio', value=True, key=empty_key)
-            if st.button('Adicionar regra', use_container_width=True, key='rules_center_add_custom_rule', disabled=not master_enabled):
-                target = str(new_target or '').strip()
-                if not target:
-                    st.warning('Informe a coluna da nova regra.')
-                else:
-                    new_rule = {
-                        'id': user_rule_id(len(updated_user_rules) + 1, target),
-                        'condition': target,
-                        'target_column': target,
-                        'fill_value': str(new_value or ''),
-                        'only_when_empty': bool(new_only_empty),
-                        'enabled': True,
-                        'source': 'user',
-                    }
-                    updated_user_rules.append(new_rule)
-                    st.session_state[NEW_RULE_VERSION_KEY] = version + 1
-                    st.session_state[CUSTOM_RULE_NOTICE_KEY] = 'Regra adicionada.'
-                    st.rerun()
-
-    return system_rules + updated_user_rules
-
-
-def render_default_rules(rules: dict[str, Any]) -> dict[str, Any]:
-    updated = dict(rules)
-    custom_rules = list(updated.get('custom_rules', []) or [])
-
-    if DEFAULT_RULES_ENABLED_KEY not in st.session_state:
-        has_enabled_custom = any(bool(rule.get('enabled')) for rule in custom_rules if isinstance(rule, dict))
-        st.session_state[DEFAULT_RULES_ENABLED_KEY] = bool(has_enabled_custom)
-
-    master_enabled = bool(st.session_state.get(DEFAULT_RULES_ENABLED_KEY, True))
-    updated, custom_rules = _render_default_rules_body(updated, custom_rules, master_enabled)
-    st.divider()
-    custom_rules = render_custom_rules(custom_rules, master_enabled=master_enabled)
-
-    updated['custom_rules'] = custom_rules
-    return updated
-
-
-__all__ = [
-    'DEFAULT_RULES_ENABLED_KEY',
-    'render_basic_defaults',
-    'render_custom_rules',
-    'render_default_rules',
-    'render_extra_default_rules',
-    'render_measure_rules',
-    'render_protection_rules',
-    'render_stock_defaults',
-]
