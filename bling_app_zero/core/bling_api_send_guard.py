@@ -5,6 +5,8 @@ from typing import Any
 
 import pandas as pd
 
+from bling_app_zero.core.validators import price_validation_details, validate_price_update_values
+
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_api_send_guard.py'
 
 
@@ -60,6 +62,12 @@ def validate_before_bling_send(df: pd.DataFrame, operation: object) -> SendGuard
         return SendGuardResult(False, 'BLOQUEADO', ('Nenhuma linha pronta para envio ao Bling.',), details)
 
     if op == 'atualizacao_preco':
+        price_details = price_validation_details(df)
+        details['price_columns'] = list(price_details.get('price_columns') or [])
+        details['invalid_price_count'] = int(price_details.get('invalid_count') or 0)
+        details['invalid_price_rows'] = list(price_details.get('invalid_rows') or [])[:30]
+        messages.extend(validate_price_update_values(df, label='Envio de preços bloqueado'))
+
         if not _has_column(df, 'Bling preço destino'):
             messages.append('Escolha Preço geral ou Canal de venda antes de enviar preços ao Bling.')
         elif str(df['Bling preço destino'].fillna('').astype(str).iloc[0]).strip().lower() != 'preço geral':
@@ -71,7 +79,7 @@ def validate_before_bling_send(df: pd.DataFrame, operation: object) -> SendGuard
 
     if messages:
         return SendGuardResult(False, 'BLOQUEADO', tuple(messages), details)
-    return SendGuardResult(True, 'OK', ('Envio liberado pela validação de destino da API.',), details)
+    return SendGuardResult(True, 'OK', ('Envio liberado pela validação de destino e conteúdo.',), details)
 
 
 __all__ = ['SendGuardResult', 'validate_before_bling_send']
