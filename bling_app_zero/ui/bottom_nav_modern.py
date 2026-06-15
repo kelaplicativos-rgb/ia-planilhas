@@ -7,18 +7,65 @@ from bling_app_zero.adapters.streamlit_action_executor import FLOW_MENU_KEY, LOG
 from bling_app_zero.adapters.streamlit_shortcut_executor import execute_shortcut, go_home
 from bling_app_zero.core.app_actions import BOTTOM_BAR_ACTIONS
 from bling_app_zero.core.diagnostics_model import build_diagnostic_snapshot
+from bling_app_zero.ui.master_reset import master_reset_to_home, reusable_origin_available, reuse_origin_for_new_operation
 from bling_app_zero.ui.support_diagnostic_panel import render_support_diagnostic_panel_content
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/bottom_nav_modern.py'
 BLING_IMPORTADOR_PRODUTOS_URL = 'https://www.bling.com.br/' + 'importador.produtos.php'
 BLING_IMPORTADOR_ESTOQUE_URL = 'https://www.bling.com.br/' + 'importador.saldos.estoque.php'
 BLING_IMPORTADOR_PRECOS_MULTILOJA_URL = 'https://www.bling.com.br/' + 'importador.precos.produtos.multiloja.php'
+RESET_CONFIRM_KEY = 'sidebar_new_operation_reset_confirmation'
 
 
 def _run_sidebar_action(action: object) -> None:
     result = execute_app_action(action)
     if result.needs_rerun:
         st.rerun()
+
+
+def _render_operation_controls() -> None:
+    st.markdown('### Operação')
+    st.caption('Inicie do zero ou use novamente os produtos já carregados.')
+
+    origin_ready = reusable_origin_available(st.session_state)
+    if st.button(
+        'Reutilizar dados da origem',
+        use_container_width=True,
+        key='sidebar_reuse_origin_operation',
+        disabled=not origin_ready,
+        help='Mantém os produtos carregados e limpa modelo, preços, mapeamento e resultados anteriores.',
+    ):
+        st.session_state.pop(RESET_CONFIRM_KEY, None)
+        if reuse_origin_for_new_operation():
+            st.rerun()
+        st.warning('Não encontrei dados de origem válidos para reaproveitar.')
+
+    if not origin_ready:
+        st.caption('Disponível depois que um arquivo ou uma busca por site carregar produtos.')
+
+    if st.button(
+        'Nova operação do zero',
+        use_container_width=True,
+        key='sidebar_new_operation_from_zero',
+        type='secondary',
+        help='Apaga os dados do fluxo atual, mas mantém a conexão com o Bling.',
+    ):
+        st.session_state[RESET_CONFIRM_KEY] = True
+
+    if bool(st.session_state.get(RESET_CONFIRM_KEY)):
+        st.warning('Esta ação apagará origem, modelo, mapeamento, preços e resultados da operação atual.')
+        confirm_col, cancel_col = st.columns(2)
+        with confirm_col:
+            if st.button('Confirmar limpeza', use_container_width=True, key='sidebar_confirm_new_operation'):
+                st.session_state.pop(RESET_CONFIRM_KEY, None)
+                master_reset_to_home()
+                st.rerun()
+        with cancel_col:
+            if st.button('Cancelar', use_container_width=True, key='sidebar_cancel_new_operation'):
+                st.session_state.pop(RESET_CONFIRM_KEY, None)
+                st.rerun()
+
+    st.divider()
 
 
 def _render_sidebar_action_buttons() -> None:
@@ -71,12 +118,9 @@ def _render_diagnostic_menu() -> None:
 
 
 def render_bottom_nav() -> None:
-    """Renderiza ações rápidas no sidebar.
-
-    O nome público foi mantido por compatibilidade, mas a barra inferior fixa
-    foi removida. O sidebar agora usa botões nativos, sem links/query param.
-    """
+    """Renderiza os comandos persistentes e as ações rápidas no sidebar."""
     with st.sidebar:
+        _render_operation_controls()
         st.markdown('### Sistema')
         _render_sidebar_action_buttons()
         _render_shortcuts_menu()
