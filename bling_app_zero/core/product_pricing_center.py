@@ -336,23 +336,47 @@ def apply_price_aliases(df: pd.DataFrame, calculated_column: str = PRICE_OUTPUT_
     return out
 
 
+def _non_blank_mask(series: pd.Series) -> pd.Series:
+    return series.fillna('').astype(str).str.strip().ne('')
+
+
 def apply_promotional_price_aliases(df: pd.DataFrame, calculated_column: str = PROMO_PRICE_OUTPUT_COLUMN, aliases: Iterable[str] | None = None) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame) or df.empty or calculated_column not in df.columns:
         return df
     out = df.copy().fillna('')
     calculated_values = out[calculated_column]
+    calculated_mask = _non_blank_mask(calculated_values)
     dynamic_aliases = promotional_price_columns(out.columns)
-    for column in list(dict.fromkeys([*(aliases or PROMO_PRICE_TARGET_ALIASES), *dynamic_aliases])):
-        out[str(column)] = calculated_values
+    all_aliases = list(dict.fromkeys([*(aliases or PROMO_PRICE_TARGET_ALIASES), *dynamic_aliases]))
+
+    # Sem desconto promocional calculado, nunca apaga o valor que veio da origem/modelo.
+    if not bool(calculated_mask.any()):
+        return out
+
+    for column in all_aliases:
+        name = str(column)
+        if name not in out.columns:
+            out[name] = ''
+        out.loc[calculated_mask, name] = calculated_values.loc[calculated_mask]
     return out
 
 
 def _apply_easy_pricing(df: pd.DataFrame, cost_column: str, output_column: str, promo_output_column: str, config: dict[str, Any]) -> pd.DataFrame:
     out = df.copy().fillna('')
+    existing_promo: dict[str, pd.Series] = {
+        column: out[column].copy()
+        for column in promotional_price_columns(out.columns)
+        if column in out.columns
+    }
     sale_values = out[cost_column].apply(lambda value: calc_easy_sale_price(value, config))
     promo_percent = config.get('promo_discount_percent', 0)
     out[output_column] = sale_values.apply(money_or_empty)
-    out[promo_output_column] = sale_values.apply(lambda value: money_or_empty(calc_easy_promo_price(value, promo_percent))) if float(promo_percent or 0) > 0 else ''
+    if float(promo_percent or 0) > 0:
+        out[promo_output_column] = sale_values.apply(lambda value: money_or_empty(calc_easy_promo_price(value, promo_percent)))
+    elif promo_output_column not in out.columns:
+        out[promo_output_column] = ''
+    for column, values in existing_promo.items():
+        out[column] = values
     return out
 
 
