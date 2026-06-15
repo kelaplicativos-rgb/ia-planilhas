@@ -14,7 +14,7 @@ ESTOQUE_QTY_TERMS = ['estoque', 'balanco', 'balanço', 'quantidade', 'qtd', 'sal
 PRICE_UPDATE_TERMS = ['preco', 'preço', 'preco_promocional', 'promocional', 'idproduto', 'id_produto', 'id_na_loja', 'loja', 'multiloja']
 PRICE_COLUMN_TERMS = ('preco', 'valor', 'unitario', 'venda', 'price')
 PRICE_COLUMN_EXCLUSIONS = ('destino', 'canal', 'loja id', 'fornecedor', 'custo', 'compra', 'margem', 'desconto', 'comissao')
-PRICE_OPERATION_VALUES = {'atualizacao_preco', 'atualizacao_precos', 'preco', 'precos', 'price', 'prices'}
+PRICE_OPERATION_VALUES = {'atualizacao preco', 'atualizacao precos', 'preco', 'precos', 'price', 'prices'}
 
 
 def _has_column(keys: list[str], terms: list[str]) -> bool:
@@ -174,7 +174,7 @@ def validate_final_df(df: pd.DataFrame, operation: str) -> list[str]:
         errors.extend(_validate_estoque(df, keys))
     elif op in PRICE_OPERATION_VALUES:
         errors.extend(validate_price_update_values(df))
-    elif op in {'universal', 'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}:
+    elif op in {'universal', 'modelo', 'modelo destino', 'planilha', 'wizard cadastro estoque'}:
         errors.extend(_validate_universal(df, keys))
     return errors
 
