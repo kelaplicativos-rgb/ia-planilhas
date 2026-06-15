@@ -8,6 +8,22 @@ from bling_app_zero.core.product_pricing_center import apply_price_calculator_pl
 
 
 class TestPromotionalPricingColumns(unittest.TestCase):
+    def test_detects_exact_bling_multistore_headers(self) -> None:
+        columns = [
+            'IdProduto',
+            'ID na Loja',
+            'Nome',
+            'Código',
+            'Preco',
+            'Preco Promocional',
+            'ID do Fornecedor',
+            'ID da Marca',
+            'Link Externo',
+            'Nome Loja (Multilojas)',
+        ]
+
+        self.assertEqual(promotional_price_columns(columns), ['Preco Promocional'])
+
     def test_detects_common_promotional_column_names(self) -> None:
         columns = [
             'Código',
@@ -61,6 +77,32 @@ class TestPromotionalPricingColumns(unittest.TestCase):
             result.df['Preço oferta'].astype(str).tolist(),
             result.df['Preço promocional'].astype(str).tolist(),
         )
+
+    def test_preserves_existing_bling_promo_when_discount_is_zero(self) -> None:
+        source = pd.DataFrame(
+            {
+                'IdProduto': ['1', '2'],
+                'Preco': ['56', '84'],
+                'Preco Promocional': ['56', '84'],
+            }
+        )
+        config = {
+            'enabled': True,
+            'quick_reprice_mode': 'markup',
+            'quick_markup_percent': 120,
+            'promo_discount_percent': 0,
+        }
+
+        result = apply_price_calculator_plugin(
+            source,
+            enabled=True,
+            config=config,
+            cost_column='Preco',
+        )
+
+        self.assertTrue(result.applied)
+        self.assertEqual(result.df['Preco Promocional'].tolist(), ['56', '84'])
+        self.assertTrue(result.df['Preco'].astype(str).str.strip().ne('').all())
 
 
 if __name__ == '__main__':
