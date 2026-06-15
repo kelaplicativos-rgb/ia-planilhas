@@ -21,6 +21,7 @@ MAX_BLING_IMAGES = 6
 _TARGET_MODULES = {
     'bling_app_zero.core.bling_pre_send_defaults',
     'bling_app_zero.core.bling_direct_sender_smart',
+    'bling_app_zero.core.bling_direct_sender_smart_diff',
     'bling_app_zero.core.verified_api_sender',
     'bling_app_zero.core.blingfix_verified_runtime_patch',
 }
@@ -160,6 +161,26 @@ def _patch_payload_variants(module: Any) -> None:
     module._payload_variants = guarded_payload_variants
 
 
+def _install_blingclean_smart_patch(module: Any | None = None) -> None:
+    """Instala o blingClean no startup e no sender diff.
+
+    O arquivo bruto antigo ainda contém ``images[:10]``. Este instalador garante
+    que o fluxo ativo use o wrapper limpo com ``MAX_BLING_IMAGES = 6`` e também
+    corrige módulos que importaram ``_payload_variants`` por cópia.
+    """
+    try:
+        clean = importlib.import_module('bling_app_zero.core.bling_smart_image_limit_clean')
+        apply_patch = getattr(clean, 'apply_blingclean_patch', None)
+        if callable(apply_patch):
+            apply_patch()
+        if module is not None and getattr(module, '__name__', '').endswith('bling_direct_sender_smart_diff'):
+            module._payload_variants = getattr(clean, '_payload_variants')
+            module.preview_payloads = getattr(clean, 'preview_payloads')
+            module._blingclean_image_limit_patch_installed = True
+    except Exception:
+        return
+
+
 def _patch_force_defaults(module: Any) -> None:
     original = getattr(module, '_force_default_fields', None)
     if not callable(original) or getattr(original, '_bling_image_limit_guard', False):
@@ -192,6 +213,9 @@ def _patch_module(module: Any) -> None:
         _patch_pre_send_defaults(module)
     if name.endswith('bling_direct_sender_smart'):
         _patch_payload_variants(module)
+        _install_blingclean_smart_patch(module)
+    if name.endswith('bling_direct_sender_smart_diff'):
+        _install_blingclean_smart_patch(module)
     if name.endswith('verified_api_sender'):
         _patch_force_defaults(module)
     if name.endswith('blingfix_verified_runtime_patch'):
