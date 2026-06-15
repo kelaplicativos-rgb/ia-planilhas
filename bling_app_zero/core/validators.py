@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
+
 import pandas as pd
 
 from bling_app_zero.core.text import clean_cell, normalize_key
@@ -10,6 +12,9 @@ CADASTRO_PRICE_TERMS = ['preco', 'preço', 'valor', 'unitario', 'unitário', 've
 ESTOQUE_CODE_TERMS = ['codigo', 'código', 'sku', 'referencia', 'referência', 'id_produto']
 ESTOQUE_QTY_TERMS = ['estoque', 'balanco', 'balanço', 'quantidade', 'qtd', 'saldo']
 PRICE_UPDATE_TERMS = ['preco', 'preço', 'preco_promocional', 'promocional', 'idproduto', 'id_produto', 'id_na_loja', 'loja', 'multiloja']
+PRICE_COLUMN_TERMS = ('preco', 'valor', 'unitario', 'venda', 'price')
+PRICE_COLUMN_EXCLUSIONS = ('destino', 'canal', 'loja id', 'fornecedor', 'custo', 'compra', 'margem', 'desconto', 'comissao')
+PRICE_OPERATION_VALUES = {'atualizacao_preco', 'atualizacao_precos', 'preco', 'precos', 'price', 'prices'}
 
 
 def _has_column(keys: list[str], terms: list[str]) -> bool:
@@ -41,6 +46,69 @@ def _has_any_cell_value(df: pd.DataFrame) -> bool:
     return False
 
 
+def _price_columns(df: pd.DataFrame) -> list[str]:
+    candidates: list[tuple[int, int, str]] = []
+    for index, column in enumerate(df.columns):
+        key = normalize_key(column)
+        if not key or not any(term in key for term in PRICE_COLUMN_TERMS):
+            continue
+        if any(term in key for term in PRICE_COLUMN_EXCLUSIONS):
+            continue
+        exact_priority = 0 if key in {'preco', 'preco unitario', 'preco venda', 'valor', 'valor venda', 'price'} else 1
+        candidates.append((exact_priority, index, str(column)))
+    return [column for _priority, _index, column in sorted(candidates)]
+
+
+def _positive_price(value: object) -> bool:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return False
+    text = clean_cell(value).replace('R$', '').replace('\u00a0', '').replace(' ', '')
+    if normalize_key(text) in EMPTY_NORMALIZED_VALUES:
+        return False
+    if ',' in text and '.' in text:
+        if text.rfind(',') > text.rfind('.'):
+            text = text.replace('.', '').replace(',', '.')
+        else:
+            text = text.replace(',', '')
+    elif ',' in text:
+        text = text.replace('.', '').replace(',', '.')
+    try:
+        return Decimal(text) > 0
+    except (InvalidOperation, ValueError):
+        return False
+
+
+def price_validation_details(df: pd.DataFrame) -> dict[str, object]:
+    columns = _price_columns(df) if isinstance(df, pd.DataFrame) else []
+    invalid_rows: list[int] = []
+    if isinstance(df, pd.DataFrame) and not df.empty and columns:
+        for position, (_index, row) in enumerate(df.iterrows(), start=1):
+            if not any(_positive_price(row.get(column)) for column in columns):
+                invalid_rows.append(position)
+    return {
+        'price_columns': columns,
+        'invalid_rows': invalid_rows,
+        'invalid_count': len(invalid_rows),
+        'rows': int(len(df)) if isinstance(df, pd.DataFrame) else 0,
+    }
+
+
+def validate_price_update_values(df: pd.DataFrame, *, label: str = 'Atualização de preços') -> list[str]:
+    details = price_validation_details(df)
+    columns = list(details['price_columns'])
+    invalid_rows = list(details['invalid_rows'])
+    if not columns:
+        return [f'{label}: nenhuma coluna de preço de venda foi encontrada no resultado mapeado.']
+    if not invalid_rows:
+        return []
+    sample = ', '.join(map(str, invalid_rows[:12]))
+    suffix = '...' if len(invalid_rows) > 12 else ''
+    return [
+        f'{label}: {len(invalid_rows)} produto(s) estão com preço vazio, inválido ou igual a zero. '
+        f'Linhas: {sample}{suffix}. Corrija o mapeamento ou a origem antes de baixar/enviar.'
+    ]
+
+
 def _validate_cadastro(df: pd.DataFrame, keys: list[str], *, label: str = 'Cadastro') -> list[str]:
     errors: list[str] = []
     if not _has_column(keys, CADASTRO_NAME_TERMS):
@@ -68,12 +136,7 @@ def _validate_estoque(df: pd.DataFrame, keys: list[str], *, label: str = 'Estoqu
 
 
 def _validate_universal(df: pd.DataFrame, keys: list[str]) -> list[str]:
-    """Valida só o contrato real do arquivo anexado.
-
-    O universal precisa aceitar planilhas de marketplaces, preços, catálogo,
-    vínculo multiloja e outros layouts que não possuem estoque. Portanto, ele não
-    pode exigir saldo/quantidade apenas porque existe código ou SKU.
-    """
+    """Valida somente os campos presentes no modelo universal anexado."""
     errors: list[str] = []
     has_name = _has_column(keys, CADASTRO_NAME_TERMS)
     has_price = _has_column(keys, CADASTRO_PRICE_TERMS)
@@ -85,21 +148,12 @@ def _validate_universal(df: pd.DataFrame, keys: list[str]) -> list[str]:
         errors.append('Modelo final: o campo de nome ou descrição está vazio.')
     if has_price and not _column_has_values(df, CADASTRO_PRICE_TERMS):
         errors.append('Modelo final: o campo de preço ou valor está vazio.')
-
-    # Só valida estoque quando o próprio modelo possui campo de estoque/quantidade.
-    # Código/SKU sozinho não transforma uma planilha de preço em planilha de estoque.
     if has_qty:
         errors.extend(_validate_estoque(df, keys, label='Modelo final'))
-
-    # Se for um modelo de atualização de preço, basta ter dados identificáveis e preço.
     if looks_like_price_update:
         return errors
-
-    # Para layouts desconhecidos de marketplace, não bloquear download por não ter
-    # campos padrão. O usuário anexou o contrato e o sistema deve devolver esse contrato.
     if not has_name and not has_price and not has_qty and not has_code:
         return errors
-
     return errors
 
 
@@ -108,7 +162,7 @@ def validate_final_df(df: pd.DataFrame, operation: str) -> list[str]:
     if df is None or not isinstance(df, pd.DataFrame) or df.empty:
         return ['O arquivo final ainda está vazio. Confira a origem dos dados antes de baixar.']
     if len(df.columns) == 0:
-        return ['O arquivo final não tem colunas. Confira o modelo do Bling antes de baixar.']
+        return ['O arquivo final não tem colunas. Confira o modelo antes de baixar.']
     if not _has_any_cell_value(df):
         errors.append('O arquivo final tem colunas, mas parece estar sem dados preenchidos.')
     columns = [str(c) for c in df.columns]
@@ -118,6 +172,11 @@ def validate_final_df(df: pd.DataFrame, operation: str) -> list[str]:
         errors.extend(_validate_cadastro(df, keys))
     elif op == 'estoque':
         errors.extend(_validate_estoque(df, keys))
+    elif op in PRICE_OPERATION_VALUES:
+        errors.extend(validate_price_update_values(df))
     elif op in {'universal', 'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}:
         errors.extend(_validate_universal(df, keys))
     return errors
+
+
+__all__ = ['price_validation_details', 'validate_final_df', 'validate_price_update_values']
