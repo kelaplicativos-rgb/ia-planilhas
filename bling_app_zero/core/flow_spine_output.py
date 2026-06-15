@@ -4,6 +4,7 @@ from typing import Any
 
 import streamlit as st
 
+from bling_app_zero.core.api_operation_lock import lock_api_operation, resolve_api_operation
 from bling_app_zero.core.flow_spine import FlowSpinePlan, build_flow_spine_plan, is_api_destination
 from bling_app_zero.core.operation_contract import OP_ATUALIZACAO_PRECO, OP_CADASTRO, OP_ESTOQUE, OP_UNIVERSAL, normalize_operation
 
@@ -11,7 +12,14 @@ RESPONSIBLE_FILE = 'bling_app_zero/core/flow_spine_output.py'
 CONCRETE_API_OPERATIONS = {OP_CADASTRO, OP_ESTOQUE, OP_ATUALIZACAO_PRECO}
 
 _OPERATION_STATE_KEYS = (
+    'api_operation',
+    'bling_api_operation',
+    'home_bling_api_operation_choice',
+    'bling_connected_api_operation',
     'flow_spine_sender_operation',
+    'flow_spine_operation_resolved_for_api',
+    'flow_spine_api_batch_operation',
+    'direct_bling_operation_choice',
     'direct_bling_operation_applied',
     'final_download_operation',
     'df_final_download_operation',
@@ -124,6 +132,10 @@ def _operation_from_dataframe(df: Any) -> str:
 
 
 def _session_concrete_operation_hint() -> str:
+    locked = resolve_api_operation()
+    if locked in CONCRETE_API_OPERATIONS:
+        return locked
+
     for key in _OPERATION_STATE_KEYS:
         op = normalize_operation(_state_text(key), default=OP_UNIVERSAL)
         if op in CONCRETE_API_OPERATIONS:
@@ -183,16 +195,18 @@ def output_operation() -> str:
     try:
         plan = output_plan()
         op = normalize_operation(plan.operation or OP_UNIVERSAL, default=OP_UNIVERSAL)
-        if is_api_destination(plan) and op == OP_UNIVERSAL:
+        if is_api_destination(plan):
             hinted = _session_concrete_operation_hint()
             if hinted in CONCRETE_API_OPERATIONS:
-                st.session_state['flow_spine_sender_operation'] = hinted
-                st.session_state['flow_spine_operation_resolved_for_api'] = hinted
-                st.session_state['flow_spine_operation_resolution_source'] = RESPONSIBLE_FILE
+                lock_api_operation(hinted, source=RESPONSIBLE_FILE, force=True)
                 return hinted
         return op
     except Exception:
-        return _session_concrete_operation_hint() or OP_UNIVERSAL
+        hinted = _session_concrete_operation_hint()
+        if hinted in CONCRETE_API_OPERATIONS:
+            lock_api_operation(hinted, source=RESPONSIBLE_FILE, force=True)
+            return hinted
+        return OP_UNIVERSAL
 
 
 def output_diagnostics() -> dict[str, object]:
