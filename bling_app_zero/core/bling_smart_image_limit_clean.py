@@ -7,6 +7,9 @@ from bling_app_zero.core import bling_direct_sender_smart as _base
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_smart_image_limit_clean.py'
 MAX_BLING_IMAGES = 6
 
+_ORIGINAL_PAYLOAD_VARIANTS = _base._payload_variants
+_ORIGINAL_PREVIEW_PAYLOADS = _base.preview_payloads
+
 # Reexports usados pelo sender inteligente com comparação.
 BASE_RESPONSIBLE_FILE = getattr(_base, 'RESPONSIBLE_FILE', 'bling_app_zero/core/bling_direct_sender_smart.py')
 SEND_TIMEOUT = getattr(_base, 'SEND_TIMEOUT', 30)
@@ -49,13 +52,13 @@ def _limit_variant_images(variant: Any) -> Any:
 
 
 def _payload_variants(token: dict[str, Any], row: Any, mapping: dict[str, str]) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
-    variants = _base._payload_variants(token, row, mapping)
+    variants = _ORIGINAL_PAYLOAD_VARIANTS(token, row, mapping)
     cleaned = [_limit_variant_images(item) for item in variants]
     return [item for item in cleaned if isinstance(item, tuple)]
 
 
 def preview_payloads(df: Any, operation: str, *, limit: int = 5) -> list[dict[str, Any]]:
-    preview = _base.preview_payloads(df, operation, limit=limit)
+    preview = _ORIGINAL_PREVIEW_PAYLOADS(df, operation, limit=limit)
     output: list[dict[str, Any]] = []
     for item in preview:
         if not isinstance(item, dict):
@@ -67,6 +70,15 @@ def preview_payloads(df: Any, operation: str, *, limit: int = 5) -> list[dict[st
             current['payload'] = _limit_midia_images(payload)
         output.append(current)
     return output
+
+
+def apply_blingclean_patch() -> None:
+    if getattr(_base, '_blingclean_image_limit_patch_installed', False):
+        return
+    _base._payload_variants = _payload_variants
+    _base.preview_payloads = preview_payloads
+    _base.MAX_BLING_IMAGES = MAX_BLING_IMAGES
+    _base._blingclean_image_limit_patch_installed = True
 
 
 __all__ = [
@@ -81,6 +93,7 @@ __all__ = [
     '_resolve_product_id',
     '_secret',
     '_url',
+    'apply_blingclean_patch',
     'is_direct_send_available',
     'preview_payloads',
 ]
