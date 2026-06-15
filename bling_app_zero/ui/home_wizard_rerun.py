@@ -4,6 +4,7 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.wizard_state import WizardState, normalize_step
+from bling_app_zero.ui.home_wizard_scroll import set_scroll_target
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_wizard_rerun.py'
 WIZARD_STEP_KEY = 'bling_wizard_step'
@@ -84,6 +85,7 @@ def set_step_without_rerun(step: str) -> bool:
     if previous == normalized:
         return False
     st.session_state[WIZARD_STEP_KEY] = normalized
+    set_scroll_target(normalized)
     try:
         st.query_params['step'] = normalized
     except Exception:
@@ -124,6 +126,8 @@ def safe_rerun(reason: str, *, target_step: str = '') -> None:
     if not force_rerun and not changed and last_reason == normalized_reason and last_target == normalized_target:
         return
 
+    if normalized_target:
+        set_scroll_target(normalized_target)
     st.session_state[LAST_RERUN_REASON_KEY] = normalized_reason
     st.session_state[LAST_RERUN_TARGET_KEY] = normalized_target
     add_audit_event(
@@ -137,6 +141,7 @@ def safe_rerun(reason: str, *, target_step: str = '') -> None:
             'forced_rerun': force_rerun,
             'neutral_wizard_synced': True,
             'api_mode_current_priority': True,
+            'scroll_target_marked': bool(normalized_target),
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
