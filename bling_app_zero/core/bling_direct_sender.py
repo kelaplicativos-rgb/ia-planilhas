@@ -8,11 +8,12 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_token_store import load_token
-from bling_app_zero.core.operation_contract import OP_CADASTRO, OP_ESTOQUE, normalize_operation, operation_label
+from bling_app_zero.core.operation_contract import OP_ATUALIZACAO_PRECO, OP_CADASTRO, OP_ESTOQUE, normalize_operation, operation_label
 from bling_app_zero.core.operation_safety_guard import require_rows_before_api
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_direct_sender.py'
 DEFAULT_API_BASE_URL = 'https://www.bling.com.br/Api/v3'
+DIRECT_SAFE_OPERATIONS = {OP_CADASTRO, OP_ESTOQUE, OP_ATUALIZACAO_PRECO}
 
 
 @dataclass(frozen=True)
@@ -97,7 +98,7 @@ def preview_payloads(df: pd.DataFrame, operation: str, *, limit: int = 5) -> lis
     if not isinstance(df, pd.DataFrame) or df.empty:
         return []
     normalized = normalize_operation(operation)
-    if normalized in {OP_CADASTRO, OP_ESTOQUE}:
+    if normalized in DIRECT_SAFE_OPERATIONS:
         try:
             from bling_app_zero.core.bling_direct_sender_safe import preview_payloads as _safe_preview_payloads
 
@@ -127,7 +128,7 @@ def send_dataframe_to_bling(
     if not isinstance(df, pd.DataFrame) or df.empty:
         return _blocked_empty_result(normalized, progress_callback)
 
-    if normalized in {OP_CADASTRO, OP_ESTOQUE}:
+    if normalized in DIRECT_SAFE_OPERATIONS:
         try:
             from bling_app_zero.core.bling_direct_sender_safe import send_dataframe_to_bling as _safe_send_dataframe_to_bling
 
@@ -138,7 +139,7 @@ def send_dataframe_to_bling(
                 details={
                     'operation': normalized,
                     'rows': len(df),
-                    'reason': 'Sender bruto convertido em camada segura; envio real delegado ao sender seguro com guard preventivo.',
+                    'reason': 'Sender bruto convertido em camada segura; cadastro, estoque e preço são delegados ao sender seguro com guard preventivo.',
                     'responsible_file': RESPONSIBLE_FILE,
                 },
             )
