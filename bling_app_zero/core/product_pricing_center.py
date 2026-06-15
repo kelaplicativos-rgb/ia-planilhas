@@ -8,6 +8,7 @@ from typing import Any, Iterable
 import pandas as pd
 
 from bling_app_zero.core.easy_reprice import calc_easy_promo_price, calc_easy_sale_price, money_or_empty
+from bling_app_zero.core.text import normalize_key
 from bling_app_zero.v2.marketplace_calculator import (
     CalculatorInputs,
     D,
@@ -38,10 +39,30 @@ PROMO_PRICE_TARGET_ALIASES = [
     'Preço promocional',
     'preco_promocional',
     'preço_promocional',
+    'Valor promocional',
+    'Preço de oferta',
+    'Preço oferta',
+    'Valor de oferta',
+    'Preço especial',
+    'Preço com desconto',
 ]
+PROMO_COLUMN_TERMS = ('promocional', 'promocao', 'oferta', 'especial', 'com desconto', 'sale price', 'promo price')
+PRICE_COLUMN_TERMS = ('preco', 'valor', 'price')
 COST_STRONG_TERMS = ['preço custo', 'preco custo', 'valor custo', 'custo', 'cost', 'preco compra', 'preço compra', 'valor compra']
 COST_WEAK_TERMS = ['valor produto', 'valor', 'preço', 'preco', 'price']
 BAD_COST_TERMS = ['venda', 'unitario', 'unitário', 'marketplace', 'comissao', 'comissão', 'taxa', 'lucro', 'promocional']
+
+
+def promotional_price_columns(columns: Iterable[object]) -> list[str]:
+    detected: list[str] = []
+    for column in columns:
+        name = str(column)
+        key = normalize_key(name)
+        has_price = any(term in key for term in PRICE_COLUMN_TERMS)
+        has_promo = any(term in key for term in PROMO_COLUMN_TERMS)
+        if has_price and has_promo and name not in detected:
+            detected.append(name)
+    return detected
 
 
 def to_number(value: Any) -> float:
@@ -320,7 +341,8 @@ def apply_promotional_price_aliases(df: pd.DataFrame, calculated_column: str = P
         return df
     out = df.copy().fillna('')
     calculated_values = out[calculated_column]
-    for column in list(aliases or PROMO_PRICE_TARGET_ALIASES):
+    dynamic_aliases = promotional_price_columns(out.columns)
+    for column in list(dict.fromkeys([*(aliases or PROMO_PRICE_TARGET_ALIASES), *dynamic_aliases])):
         out[str(column)] = calculated_values
     return out
 
@@ -363,5 +385,5 @@ __all__ = [
     'calculate_price', 'calculate_product_price', 'calculate_promotional_price_from_sale',
     'calculate_quick_reprice_decimal', 'calculate_shared_price',
     'calculate_shared_price_decimal', 'detect_discount_percent', 'normalize_percent',
-    'normalize_shared_price_config', 'to_number',
+    'normalize_shared_price_config', 'promotional_price_columns', 'to_number',
 ]
