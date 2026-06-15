@@ -9,6 +9,7 @@ from bling_app_zero.core.user_rules import get_user_rules
 SIGNATURE_RULE_KEYS = (
     'clean_invalid_gtin',
     'normalize_image_separator',
+    'limit_bling_images',
     'invalid_gtin_mode',
     'image_separator',
     'auto_product_code',
@@ -25,7 +26,8 @@ def rules_signature() -> str:
     """Assinatura das regras que afetam o CSV final.
 
     Impede download final cacheado quando a sidebar muda recursos como
-    Limpar GTIN inválido, Separar imagens por |, Código automático ou regras manuais.
+    Limpar GTIN inválido, Separar imagens por |, Limitar imagens para Bling,
+    Código automático ou regras manuais.
     """
     payload = _safe_rules_payload(get_user_rules())
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
