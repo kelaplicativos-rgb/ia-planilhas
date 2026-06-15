@@ -6,6 +6,7 @@ import streamlit as st
 from bling_app_zero.ui.cadastro_wizard_state import LEGACY_CADASTRO_FINAL_KEY, UNIVERSAL_FINAL_KEY, set_universal_final_df
 from bling_app_zero.ui.home_autofluxo import pause_home_autofluxo_for_manual_review
 from bling_app_zero.ui.home_shared import df_signature, preview_df
+from bling_app_zero.ui.home_wizard_scroll import render_mapping_fields_anchor
 from bling_app_zero.ui.layout import inject_mapping_css
 from bling_app_zero.ui.mapping_auto_suggestions import build_super_mapping
 from bling_app_zero.ui.mapping_confirmation import render_confirm_mapping_button
@@ -155,6 +156,7 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
     ordered_targets = ordered_targets_once(order_key, target_columns, current_confidence)
     required = required_targets(target_columns)
     filtered_targets = filter_targets(mapping_key, ordered_targets, current_confidence, required)
+    render_mapping_fields_anchor()
     visible = visible_targets(mapping_key, filtered_targets)
 
     render_mapping_page_arrows(mapping_key, position='top')
