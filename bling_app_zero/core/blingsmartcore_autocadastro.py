@@ -53,6 +53,8 @@ def _reason_for_index(index: int, errors: list[str] | tuple[str, ...], not_found
         text = str(error or '')
         if re.search(rf'linha\s+{line}\b', text, flags=re.IGNORECASE):
             low = text.lower()
+            if 'canal' in low or 'produto-loja' in low or 'vinculo' in low or 'vínculo' in low:
+                return ('PRODUTO_NAO_ENCONTRADO_NO_CANAL', text, 'Vincular o produto ao canal/loja no Bling antes de reenviar preço por canal.')
             if 'quantidade' in low or 'saldo' in low:
                 return ('ESTOQUE_INVALIDO', text, 'Corrigir quantidade/saldo antes de reenviar estoque.')
             if 'deposito' in low or 'depósito' in low:
@@ -125,6 +127,20 @@ def build_stock_pending_dataframe(download_df: pd.DataFrame, result_payload: dic
     if 'status_envio_bling' in fixed.columns and 'acao_recomendada' in fixed.columns:
         mask = fixed['status_envio_bling'].astype(str).eq('PRODUTO_NAO_ENCONTRADO_NO_BLING')
         fixed.loc[mask, 'acao_recomendada'] = 'Produto nao localizado no Bling. Corrigir codigo/SKU/GTIN/ID ou cadastrar manualmente com dados completos antes de reenviar estoque.'
+    return fixed
+
+
+def build_price_channel_pending_dataframe(download_df: pd.DataFrame, result_payload: dict[str, Any]) -> pd.DataFrame:
+    df_pending = build_not_sent_dataframe(download_df, result_payload)
+    if df_pending.empty:
+        return df_pending
+    fixed = df_pending.copy().fillna('')
+    fixed['autocadastro_elegivel'] = 'NAO'
+    if 'status_envio_bling' in fixed.columns:
+        mask = fixed['status_envio_bling'].astype(str).isin({'PRODUTO_NAO_ENCONTRADO_NO_BLING', 'PRODUTO_NAO_ENCONTRADO_NO_CANAL'})
+        fixed.loc[mask, 'status_envio_bling'] = 'PRODUTO_NAO_ENCONTRADO_NO_CANAL'
+    if 'acao_recomendada' in fixed.columns:
+        fixed['acao_recomendada'] = 'Vincular/conferir o produto no canal escolhido no Bling antes de reenviar preço por canal.'
     return fixed
 
 
@@ -224,6 +240,34 @@ def render_stock_pending_panel(download_df: pd.DataFrame, result_payload: dict[s
     )
 
 
+def render_price_pending_panel(download_df: pd.DataFrame, result_payload: dict[str, Any], *, key: str) -> None:
+    df_pending = build_price_channel_pending_dataframe(download_df, result_payload)
+    if df_pending.empty:
+        _render_unclassified_partial_notice(result_payload, operation_label='preco')
+        return
+
+    csv_bytes = df_pending.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+    st.markdown('### Produtos nao encontrados no canal')
+    st.warning(
+        f'{len(df_pending)} produto(s) nao tiveram vinculo produto-canal confirmado no Bling. Eles foram separados para nao misturar com erro generico de API.'
+    )
+    st.download_button(
+        'Baixar produtos nao encontrados no canal',
+        data=csv_bytes,
+        file_name='produtos_nao_encontrados_no_canal_bling.csv',
+        mime='text/csv; charset=utf-8',
+        use_container_width=True,
+        key=f'preco_download_produtos_sem_canal_{key}_{len(df_pending)}',
+    )
+    st.dataframe(df_pending.head(150), use_container_width=True)
+    add_audit_event(
+        'blingsmartcore_price_channel_pending_panel_rendered',
+        area='PRECO',
+        status='AVISO',
+        details={'rows': len(df_pending), 'responsible_file': RESPONSIBLE_FILE},
+    )
+
+
 def render_autocadastro_panel(download_df: pd.DataFrame, result_payload: dict[str, Any], *, key: str) -> None:
     """Renderiza AutoCadastro usando o motor novo via API.
 
@@ -275,8 +319,10 @@ def render_autocadastro_panel(download_df: pd.DataFrame, result_payload: dict[st
 
 __all__ = [
     'build_not_sent_dataframe',
+    'build_price_channel_pending_dataframe',
     'build_stock_pending_dataframe',
     'render_autocadastro_panel',
+    'render_price_pending_panel',
     'render_stock_pending_panel',
     'save_autocadastro_source',
 ]
