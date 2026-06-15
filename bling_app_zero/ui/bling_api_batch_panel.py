@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.background_jobs import background_jobs_available, background_jobs_mode, create_background_bling_job, list_my_background_jobs
 from bling_app_zero.core.bling_direct_sender_smart_diff import is_direct_send_available, preview_payloads
 from bling_app_zero.core.bling_intelligent_update_sender import send_dataframe_to_bling_intelligent
 from bling_app_zero.core.bling_oauth import connection_status
@@ -35,6 +36,7 @@ PAYLOAD_PREVIEW_CACHE_KEY = 'bling_api_payload_preview_cache_v2'
 LAST_BATCH_SECONDS_KEY = 'bling_api_last_batch_seconds_v1'
 LIVE_PROGRESS_KEY = 'bling_api_live_progress_v2'
 INTELLIGENT_BATCH_PLAN_KEY = 'bling_api_intelligent_batch_plan_v1'
+BACKGROUND_JOB_CREATED_KEY = 'bling_background_job_created_v1'
 MAX_AUTO_BATCH_SECONDS = 22.0
 
 DIRECT_SEND_TEXT = {
@@ -269,6 +271,58 @@ def _render_progress(state: dict[str, Any]) -> None:
         st.caption(progress_caption(plan))
 
 
+def _render_background_jobs_summary() -> None:
+    try:
+        jobs = list_my_background_jobs(limit=8)
+    except Exception as exc:
+        st.caption(f'Não consegui listar tarefas em segundo plano agora: {exc}')
+        return
+    if not jobs:
+        return
+    with st.expander('Minhas tarefas em segundo plano', expanded=False):
+        for job in jobs:
+            progress = int((int(job.attempted) / max(int(job.total_rows), 1)) * 100)
+            st.markdown(f'**{job.title or job.operation}**')
+            st.progress(min(100, progress), text=f'{job.status}: {job.attempted}/{job.total_rows} · enviados {job.sent} · falhas {job.failed} · ignorados {job.skipped}')
+            if job.last_error:
+                st.caption(f'Último erro: {job.last_error}')
+
+
+def _render_background_job_launcher(send_df: pd.DataFrame, operation: str, identity: str, report: dict[str, Any], flow_decision: dict[str, Any], state: dict[str, Any]) -> None:
+    st.markdown('### Modo segundo plano')
+    if not background_jobs_available():
+        st.warning('Segundo plano indisponível agora. Configure Firestore para continuar tarefas mesmo com o navegador fechado.')
+        return
+    mode = background_jobs_mode()
+    if mode != 'firestore':
+        st.warning('Modo segundo plano local disponível apenas como fallback. Para continuar após fechar a aba no Streamlit Cloud, use Firestore.')
+    else:
+        st.success('Modo segundo plano persistente disponível. Você pode iniciar a tarefa e voltar depois para conferir.')
+
+    created = st.session_state.get(BACKGROUND_JOB_CREATED_KEY)
+    if isinstance(created, dict) and created.get('identity') == identity:
+        st.info(f'Tarefa criada: {created.get("job_id")}. Volte depois em “Minhas tarefas em segundo plano” para conferir.')
+        return
+
+    plan = _current_plan(operation, state)
+    if st.button('Iniciar em segundo plano e poder fechar o navegador', use_container_width=True, key=f'background_job_create_{identity}'):
+        try:
+            snapshot = create_background_bling_job(
+                send_df,
+                operation=operation,
+                title=_operation_action_label(operation),
+                metadata={'identity': identity, 'preflight_report': report, 'flow_decision': flow_decision, 'flow_spine': output_diagnostics()},
+                batch_size=int(plan.batch_size),
+            )
+            st.session_state[BACKGROUND_JOB_CREATED_KEY] = {'identity': identity, 'job_id': snapshot.job_id}
+            st.success(f'Tarefa em segundo plano criada: {snapshot.job_id}. Você pode fechar o navegador e voltar depois para conferir.')
+            add_audit_event('bling_api_background_job_created_from_panel', area='BACKGROUND_JOBS', status='OK', details={'job_id': snapshot.job_id, 'operation': operation, 'rows': len(send_df), 'responsible_file': RESPONSIBLE_FILE})
+            st.rerun()
+        except Exception as exc:
+            st.error(f'Não consegui criar a tarefa em segundo plano: {exc}')
+            add_audit_event('bling_api_background_job_create_failed', area='BACKGROUND_JOBS', status='ERRO', details={'operation': operation, 'rows': len(send_df), 'error': str(exc)[:300], 'responsible_file': RESPONSIBLE_FILE})
+
+
 def _state_obj_from_legacy(state: dict[str, Any]):
     return ensure_send_state(state, identity=str(state.get('identity') or ''), total=int(state.get('total') or 0), operation=str(state.get('operation') or OP_CADASTRO))
 
@@ -406,6 +460,7 @@ def render_bling_api_batch_panel(download_df: pd.DataFrame, operation: str, key:
     operation = _spine_operation_or(operation)
     st.markdown('### Envio direto ao Bling')
     st.caption(f'{_operation_action_label(operation)} · operação: {operation}')
+    _render_background_jobs_summary()
 
     status = connection_status()
     if not status.get('connected'):
@@ -442,6 +497,7 @@ def render_bling_api_batch_panel(download_df: pd.DataFrame, operation: str, key:
 
     state = _get_state(identity, len(send_df), operation)
     _render_progress(state)
+    _render_background_job_launcher(send_df, operation, identity, report, flow_decision, state)
 
     total = int(state.get('total') or len(send_df))
     done = bool(state.get('done'))
