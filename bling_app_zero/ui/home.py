@@ -62,8 +62,11 @@ def render_home() -> None:
     inject_scroll_position_keeper()
     render_compact_hero()
     _render_blingfix_runtime_stamp()
-    render_home_router()
+
+    # O sidebar precisa existir antes de buscas, processamentos e envios longos.
+    # Assim os comandos de nova operacao continuam visiveis durante todo o fluxo.
     render_bottom_nav()
+    render_home_router()
 
 
 __all__ = ['render_home']
