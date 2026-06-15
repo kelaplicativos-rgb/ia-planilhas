@@ -159,13 +159,15 @@ def sidebar_rule_target_keys(target_columns: Iterable[object]) -> set[str]:
     Regra do BLINGFIX:
     - Regras e padrões só existem no fluxo principal, não na sidebar.
     - Padrões opcionais desligados não podem pintar campo de roxo.
-    - Proteções do CSV final continuam independentes: GTIN, imagens e código.
+    - Proteções do CSV final continuam independentes: GTIN, imagens, limite de imagens e código.
     """
     rules = _rules()
     targets: set[str] = set()
     optional_defaults_enabled = _optional_defaults_enabled()
     enabled_custom_targets = _enabled_custom_rule_targets(rules) if optional_defaults_enabled else set()
     post_mapping_targets = set(COLUMN_DEFAULT_KEY_BY_TARGET.keys()) if _post_mapping_defaults_enabled() else set()
+
+    image_rule_enabled = bool(rules.get('normalize_image_separator', True)) or bool(rules.get('limit_bling_images', True))
 
     for target in target_columns:
         clean_target = _clean_target_label(target)
@@ -181,7 +183,7 @@ def sidebar_rule_target_keys(target_columns: Iterable[object]) -> set[str]:
 
         if bool(rules.get('clean_invalid_gtin', True)) and looks_like_gtin_column(clean_target):
             targets.add(key)
-        if bool(rules.get('normalize_image_separator', True)) and _looks_like_image_target(clean_target):
+        if image_rule_enabled and _looks_like_image_target(clean_target):
             targets.add(key)
         if bool(rules.get('normalize_measures_to_meters', False)) and _looks_like_measure_target(clean_target):
             targets.add(key)
