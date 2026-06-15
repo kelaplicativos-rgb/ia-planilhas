@@ -112,6 +112,48 @@ RESET_PREFIXES = (
     'mapping_page_',
 )
 
+REUSABLE_ORIGIN_KEYS = (
+    'cadastro_wizard_df_origem',
+    'df_origem',
+    'df_origem_planilha',
+    'df_produtos_origem',
+    'df_origem_site',
+    'df_origem_site_como_planilha',
+    'df_origem_site_como_planilha_universal',
+    'df_origem_site_como_planilha_cadastro',
+    'df_origem_site_como_planilha_estoque',
+    'df_origem_site_como_planilha_atualizacao_preco',
+    'df_origem_cadastro',
+    'df_origem_estoque',
+    'df_origem_universal',
+    'df_site_bruto',
+    'df_site_bruto_universal',
+    'df_site_bruto_cadastro',
+    'df_site_bruto_estoque',
+    'df_site_bruto_atualizacao_preco',
+    'estoque_wizard_df_origem_site',
+)
+
+
+def _valid_origin_data(value: object) -> bool:
+    if value is None or not hasattr(value, 'columns'):
+        return False
+    try:
+        return len(value) > 0 and len(getattr(value, 'columns', [])) > 0
+    except Exception:
+        return False
+
+
+def reusable_origin_key(state: MutableMapping[str, Any]) -> str:
+    for key in REUSABLE_ORIGIN_KEYS:
+        if _valid_origin_data(state.get(key)):
+            return key
+    return ''
+
+
+def reusable_origin_available(state: MutableMapping[str, Any]) -> bool:
+    return bool(reusable_origin_key(state))
+
 
 def should_clear_for_new_operation(key: object) -> bool:
     text = str(key or '')
@@ -127,10 +169,58 @@ def clear_operation_state(state: MutableMapping[str, Any]) -> list[str]:
     return removed
 
 
+def prepare_reuse_origin_state(state: MutableMapping[str, Any]) -> tuple[str, list[str]]:
+    source_key = reusable_origin_key(state)
+    if not source_key:
+        return '', []
+
+    source_data = state.get(source_key)
+    source_kind = str(
+        state.get('home_slim_flow_origin')
+        or state.get('frontpage_origin_radio_universal')
+        or state.get('origem_final')
+        or ('site' if 'site' in source_key else 'arquivo')
+    ).strip().lower()
+    if source_kind not in {'arquivo', 'site'}:
+        source_kind = 'site' if 'site' in source_key else 'arquivo'
+
+    api_send = bool(state.get('home_bling_connected_same_flow_api_send'))
+    removed = clear_operation_state(state)
+
+    state['cadastro_wizard_df_origem'] = source_data
+    state['home_slim_flow_origin'] = source_kind
+    state['frontpage_origin_radio_universal'] = source_kind
+    state['origem_final'] = source_kind
+    state['home_active_operation_v2'] = 'wizard_cadastro_estoque'
+    state['home_allow_operation_v2_session'] = True
+    state['home_single_page_flow_active'] = True
+    state['home_entry_context'] = 'universal'
+    state['bling_finish_mode'] = 'csv_download'
+    state['finish_mode'] = 'csv_download'
+    state['skip_direct_bling_connection_this_flow'] = True
+    state['bling_wizard_step'] = 'modelo'
+    state['home_wizard_step'] = 'modelo'
+    if api_send:
+        state['home_bling_connected_same_flow_api_send'] = True
+
+    return source_key, removed
+
+
 def clear_navigation_params() -> None:
     try:
         for key in ('operation_v2', 'step', 'flow', 'origem', 'operacao', 'operation', 'mapping_page', 'page'):
             st.query_params.pop(key, None)
+    except Exception:
+        pass
+
+
+def _set_reuse_navigation_params(source_kind: str) -> None:
+    clear_navigation_params()
+    try:
+        st.query_params['operation_v2'] = 'wizard_cadastro_estoque'
+        st.query_params['step'] = 'modelo'
+        st.query_params['origem'] = source_kind
+        st.query_params['flow'] = 'site' if source_kind == 'site' else 'arquivo'
     except Exception:
         pass
 
@@ -157,11 +247,41 @@ def master_reset_to_home() -> list[str]:
     return removed
 
 
+def reuse_origin_for_new_operation() -> bool:
+    source_key, removed = prepare_reuse_origin_state(st.session_state)
+    if not source_key:
+        return False
+    source_kind = str(st.session_state.get('home_slim_flow_origin') or 'arquivo')
+    _set_reuse_navigation_params(source_kind)
+    add_audit_event(
+        'reuse_origin_for_new_operation',
+        area='HOME',
+        step='modelo',
+        status='OK',
+        details={
+            'source_key': source_key,
+            'source_kind': source_kind,
+            'removed_count': len(removed),
+            'removed_keys': removed[:120],
+            'origin_preserved': True,
+            'previous_outputs_cleared': True,
+            'bling_connection_preserved': True,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+    return True
+
+
 __all__ = [
     'RESET_EXACT_KEYS',
     'RESET_PREFIXES',
+    'REUSABLE_ORIGIN_KEYS',
     'clear_navigation_params',
     'clear_operation_state',
     'master_reset_to_home',
+    'prepare_reuse_origin_state',
+    'reusable_origin_available',
+    'reusable_origin_key',
+    'reuse_origin_for_new_operation',
     'should_clear_for_new_operation',
 ]
