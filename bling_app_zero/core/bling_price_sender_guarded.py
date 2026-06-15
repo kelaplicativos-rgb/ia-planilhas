@@ -100,7 +100,7 @@ def _price_channel_separation(df: pd.DataFrame, *, limit: int | None = None) -> 
     mapping = raw_sender._column_map(rows.columns)
     token, _mode = raw_sender._token()
     if not isinstance(token, dict) or not token.get('access_token'):
-        return rows.reset_index(drop=True), [], [], {'separation_enabled': False, 'reason': 'bling_not_connected'}
+        return rows.reset_index(drop=True), [], [], {'separation_enabled': False, 'reason': 'bling_not_connected', 'send_positions': list(range(len(rows)))}
 
     send_positions: list[int] = []
     missing_positions: list[int] = []
@@ -143,6 +143,7 @@ def _price_channel_separation(df: pd.DataFrame, *, limit: int | None = None) -> 
         'total_rows': len(rows),
         'sendable_rows': len(send_positions),
         'missing_channel_rows': len(missing_positions),
+        'send_positions': send_positions,
         'missing_details': missing_details[:30],
     }
     return send_df, missing_positions, errors, diagnostics
@@ -214,10 +215,12 @@ def send_dataframe_to_bling_price(
     skipped = _safe_int_attr(result, 'skipped')
     errors = list(_safe_tuple_attr(result, 'errors')) + missing_errors
 
+    send_positions = [int(item) for item in list(diagnostics.get('send_positions') or []) if str(item).lstrip('-').isdigit()]
     raw_not_found = []
     for item in _safe_tuple_attr(result, 'not_found_indices'):
         try:
-            raw_not_found.append(int(item))
+            raw_index = int(item)
+            raw_not_found.append(send_positions[raw_index] if 0 <= raw_index < len(send_positions) else raw_index)
         except Exception:
             continue
     not_found = sorted(set(raw_not_found + missing_positions))
