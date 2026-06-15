@@ -6,6 +6,9 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.bling_connected_flow_policy import (
+    OP_CADASTRO,
+    OP_ESTOQUE,
+    OP_PRECO,
     activate_connected_flow,
     annotate_dataframe_for_connected_flow,
     api_flow_explicitly_selected,
@@ -35,6 +38,26 @@ HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
 CONTEXT_BLING_API = 'bling_api'
 MODEL_BYTES_KEY = 'destination_model_upload_bytes'
 MODEL_NAME_KEY = 'destination_model_upload_name'
+API_OPERATION_CHOICE_KEY = 'home_bling_api_operation_choice'
+API_OPERATION_OPTIONS = {
+    'Cadastrar produtos no Bling': OP_CADASTRO,
+    'Atualizar preços multilojas/canais': OP_PRECO,
+    'Atualizar estoque por depósito': OP_ESTOQUE,
+}
+API_OPERATION_HELP = {
+    OP_CADASTRO: 'Cadastro cria ou atualiza produtos. Não exige loja/canal nem depósito.',
+    OP_PRECO: 'Preços multilojas exigem escolher Preço geral ou loja/canal de venda antes do envio.',
+    OP_ESTOQUE: 'Estoque exige escolher o depósito do Bling antes de atualizar o saldo.',
+}
+API_OPERATION_SESSION_KEYS = (
+    API_OPERATION_CHOICE_KEY,
+    'bling_connected_api_operation',
+    'flow_spine_sender_operation',
+    'flow_spine_operation_resolved_for_api',
+    'direct_bling_operation_applied',
+    'api_operation',
+    'bling_api_operation',
+)
 
 MODEL_FALLBACK_KEYS = (
     CADASTRO_MODELO_KEY,
@@ -68,28 +91,76 @@ def _is_api_context() -> bool:
         return False
 
 
+def _normalize_api_operation(value: object) -> str:
+    text = str(value or '').strip().lower()
+    if text in {OP_CADASTRO, OP_ESTOQUE, OP_PRECO}:
+        return text
+    if 'estoque' in text or 'saldo' in text or 'stock' in text or 'deposit' in text:
+        return OP_ESTOQUE
+    if 'preco' in text or 'preço' in text or 'price' in text or 'loja' in text or 'canal' in text:
+        return OP_PRECO
+    if 'cadastro' in text or 'produto' in text or 'produtos' in text:
+        return OP_CADASTRO
+    return ''
+
+
+def _store_api_operation(operation: object) -> str:
+    op = _normalize_api_operation(operation) or OP_CADASTRO
+    for key in API_OPERATION_SESSION_KEYS:
+        st.session_state[key] = op
+    return op
+
+
 def _current_operation() -> str:
-    keys = ['active_feature_operation', 'flow_spine_operation', 'operacao_final', 'operation', 'selected_operation']
-    if _is_api_context():
-        keys.insert(0, 'bling_connected_api_operation')
+    keys = [
+        API_OPERATION_CHOICE_KEY,
+        'bling_connected_api_operation',
+        'flow_spine_sender_operation',
+        'flow_spine_operation_resolved_for_api',
+        'direct_bling_operation_applied',
+        'api_operation',
+        'bling_api_operation',
+        'active_feature_operation',
+        'flow_spine_operation',
+        'operacao_final',
+        'operation',
+        'selected_operation',
+    ]
     for key in keys:
         value = str(st.session_state.get(key) or '').strip()
-        if value:
-            return value
+        op = _normalize_api_operation(value)
+        if op:
+            return op
     try:
-        value = str(output_operation() or '').strip()
-        if value:
-            return value
+        op = _normalize_api_operation(output_operation())
+        if op:
+            return op
     except Exception:
         pass
-    try:
-        plan = output_plan()
-        value = str(getattr(plan, 'operation', '') or '').strip()
-        if value:
-            return value
-    except Exception:
-        pass
-    return 'cadastro'
+    return OP_CADASTRO
+
+
+def _render_api_operation_selector() -> str:
+    current = _current_operation()
+    labels = list(API_OPERATION_OPTIONS.keys())
+    index = 0
+    for pos, label in enumerate(labels):
+        if API_OPERATION_OPTIONS[label] == current:
+            index = pos
+            break
+
+    st.markdown('### Operação da API Bling')
+    st.caption('Escolha a função real antes de preparar o envio. API não pode seguir como modelo universal.')
+    selected_label = st.radio(
+        'O que você quer fazer no Bling?',
+        labels,
+        index=index,
+        horizontal=False,
+        key='bling_api_operation_selector_radio',
+    )
+    operation = _store_api_operation(API_OPERATION_OPTIONS[selected_label])
+    st.info(API_OPERATION_HELP.get(operation, ''))
+    return operation
 
 
 def _origin_kind() -> str:
@@ -145,7 +216,8 @@ def _current_final_df() -> pd.DataFrame | None:
 def _render_mapping_spine_caption() -> None:
     try:
         plan = output_plan()
-        st.caption(f"Fluxo ativo: {plan.contract_key} · destino: {plan.final_destination} · operação: universal")
+        operation = _normalize_api_operation(st.session_state.get('flow_spine_sender_operation')) if _is_api_context() else 'universal'
+        st.caption(f"Fluxo ativo: {plan.contract_key} · destino: {plan.final_destination} · operação: {operation or 'universal'}")
         st.session_state['flow_spine_mapping_ready'] = True
         st.session_state['flow_spine_mapping_diagnostics'] = output_diagnostics()
     except Exception:
@@ -158,8 +230,14 @@ def _render_post_mapping_notice() -> None:
         return
 
     if _is_api_context():
-        label = _operation_label() or 'enviar'
-        st.success(f'Automação preparada. Continue para a prévia e {label}.')
+        op = _current_operation()
+        if op == OP_PRECO:
+            st.success('Automação preparada. Continue para a prévia; antes do envio será obrigatório escolher Preço geral ou loja/canal.')
+        elif op == OP_ESTOQUE:
+            st.success('Automação preparada. Continue para a prévia; antes do envio será obrigatório escolher o depósito do estoque.')
+        else:
+            label = _operation_label() or 'enviar'
+            st.success(f'Automação preparada. Continue para a prévia e {label}.')
         return
 
     st.success('Mapeamento confirmado. O download será liberado no final, após a revisão e a prévia.')
@@ -181,7 +259,7 @@ def _api_automation_source_df(df_origem: pd.DataFrame) -> pd.DataFrame:
 
 def _prepare_bling_api_automation(df_origem: pd.DataFrame) -> pd.DataFrame | None:
     """Prepara a base para API sem mapeamento manual, apenas quando escolhida."""
-    operation = _current_operation()
+    operation = _render_api_operation_selector()
     policy = activate_connected_flow(operation, _origin_kind())
     if not policy.api_enabled:
         return None
@@ -209,6 +287,10 @@ def _prepare_bling_api_automation(df_origem: pd.DataFrame) -> pd.DataFrame | Non
     st.session_state['bling_api_required_selector'] = policy.required_selector
     st.session_state['bling_api_must_run_ai_check'] = policy.must_run_ai_check
     st.session_state['bling_api_final_action'] = policy.final_action
+    st.session_state['bling_connected_api_operation'] = policy.operation
+    st.session_state['flow_spine_sender_operation'] = policy.operation
+    st.session_state['flow_spine_operation_resolved_for_api'] = policy.operation
+    st.session_state['direct_bling_operation_applied'] = policy.operation
     return fixed
 
 
@@ -244,7 +326,7 @@ def render_cadastro_mapeamento_step() -> None:
                 st.metric('Linhas preparadas', len(df_final_api))
             with col_b:
                 st.metric('Campos para API', len(df_final_api.columns))
-            st.info('Fluxo API escolhido na Home: o sistema preparou os campos automaticamente; o usuário não precisa mapear manualmente.')
+            st.info('Fluxo API escolhido: o sistema preparou os campos automaticamente; o usuário não precisa mapear manualmente.')
             _render_connected_policy_notice()
             _render_post_mapping_notice()
             return
