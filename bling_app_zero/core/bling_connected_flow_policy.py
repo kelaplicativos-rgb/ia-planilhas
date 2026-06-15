@@ -6,6 +6,7 @@ from typing import Final
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.api_operation_lock import lock_api_operation
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_oauth import connection_status
 
@@ -138,6 +139,8 @@ def activate_connected_flow(operation: object, origin_kind: object = '') -> Conn
     st.session_state[CONNECTED_OPERATION_KEY] = policy.operation
     st.session_state[CONNECTED_ORIGIN_KIND_KEY] = policy.origin_kind
     st.session_state[CONNECTED_HUMAN_STEP_KEY] = policy.next_human_step
+    if policy.api_enabled:
+        lock_api_operation(policy.operation, source=RESPONSIBLE_FILE, force=True)
     add_audit_event(
         'bling_connected_flow_policy_applied',
         area='BLING_API_FLOW',
@@ -153,6 +156,7 @@ def activate_connected_flow(operation: object, origin_kind: object = '') -> Conn
             'next_human_step': policy.next_human_step,
             'must_run_ai_check': policy.must_run_ai_check,
             'final_action': policy.final_action,
+            'api_operation_locked': bool(policy.api_enabled),
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
