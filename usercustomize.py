@@ -2,10 +2,15 @@
 
 Bling rejects product creation when more than 6 images are sent. This module is
 loaded automatically by Python in normal app startup and patches only the Bling
-product preparation/sending paths, trimming image lists before export/API calls.
+product preparation/sending paths.
+
+The preferred flow is the visible rule inside IA Real. The runtime guard remains
+as a last safety net, but it respects the explicit user decision stored by the
+IA Real panel when the user chooses not to apply the image-limit rule.
 """
 from __future__ import annotations
 
+import importlib
 import importlib.abc
 import re
 import sys
@@ -21,6 +26,25 @@ _TARGET_MODULES = {
 }
 _IMAGE_KEY_HINTS = ('imagem', 'imagens', 'image', 'images', 'foto', 'fotos', 'midia')
 _URL_SPLIT_RE = re.compile(r'[|;,\n\r]+')
+_DECISION_SESSION_KEY = 'ai_real_bling_image_limit_decision'
+_GUARD_SESSION_KEY = 'bling_image_limit_guard_enabled'
+_SKIP_DECISIONS = {'nao_aplicar', 'não_aplicar', 'skip', 'skipped', 'disabled', 'false'}
+
+
+def _image_limit_guard_enabled() -> bool:
+    try:
+        st = importlib.import_module('streamlit')
+        state = getattr(st, 'session_state', None)
+        if state is None:
+            return True
+        decision = str(state.get(_DECISION_SESSION_KEY) or '').strip().lower()
+        if decision in _SKIP_DECISIONS:
+            return False
+        if _GUARD_SESSION_KEY in state:
+            return bool(state.get(_GUARD_SESSION_KEY))
+    except Exception:
+        return True
+    return True
 
 
 def _is_image_key(key: Any) -> bool:
@@ -62,6 +86,8 @@ def _limit_image_text(value: Any) -> Any:
 
 
 def _limit_payload_images(payload: Any) -> Any:
+    if not _image_limit_guard_enabled():
+        return payload
     if isinstance(payload, list):
         return [_limit_payload_images(item) for item in payload[:MAX_BLING_IMAGES]]
     if not isinstance(payload, dict):
