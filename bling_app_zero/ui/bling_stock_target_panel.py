@@ -39,39 +39,41 @@ def _clear_deposit_cache() -> None:
         st.session_state.pop(key, None)
 
 
+def _render_retry_button(button_key: str) -> None:
+    if st.button('Buscar depósitos novamente', use_container_width=True, key=button_key):
+        _clear_deposit_cache()
+        add_audit_event(
+            'stock_target_retry_load_deposits_clicked',
+            area='BLING_ENVIO',
+            status='INFO',
+            details={'responsible_file': RESPONSIBLE_FILE, 'button_key': button_key},
+        )
+        _safe_rerun()
+
+
 def _render_manual_deposit_controls() -> None:
+    _render_retry_button('api_stock_retry_load_deposits_manual_top')
+
     current_id = str(st.session_state.get(API_STOCK_DEPOSIT_ID_KEY) or st.session_state.get(MANUAL_DEPOSIT_ID_INPUT_KEY) or '').strip()
     current_name = str(st.session_state.get(API_STOCK_DEPOSIT_KEY) or st.session_state.get(MANUAL_DEPOSIT_NAME_INPUT_KEY) or '').strip()
 
     manual_id = st.text_input('ID do depósito no Bling', value=current_id, key=MANUAL_DEPOSIT_ID_INPUT_KEY).strip()
     manual_name = st.text_input('Nome do depósito', value=current_name, key=MANUAL_DEPOSIT_NAME_INPUT_KEY).strip()
 
-    col_retry, col_confirm = st.columns(2)
-    with col_retry:
-        if st.button('🔄 Tentar buscar depósitos novamente', use_container_width=True, key='api_stock_retry_load_deposits'):
-            _clear_deposit_cache()
-            add_audit_event(
-                'stock_target_retry_load_deposits_clicked',
-                area='BLING_ENVIO',
-                status='INFO',
-                details={'responsible_file': RESPONSIBLE_FILE},
-            )
-            _safe_rerun()
-    with col_confirm:
-        if st.button('✅ Usar este depósito e continuar', use_container_width=True, key='api_stock_confirm_manual_deposit'):
-            if not manual_id:
-                st.warning('Informe o ID do depósito antes de continuar.')
-                return
-            st.session_state[API_STOCK_DEPOSIT_ID_KEY] = manual_id
-            st.session_state[API_STOCK_DEPOSIT_KEY] = manual_name or manual_id
-            st.session_state[MANUAL_DEPOSIT_CONFIRMED_KEY] = True
-            add_audit_event(
-                'stock_target_manual_deposit_confirmed',
-                area='BLING_ENVIO',
-                status='OK',
-                details={'deposit_id': manual_id, 'deposit_name': manual_name or manual_id, 'responsible_file': RESPONSIBLE_FILE},
-            )
-            _safe_rerun()
+    if st.button('Usar este depósito e continuar', use_container_width=True, key='api_stock_confirm_manual_deposit'):
+        if not manual_id:
+            st.warning('Informe o ID do depósito antes de continuar.')
+            return
+        st.session_state[API_STOCK_DEPOSIT_ID_KEY] = manual_id
+        st.session_state[API_STOCK_DEPOSIT_KEY] = manual_name or manual_id
+        st.session_state[MANUAL_DEPOSIT_CONFIRMED_KEY] = True
+        add_audit_event(
+            'stock_target_manual_deposit_confirmed',
+            area='BLING_ENVIO',
+            status='OK',
+            details={'deposit_id': manual_id, 'deposit_name': manual_name or manual_id, 'responsible_file': RESPONSIBLE_FILE},
+        )
+        _safe_rerun()
 
     if manual_id and not bool(st.session_state.get(MANUAL_DEPOSIT_CONFIRMED_KEY)):
         st.info('Toque em “Usar este depósito e continuar” para confirmar o ID digitado.')
@@ -97,8 +99,9 @@ def render_stock_target_panel(df: pd.DataFrame) -> pd.DataFrame | None:
         st.session_state[API_STOCK_DEPOSIT_ID_KEY] = str(selected.get('id') or '').strip()
         st.session_state[API_STOCK_DEPOSIT_KEY] = str(selected.get('nome') or '').strip()
         st.session_state[MANUAL_DEPOSIT_CONFIRMED_KEY] = False
+        _render_retry_button('api_stock_retry_load_deposits_loaded')
     else:
-        st.warning('Não consegui carregar os depósitos automaticamente. Informe o ID do depósito para continuar.')
+        st.warning('Não consegui carregar os depósitos automaticamente.')
         _render_manual_deposit_controls()
 
     deposit_id = str(st.session_state.get(API_STOCK_DEPOSIT_ID_KEY) or '').strip()
