@@ -23,6 +23,7 @@ from bling_app_zero.core.bling_send_engine import (
 )
 from bling_app_zero.core.bling_send_state import batch_size_for_operation
 from bling_app_zero.core.blingsmartcore_autocadastro import render_autocadastro_panel, render_price_pending_panel, render_stock_pending_panel
+from bling_app_zero.core.final_output_rule_engine import apply_final_output_rules
 from bling_app_zero.core.flow_spine_output import output_diagnostics, output_operation
 from bling_app_zero.core.intelligent_flow_decision import decide_before_api_send
 from bling_app_zero.core.operation_contract import OP_ATUALIZACAO_PRECO, OP_CADASTRO, OP_ESTOQUE, normalize_operation
@@ -62,6 +63,15 @@ def _operation_action_label(operation: str) -> str:
 
 def _batch_size_for_operation(operation: str) -> int:
     return batch_size_for_operation(operation)
+
+
+def _df_signature(df: pd.DataFrame) -> str:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return 'empty'
+    columns = '|'.join(map(str, df.columns))
+    shape = f'{len(df)}x{len(df.columns)}'
+    sample = pd.util.hash_pandas_object(df.head(200).astype(str), index=True).sum()
+    return f'{shape}:{columns}:{sample}'
 
 
 def _state_id(operation: str, key: str, signature: str, rules_sig: str) -> str:
@@ -120,6 +130,33 @@ def _cached_payload_preview(preview_df: pd.DataFrame, operation: str, identity: 
     return payload_preview
 
 
+def _apply_api_final_rules(download_df: pd.DataFrame, operation: str) -> pd.DataFrame:
+    if not isinstance(download_df, pd.DataFrame) or download_df.empty:
+        return pd.DataFrame()
+    fixed_df, report = apply_final_output_rules(download_df, context='api')
+    st.session_state['bling_api_final_output_rule_report'] = report.to_dict()
+    if report.changed_cells:
+        if report.rows_limited:
+            st.success(f'Regra aplicada antes da API: {report.rows_limited} produto(s) limitado(s) ao máximo de 6 imagens.')
+        else:
+            st.caption(f'Regras finais aplicadas antes da API em {report.changed_cells} célula(s).')
+    for warning in report.warnings:
+        if report.blocked_for_api:
+            st.error(warning)
+        else:
+            st.warning(warning)
+    if report.blocked_for_api:
+        st.info('Ligue “Limitar imagens para Bling” no centro de regras ou aplique a correção segura antes do envio por API.')
+        add_audit_event(
+            'bling_api_batch_blocked_by_final_output_rules',
+            area='BLING_ENVIO',
+            status='BLOQUEADO',
+            details={'operation': normalize_operation(operation), 'report': report.to_dict(), 'responsible_file': RESPONSIBLE_FILE},
+        )
+        return pd.DataFrame(columns=list(download_df.columns))
+    return fixed_df.copy().fillna('')
+
+
 def _render_preflight(download_df: pd.DataFrame, operation: str, identity: str) -> dict[str, Any]:
     cache = st.session_state.get(PREFLIGHT_CACHE_KEY)
     if isinstance(cache, dict) and cache.get('identity') == identity:
@@ -135,6 +172,8 @@ def _render_preflight(download_df: pd.DataFrame, operation: str, identity: str) 
         cols[1].metric('Aptas', int(report.get('safe_to_send_rows') or 0))
         cols[2].metric('Pendências', int(report.get('blocked_rows') or report.get('missing_required_rows') or 0))
         cols[3].metric('Lotes previstos', int(report.get('estimated_batches') or 0))
+        if int(report.get('rows_over_image_limit') or 0):
+            st.warning(f"{int(report.get('rows_over_image_limit') or 0)} produto(s) com mais de 6 imagens foram separados antes da API.")
         for warning in list(report.get('warnings') or [])[:6]:
             st.warning(str(warning))
     return report
@@ -471,6 +510,11 @@ def render_bling_api_batch_panel(download_df: pd.DataFrame, operation: str, key:
         st.warning('Token do Bling indisponível. Reconecte o Bling e tente novamente.')
         return
 
+    download_df = _apply_api_final_rules(download_df, operation)
+    if not isinstance(download_df, pd.DataFrame) or download_df.empty:
+        return
+    signature = _df_signature(download_df)
+
     identity = _state_id(operation, key, signature, rules_sig)
     report = _render_preflight(download_df, operation, identity)
     flow_decision = _render_flow_decision(report, operation)
@@ -484,7 +528,7 @@ def render_bling_api_batch_panel(download_df: pd.DataFrame, operation: str, key:
         if operation == OP_ATUALIZACAO_PRECO:
             st.warning('Revise ID Bling/SKU/código/GTIN e preço antes de enviar.')
         else:
-            st.warning('Revise SKU/código/GTIN e quantidade no estoque, ou nome/código no cadastro, antes de enviar.')
+            st.warning('Revise SKU/código/GTIN e quantidade no estoque, nome/código no cadastro ou limite de imagens antes de enviar.')
         add_audit_event('bling_api_batch_blocked_no_sendable_rows', area='BLING_ENVIO', status='BLOQUEADO', details={'operation': operation, 'rows': len(download_df) if isinstance(download_df, pd.DataFrame) else 0, 'flow_spine': output_diagnostics(), 'responsible_file': RESPONSIBLE_FILE})
         return
 
