@@ -20,12 +20,13 @@ PRICE_LOOKUP_TIMEOUT = 12
 PRICE_SEND_TIMEOUT = 30
 PRODUCT_STORE_LOOKUP_PATH = '/produtos/lojas'
 PRODUCT_STORE_UPDATE_PATH_TEMPLATE = '/produtos/lojas/{idProdutoLoja}'
+FORBIDDEN_PRICE_PATH_TERMS = ('/precos', '/preços', 'produtos/precos', 'produtos/preços')
 
 PRICE_COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     'id': ('id', 'id produto', 'id_produto', 'id produto bling', 'id_produto_bling', 'id bling', 'id_bling', 'codigo bling', 'código bling', 'id produto api'),
     'codigo': ('código', 'codigo', 'sku', 'ref', 'referencia', 'referência', 'codigo produto', 'código produto', 'cod', 'cód'),
     'gtin': ('gtin', 'ean', 'codigo de barras', 'código de barras', 'gtin/ean'),
-    'preco': ('preço', 'preco', 'preço unitário', 'preco unitario', 'preço unitário (obrigatório)', 'preco unitario (obrigatorio)', 'valor', 'valor venda', 'preço de venda', 'preco de venda'),
+    'preco': ('preço', 'preco', 'preço unitário', 'preco unitario', 'preço unitário (obrigatório)', 'preco unitario (obrigatorio)', 'valor', 'valor venda', 'preço de venda', 'preco de venda', 'preço promocional', 'preco promocional', 'valor promocional', 'preço oferta', 'preco oferta'),
     'price_target': ('bling preço destino', 'bling preco destino', 'preço destino', 'preco destino'),
     'product_store_id': ('id produto loja', 'id_produto_loja', 'idprodutoloja', 'id vínculo loja', 'id vinculo loja', 'id vinculo produto loja', 'id vínculo produto loja', 'id produto na loja', 'id loja produto', 'bling id produto loja', 'bling id vínculo loja', 'bling id vinculo loja'),
     'channel_id': ('bling canal venda id', 'canal venda id', 'id canal', 'id loja', 'loja id', 'id loja virtual', 'id loja marketplace', 'id marketplace'),
@@ -218,6 +219,19 @@ def _session_cache(key: str) -> dict[str, str]:
     return cache
 
 
+def _path_contains_forbidden_price_endpoint(path: object) -> bool:
+    text = str(path or '').strip().lower()
+    return bool(text) and any(term in text for term in FORBIDDEN_PRICE_PATH_TERMS)
+
+
+def _configured_path_or_default(secret_name: str, default: str, audit_action: str) -> str:
+    configured = _secret(secret_name, '')
+    if configured and _path_contains_forbidden_price_endpoint(configured):
+        add_audit_event(audit_action, area='BLING_ENVIO', status='AVISO', details={'secret_name': secret_name, 'configured_path_preview': configured[:120], 'fallback_path': default, 'reason': 'Endpoint antigo de precos bloqueado para evitar 404/403.', 'responsible_file': RESPONSIBLE_FILE})
+        return default
+    return configured or default
+
+
 def _resolve_product_by_candidate(token: dict[str, Any], candidate: str) -> str:
     candidate = _id_text(candidate)
     if not candidate:
@@ -280,7 +294,7 @@ def _resolve_product_store_link_id(token: dict[str, Any], product_id: str, chann
     if key in cache:
         return str(cache.get(key) or '')
 
-    lookup_path = _secret('product_store_lookup_path', PRODUCT_STORE_LOOKUP_PATH) or PRODUCT_STORE_LOOKUP_PATH
+    lookup_path = _configured_path_or_default('product_store_lookup_path', PRODUCT_STORE_LOOKUP_PATH, 'bling_price_product_store_lookup_path_legacy_ignored')
     params_variants = [
         {'idProduto': product_id, 'idLoja': channel_id},
         {'idProduto': product_id, 'idLojaVirtual': channel_id},
@@ -311,7 +325,7 @@ def _resolve_product_store_link_id(token: dict[str, Any], product_id: str, chann
 
 
 def _store_update_path(product_store_id: str) -> str:
-    template = _secret('product_store_update_path', PRODUCT_STORE_UPDATE_PATH_TEMPLATE) or PRODUCT_STORE_UPDATE_PATH_TEMPLATE
+    template = _configured_path_or_default('product_store_update_path', PRODUCT_STORE_UPDATE_PATH_TEMPLATE, 'bling_price_product_store_update_path_legacy_ignored')
     return template.replace('{idProdutoLoja}', str(product_store_id)).replace('{id}', str(product_store_id))
 
 
@@ -331,7 +345,7 @@ def _product_store_price_payloads(product_store_id: str, product_id: str, channe
 
 def _general_price_payloads(product_id: str, price: float, field: str) -> list[tuple[str, str, str, dict[str, Any]]]:
     price_value = _api_number(price)
-    configured_path = _secret('price_update_path', '')
+    configured_path = _configured_path_or_default('price_update_path', '', 'bling_price_general_update_path_legacy_ignored')
     configured_method = (_secret('price_update_method', 'PATCH') or 'PATCH').upper()
     attempts: list[tuple[str, str, str, dict[str, Any]]] = []
     for path in _unique_non_empty([configured_path, f'/produtos/{product_id}']):
@@ -348,7 +362,7 @@ def _dedupe_price_attempts(attempts: list[tuple[str, str, str, dict[str, Any]]])
     for method, path, label, payload in attempts:
         method = str(method or 'PATCH').upper()
         path = str(path or '').replace('{id}', '').replace('{idProduto}', '').strip()
-        if not path or '{' in path:
+        if not path or '{' in path or _path_contains_forbidden_price_endpoint(path):
             continue
         key = f'{method}|{path}|{label}|{payload}'
         if key not in seen:
@@ -402,7 +416,7 @@ def _price_preview_payloads(df: pd.DataFrame, *, limit: int = 5) -> list[dict[st
         field = _price_field_from_target(target)
         payload = {field: _api_number(price)} if price is not None else {}
         endpoint = PRODUCT_STORE_UPDATE_PATH_TEMPLATE if channel_id else '/produtos/{id}'
-        previews.append({'payload': payload, 'status': 'OK' if payload else 'IGNORADO', 'motivo': f'Destino: {target} | Endpoint: {endpoint}' if payload else 'Preço ausente ou inválido.'})
+        previews.append({'payload': payload, 'status': 'OK' if payload else 'IGNORADO', 'motivo': f'Destino: {target} | Endpoint seguro: {endpoint}' if payload else 'Preço ausente ou inválido.'})
     return previews
 
 
@@ -483,6 +497,12 @@ def _send_price_dataframe_to_bling(df: pd.DataFrame, *, limit: int | None = None
             attempts = _product_store_price_payloads(product_store_id, product_id, channel_id, price, field)
         else:
             attempts = _general_price_payloads(product_id, price, field)
+        if not attempts:
+            failed += 1
+            if len(errors) < 8:
+                errors.append(f'Linha {line}: nenhum endpoint seguro disponível para atualização de preço.')
+            add_audit_event('bling_direct_price_update_no_safe_endpoint', area='BLING_ENVIO', status='BLOQUEADO', details={'line': line, 'product_id': product_id, 'product_store_id': product_store_id, 'channel_id': channel_id, 'target': target, 'responsible_file': RESPONSIBLE_FILE})
+            continue
 
         ok, last_response, attempts_log = _send_price_attempts(token, attempts)
         if ok:
