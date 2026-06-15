@@ -123,6 +123,8 @@ def _validate_cadastro(df: pd.DataFrame, keys: list[str], *, label: str = 'Cadas
         errors.append(f'{label}: falta um campo de preço ou valor.')
     elif not _column_has_values(df, CADASTRO_PRICE_TERMS):
         errors.append(f'{label}: o campo de preço ou valor está vazio.')
+    elif _price_columns(df):
+        errors.extend(validate_price_update_values(df, label=f'{label} bloqueado'))
     return errors
 
 
@@ -140,22 +142,21 @@ def _validate_estoque(df: pd.DataFrame, keys: list[str], *, label: str = 'Estoqu
 
 
 def _validate_universal(df: pd.DataFrame, keys: list[str]) -> list[str]:
-    """Valida somente os campos presentes no modelo universal anexado."""
+    """Valida os campos presentes sem classificar ou alterar o modelo anexado."""
     errors: list[str] = []
     has_name = _has_column(keys, CADASTRO_NAME_TERMS)
     has_price = _has_column(keys, CADASTRO_PRICE_TERMS)
     has_code = _has_column(keys, ESTOQUE_CODE_TERMS)
     has_qty = _has_column(keys, ESTOQUE_QTY_TERMS)
-    looks_like_price_update = _has_column(keys, PRICE_UPDATE_TERMS) and has_price
 
     if has_name and not _column_has_values(df, CADASTRO_NAME_TERMS):
         errors.append('Modelo final: o campo de nome ou descrição está vazio.')
     if has_price and not _column_has_values(df, CADASTRO_PRICE_TERMS):
         errors.append('Modelo final: o campo de preço ou valor está vazio.')
+    if _price_columns(df):
+        errors.extend(validate_price_update_values(df, label='Modelo final bloqueado'))
     if has_qty:
         errors.extend(_validate_estoque(df, keys, label='Modelo final'))
-    if looks_like_price_update:
-        return errors
     if not has_name and not has_price and not has_qty and not has_code:
         return errors
     return errors
