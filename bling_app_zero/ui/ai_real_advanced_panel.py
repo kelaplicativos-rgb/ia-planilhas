@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.user_rules import get_user_rules
 from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/ai_real_advanced_panel.py'
@@ -63,19 +64,28 @@ def _image_rules_module():
     return importlib.import_module('bling_app_zero.ai.ai_real_image_rules')
 
 
+def _central_image_limit_enabled() -> bool:
+    try:
+        return bool(get_user_rules().get('limit_bling_images', True))
+    except Exception:
+        return True
+
+
 def _render_bling_image_rules(df_final: pd.DataFrame) -> None:
     module = _image_rules_module()
     report = module.analyze_bling_image_limit(df_final)
+    rule_enabled = _central_image_limit_enabled()
 
-    st.markdown('#### Regras Bling revisáveis')
-    st.caption('Regras que podem alterar o arquivo final aparecem aqui para o usuário decidir antes de exportar ou enviar pela API.')
+    st.markdown('#### Regras do arquivo final')
+    st.caption('A IA Real mostra o impacto das regras ligadas no centro de regras. A decisão principal fica junto de GTIN inválido, separador de imagens e demais tratamentos.')
 
     if not report.image_columns:
         st.info('Nenhuma coluna de imagens foi identificada no arquivo final.')
         return
 
-    col_products, col_removed = st.columns(2)
-    col_products.metric('Produtos com ajuste de imagens', report.products_with_excess)
+    col_status, col_products, col_removed = st.columns(3)
+    col_status.metric('Regra 6 imagens', 'Ligada' if rule_enabled else 'Desligada')
+    col_products.metric('Produtos afetados', report.products_with_excess)
     col_removed.metric('Imagens excedentes/duplicadas', report.images_removed)
 
     if not report.has_issues:
@@ -84,61 +94,39 @@ def _render_bling_image_rules(df_final: pd.DataFrame) -> None:
         st.session_state[IMAGE_LIMIT_GUARD_KEY] = True
         return
 
-    st.warning('Existem produtos com mais imagens do que o Bling permite. O Bling pode recusar o cadastro/exportação se essa regra não for aplicada.')
-
-    with st.expander('Ver produtos que serão ajustados', expanded=False):
+    with st.expander('Ver produtos que serão ajustados pela regra de imagens', expanded=False):
         st.dataframe(report.as_dataframe(), use_container_width=True, hide_index=True, height=280)
 
-    choice = st.radio(
-        'Aplicar regra de imagens do Bling?',
-        options=('Aplicar agora', 'Não aplicar nesta etapa'),
-        index=0,
-        horizontal=True,
-        key='ai_real_bling_image_limit_choice',
-    )
+    if not rule_enabled:
+        st.warning('A regra “Limitar imagens para Bling” está desligada no centro de regras. O sistema não altera as imagens nesta etapa e o Bling pode recusar produtos com mais de 6 imagens.')
+        st.session_state[IMAGE_LIMIT_DECISION_KEY] = 'nao_aplicar'
+        st.session_state[IMAGE_LIMIT_GUARD_KEY] = False
+        return
 
-    if choice == 'Aplicar agora':
-        st.caption('Mantém as 6 primeiras imagens válidas de cada produto, remove duplicadas e ignora o restante.')
-        if st.button('Aplicar regra: limitar imagens para Bling', use_container_width=True, key='ai_real_bling_image_limit_apply'):
-            fixed_df, _ = module.apply_bling_image_limit(df_final)
-            if _looks_like_df(fixed_df):
-                _save_df_final_universal(fixed_df)
-                st.session_state[IMAGE_LIMIT_DECISION_KEY] = 'aplicada'
-                st.session_state[IMAGE_LIMIT_GUARD_KEY] = True
-                add_audit_event(
-                    'ai_real_bling_image_limit_applied',
-                    area='AI_REAL',
-                    step='revisao_final',
-                    status='OK',
-                    details={
-                        'products_with_excess': report.products_with_excess,
-                        'images_removed': report.images_removed,
-                        'image_columns': report.image_columns,
-                        'max_images': getattr(module, 'MAX_BLING_IMAGES', 6),
-                        'responsible_file': RESPONSIBLE_FILE,
-                    },
-                )
-                st.success('Regra aplicada. Confira o preview antes de exportar ou enviar ao Bling.')
-                safe_rerun('ai_real_bling_image_limit_applied')
-    else:
-        st.caption('O sistema não altera as imagens nesta etapa. Use apenas se você for corrigir a origem ou aceitar o risco de rejeição pelo Bling.')
-        if st.button('Confirmar: não aplicar regra de imagens agora', use_container_width=True, key='ai_real_bling_image_limit_skip'):
-            st.session_state[IMAGE_LIMIT_DECISION_KEY] = 'nao_aplicar'
-            st.session_state[IMAGE_LIMIT_GUARD_KEY] = False
+    st.warning('A regra central “Limitar imagens para Bling” está ligada. Estes produtos podem ser ajustados antes do preview/exportação.')
+    st.caption('Mantém as 6 primeiras imagens válidas de cada produto, remove duplicadas e ignora o restante.')
+    if st.button('Aplicar regra ligada: limitar imagens para Bling', use_container_width=True, key='ai_real_bling_image_limit_apply'):
+        fixed_df, _ = module.apply_bling_image_limit(df_final)
+        if _looks_like_df(fixed_df):
+            _save_df_final_universal(fixed_df)
+            st.session_state[IMAGE_LIMIT_DECISION_KEY] = 'aplicada'
+            st.session_state[IMAGE_LIMIT_GUARD_KEY] = True
             add_audit_event(
-                'ai_real_bling_image_limit_skipped_by_user',
+                'ai_real_bling_image_limit_applied',
                 area='AI_REAL',
                 step='revisao_final',
-                status='AVISO',
+                status='OK',
                 details={
                     'products_with_excess': report.products_with_excess,
                     'images_removed': report.images_removed,
                     'image_columns': report.image_columns,
-                    'reason': 'Usuário decidiu não aplicar a regra de máximo 6 imagens nesta etapa.',
+                    'max_images': getattr(module, 'MAX_BLING_IMAGES', 6),
+                    'rule_source': 'user_rules.limit_bling_images',
                     'responsible_file': RESPONSIBLE_FILE,
                 },
             )
-            st.warning('Regra não aplicada. Se o arquivo continuar com mais de 6 imagens por produto, o Bling poderá recusar o cadastro.')
+            st.success('Regra aplicada. Confira o preview antes de exportar ou enviar ao Bling.')
+            safe_rerun('ai_real_bling_image_limit_applied')
 
 
 def _render_enrichment(df_final: pd.DataFrame) -> None:
