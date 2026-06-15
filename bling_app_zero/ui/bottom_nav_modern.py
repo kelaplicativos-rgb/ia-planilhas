@@ -68,6 +68,12 @@ def _render_operation_controls() -> None:
     st.divider()
 
 
+def render_persistent_operation_controls() -> None:
+    """Renderiza cedo somente os dois comandos essenciais e leves."""
+    with st.sidebar:
+        _render_operation_controls()
+
+
 def _render_sidebar_action_buttons() -> None:
     st.caption('Ferramentas rápidas do sistema.')
     for action in BOTTOM_BAR_ACTIONS:
@@ -118,9 +124,8 @@ def _render_diagnostic_menu() -> None:
 
 
 def render_bottom_nav() -> None:
-    """Renderiza os comandos persistentes e as ações rápidas no sidebar."""
+    """Renderiza ferramentas secundárias após o conteúdo principal."""
     with st.sidebar:
-        _render_operation_controls()
         st.markdown('### Sistema')
         _render_sidebar_action_buttons()
         _render_shortcuts_menu()
@@ -132,4 +137,5 @@ __all__ = [
     'BLING_IMPORTADOR_PRECOS_MULTILOJA_URL',
     'BLING_IMPORTADOR_PRODUTOS_URL',
     'render_bottom_nav',
+    'render_persistent_operation_controls',
 ]
