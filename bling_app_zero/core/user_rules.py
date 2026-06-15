@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 RULES_SESSION_KEY = 'bling_user_rules'
-RULES_SCHEMA_VERSION = 9
+RULES_SCHEMA_VERSION = 10
 REMOVED_SYSTEM_RULE_COLUMNS = {'nome fornecedor', 'nome do fornecedor', 'unidade de medida', 'unidade medida'}
 REMOVED_SYSTEM_RULE_PAIRS = {('fornecedor', 'não definido')}
 _FALLBACK_STATE: dict[str, Any] = {}
@@ -71,6 +71,7 @@ DEFAULT_RULES: dict[str, Any] = {
     'normalize_measures_to_meters': False,
     'clean_invalid_gtin': True,
     'normalize_image_separator': True,
+    'limit_bling_images': True,
     'invalid_gtin_mode': 'limpar',
     'image_separator': '|',
     'auto_product_code': True,
@@ -100,6 +101,7 @@ class RuleOption:
 RULE_OPTIONS: list[RuleOption] = [
     RuleOption('clean_invalid_gtin', 'Limpar GTIN inválido', 'GTIN fora do padrão sai vazio antes do download final.', DEFAULT_RULES['clean_invalid_gtin']),
     RuleOption('normalize_image_separator', 'Separar imagens por |', 'Múltiplas imagens saem como img1|img2|img3.', DEFAULT_RULES['normalize_image_separator']),
+    RuleOption('limit_bling_images', 'Limitar imagens para Bling', 'Mantém no máximo 6 imagens por produto para evitar rejeição no cadastro/exportação.', DEFAULT_RULES['limit_bling_images']),
     RuleOption('auto_product_code', 'Gerar código quando vazio', 'Gera SKU/código automático quando o campo estiver vazio.', DEFAULT_RULES['auto_product_code']),
     RuleOption('unique_product_code', 'Evitar código duplicado', 'Ajusta códigos repetidos para ficarem únicos.', DEFAULT_RULES['unique_product_code']),
 ]
@@ -241,6 +243,7 @@ def normalize_rules(raw: dict[str, Any] | None) -> dict[str, Any]:
     rules['normalize_measures_to_meters'] = False
     rules['clean_invalid_gtin'] = bool(rules.get('clean_invalid_gtin', True))
     rules['normalize_image_separator'] = bool(rules.get('normalize_image_separator', True))
+    rules['limit_bling_images'] = bool(rules.get('limit_bling_images', True))
     rules['invalid_gtin_mode'] = 'limpar'
     rules['image_separator'] = '|'
     rules['auto_product_code'] = bool(rules.get('auto_product_code', True))
