@@ -7,7 +7,7 @@ import streamlit as st
 from bling_app_zero.core import APP_VERSION
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.alerts import enforce_attention_alert_policy
-from bling_app_zero.ui.bottom_nav import render_bottom_nav
+from bling_app_zero.ui.bottom_nav import render_bottom_nav, render_persistent_operation_controls
 from bling_app_zero.ui.home_router import render_home as render_home_router
 from bling_app_zero.ui.layout import inject_app_layout, render_compact_hero
 from bling_app_zero.ui.scroll_position import inject_scroll_position_keeper
@@ -63,10 +63,11 @@ def render_home() -> None:
     render_compact_hero()
     _render_blingfix_runtime_stamp()
 
-    # O sidebar precisa existir antes de buscas, processamentos e envios longos.
-    # Assim os comandos de nova operacao continuam visiveis durante todo o fluxo.
-    render_bottom_nav()
+    # Apenas os dois comandos essenciais carregam cedo. Diagnóstico, atalhos e
+    # links auxiliares ficam para depois, reduzindo trabalho em aparelhos modestos.
+    render_persistent_operation_controls()
     render_home_router()
+    render_bottom_nav()
 
 
 __all__ = ['render_home']
