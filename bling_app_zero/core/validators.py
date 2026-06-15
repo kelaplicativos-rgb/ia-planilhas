@@ -14,6 +14,7 @@ ESTOQUE_QTY_TERMS = ['estoque', 'balanco', 'balanço', 'quantidade', 'qtd', 'sal
 PRICE_UPDATE_TERMS = ['preco', 'preço', 'preco_promocional', 'promocional', 'idproduto', 'id_produto', 'id_na_loja', 'loja', 'multiloja']
 PRICE_COLUMN_TERMS = ('preco', 'valor', 'unitario', 'venda', 'price')
 PRICE_COLUMN_EXCLUSIONS = ('destino', 'canal', 'loja id', 'fornecedor', 'custo', 'compra', 'margem', 'desconto', 'comissao')
+PRIMARY_PRICE_COLUMNS = {'preco', 'preco unitario', 'preco venda', 'valor', 'valor venda', 'price'}
 PRICE_OPERATION_VALUES = {'atualizacao preco', 'atualizacao precos', 'preco', 'precos', 'price', 'prices'}
 
 
@@ -54,9 +55,12 @@ def _price_columns(df: pd.DataFrame) -> list[str]:
             continue
         if any(term in key for term in PRICE_COLUMN_EXCLUSIONS):
             continue
-        exact_priority = 0 if key in {'preco', 'preco unitario', 'preco venda', 'valor', 'valor venda', 'price'} else 1
-        candidates.append((exact_priority, index, str(column)))
-    return [column for _priority, _index, column in sorted(candidates)]
+        priority = 0 if key in PRIMARY_PRICE_COLUMNS else 1
+        candidates.append((priority, index, str(column)))
+    if not candidates:
+        return []
+    best_priority = min(priority for priority, _index, _column in candidates)
+    return [column for priority, _index, column in sorted(candidates) if priority == best_priority]
 
 
 def _positive_price(value: object) -> bool:
