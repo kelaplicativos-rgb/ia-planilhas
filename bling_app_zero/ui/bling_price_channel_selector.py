@@ -189,6 +189,11 @@ def _filter_options_by_query(options: list[dict[str, str]], query: object) -> li
     return filtered
 
 
+def _manual_channel_id_from_query(query: object) -> str:
+    digits = re.sub(r'\D+', '', str(query or ''))
+    return digits if len(digits) >= 6 else ''
+
+
 def _prepare_options(options: list[dict[str, str]]) -> tuple[list[dict[str, str]], int, bool]:
     valid_options = [item for item in _unique_options(options) if _option_has_valid_id(item)]
     return _filter_active_options(valid_options)
@@ -366,6 +371,23 @@ def render_price_channel_selector(download_df: pd.DataFrame, operation: str) -> 
     )
     filtered_options = _filter_options_by_query(options, query)
     if not filtered_options:
+        manual_id = _manual_channel_id_from_query(query)
+        if manual_id:
+            st.info('Não encontrei esse canal na lista automática. Vou usar o ID digitado como canal manual.')
+            manual_name = st.text_input(
+                'Nome para esse canal manual',
+                value=str(st.session_state.get(PRICE_CHANNEL_NAME_KEY) or query or manual_id),
+                key='bling_price_manual_channel_name_from_filter',
+            )
+            st.session_state[PRICE_CHANNEL_ID_KEY] = manual_id
+            st.session_state[PRICE_CHANNEL_NAME_KEY] = str(manual_name or manual_id).strip()
+            add_audit_event(
+                'bling_price_channel_manual_from_filter',
+                area='BLING_ENVIO',
+                status='OK',
+                details={'channel_id': manual_id, 'channel_name': st.session_state[PRICE_CHANNEL_NAME_KEY], 'responsible_file': RESPONSIBLE_FILE},
+            )
+            return _inject_price_target_columns(download_df)
         st.warning('Nenhuma loja/canal encontrada com esse filtro. Clique em Atualizar lista completa ou ajuste o texto para continuar.')
         return None
     if query:
