@@ -13,6 +13,7 @@ from bling_app_zero.core.final_download_resources import (
     looks_like_image_column,
     normalize_image_separator_resource,
 )
+from bling_app_zero.core.final_measure_unit_defaults import apply_measure_unit_default_resource
 from bling_app_zero.core.user_rules import get_user_rules
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/final_output_rule_engine.py'
@@ -24,6 +25,9 @@ class FinalOutputRuleReport:
     normalize_images_enabled: bool
     limit_images_enabled: bool
     image_columns: tuple[str, ...]
+    measure_unit_columns: tuple[str, ...]
+    measure_unit_cells_changed: int
+    measure_unit_value: str
     rows_over_image_limit_before: int
     rows_over_image_limit_after: int
     rows_limited: int
@@ -39,6 +43,7 @@ class FinalOutputRuleReport:
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data['image_columns'] = list(self.image_columns)
+        data['measure_unit_columns'] = list(self.measure_unit_columns)
         data['warnings'] = list(self.warnings)
         return data
 
@@ -92,8 +97,8 @@ def apply_final_output_rules(
     """Aplica as regras centrais do usuário no último ponto comum.
 
     Este motor é chamado antes de gerar CSV e antes do envio por API. Assim,
-    recursos como separador de imagens e limite de 6 imagens valem para os dois
-    fluxos: exportação sem conectar e envio direto ao Bling.
+    recursos como separador de imagens, limite de 6 imagens e Unidade das medidas
+    valem para os dois fluxos: exportação sem conectar e envio direto ao Bling.
     """
     original = _safe_df(df)
     current = original.copy()
@@ -110,9 +115,13 @@ def apply_final_output_rules(
     if limit_images_enabled:
         current = limit_bling_images_resource(current, enabled=True).df
 
+    measure_result = apply_measure_unit_default_resource(current, rules)
+    current = measure_result.df
+
     columns_after = _image_columns(current)
     excess_after = rows_over_bling_image_limit(current)
-    changed = _changed_cells(original, current, sorted(set(columns_before + columns_after)))
+    changed_columns = sorted(set(columns_before + columns_after + list(measure_result.columns)))
+    changed = _changed_cells(original, current, changed_columns)
     rows_limited = max(0, len(excess_before) - len(excess_after)) if limit_images_enabled else 0
 
     warnings: list[str] = []
@@ -141,6 +150,9 @@ def apply_final_output_rules(
                 'normalize_image_separator': normalize_images_enabled,
                 'limit_bling_images': limit_images_enabled,
                 'image_columns': columns_after,
+                'measure_unit_columns': list(measure_result.columns),
+                'measure_unit_cells_changed': int(measure_result.changed),
+                'measure_unit_value': measure_result.fill_value,
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
@@ -155,6 +167,7 @@ def apply_final_output_rules(
                 'rows_over_image_limit_before': len(excess_before),
                 'limit_bling_images': limit_images_enabled,
                 'image_columns': columns_before,
+                'measure_unit_columns': list(measure_result.columns),
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
@@ -164,6 +177,9 @@ def apply_final_output_rules(
         normalize_images_enabled=normalize_images_enabled,
         limit_images_enabled=limit_images_enabled,
         image_columns=tuple(columns_after or columns_before),
+        measure_unit_columns=tuple(measure_result.columns),
+        measure_unit_cells_changed=int(measure_result.changed),
+        measure_unit_value=measure_result.fill_value,
         rows_over_image_limit_before=len(excess_before),
         rows_over_image_limit_after=len(excess_after),
         rows_limited=rows_limited,
