@@ -13,7 +13,7 @@ RESPONSIBLE_FILE = 'bling_app_zero/core/bling_price_sender_guarded.py'
 
 
 def _store_price_values(price_value: int | float, field: str) -> dict[str, Any]:
-    return {'precoPromocional': price_value}
+    return {'preco': price_value, 'precoPromocional': price_value}
 
 
 def _product_store_price_payloads(product_store_id: str, product_id: str, channel_id: str, price: float, field: str) -> list[tuple[str, str, str, dict[str, Any]]]:
@@ -26,9 +26,9 @@ def _product_store_price_payloads(product_store_id: str, product_id: str, channe
     channel_id = str(channel_id)
 
     payloads: list[tuple[str, dict[str, Any]]] = [
-        ('produto_loja_idProdutoLoja_preco_promocional', {'idProdutoLoja': product_store_id, **price_values}),
+        ('produto_loja_idProdutoLoja_preco_e_promocional', {'idProdutoLoja': product_store_id, **price_values}),
         (
-            'produto_loja_ids_planos_preco_promocional',
+            'produto_loja_ids_planos_preco_e_promocional',
             {
                 'id': product_store_id,
                 'idProdutoLoja': product_store_id,
@@ -38,7 +38,7 @@ def _product_store_price_payloads(product_store_id: str, product_id: str, channe
             },
         ),
         (
-            'produto_loja_objetos_com_idProdutoLoja_preco_promocional',
+            'produto_loja_objetos_com_idProdutoLoja_preco_e_promocional',
             {
                 'idProdutoLoja': product_store_id,
                 'produto': {'id': product_id},
@@ -46,13 +46,13 @@ def _product_store_price_payloads(product_store_id: str, product_id: str, channe
                 **price_values,
             },
         ),
-        ('produto_loja_preco_promocional_legado_seguro', dict(price_values)),
+        ('produto_loja_preco_e_promocional_legado_seguro', dict(price_values)),
     ]
     attempts = [(method, path, label, payload) for label, payload in payloads]
     if method not in {'PATCH', 'PUT'}:
-        attempts.insert(0, ('PUT', path, 'produto_loja_idProdutoLoja_preco_promocional', {'idProdutoLoja': product_store_id, **price_values}))
+        attempts.insert(0, ('PUT', path, 'produto_loja_idProdutoLoja_preco_e_promocional', {'idProdutoLoja': product_store_id, **price_values}))
     elif method != 'PUT':
-        attempts.insert(0, ('PUT', path, 'produto_loja_idProdutoLoja_preco_promocional', {'idProdutoLoja': product_store_id, **price_values}))
+        attempts.insert(0, ('PUT', path, 'produto_loja_idProdutoLoja_preco_e_promocional', {'idProdutoLoja': product_store_id, **price_values}))
     return raw_sender._dedupe_price_attempts(attempts)
 
 
@@ -63,9 +63,9 @@ def _install_price_payload_guard() -> None:
         area='BLING_ENVIO',
         status='OK',
         details={
-            'reason': 'Atualizacao por canal envia somente precoPromocional no vinculo produto-loja.',
+            'reason': 'Com canal selecionado, atualizacao mira o vinculo produto-loja e envia preco e precoPromocional. Sem canal, o fluxo normal atualiza o preco geral do produto.',
             'legacy_price_paths_blocked': True,
-            'store_price_fields': ['precoPromocional'],
+            'store_price_fields': ['preco', 'precoPromocional'],
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
