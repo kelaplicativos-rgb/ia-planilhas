@@ -13,10 +13,7 @@ RESPONSIBLE_FILE = 'bling_app_zero/core/bling_price_sender_guarded.py'
 
 
 def _store_price_values(price_value: int | float, field: str) -> dict[str, Any]:
-    values = {'preco': price_value, 'precoPromocional': price_value}
-    if field not in values:
-        values[field] = price_value
-    return values
+    return {'precoPromocional': price_value}
 
 
 def _product_store_price_payloads(product_store_id: str, product_id: str, channel_id: str, price: float, field: str) -> list[tuple[str, str, str, dict[str, Any]]]:
@@ -66,9 +63,9 @@ def _install_price_payload_guard() -> None:
         area='BLING_ENVIO',
         status='OK',
         details={
-            'reason': 'Atualizacao por canal envia idProdutoLoja com preco e precoPromocional no payload.',
+            'reason': 'Atualizacao por canal envia somente precoPromocional no vinculo produto-loja.',
             'legacy_price_paths_blocked': True,
-            'store_price_fields': ['preco', 'precoPromocional'],
+            'store_price_fields': ['precoPromocional'],
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
