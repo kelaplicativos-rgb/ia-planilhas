@@ -162,12 +162,7 @@ def _patch_payload_variants(module: Any) -> None:
 
 
 def _install_blingclean_smart_patch(module: Any | None = None) -> None:
-    """Instala o blingClean no startup e no sender diff.
-
-    O arquivo bruto antigo ainda contém ``images[:10]``. Este instalador garante
-    que o fluxo ativo use o wrapper limpo com ``MAX_BLING_IMAGES = 6`` e também
-    corrige módulos que importaram ``_payload_variants`` por cópia.
-    """
+    """Instala o blingClean no startup e no sender diff."""
     try:
         clean = importlib.import_module('bling_app_zero.core.bling_smart_image_limit_clean')
         apply_patch = getattr(clean, 'apply_blingclean_patch', None)
@@ -177,6 +172,17 @@ def _install_blingclean_smart_patch(module: Any | None = None) -> None:
             module._payload_variants = getattr(clean, '_payload_variants')
             module.preview_payloads = getattr(clean, 'preview_payloads')
             module._blingclean_image_limit_patch_installed = True
+    except Exception:
+        return
+
+
+def _install_dimension_unit_defaults() -> None:
+    """Instala Centímetros como padrão de Unidade das medidas."""
+    try:
+        runtime = importlib.import_module('bling_app_zero.core.dimension_unit_defaults_runtime')
+        install = getattr(runtime, 'install_dimension_unit_defaults_runtime', None)
+        if callable(install):
+            install()
     except Exception:
         return
 
@@ -253,6 +259,8 @@ class _BlingImageLimitFinder(importlib.abc.MetaPathFinder):
                 return spec
         return None
 
+
+_install_dimension_unit_defaults()
 
 if not any(isinstance(finder, _BlingImageLimitFinder) for finder in sys.meta_path):
     sys.meta_path.insert(0, _BlingImageLimitFinder())
