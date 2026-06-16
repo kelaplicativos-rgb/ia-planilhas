@@ -310,17 +310,27 @@ def _is_price_operation(operation: object) -> bool:
     return text == 'atualizacao_preco' or 'preco' in text or 'price' in text
 
 
+def _clear_selected_channel() -> None:
+    st.session_state[PRICE_TARGET_MODE_KEY] = PRICE_GENERAL_VALUE
+    st.session_state.pop(PRICE_CHANNEL_ID_KEY, None)
+    st.session_state.pop(PRICE_CHANNEL_NAME_KEY, None)
+
+
+def _select_channel(channel_id: object, channel_name: object) -> None:
+    st.session_state[PRICE_TARGET_MODE_KEY] = PRICE_CHANNEL_VALUE
+    st.session_state[PRICE_CHANNEL_ID_KEY] = str(channel_id or '').strip()
+    st.session_state[PRICE_CHANNEL_NAME_KEY] = str(channel_name or channel_id or '').strip()
+
+
 def _inject_price_target_columns(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy().fillna('')
-    mode = str(st.session_state.get(PRICE_TARGET_MODE_KEY) or PRICE_GENERAL_VALUE)
     channel_id = str(st.session_state.get(PRICE_CHANNEL_ID_KEY) or '').strip()
     channel_name = str(st.session_state.get(PRICE_CHANNEL_NAME_KEY) or '').strip()
-    if mode == PRICE_CHANNEL_VALUE and not channel_id:
-        mode = PRICE_GENERAL_VALUE
-        st.session_state[PRICE_TARGET_MODE_KEY] = PRICE_GENERAL_VALUE
-    out['Bling preço destino'] = 'Preço geral' if mode == PRICE_GENERAL_VALUE else 'Canal de venda'
-    out['Bling canal venda id'] = '' if mode == PRICE_GENERAL_VALUE else channel_id
-    out['Bling canal venda nome'] = '' if mode == PRICE_GENERAL_VALUE else channel_name
+    mode = PRICE_CHANNEL_VALUE if channel_id else PRICE_GENERAL_VALUE
+    st.session_state[PRICE_TARGET_MODE_KEY] = mode
+    out['Bling preço destino'] = 'Canal de venda' if mode == PRICE_CHANNEL_VALUE else 'Preço geral'
+    out['Bling canal venda id'] = channel_id if mode == PRICE_CHANNEL_VALUE else ''
+    out['Bling canal venda nome'] = channel_name if mode == PRICE_CHANNEL_VALUE else ''
     return out
 
 
@@ -328,29 +338,10 @@ def render_price_channel_selector(download_df: pd.DataFrame, operation: str) -> 
     if not _is_price_operation(operation):
         return download_df
     st.markdown('### Destino do preço no Bling')
-    st.caption('Escolha onde o preço calculado será aplicado antes do envio.')
+    st.caption('Selecione uma loja/canal apenas se quiser atualizar aquele anúncio. Sem seleção, o preço calculado vai para o preço geral do produto.')
 
-    current_mode = str(st.session_state.get(PRICE_TARGET_MODE_KEY) or PRICE_GENERAL_VALUE)
-    mode_label = st.radio(
-        'Onde atualizar o preço?',
-        ['Preço geral do produto', 'Preço de uma loja/canal de venda'],
-        index=1 if current_mode == PRICE_CHANNEL_VALUE else 0,
-        horizontal=False,
-        key='bling_price_target_mode_radio',
-    )
-    mode = PRICE_CHANNEL_VALUE if 'loja' in mode_label.lower() or 'canal' in mode_label.lower() else PRICE_GENERAL_VALUE
-    st.session_state[PRICE_TARGET_MODE_KEY] = mode
-
-    if mode == PRICE_GENERAL_VALUE:
-        st.session_state.pop(PRICE_CHANNEL_ID_KEY, None)
-        st.session_state.pop(PRICE_CHANNEL_NAME_KEY, None)
-        st.info('O preço calculado será aplicado no preço geral do produto no Bling.')
-        add_audit_event('bling_price_target_general_selected', area='BLING_ENVIO', status='OK', details={'responsible_file': RESPONSIBLE_FILE})
-        return _inject_price_target_columns(download_df)
-
-    options = load_price_channels()
     if st.button('Atualizar lista completa de lojas/canais do Bling', use_container_width=True, key='bling_price_reload_channels'):
-        options = load_price_channels(force=True)
+        load_price_channels(force=True)
         st.rerun()
 
     manual_override_id = st.text_input(
@@ -368,10 +359,9 @@ def render_price_channel_selector(download_df: pd.DataFrame, operation: str) -> 
             key='bling_price_channel_manual_override_name',
         )
         if not manual_id:
-            st.warning('Informe somente o ID numérico do canal manual para continuar.')
+            st.warning('Informe somente o ID numérico do canal manual para atualizar uma loja/canal. Deixe vazio para usar preço geral.')
             return None
-        st.session_state[PRICE_CHANNEL_ID_KEY] = manual_id
-        st.session_state[PRICE_CHANNEL_NAME_KEY] = str(manual_name or manual_id).strip()
+        _select_channel(manual_id, manual_name or manual_id)
         st.success(f"Preço será atualizado no canal manual: {st.session_state[PRICE_CHANNEL_NAME_KEY]} · ID {manual_id}.")
         add_audit_event(
             'bling_price_channel_manual_override_selected',
@@ -381,18 +371,21 @@ def render_price_channel_selector(download_df: pd.DataFrame, operation: str) -> 
         )
         return _inject_price_target_columns(download_df)
 
+    options = load_price_channels()
     if not options:
-        manual_id = st.text_input('ID da loja/canal no Bling', value=str(st.session_state.get(PRICE_CHANNEL_ID_KEY) or ''), key='bling_price_manual_channel_id')
-        manual_name = st.text_input('Nome da loja/canal', value=str(st.session_state.get(PRICE_CHANNEL_NAME_KEY) or ''), key='bling_price_manual_channel_name')
-        if not str(manual_id or '').strip():
-            st.warning('Não encontrei lojas/canais com ID válido. Informe o ID do canal ou selecione Preço geral para continuar.')
-            return None
-        st.session_state[PRICE_CHANNEL_ID_KEY] = str(manual_id).strip()
-        st.session_state[PRICE_CHANNEL_NAME_KEY] = str(manual_name or manual_id).strip()
+        manual_id = st.text_input('ID da loja/canal no Bling (opcional)', value=str(st.session_state.get(PRICE_CHANNEL_ID_KEY) or ''), key='bling_price_manual_channel_id')
+        manual_name = st.text_input('Nome da loja/canal (opcional)', value=str(st.session_state.get(PRICE_CHANNEL_NAME_KEY) or ''), key='bling_price_manual_channel_name')
+        if str(manual_id or '').strip():
+            _select_channel(manual_id, manual_name or manual_id)
+            st.success(f"Preço será atualizado no canal: {st.session_state[PRICE_CHANNEL_NAME_KEY]}.")
+            return _inject_price_target_columns(download_df)
+        _clear_selected_channel()
+        st.info('Nenhum canal selecionado. O preço calculado será aplicado no preço geral do produto no Bling.')
+        add_audit_event('bling_price_target_general_selected_without_channels', area='BLING_ENVIO', status='OK', details={'responsible_file': RESPONSIBLE_FILE})
         return _inject_price_target_columns(download_df)
 
     query = st.text_input(
-        'Filtrar loja/canal',
+        'Filtrar loja/canal (opcional)',
         value=str(st.session_state.get('bling_price_channel_filter') or ''),
         placeholder='Digite nome ou ID do canal. Ex.: Ifood ou 205541563',
         key='bling_price_channel_filter',
@@ -407,8 +400,7 @@ def render_price_channel_selector(download_df: pd.DataFrame, operation: str) -> 
                 value=str(st.session_state.get(PRICE_CHANNEL_NAME_KEY) or query or manual_id),
                 key='bling_price_manual_channel_name_from_filter',
             )
-            st.session_state[PRICE_CHANNEL_ID_KEY] = manual_id
-            st.session_state[PRICE_CHANNEL_NAME_KEY] = str(manual_name or manual_id).strip()
+            _select_channel(manual_id, manual_name or manual_id)
             add_audit_event(
                 'bling_price_channel_manual_from_filter',
                 area='BLING_ENVIO',
@@ -416,26 +408,34 @@ def render_price_channel_selector(download_df: pd.DataFrame, operation: str) -> 
                 details={'channel_id': manual_id, 'channel_name': st.session_state[PRICE_CHANNEL_NAME_KEY], 'responsible_file': RESPONSIBLE_FILE},
             )
             return _inject_price_target_columns(download_df)
-        st.warning('Nenhuma loja/canal encontrada com esse filtro. Clique em Atualizar lista completa ou ajuste o texto para continuar.')
-        return None
+        _clear_selected_channel()
+        st.warning('Nenhuma loja/canal encontrada com esse filtro. Sem canal selecionado, o preço será aplicado no preço geral.')
+        return _inject_price_target_columns(download_df)
     if query:
         st.caption(f'{len(filtered_options)} de {len(options)} canal(is) encontrado(s).')
 
-    labels = [f"{item.get('nome') or 'Sem nome'} · ID {item.get('id')}" for item in filtered_options]
+    general_label = 'Nenhum canal selecionado · atualizar preço geral do produto'
+    labels = [general_label] + [f"{item.get('nome') or 'Sem nome'} · ID {item.get('id')}" for item in filtered_options]
     current_id = str(st.session_state.get(PRICE_CHANNEL_ID_KEY) or '')
     index = 0
-    for pos, item in enumerate(filtered_options):
+    for pos, item in enumerate(filtered_options, start=1):
         if current_id and str(item.get('id') or '') == current_id:
             index = pos
             break
-    selected_label = st.selectbox('Loja/canal que receberá o preço calculado', labels, index=index, key='bling_price_channel_select')
-    selected = filtered_options[labels.index(selected_label)]
+    selected_label = st.selectbox('Loja/canal que receberá o preço calculado (opcional)', labels, index=index, key='bling_price_channel_select')
+    if selected_label == general_label:
+        _clear_selected_channel()
+        st.info('Nenhum canal selecionado. O preço calculado será aplicado no preço geral do produto no Bling.')
+        add_audit_event('bling_price_target_general_selected_by_empty_channel', area='BLING_ENVIO', status='OK', details={'responsible_file': RESPONSIBLE_FILE})
+        return _inject_price_target_columns(download_df)
+
+    selected = filtered_options[labels.index(selected_label) - 1]
     selected_id = str(selected.get('id') or '').strip()
     if not selected_id:
-        st.warning('O canal selecionado não trouxe ID válido. Atualize a lista ou use Preço geral.')
-        return None
-    st.session_state[PRICE_CHANNEL_ID_KEY] = selected_id
-    st.session_state[PRICE_CHANNEL_NAME_KEY] = str(selected.get('nome') or selected_id).strip()
+        _clear_selected_channel()
+        st.warning('O canal selecionado não trouxe ID válido. Sem canal selecionado, o preço será aplicado no preço geral.')
+        return _inject_price_target_columns(download_df)
+    _select_channel(selected_id, selected.get('nome') or selected_id)
     st.success(f"Preço será atualizado no canal: {st.session_state[PRICE_CHANNEL_NAME_KEY]}.")
     add_audit_event('bling_price_channel_selected', area='BLING_ENVIO', status='OK', details={'channel_id': st.session_state[PRICE_CHANNEL_ID_KEY], 'channel_name': st.session_state[PRICE_CHANNEL_NAME_KEY], 'responsible_file': RESPONSIBLE_FILE})
     return _inject_price_target_columns(download_df)
