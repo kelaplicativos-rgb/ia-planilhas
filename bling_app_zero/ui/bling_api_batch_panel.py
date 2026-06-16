@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
 
@@ -38,6 +39,8 @@ LAST_BATCH_SECONDS_KEY = 'bling_api_last_batch_seconds_v1'
 LIVE_PROGRESS_KEY = 'bling_api_live_progress_v2'
 INTELLIGENT_BATCH_PLAN_KEY = 'bling_api_intelligent_batch_plan_v1'
 BACKGROUND_JOB_CREATED_KEY = 'bling_background_job_created_v1'
+FAILED_RETRY_ROWS_KEY = 'bling_api_failed_retry_rows_v1'
+FAILED_RETRY_RESULT_KEY = 'bling_api_failed_retry_result_v1'
 MAX_AUTO_BATCH_SECONDS = 22.0
 
 DIRECT_SEND_TEXT = {
@@ -110,12 +113,155 @@ def _get_state(identity: str, total: int, operation: str) -> dict[str, Any]:
     return _sync_state(state_obj)
 
 
+def _clear_failed_retry_rows(identity: str) -> None:
+    store = st.session_state.get(FAILED_RETRY_ROWS_KEY)
+    if isinstance(store, dict) and identity in store:
+        store.pop(identity, None)
+        st.session_state[FAILED_RETRY_ROWS_KEY] = store
+    result_store = st.session_state.get(FAILED_RETRY_RESULT_KEY)
+    if isinstance(result_store, dict) and result_store.get('identity') == identity:
+        st.session_state.pop(FAILED_RETRY_RESULT_KEY, None)
+
+
 def _reset_state(identity: str, total: int, operation: str) -> dict[str, Any]:
     result = reset_send(identity=identity, total=total, operation=operation)
     st.session_state.pop(LAST_BATCH_SECONDS_KEY, None)
     st.session_state.pop(LIVE_PROGRESS_KEY, None)
     st.session_state.pop(INTELLIGENT_BATCH_PLAN_KEY, None)
+    _clear_failed_retry_rows(identity)
     return _sync_state(result.state)
+
+
+def _line_indices_from_errors(errors: list[Any]) -> set[int]:
+    indices: set[int] = set()
+    for error in errors or []:
+        text = str(error or '')
+        for match in re.finditer(r'(?i)linha\s+(\d+)', text):
+            try:
+                line_number = int(match.group(1))
+            except Exception:
+                continue
+            if line_number > 0:
+                indices.add(line_number - 1)
+    return indices
+
+
+def _store_failed_retry_rows(identity: str, batch_start: int, batch_len: int, result: Any) -> list[int]:
+    if not identity or batch_len <= 0:
+        return []
+    local_indices: set[int] = set()
+    for item in list(getattr(result, 'not_found_indices', []) or []):
+        try:
+            local_index = int(item)
+        except Exception:
+            continue
+        if 0 <= local_index < batch_len:
+            local_indices.add(local_index)
+    local_indices.update(index for index in _line_indices_from_errors(list(getattr(result, 'errors', []) or [])) if 0 <= index < batch_len)
+
+    failed_count = int(getattr(result, 'failed', 0) or 0) + int(getattr(result, 'skipped', 0) or 0)
+    sent_count = int(getattr(result, 'sent', 0) or 0)
+    attempted = int(getattr(result, 'attempted', 0) or 0)
+    if failed_count > 0 and not local_indices and sent_count == 0:
+        local_indices.update(range(min(batch_len, attempted or batch_len)))
+
+    absolute_indices = sorted({batch_start + index for index in local_indices if 0 <= index < batch_len})
+    if not absolute_indices:
+        return []
+
+    store = st.session_state.get(FAILED_RETRY_ROWS_KEY)
+    if not isinstance(store, dict):
+        store = {}
+    current = store.get(identity)
+    current_indices = set(current.get('indices') or []) if isinstance(current, dict) else set()
+    current_indices.update(absolute_indices)
+    store[identity] = {'indices': sorted(current_indices), 'updated_at': time.time()}
+    st.session_state[FAILED_RETRY_ROWS_KEY] = store
+    add_audit_event(
+        'bling_api_failed_rows_marked_for_retry',
+        area='BLING_ENVIO',
+        status='OK',
+        details={'identity': identity, 'rows': len(absolute_indices), 'batch_start': batch_start, 'responsible_file': RESPONSIBLE_FILE},
+    )
+    return absolute_indices
+
+
+def _failed_retry_indices(identity: str, total_rows: int) -> list[int]:
+    store = st.session_state.get(FAILED_RETRY_ROWS_KEY)
+    if not isinstance(store, dict):
+        return []
+    entry = store.get(identity)
+    if not isinstance(entry, dict):
+        return []
+    indices: list[int] = []
+    for item in list(entry.get('indices') or []):
+        try:
+            index = int(item)
+        except Exception:
+            continue
+        if 0 <= index < total_rows:
+            indices.append(index)
+    return sorted(set(indices))
+
+
+def _render_retry_result(identity: str) -> None:
+    payload = st.session_state.get(FAILED_RETRY_RESULT_KEY)
+    if not isinstance(payload, dict) or payload.get('identity') != identity:
+        return
+    attempted = int(payload.get('attempted') or 0)
+    sent = int(payload.get('sent') or 0)
+    failed = int(payload.get('failed') or 0)
+    skipped = int(payload.get('skipped') or 0)
+    if attempted <= 0:
+        return
+    if failed == 0 and skipped == 0 and sent > 0:
+        st.success(f'Reenvio das falhas concluído: {sent}/{attempted} linha(s) enviada(s).')
+    elif sent > 0:
+        st.warning(f'Reenvio parcial: {sent}/{attempted} enviada(s), {failed} falha(s), {skipped} ignorada(s).')
+    else:
+        st.error(f'Reenvio não concluído: 0/{attempted} enviada(s), {failed} falha(s), {skipped} ignorada(s).')
+    for error in list(payload.get('errors') or [])[:5]:
+        st.error(str(error))
+
+
+def _render_retry_failed_rows(download_df: pd.DataFrame, state: dict[str, Any], key: str) -> None:
+    identity = str(state.get('identity') or '')
+    operation = normalize_operation(str(state.get('operation') or ''))
+    indices = _failed_retry_indices(identity, len(download_df) if isinstance(download_df, pd.DataFrame) else 0)
+    if not indices:
+        _render_retry_result(identity)
+        return
+
+    retry_df = download_df.iloc[indices].copy().fillna('')
+    st.markdown('### Reenviar falhas')
+    st.warning(f'{len(retry_df)} linha(s) com falha ficaram separadas para reenvio. O botão abaixo manda somente essas linhas novamente.')
+    _render_retry_result(identity)
+    if st.button('Reenviar somente falhas', use_container_width=True, key=f'bling_retry_failed_rows_{key}_{identity}'):
+        try:
+            result = send_dataframe_to_bling_intelligent(retry_df, operation)
+            result_data = {
+                'identity': identity,
+                'operation': operation,
+                'attempted': int(result.attempted),
+                'sent': int(result.sent),
+                'failed': int(result.failed),
+                'skipped': int(result.skipped),
+                'errors': list(result.errors or []),
+            }
+            st.session_state[FAILED_RETRY_RESULT_KEY] = result_data
+            if int(result.failed or 0) == 0 and int(result.skipped or 0) == 0:
+                _clear_failed_retry_rows(identity)
+            add_audit_event(
+                'bling_api_failed_rows_retry_sent',
+                area='BLING_ENVIO',
+                status='OK' if int(result.failed or 0) == 0 else 'PARCIAL',
+                details={**result_data, 'rows': len(retry_df), 'responsible_file': RESPONSIBLE_FILE},
+            )
+            st.rerun()
+        except Exception as exc:
+            st.session_state[FAILED_RETRY_RESULT_KEY] = {'identity': identity, 'operation': operation, 'attempted': len(retry_df), 'sent': 0, 'failed': len(retry_df), 'skipped': 0, 'errors': [str(exc)]}
+            add_audit_event('bling_api_failed_rows_retry_error', area='BLING_ENVIO', status='ERRO', details={'identity': identity, 'operation': operation, 'rows': len(retry_df), 'error': str(exc)[:300], 'responsible_file': RESPONSIBLE_FILE})
+            st.rerun()
 
 
 def _cached_payload_preview(preview_df: pd.DataFrame, operation: str, identity: str, preview_limit: int) -> list[dict[str, Any]]:
@@ -382,17 +528,17 @@ def _render_final_result(download_df: pd.DataFrame, state: dict[str, Any], key: 
         st.error('Envio não iniciado: nenhum produto foi processado.')
     elif failed == 0 and skipped == 0:
         if operation == OP_ATUALIZACAO_PRECO:
-            st.success(f'Atualização de preços concluída com sucesso: {sent}/{attempted} preço(s) enviado(s) ao Bling.')
+            st.success(f'Finalizado com sucesso. Atualização de preços concluída: {sent}/{attempted} preço(s) enviado(s) ao Bling.')
         else:
-            st.success(f'Envio concluído com sucesso: {sent}/{attempted} produto(s) enviado(s) ao Bling.')
+            st.success(f'Finalizado com sucesso. Envio concluído: {sent}/{attempted} produto(s) enviado(s) ao Bling.')
     elif operation == OP_ESTOQUE and sent > 0:
-        st.warning(f'Atualização de estoque concluída parcialmente: {sent}/{attempted} saldo(s) enviado(s), {failed} falha(s), {skipped} ignorado(s). Os itens não encontrados ficam como pendência.')
+        st.warning(f'Finalizado com atenção. Estoque parcial: {sent}/{attempted} saldo(s) enviado(s), {failed} falha(s), {skipped} ignorado(s).')
     elif operation == OP_ATUALIZACAO_PRECO and sent > 0:
-        st.warning(f'Atualização de preços concluída parcialmente: {sent}/{attempted} preço(s) enviado(s), {failed} falha(s), {skipped} ignorado(s).')
+        st.warning(f'Finalizado com atenção. Preços parciais: {sent}/{attempted} preço(s) enviado(s), {failed} falha(s), {skipped} ignorado(s).')
     elif sent > 0:
-        st.warning(f'Envio parcialmente concluído: {sent}/{attempted} enviado(s), {failed} falha(s), {skipped} ignorado(s).')
+        st.warning(f'Finalizado com atenção. Envio parcial: {sent}/{attempted} enviado(s), {failed} falha(s), {skipped} ignorado(s).')
     else:
-        st.error(f'Envio não concluído: 0/{attempted} enviado(s), {failed} falha(s), {skipped} ignorado(s).')
+        st.error(f'Finalizado com erro. Nenhum item enviado: 0/{attempted} enviado(s), {failed} falha(s), {skipped} ignorado(s).')
     for error in payload['errors'][:8]:
         st.error(str(error))
     if operation == OP_ESTOQUE:
@@ -402,6 +548,7 @@ def _render_final_result(download_df: pd.DataFrame, state: dict[str, Any], key: 
         st.caption('Produtos sem vínculo no canal ficam separados em relatório próprio. Confira ID/SKU/GTIN, preço e vínculo produto-canal antes de reenviar.')
     else:
         render_autocadastro_panel(download_df, payload, key=key)
+    _render_retry_failed_rows(download_df, state, key=key)
 
 
 def _pause_after_slow_batch(state: dict[str, Any], elapsed: float) -> dict[str, Any]:
@@ -462,6 +609,7 @@ def _send_one_batch(download_df: pd.DataFrame, operation: str, state: dict[str, 
         status_box.info(detail)
 
     result = send_dataframe_to_bling_intelligent(batch_df, operation, progress_callback=_progress)
+    _store_failed_retry_rows(identity, batch_start, len(batch_df), result)
     elapsed = max(0.0, time.monotonic() - started_at)
     st.session_state[LAST_BATCH_SECONDS_KEY] = elapsed
     _store_plan_after_batch(operation, batch_size=batch_size, elapsed=elapsed, failed=int(result.failed), skipped=int(result.skipped))
