@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -15,9 +16,14 @@ from bling_app_zero.core.final_download_resources import (
 )
 from bling_app_zero.core.final_measure_unit_defaults import apply_measure_unit_default_resource
 from bling_app_zero.core.final_video_link_guard import apply_video_link_guard_resource
+from bling_app_zero.core.text import normalize_key
 from bling_app_zero.core.user_rules import get_user_rules
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/final_output_rule_engine.py'
+EMPTY_VALUES = {'', 'nan', 'none', 'null', '<na>', 'na', 'n/a'}
+TITLE_TARGET_TERMS = ('nome', 'titulo', 'título', 'title', 'name')
+TITLE_SOURCE_TERMS = ('descricao', 'descrição', 'produto', 'titulo', 'título', 'nome', 'title', 'name')
+BAD_TITLE_SOURCE_TERMS = ('preco', 'preço', 'valor', 'estoque', 'saldo', 'quantidade', 'qtd', 'codigo', 'código', 'sku', 'gtin', 'ean', 'url', 'link', 'imagem', 'foto', 'marca', 'categoria', 'ncm', 'deposito')
 
 
 @dataclass(frozen=True)
@@ -55,6 +61,103 @@ class FinalOutputRuleReport:
 
 def _safe_df(df: pd.DataFrame | None) -> pd.DataFrame:
     return df.copy().fillna('') if isinstance(df, pd.DataFrame) else pd.DataFrame()
+
+
+def _clean(value: Any) -> str:
+    text = '' if value is None else str(value)
+    text = text.replace('\ufeff', '').replace('\x00', '').replace('\xa0', ' ')
+    text = text.replace('\r\n', ' ').replace('\n', ' ').replace('\r', ' ')
+    return ' '.join(text.split()).strip()
+
+
+def _is_empty(value: Any) -> bool:
+    return normalize_key(_clean(value)) in EMPTY_VALUES
+
+
+def _has_term(column: Any, terms: tuple[str, ...]) -> bool:
+    key = normalize_key(column)
+    return any(normalize_key(term) in key for term in terms if normalize_key(term))
+
+
+def _title_from_text(value: Any, limit: int = 120) -> str:
+    text = _clean(value)
+    if _is_empty(text):
+        return ''
+    for sep in (' — ', ' – ', ' - ', ' | ', ' • ', '—', '–'):
+        if sep in text:
+            out = _clean(text.split(sep, 1)[0])
+            if len(out) >= 3:
+                return out[:limit].strip()
+    out = _clean(re.split(r'(?<=[.!?])\s+', text, maxsplit=1)[0])
+    return out if len(out) <= limit else _clean(out[:limit].rsplit(' ', 1)[0])
+
+
+def _title_columns(df: pd.DataFrame) -> list[str]:
+    if not isinstance(df, pd.DataFrame) or not len(df.columns):
+        return []
+    out: list[str] = []
+    for column in df.columns:
+        key = normalize_key(column)
+        if any(term in key for term in ('ingrediente', 'metodo', 'preparo', 'complementar')):
+            continue
+        if _has_term(column, TITLE_TARGET_TERMS):
+            out.append(str(column))
+    return out
+
+
+def _title_sources(df: pd.DataFrame, title_columns: list[str]) -> list[str]:
+    if not isinstance(df, pd.DataFrame) or not len(df.columns):
+        return []
+    out: list[str] = []
+    for column in df.columns:
+        text = str(column)
+        if text in title_columns or _has_term(text, BAD_TITLE_SOURCE_TERMS):
+            continue
+        if _has_term(text, TITLE_SOURCE_TERMS):
+            out.append(text)
+    for column in df.columns:
+        text = str(column)
+        if text not in title_columns and text not in out and not _has_term(text, BAD_TITLE_SOURCE_TERMS):
+            out.append(text)
+    return out
+
+
+def title_guard_empty_rows(df: pd.DataFrame | None) -> list[int]:
+    out = _safe_df(df)
+    titles = _title_columns(out)
+    if out.empty or not titles:
+        return []
+    rows: list[int] = []
+    for pos, (_idx, row) in enumerate(out.fillna('').astype(str).iterrows(), start=1):
+        if not any(not _is_empty(row.get(col, '')) for col in titles):
+            rows.append(pos)
+    return rows
+
+
+def apply_final_title_guard(df: pd.DataFrame | None, *, context: str = 'download') -> tuple[pd.DataFrame, int, tuple[int, ...]]:
+    out = _safe_df(df)
+    titles = _title_columns(out)
+    sources = _title_sources(out, titles)
+    changed = 0
+    if not out.empty and titles and sources:
+        view = out.fillna('').astype(str)
+        for idx, row in view.iterrows():
+            for title_col in titles:
+                if not _is_empty(row.get(title_col, '')):
+                    continue
+                value = ''
+                for source_col in sources:
+                    if source_col in row.index:
+                        value = _title_from_text(row.get(source_col, ''))
+                    if not _is_empty(value):
+                        break
+                if not _is_empty(value):
+                    out.at[idx, title_col] = value
+                    changed += 1
+    empty_rows = tuple(title_guard_empty_rows(out))
+    if changed or empty_rows:
+        add_audit_event('final_title_guard_applied', area='FINAL_OUTPUT', status='OK' if not empty_rows else 'AVISO', details={'context': context, 'title_columns': titles, 'source_columns': sources[:30], 'changed_cells': changed, 'empty_rows_after': list(empty_rows[:50]), 'empty_rows_after_count': len(empty_rows), 'responsible_file': RESPONSIBLE_FILE})
+    return out.copy().fillna(''), changed, empty_rows
 
 
 def _image_columns(df: pd.DataFrame) -> list[str]:
@@ -99,12 +202,6 @@ def apply_final_output_rules(
     context: str = 'download',
     block_api_when_rule_disabled: bool = True,
 ) -> tuple[pd.DataFrame, FinalOutputRuleReport]:
-    """Aplica as regras centrais do usuário no último ponto comum.
-
-    Este motor é chamado antes de gerar CSV e antes do envio por API. Assim,
-    recursos como separador de imagens, bloqueio de links de vídeo, limite de 6
-    imagens e Unidade das medidas valem para os dois fluxos.
-    """
     original = _safe_df(df)
     current = original.copy()
     rules = get_user_rules()
@@ -126,23 +223,30 @@ def apply_final_output_rules(
     measure_result = apply_measure_unit_default_resource(current, rules)
     current = measure_result.df
 
+    current, title_filled, title_empty_rows = apply_final_title_guard(current, context=context)
+
     columns_after = _image_columns(current)
     excess_after = rows_over_bling_image_limit(current)
-    changed_columns = sorted(set(columns_before + columns_after + list(measure_result.columns) + list(video_result.columns)))
+    changed_columns = sorted(set(columns_before + columns_after + list(measure_result.columns) + list(video_result.columns) + _title_columns(current)))
     changed = _changed_cells(original, current, changed_columns)
     rows_limited = max(0, len(excess_before) - len(excess_after)) if limit_images_enabled else 0
 
     warnings: list[str] = []
     blocked_for_api = False
     if excess_after and not limit_images_enabled:
-        message = (
-            f'{len(excess_after)} produto(s) ainda têm mais de {MAX_IMAGE_URLS_PER_PRODUCT} imagens. '
-            'A regra “Limitar imagens para Bling” está desligada.'
-        )
+        message = f'{len(excess_after)} produto(s) ainda têm mais de {MAX_IMAGE_URLS_PER_PRODUCT} imagens. A regra “Limitar imagens para Bling” está desligada.'
         warnings.append(message)
         if str(context or '').strip().lower() == 'api' and block_api_when_rule_disabled:
             blocked_for_api = True
             warnings.append('Envio por API bloqueado: o Bling pode recusar produtos com mais de 6 imagens.')
+
+    if title_empty_rows:
+        sample = ', '.join(map(str, list(title_empty_rows)[:12]))
+        suffix = '...' if len(title_empty_rows) > 12 else ''
+        warnings.append(f'{len(title_empty_rows)} produto(s) ainda estão sem título/nome. Linhas: {sample}{suffix}.')
+        if str(context or '').strip().lower() == 'api':
+            blocked_for_api = True
+            warnings.append('Envio por API bloqueado: produto sem título pode cadastrar item errado no Bling.')
 
     if video_result.video_links_removed:
         warnings.append(f'{video_result.video_links_removed} link(s) de vídeo foram removidos do arquivo final.')
@@ -155,6 +259,7 @@ def apply_final_output_rules(
             details={
                 'context': context,
                 'changed_cells': changed,
+                'title_cells_filled': title_filled,
                 'rows_over_image_limit_before': len(excess_before),
                 'rows_over_image_limit_after': len(excess_after),
                 'rows_limited': rows_limited,
@@ -213,5 +318,8 @@ def apply_final_output_rules(
 __all__ = [
     'FinalOutputRuleReport',
     'apply_final_output_rules',
+    'apply_final_title_guard',
+    'extract_title_from_text',
     'rows_over_bling_image_limit',
+    'title_guard_empty_rows',
 ]
