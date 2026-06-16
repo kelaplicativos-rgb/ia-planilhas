@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from io import BytesIO
+from io import BytesIO, StringIO
 from typing import Any
 
+import csv
 import hashlib
+import zipfile
+
 import pandas as pd
 import streamlit as st
 
@@ -19,7 +22,8 @@ from bling_app_zero.universal.model_contract_detector import (
 )
 
 MODEL_SPREADSHEET_TYPES = ['xlsx', 'xls', 'csv', 'xlsm', 'xlsb', 'zip']
-EXCEL_HEADER_FALLBACK_TYPES = {'xlsx', 'xlsm'}
+EXCEL_HEADER_FALLBACK_TYPES = {'xlsx', 'xls', 'xlsm', 'xlsb'}
+HEADER_FALLBACK_TYPES = EXCEL_HEADER_FALLBACK_TYPES | {'csv'}
 MODEL_LABEL = 'Modelo para mapear'
 MODEL_SIGNATURE_KEY = 'destination_model_upload_signature_current'
 MODEL_BYTES_KEY = 'destination_model_upload_bytes'
@@ -146,8 +150,10 @@ def _df_audit_info(df: pd.DataFrame | None) -> dict[str, Any]:
 
 
 def _clean_header_value(value: Any) -> str:
-    text = str(value or '').replace('\ufeff', '').strip()
+    text = str(value or '').replace('\ufeff', '').replace('\xa0', ' ').strip()
     text = ' '.join(text.split())
+    if not text or text.lower().startswith('unnamed:'):
+        return ''
     return text
 
 
@@ -162,52 +168,180 @@ def _dedupe_columns(columns: list[str]) -> list[str]:
     return fixed
 
 
-def _read_excel_header_fallback(file: Any) -> pd.DataFrame | None:
-    if _file_ext(file) not in EXCEL_HEADER_FALLBACK_TYPES:
+def _valid_columns(columns: list[Any]) -> list[str]:
+    return [_clean_header_value(value) for value in columns if _clean_header_value(value)]
+
+
+def _header_df(columns: list[Any], *, source: str = '') -> pd.DataFrame | None:
+    fixed = _dedupe_columns(_valid_columns(list(columns or [])))
+    if not fixed:
         return None
+    df = pd.DataFrame(columns=fixed)
+    if source:
+        df.attrs['model_header_source'] = source
+    return df
+
+
+def _detect_csv_separator(text: str) -> str:
+    sample = text[:8192]
+    try:
+        return csv.Sniffer().sniff(sample, delimiters=',;\t|').delimiter
+    except Exception:
+        candidates = [',', ';', '\t', '|']
+        return max(candidates, key=lambda sep: sample.count(sep))
+
+
+def _decode_text_bytes(data: bytes) -> str:
+    for encoding in ('utf-8-sig', 'utf-8', 'cp1252', 'latin1'):
+        try:
+            return data.decode(encoding)
+        except Exception:
+            continue
+    return data.decode('utf-8', errors='ignore')
+
+
+def _read_csv_header_from_bytes(data: bytes, file_name: str = 'modelo.csv') -> pd.DataFrame | None:
+    text = _decode_text_bytes(data)
+    if not text.strip():
+        return None
+    sep = _detect_csv_separator(text)
+    try:
+        df = pd.read_csv(StringIO(text), sep=sep, dtype=str, nrows=0)
+        return _header_df(list(df.columns), source=file_name)
+    except Exception:
+        first_line = next((line for line in text.splitlines() if line.strip()), '')
+        if not first_line:
+            return None
+        return _header_df([part.strip() for part in first_line.split(sep)], source=f'{file_name}:linha_1')
+
+
+def _read_excel_header_with_pandas(data: bytes, file_name: str = 'modelo.xlsx') -> pd.DataFrame | None:
+    try:
+        frames = pd.read_excel(BytesIO(data), sheet_name=None, dtype=str, nrows=0)
+    except Exception:
+        return None
+    best_df: pd.DataFrame | None = None
+    best_sheet = ''
+    for sheet_name, frame in frames.items():
+        candidate = _header_df(list(frame.columns), source=f'{file_name}:{sheet_name}')
+        if _valid_model(candidate) and (best_df is None or len(candidate.columns) > len(best_df.columns)):
+            best_df = candidate
+            best_sheet = str(sheet_name)
+    if _valid_model(best_df):
+        best_df.attrs['model_header_sheet'] = best_sheet
+        return best_df
+    return None
+
+
+def _read_excel_header_with_openpyxl(data: bytes, file_name: str = 'modelo.xlsx') -> pd.DataFrame | None:
     try:
         from openpyxl import load_workbook
-        workbook = load_workbook(BytesIO(_file_bytes(file)), read_only=True, data_only=True)
+    except Exception:
+        return None
+
+    workbook = None
+    try:
+        workbook = load_workbook(BytesIO(data), read_only=True, data_only=True)
         best_columns: list[str] = []
         best_sheet = ''
+        best_row = 0
         for sheet in workbook.worksheets:
-            max_rows_to_scan = min(int(sheet.max_row or 1), 10)
+            max_rows_to_scan = min(int(sheet.max_row or 1), 30)
             max_cols_to_scan = int(sheet.max_column or 0)
             for row_index in range(1, max_rows_to_scan + 1):
                 values = [sheet.cell(row=row_index, column=col_index).value for col_index in range(1, max_cols_to_scan + 1)]
-                columns = [_clean_header_value(value) for value in values]
-                columns = [column for column in columns if column]
+                columns = _valid_columns(values)
                 if len(columns) > len(best_columns):
                     best_columns = columns
                     best_sheet = sheet.title
+                    best_row = row_index
+        df = _header_df(best_columns, source=f'{file_name}:{best_sheet}:linha_{best_row}')
+        if _valid_model(df):
+            df.attrs['model_header_sheet'] = best_sheet
+            df.attrs['model_header_row'] = best_row
+        return df
+    except Exception:
+        return None
+    finally:
         try:
-            workbook.close()
+            if workbook is not None:
+                workbook.close()
         except Exception:
             pass
-        if not best_columns:
-            add_audit_event('mapping_model_header_fallback_empty', area='MODELO', status='AVISO', details={'file': _file_audit_info(file)})
-            return None
-        df = pd.DataFrame(columns=_dedupe_columns(best_columns))
-        add_audit_event('mapping_model_header_fallback_applied', area='MODELO', status='OK', details={'file': _file_audit_info(file), 'sheet': best_sheet, 'dataframe': _df_audit_info(df)})
-        return df
+
+
+def _read_header_from_bytes(data: bytes, file_name: str) -> pd.DataFrame | None:
+    lower = str(file_name or '').lower()
+    if lower.endswith('.csv'):
+        return _read_csv_header_from_bytes(data, file_name)
+    if lower.endswith(('.xlsx', '.xls', '.xlsm', '.xlsb')):
+        pandas_df = _read_excel_header_with_pandas(data, file_name)
+        if _valid_model(pandas_df):
+            return pandas_df
+        return _read_excel_header_with_openpyxl(data, file_name)
+    return None
+
+
+def _read_zip_header_fallback(file: Any) -> pd.DataFrame | None:
+    try:
+        with zipfile.ZipFile(BytesIO(_file_bytes(file))) as archive:
+            best_df: pd.DataFrame | None = None
+            best_inner = ''
+            for info in archive.infolist():
+                if info.is_dir():
+                    continue
+                inner_name = str(info.filename or '')
+                lower = inner_name.lower()
+                if not lower.endswith(('.csv', '.xlsx', '.xls', '.xlsm', '.xlsb')):
+                    continue
+                candidate = _read_header_from_bytes(archive.read(info), inner_name)
+                if _valid_model(candidate) and (best_df is None or len(candidate.columns) > len(best_df.columns)):
+                    best_df = candidate
+                    best_inner = inner_name
+            if _valid_model(best_df):
+                best_df.attrs['model_header_zip_member'] = best_inner
+                return best_df
+    except Exception:
+        return None
+    return None
+
+
+def _read_model_header_fallback(file: Any) -> pd.DataFrame | None:
+    ext = _file_ext(file)
+    try:
+        if ext == 'zip':
+            df = _read_zip_header_fallback(file)
+        elif ext in HEADER_FALLBACK_TYPES:
+            df = _read_header_from_bytes(_file_bytes(file), _file_name(file))
+        else:
+            df = None
+        if _valid_model(df):
+            add_audit_event('mapping_model_header_fallback_applied', area='MODELO', status='OK', details={'file': _file_audit_info(file), 'dataframe': _df_audit_info(df), 'source': getattr(df, 'attrs', {})})
+            return df
+        add_audit_event('mapping_model_header_fallback_empty', area='MODELO', status='AVISO', details={'file': _file_audit_info(file)})
+        return None
     except Exception as exc:
         add_audit_event('mapping_model_header_fallback_failed', area='MODELO', status='ERRO', details={'file': _file_audit_info(file), 'error': str(exc)})
         return None
 
 
 def _safe_read(file: Any) -> pd.DataFrame | None:
+    fallback_df: pd.DataFrame | None = None
     try:
         df = read_upload_fast(file)
-        if not _valid_model(df):
-            fallback_df = _read_excel_header_fallback(file)
-            if _valid_model(fallback_df):
-                df = fallback_df
-        add_audit_event('mapping_model_file_read', area='MODELO', details={'file': _file_audit_info(file), 'dataframe': _df_audit_info(df)})
+        if _valid_model(df):
+            add_audit_event('mapping_model_file_read', area='MODELO', details={'file': _file_audit_info(file), 'dataframe': _df_audit_info(df), 'reader': 'read_upload_fast'})
+            return df
+        fallback_df = _read_model_header_fallback(file)
+        if _valid_model(fallback_df):
+            add_audit_event('mapping_model_file_read_recovered_by_header_fallback', area='MODELO', status='OK', details={'file': _file_audit_info(file), 'dataframe': _df_audit_info(fallback_df), 'reader': 'header_fallback_after_invalid_df'})
+            return fallback_df
+        add_audit_event('mapping_model_file_read', area='MODELO', details={'file': _file_audit_info(file), 'dataframe': _df_audit_info(df), 'reader': 'read_upload_fast_invalid'})
         return df
     except Exception as exc:
-        fallback_df = _read_excel_header_fallback(file)
+        fallback_df = _read_model_header_fallback(file)
         if _valid_model(fallback_df):
-            add_audit_event('mapping_model_file_read_recovered_by_header_fallback', area='MODELO', status='OK', details={'file': _file_audit_info(file), 'dataframe': _df_audit_info(fallback_df), 'original_error': str(exc)})
+            add_audit_event('mapping_model_file_read_recovered_by_header_fallback', area='MODELO', status='OK', details={'file': _file_audit_info(file), 'dataframe': _df_audit_info(fallback_df), 'original_error': str(exc), 'reader': 'header_fallback_after_exception'})
             return fallback_df
         add_audit_event('mapping_model_file_read_failed', area='MODELO', status='ERRO', details={'file': _file_audit_info(file), 'error': str(exc)})
         return None
