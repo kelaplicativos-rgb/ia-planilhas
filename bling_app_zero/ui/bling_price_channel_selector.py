@@ -129,6 +129,18 @@ def _filter_active_options(options: list[dict[str, str]]) -> tuple[list[dict[str
     return active, max(0, len(options) - len(active)), True
 
 
+def _filter_options_by_query(options: list[dict[str, str]], query: object) -> list[dict[str, str]]:
+    terms = [term for term in _normalize_sort_text(query).split() if term]
+    if not terms:
+        return options
+    filtered: list[dict[str, str]] = []
+    for item in options:
+        searchable = _normalize_sort_text(f"{item.get('nome', '')} {item.get('id', '')}")
+        if all(term in searchable for term in terms):
+            filtered.append(item)
+    return filtered
+
+
 def _prepare_options(options: list[dict[str, str]]) -> tuple[list[dict[str, str]], int, bool]:
     valid_options = [item for item in _unique_options(options) if _option_has_valid_id(item)]
     return _filter_active_options(valid_options)
@@ -250,15 +262,28 @@ def render_price_channel_selector(download_df: pd.DataFrame, operation: str) -> 
         st.session_state[PRICE_CHANNEL_NAME_KEY] = str(manual_name or manual_id).strip()
         return _inject_price_target_columns(download_df)
 
-    labels = [f"{item.get('nome') or 'Sem nome'} · ID {item.get('id')}" for item in options]
+    query = st.text_input(
+        'Filtrar loja/canal',
+        value=str(st.session_state.get('bling_price_channel_filter') or ''),
+        placeholder='Digite nome ou ID do canal',
+        key='bling_price_channel_filter',
+    )
+    filtered_options = _filter_options_by_query(options, query)
+    if not filtered_options:
+        st.warning('Nenhuma loja/canal encontrada com esse filtro. Apague ou ajuste o texto para continuar.')
+        return None
+    if query:
+        st.caption(f'{len(filtered_options)} de {len(options)} canal(is) encontrado(s).')
+
+    labels = [f"{item.get('nome') or 'Sem nome'} · ID {item.get('id')}" for item in filtered_options]
     current_id = str(st.session_state.get(PRICE_CHANNEL_ID_KEY) or '')
     index = 0
-    for pos, item in enumerate(options):
+    for pos, item in enumerate(filtered_options):
         if current_id and str(item.get('id') or '') == current_id:
             index = pos
             break
     selected_label = st.selectbox('Loja/canal que receberá o preço calculado', labels, index=index, key='bling_price_channel_select')
-    selected = options[labels.index(selected_label)]
+    selected = filtered_options[labels.index(selected_label)]
     selected_id = str(selected.get('id') or '').strip()
     if not selected_id:
         st.warning('O canal selecionado não trouxe ID válido. Atualize a lista ou use Preço geral.')
