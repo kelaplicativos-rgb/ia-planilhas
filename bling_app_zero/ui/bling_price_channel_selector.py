@@ -16,7 +16,10 @@ API_BASE_DEFAULT = 'https://api.bling.com.br/Api/v3'
 PRICE_TARGET_MODE_KEY = 'bling_price_target_mode'
 PRICE_CHANNEL_ID_KEY = 'bling_price_channel_id'
 PRICE_CHANNEL_NAME_KEY = 'bling_price_channel_name'
-PRICE_CHANNEL_OPTIONS_KEY = 'bling_price_channel_options'
+PRICE_CHANNEL_OPTIONS_KEY_LEGACY = 'bling_price_channel_options'
+PRICE_CHANNEL_OPTIONS_KEY = 'bling_price_channel_options_v2_full_paginated'
+PRICE_CHANNEL_CACHE_VERSION_KEY = 'bling_price_channel_options_cache_version'
+PRICE_CHANNEL_CACHE_VERSION = 'v2_full_paginated_2026_06_16'
 PRICE_GENERAL_VALUE = 'geral'
 PRICE_CHANNEL_VALUE = 'canal'
 LOOKUP_TIMEOUT = 15
@@ -191,6 +194,29 @@ def _prepare_options(options: list[dict[str, str]]) -> tuple[list[dict[str, str]
     return _filter_active_options(valid_options)
 
 
+def _invalidate_legacy_channel_cache() -> None:
+    current_version = str(st.session_state.get(PRICE_CHANNEL_CACHE_VERSION_KEY) or '')
+    if current_version == PRICE_CHANNEL_CACHE_VERSION:
+        return
+    removed_keys: list[str] = []
+    for key in (PRICE_CHANNEL_OPTIONS_KEY_LEGACY, PRICE_CHANNEL_OPTIONS_KEY):
+        if key in st.session_state:
+            st.session_state.pop(key, None)
+            removed_keys.append(key)
+    st.session_state[PRICE_CHANNEL_CACHE_VERSION_KEY] = PRICE_CHANNEL_CACHE_VERSION
+    add_audit_event(
+        'bling_price_channels_cache_invalidated',
+        area='BLING_ENVIO',
+        status='OK',
+        details={
+            'cache_version': PRICE_CHANNEL_CACHE_VERSION,
+            'removed_keys': removed_keys,
+            'reason': 'Forcar busca completa paginada de canais/lojas do Bling.',
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+
+
 def _fetch_channel_path_items(token: dict[str, Any], path: str) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]]:
     items: list[dict[str, Any]] = []
     errors: list[str] = []
@@ -214,6 +240,7 @@ def _fetch_channel_path_items(token: dict[str, Any], path: str) -> tuple[list[di
 
 
 def load_price_channels(*, force: bool = False) -> list[dict[str, str]]:
+    _invalidate_legacy_channel_cache()
     cached = st.session_state.get(PRICE_CHANNEL_OPTIONS_KEY)
     if not force and isinstance(cached, list) and cached:
         options, _inactive_count, _status_filter_applied = _prepare_options([item for item in cached if isinstance(item, dict)])
@@ -260,6 +287,7 @@ def load_price_channels(*, force: bool = False) -> list[dict[str, str]]:
                 'inactive_ignored': inactive_count,
                 'status_filter_applied': status_filter_applied,
                 'order': 'alphabetical_by_name',
+                'cache_version': PRICE_CHANNEL_CACHE_VERSION,
                 'pagination': {'page_size': CHANNEL_PAGE_SIZE, 'max_pages': CHANNEL_MAX_PAGES},
                 'paths': path_stats,
                 'errors': errors[:8],
@@ -268,7 +296,7 @@ def load_price_channels(*, force: bool = False) -> list[dict[str, str]]:
             },
         )
         return options
-    add_audit_event('bling_price_channels_load_failed', area='BLING_ENVIO', status='AVISO', details={'errors': errors[:8], 'paths': path_stats, 'api_base': _api_base_url(), 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('bling_price_channels_load_failed', area='BLING_ENVIO', status='AVISO', details={'errors': errors[:8], 'paths': path_stats, 'cache_version': PRICE_CHANNEL_CACHE_VERSION, 'api_base': _api_base_url(), 'responsible_file': RESPONSIBLE_FILE})
     return []
 
 
