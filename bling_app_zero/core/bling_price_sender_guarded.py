@@ -12,8 +12,16 @@ from bling_app_zero.core.operation_contract import OP_ATUALIZACAO_PRECO
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_price_sender_guarded.py'
 
 
+def _store_price_values(price_value: int | float, field: str) -> dict[str, Any]:
+    values = {'preco': price_value, 'precoPromocional': price_value}
+    if field not in values:
+        values[field] = price_value
+    return values
+
+
 def _product_store_price_payloads(product_store_id: str, product_id: str, channel_id: str, price: float, field: str) -> list[tuple[str, str, str, dict[str, Any]]]:
     price_value = raw_sender._api_number(price)
+    price_values = _store_price_values(price_value, field)
     path = raw_sender._store_update_path(product_store_id)
     method = (raw_sender._secret('product_store_update_method', 'PUT') or 'PUT').upper()
     product_store_id = str(product_store_id)
@@ -21,33 +29,33 @@ def _product_store_price_payloads(product_store_id: str, product_id: str, channe
     channel_id = str(channel_id)
 
     payloads: list[tuple[str, dict[str, Any]]] = [
-        ('produto_loja_idProdutoLoja_preco', {'idProdutoLoja': product_store_id, field: price_value}),
+        ('produto_loja_idProdutoLoja_preco_promocional', {'idProdutoLoja': product_store_id, **price_values}),
         (
-            'produto_loja_ids_planos_preco',
+            'produto_loja_ids_planos_preco_promocional',
             {
                 'id': product_store_id,
                 'idProdutoLoja': product_store_id,
                 'idProduto': product_id,
                 'idLoja': channel_id,
-                field: price_value,
+                **price_values,
             },
         ),
         (
-            'produto_loja_objetos_com_idProdutoLoja_preco',
+            'produto_loja_objetos_com_idProdutoLoja_preco_promocional',
             {
                 'idProdutoLoja': product_store_id,
                 'produto': {'id': product_id},
                 'loja': {'id': channel_id},
-                field: price_value,
+                **price_values,
             },
         ),
-        ('produto_loja_preco_minimo_legado_seguro', {field: price_value}),
+        ('produto_loja_preco_promocional_legado_seguro', dict(price_values)),
     ]
     attempts = [(method, path, label, payload) for label, payload in payloads]
     if method not in {'PATCH', 'PUT'}:
-        attempts.insert(0, ('PUT', path, 'produto_loja_idProdutoLoja_preco', {'idProdutoLoja': product_store_id, field: price_value}))
+        attempts.insert(0, ('PUT', path, 'produto_loja_idProdutoLoja_preco_promocional', {'idProdutoLoja': product_store_id, **price_values}))
     elif method != 'PUT':
-        attempts.insert(0, ('PUT', path, 'produto_loja_idProdutoLoja_preco', {'idProdutoLoja': product_store_id, field: price_value}))
+        attempts.insert(0, ('PUT', path, 'produto_loja_idProdutoLoja_preco_promocional', {'idProdutoLoja': product_store_id, **price_values}))
     return raw_sender._dedupe_price_attempts(attempts)
 
 
@@ -58,8 +66,9 @@ def _install_price_payload_guard() -> None:
         area='BLING_ENVIO',
         status='OK',
         details={
-            'reason': 'Atualizacao por canal envia idProdutoLoja no payload antes do fallback minimo.',
+            'reason': 'Atualizacao por canal envia idProdutoLoja com preco e precoPromocional no payload.',
             'legacy_price_paths_blocked': True,
+            'store_price_fields': ['preco', 'precoPromocional'],
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
