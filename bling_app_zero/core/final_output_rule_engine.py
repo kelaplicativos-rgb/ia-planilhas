@@ -134,9 +134,9 @@ def apply_final_output_rules(
 
     warnings: list[str] = []
     blocked_for_api = False
-    if excess_before and not limit_images_enabled:
+    if excess_after and not limit_images_enabled:
         message = (
-            f'{len(excess_before)} produto(s) têm mais de {MAX_IMAGE_URLS_PER_PRODUCT} imagens. '
+            f'{len(excess_after)} produto(s) ainda têm mais de {MAX_IMAGE_URLS_PER_PRODUCT} imagens. '
             'A regra “Limitar imagens para Bling” está desligada.'
         )
         warnings.append(message)
@@ -179,6 +179,7 @@ def apply_final_output_rules(
                 'context': context,
                 'warnings': warnings,
                 'rows_over_image_limit_before': len(excess_before),
+                'rows_over_image_limit_after': len(excess_after),
                 'limit_bling_images': limit_images_enabled,
                 'image_columns': columns_before,
                 'measure_unit_columns': list(measure_result.columns),
