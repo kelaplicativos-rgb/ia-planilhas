@@ -20,6 +20,8 @@ PRICE_CHANNEL_OPTIONS_KEY = 'bling_price_channel_options'
 PRICE_GENERAL_VALUE = 'geral'
 PRICE_CHANNEL_VALUE = 'canal'
 LOOKUP_TIMEOUT = 15
+CHANNEL_PAGE_SIZE = 100
+CHANNEL_MAX_PAGES = 20
 ACTIVE_STATUS_VALUES = {'a', 'ativo', 'ativa', 'active', 'enabled', 'habilitado', 'habilitada', '1', 'true', 'sim', 'yes'}
 INACTIVE_STATUS_VALUES = {'i', 'inativo', 'inativa', 'inactive', 'disabled', 'desabilitado', 'desabilitada', '0', 'false', 'nao', 'não', 'no'}
 STATUS_KEYS = ('situacao', 'situação', 'status', 'ativo', 'ativa', 'active', 'enabled', 'habilitado', 'habilitada', 'isActive')
@@ -94,10 +96,53 @@ def _is_active_channel(item: dict[str, Any]) -> bool:
     return True
 
 
+def _first_text(*values: Any) -> str:
+    for value in values:
+        text = str(value or '').strip()
+        if text:
+            return text
+    return ''
+
+
 def _normalize_channel_item(item: dict[str, Any]) -> dict[str, str] | None:
     nested = item.get('loja') if isinstance(item.get('loja'), dict) else item.get('canal') if isinstance(item.get('canal'), dict) else {}
-    channel_id = str(item.get('id') or item.get('idLoja') or item.get('idCanal') or item.get('codigo') or nested.get('id') or nested.get('idLoja') or '').strip()
-    name = str(item.get('descricao') or item.get('nome') or item.get('name') or item.get('description') or nested.get('descricao') or nested.get('nome') or '').strip()
+    channel_id = _first_text(
+        item.get('id'),
+        item.get('idLoja'),
+        item.get('idCanal'),
+        item.get('idLojaVirtual'),
+        item.get('codigo'),
+        item.get('codigoLoja'),
+        item.get('codigoLojaApi'),
+        item.get('codigoApi'),
+        item.get('codigoApiBling'),
+        item.get('codigoAplicativo'),
+        nested.get('id'),
+        nested.get('idLoja'),
+        nested.get('idCanal'),
+        nested.get('idLojaVirtual'),
+        nested.get('codigo'),
+        nested.get('codigoLoja'),
+        nested.get('codigoLojaApi'),
+        nested.get('codigoApi'),
+        nested.get('codigoApiBling'),
+    )
+    name = _first_text(
+        item.get('descricao'),
+        item.get('nome'),
+        item.get('nomeCanalVenda'),
+        item.get('nomeCanal'),
+        item.get('nomeLoja'),
+        item.get('nomeLojaVirtual'),
+        item.get('name'),
+        item.get('description'),
+        nested.get('descricao'),
+        nested.get('nome'),
+        nested.get('nomeCanalVenda'),
+        nested.get('nomeCanal'),
+        nested.get('nomeLoja'),
+        nested.get('nomeLojaVirtual'),
+    )
     if not channel_id and not name:
         return None
     return {'id': channel_id, 'nome': name or channel_id, 'status': _status_value(item, nested)}
@@ -146,6 +191,28 @@ def _prepare_options(options: list[dict[str, str]]) -> tuple[list[dict[str, str]
     return _filter_active_options(valid_options)
 
 
+def _fetch_channel_path_items(token: dict[str, Any], path: str) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]]:
+    items: list[dict[str, Any]] = []
+    errors: list[str] = []
+    pages_loaded = 0
+    for page in range(1, CHANNEL_MAX_PAGES + 1):
+        params = {'pagina': page, 'limite': CHANNEL_PAGE_SIZE}
+        try:
+            response = requests.get(_url(path), headers=_headers(token), params=params, timeout=LOOKUP_TIMEOUT)
+        except Exception as exc:
+            errors.append(f'{path} página {page}: {str(exc)[:160]}')
+            break
+        if response.status_code >= 400:
+            errors.append(f'{path} página {page}: HTTP {response.status_code}')
+            break
+        page_items = _extract_items(response.json() if str(response.text or '').strip() else {})
+        pages_loaded += 1
+        items.extend(page_items)
+        if len(page_items) < CHANNEL_PAGE_SIZE:
+            break
+    return items, {'path': path, 'pages': pages_loaded, 'raw_count': len(items)}, errors
+
+
 def load_price_channels(*, force: bool = False) -> list[dict[str, str]]:
     cached = st.session_state.get(PRICE_CHANNEL_OPTIONS_KEY)
     if not force and isinstance(cached, list) and cached:
@@ -170,37 +237,38 @@ def load_price_channels(*, force: bool = False) -> list[dict[str, str]]:
     ]
     found: list[dict[str, str]] = []
     errors: list[str] = []
+    path_stats: list[dict[str, Any]] = []
     for path in [path for path in paths if str(path or '').strip()]:
-        try:
-            response = requests.get(_url(path), headers=_headers(token), timeout=LOOKUP_TIMEOUT)
-            if response.status_code >= 400:
-                errors.append(f'{path}: HTTP {response.status_code}')
-                continue
-            for item in _extract_items(response.json() if str(response.text or '').strip() else {}):
-                normalized = _normalize_channel_item(item)
-                if normalized:
-                    found.append(normalized)
-            options, inactive_count, status_filter_applied = _prepare_options(found)
-            if options:
-                st.session_state[PRICE_CHANNEL_OPTIONS_KEY] = options
-                add_audit_event(
-                    'bling_price_channels_loaded',
-                    area='BLING_ENVIO',
-                    status='OK',
-                    details={
-                        'path': path,
-                        'count': len(options),
-                        'inactive_ignored': inactive_count,
-                        'status_filter_applied': status_filter_applied,
-                        'order': 'alphabetical_by_name',
-                        'api_base': _api_base_url(),
-                        'responsible_file': RESPONSIBLE_FILE,
-                    },
-                )
-                return options
-        except Exception as exc:
-            errors.append(f'{path}: {str(exc)[:160]}')
-    add_audit_event('bling_price_channels_load_failed', area='BLING_ENVIO', status='AVISO', details={'errors': errors[:8], 'api_base': _api_base_url(), 'responsible_file': RESPONSIBLE_FILE})
+        raw_items, stats, path_errors = _fetch_channel_path_items(token, path)
+        path_stats.append(stats)
+        errors.extend(path_errors)
+        for item in raw_items:
+            normalized = _normalize_channel_item(item)
+            if normalized:
+                found.append(normalized)
+
+    options, inactive_count, status_filter_applied = _prepare_options(found)
+    if options:
+        st.session_state[PRICE_CHANNEL_OPTIONS_KEY] = options
+        add_audit_event(
+            'bling_price_channels_loaded',
+            area='BLING_ENVIO',
+            status='OK',
+            details={
+                'count': len(options),
+                'raw_count': len(found),
+                'inactive_ignored': inactive_count,
+                'status_filter_applied': status_filter_applied,
+                'order': 'alphabetical_by_name',
+                'pagination': {'page_size': CHANNEL_PAGE_SIZE, 'max_pages': CHANNEL_MAX_PAGES},
+                'paths': path_stats,
+                'errors': errors[:8],
+                'api_base': _api_base_url(),
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+        return options
+    add_audit_event('bling_price_channels_load_failed', area='BLING_ENVIO', status='AVISO', details={'errors': errors[:8], 'paths': path_stats, 'api_base': _api_base_url(), 'responsible_file': RESPONSIBLE_FILE})
     return []
 
 
@@ -248,7 +316,7 @@ def render_price_channel_selector(download_df: pd.DataFrame, operation: str) -> 
         return _inject_price_target_columns(download_df)
 
     options = load_price_channels()
-    if st.button('Atualizar lista de lojas/canais do Bling', use_container_width=True, key='bling_price_reload_channels'):
+    if st.button('Atualizar lista completa de lojas/canais do Bling', use_container_width=True, key='bling_price_reload_channels'):
         options = load_price_channels(force=True)
         st.rerun()
 
@@ -265,12 +333,12 @@ def render_price_channel_selector(download_df: pd.DataFrame, operation: str) -> 
     query = st.text_input(
         'Filtrar loja/canal',
         value=str(st.session_state.get('bling_price_channel_filter') or ''),
-        placeholder='Digite nome ou ID do canal',
+        placeholder='Digite nome ou ID do canal. Ex.: Ifood ou 205541563',
         key='bling_price_channel_filter',
     )
     filtered_options = _filter_options_by_query(options, query)
     if not filtered_options:
-        st.warning('Nenhuma loja/canal encontrada com esse filtro. Apague ou ajuste o texto para continuar.')
+        st.warning('Nenhuma loja/canal encontrada com esse filtro. Clique em Atualizar lista completa ou ajuste o texto para continuar.')
         return None
     if query:
         st.caption(f'{len(filtered_options)} de {len(options)} canal(is) encontrado(s).')
