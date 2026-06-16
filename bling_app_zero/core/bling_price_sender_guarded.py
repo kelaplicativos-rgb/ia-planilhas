@@ -56,8 +56,33 @@ def _product_store_price_payloads(product_store_id: str, product_id: str, channe
     return raw_sender._dedupe_price_attempts(attempts)
 
 
+def _guarded_price_preview_payloads(df: pd.DataFrame, *, limit: int = 5) -> list[dict[str, Any]]:
+    mapping = raw_sender._column_map(df.columns)
+    previews: list[dict[str, Any]] = []
+    for _index, row in df.fillna('').head(limit).iterrows():
+        price = raw_sender._number_value(raw_sender._value(row, mapping, 'preco'))
+        channel_id = raw_sender._id_text(raw_sender._value(row, mapping, 'channel_id'))
+        target = raw_sender._value(row, mapping, 'price_target') or ('Canal de venda' if channel_id else 'Preço geral')
+        if price is None:
+            previews.append({'payload': {}, 'status': 'IGNORADO', 'motivo': 'Preço ausente ou inválido.'})
+            continue
+        price_value = raw_sender._api_number(price)
+        if channel_id:
+            payload = {'preco': price_value, 'precoPromocional': price_value}
+            endpoint = raw_sender.PRODUCT_STORE_UPDATE_PATH_TEMPLATE
+            reason = f'Destino: {target} | Canal selecionado: atualiza Preço e Preço promocional do anúncio da loja.'
+        else:
+            field = raw_sender._price_field_from_target(target)
+            payload = {field: price_value}
+            endpoint = '/produtos/{id}'
+            reason = f'Destino: {target} | Sem canal selecionado: atualiza o preço geral do produto.'
+        previews.append({'payload': payload, 'status': 'OK', 'motivo': f'{reason} | Endpoint seguro: {endpoint}'})
+    return previews
+
+
 def _install_price_payload_guard() -> None:
     raw_sender._product_store_price_payloads = _product_store_price_payloads
+    raw_sender._price_preview_payloads = _guarded_price_preview_payloads
     add_audit_event(
         'bling_price_sender_guard_installed',
         area='BLING_ENVIO',
@@ -66,6 +91,7 @@ def _install_price_payload_guard() -> None:
             'reason': 'Com canal selecionado, atualizacao mira o vinculo produto-loja e envia preco e precoPromocional. Sem canal, o fluxo normal atualiza o preco geral do produto.',
             'legacy_price_paths_blocked': True,
             'store_price_fields': ['preco', 'precoPromocional'],
+            'preview_guarded': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -157,7 +183,7 @@ def _price_channel_separation(df: pd.DataFrame, *, limit: int | None = None) -> 
 
 def preview_payloads(df: pd.DataFrame, *, limit: int = 5) -> list[dict[str, Any]]:
     _install_price_payload_guard()
-    return raw_sender.preview_payloads(df, OP_ATUALIZACAO_PRECO, limit=limit)
+    return _guarded_price_preview_payloads(df, limit=limit)
 
 
 def send_dataframe_to_bling_price(
