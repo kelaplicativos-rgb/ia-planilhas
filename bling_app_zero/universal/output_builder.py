@@ -17,6 +17,7 @@ PROMO_PRICE_TERMS = ('preco_promocional', 'preço_promocional', 'preco promocion
 CALCULATED_PRICE_COLUMNS = ('Preço de venda', 'Preco de venda')
 CALCULATED_PROMO_PRICE_COLUMNS = ('Preço promocional', 'Preco Promocional', 'Preço Promocional')
 NAME_TERMS = ('nome', 'descricao', 'descrição', 'produto', 'titulo', 'título')
+TITLE_TARGET_TERMS = ('nome', 'titulo', 'título', 'title', 'name')
 EMPTY_MARKERS = {'', 'nan', 'none', 'null', '<na>'}
 
 
@@ -47,6 +48,37 @@ def _has_term(column: Any, terms: tuple[str, ...]) -> bool:
     key = _norm_column(column)
     normalized_terms = tuple(normalize_key(term).replace(' ', '_') for term in terms)
     return any(term and term in key for term in normalized_terms)
+
+
+def _is_title_target(column: Any) -> bool:
+    key = _norm_column(column)
+    normalized_terms = tuple(normalize_key(term).replace(' ', '_') for term in TITLE_TARGET_TERMS)
+    return any(term and term in key for term in normalized_terms)
+
+
+def _title_from_text(value: Any) -> str:
+    """Extrai um título seguro quando a origem trouxe o nome dentro da descrição.
+
+    Caso real: alguns produtos do site vieram sem a coluna de título, mas a
+    descrição começava como "Nome do produto — texto complementar". O modelo
+    vazio usava somente a coluna mapeada e deixava Nome do item em branco. Este
+    fallback recupera o nome sem copiar a descrição inteira para o campo título.
+    """
+    text = _clean_value(value)
+    if _is_empty(text):
+        return ''
+
+    for separator in (' — ', ' – ', ' - ', ' | ', ' • ', '—', '–'):
+        if separator in text:
+            candidate = _clean_value(text.split(separator, 1)[0])
+            if len(candidate) >= 3:
+                return candidate
+
+    sentence = re.split(r'(?<=[.!?])\s+', text, maxsplit=1)[0]
+    candidate = _clean_value(sentence)
+    if len(candidate) <= 120:
+        return candidate
+    return _clean_value(candidate[:120].rsplit(' ', 1)[0])
 
 
 def _key_columns(df: pd.DataFrame) -> list[str]:
@@ -145,13 +177,42 @@ def _safe_series(df_source: pd.DataFrame, source_column: str, length: int) -> pd
     return pd.Series([''] * length, dtype='object')
 
 
+def _prepare_candidate_value(value: Any, target_column: str) -> str:
+    if _is_title_target(target_column):
+        return _title_from_text(value)
+    return _clean_value(value)
+
+
+def _merged_candidate_series(df_source: pd.DataFrame, candidates: list[str], length: int, target_column: str) -> pd.Series:
+    """Preenche linha a linha usando fallback entre colunas candidatas.
+
+    Antes, modelo vazio pegava só a coluna mapeada. Se o título vinha vazio em
+    parte do lote capturado, a saída ficava vazia mesmo havendo título/descrição
+    em outras colunas da origem. Agora cada linha tenta: mapeada -> mesma coluna
+    -> aliases de nome/produto/título/descrição.
+    """
+    values = [''] * max(0, int(length or 0))
+    for source_column in candidates:
+        series = _safe_series(df_source, source_column, length)
+        for idx in range(min(length, len(series))):
+            if not _is_empty(values[idx]):
+                continue
+            candidate = _prepare_candidate_value(series.iloc[idx], target_column)
+            if not _is_empty(candidate):
+                values[idx] = candidate
+    return pd.Series(values, dtype='object')
+
+
 def _build_from_empty_model(df_source: pd.DataFrame, contract_columns: list[str], mapping: dict[str, str]) -> pd.DataFrame:
     source = df_source if isinstance(df_source, pd.DataFrame) else pd.DataFrame()
     length = int(len(source)) if not source.empty else 0
     data: dict[str, pd.Series] = {}
     for target_column in contract_columns:
         source_column = str(mapping.get(target_column, '') or '')
-        data[target_column] = _safe_series(source, source_column, length)
+        candidates = _candidate_source_columns(source, source_column, target_column)
+        if not candidates and source_column:
+            candidates = [source_column]
+        data[target_column] = _merged_candidate_series(source, candidates, length, target_column) if candidates else pd.Series([''] * length, dtype='object')
     return pd.DataFrame(data, columns=contract_columns)
 
 
@@ -170,24 +231,20 @@ def _build_from_filled_model(df_source: pd.DataFrame, df_model: pd.DataFrame, co
         if not candidates:
             continue
 
-        applied = False
-        for source_column in candidates:
-            lookup = _build_lookup(source, source_column)
-            if lookup and model_key_columns:
+        if model_key_columns:
+            for source_column in candidates:
+                lookup = _build_lookup(source, source_column)
+                if not lookup:
+                    continue
                 values = model.apply(lambda row: _match_model_row(row, lookup, model_key_columns), axis=1)
-                mask = values.map(lambda value: not _is_empty(value))
+                values = values.map(lambda value: _prepare_candidate_value(value, target_column))
+                mask = values.map(lambda value: not _is_empty(value)) & model[target_column].map(_is_empty)
                 if bool(mask.any()):
                     model.loc[mask, target_column] = values[mask]
-                    applied = True
-                    break
 
-        if applied:
-            continue
-
-        fallback_column = candidates[0]
-        if same_length and fallback_column in source.columns:
-            values = source[fallback_column].fillna('').astype(str).reset_index(drop=True)
-            mask = values.map(lambda value: not _is_empty(value))
+        if same_length:
+            values = _merged_candidate_series(source, candidates, len(model), target_column)
+            mask = values.map(lambda value: not _is_empty(value)) & model[target_column].map(_is_empty)
             if bool(mask.any()):
                 model.loc[mask, target_column] = values[mask]
 
