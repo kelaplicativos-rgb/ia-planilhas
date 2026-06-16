@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import unicodedata
 from typing import Any
 
 import pandas as pd
@@ -18,6 +20,9 @@ PRICE_CHANNEL_OPTIONS_KEY = 'bling_price_channel_options'
 PRICE_GENERAL_VALUE = 'geral'
 PRICE_CHANNEL_VALUE = 'canal'
 LOOKUP_TIMEOUT = 15
+ACTIVE_STATUS_VALUES = {'a', 'ativo', 'ativa', 'active', 'enabled', 'habilitado', 'habilitada', '1', 'true', 'sim', 'yes'}
+INACTIVE_STATUS_VALUES = {'i', 'inativo', 'inativa', 'inactive', 'disabled', 'desabilitado', 'desabilitada', '0', 'false', 'nao', 'não', 'no'}
+STATUS_KEYS = ('situacao', 'situação', 'status', 'ativo', 'ativa', 'active', 'enabled', 'habilitado', 'habilitada', 'isActive')
 
 
 def _secret(name: str, default: str = '') -> str:
@@ -62,6 +67,42 @@ def _extract_items(payload: Any) -> list[dict[str, Any]]:
     return [payload] if payload.get('id') or payload.get('idLoja') or payload.get('idCanal') else []
 
 
+def _normalize_sort_text(value: object) -> str:
+    text = str(value or '').strip().casefold()
+    text = ''.join(char for char in unicodedata.normalize('NFKD', text) if not unicodedata.combining(char))
+    text = re.sub(r'[^a-z0-9]+', ' ', text)
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def _status_value(item: dict[str, Any], nested: dict[str, Any] | None = None) -> str:
+    nested = nested or {}
+    for source in (item, nested):
+        for key in STATUS_KEYS:
+            if key in source and source.get(key) not in (None, ''):
+                return _normalize_sort_text(source.get(key))
+    return ''
+
+
+def _is_active_channel(item: dict[str, Any]) -> bool:
+    status = str(item.get('status') or '').strip()
+    if not status:
+        return True
+    if status in INACTIVE_STATUS_VALUES:
+        return False
+    if status in ACTIVE_STATUS_VALUES:
+        return True
+    return True
+
+
+def _normalize_channel_item(item: dict[str, Any]) -> dict[str, str] | None:
+    nested = item.get('loja') if isinstance(item.get('loja'), dict) else item.get('canal') if isinstance(item.get('canal'), dict) else {}
+    channel_id = str(item.get('id') or item.get('idLoja') or item.get('idCanal') or item.get('codigo') or nested.get('id') or nested.get('idLoja') or '').strip()
+    name = str(item.get('descricao') or item.get('nome') or item.get('name') or item.get('description') or nested.get('descricao') or nested.get('nome') or '').strip()
+    if not channel_id and not name:
+        return None
+    return {'id': channel_id, 'nome': name or channel_id, 'status': _status_value(item, nested)}
+
+
 def _unique_options(items: list[dict[str, str]]) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -70,14 +111,22 @@ def _unique_options(items: list[dict[str, str]]) -> list[dict[str, str]]:
         name = str(item.get('nome') or '').strip()
         key = (channel_id or name).lower()
         if key and key not in seen:
-            out.append({'id': channel_id, 'nome': name or channel_id})
+            out.append({'id': channel_id, 'nome': name or channel_id, 'status': str(item.get('status') or '').strip()})
             seen.add(key)
-    return out
+    return sorted(out, key=lambda option: (_normalize_sort_text(option.get('nome')), _normalize_sort_text(option.get('id'))))
 
 
 def _option_has_valid_id(item: dict[str, str]) -> bool:
     channel_id = str(item.get('id') or '').strip()
     return bool(channel_id) and channel_id.lower() not in {'sem id', 'none', 'nan', 'null'}
+
+
+def _filter_active_options(options: list[dict[str, str]]) -> tuple[list[dict[str, str]], int, bool]:
+    has_status = any(str(item.get('status') or '').strip() for item in options)
+    if not has_status:
+        return options, 0, False
+    active = [item for item in options if _is_active_channel(item)]
+    return active, max(0, len(options) - len(active)), True
 
 
 def load_price_channels(*, force: bool = False) -> list[dict[str, str]]:
@@ -108,15 +157,27 @@ def load_price_channels(*, force: bool = False) -> list[dict[str, str]]:
                 errors.append(f'{path}: HTTP {response.status_code}')
                 continue
             for item in _extract_items(response.json() if str(response.text or '').strip() else {}):
-                nested = item.get('loja') if isinstance(item.get('loja'), dict) else item.get('canal') if isinstance(item.get('canal'), dict) else {}
-                channel_id = str(item.get('id') or item.get('idLoja') or item.get('idCanal') or item.get('codigo') or nested.get('id') or nested.get('idLoja') or '').strip()
-                name = str(item.get('descricao') or item.get('nome') or item.get('name') or item.get('description') or nested.get('descricao') or nested.get('nome') or '').strip()
-                if channel_id or name:
-                    found.append({'id': channel_id, 'nome': name or channel_id})
+                normalized = _normalize_channel_item(item)
+                if normalized:
+                    found.append(normalized)
             options = [item for item in _unique_options(found) if _option_has_valid_id(item)]
+            options, inactive_count, status_filter_applied = _filter_active_options(options)
             if options:
                 st.session_state[PRICE_CHANNEL_OPTIONS_KEY] = options
-                add_audit_event('bling_price_channels_loaded', area='BLING_ENVIO', status='OK', details={'path': path, 'count': len(options), 'api_base': _api_base_url(), 'responsible_file': RESPONSIBLE_FILE})
+                add_audit_event(
+                    'bling_price_channels_loaded',
+                    area='BLING_ENVIO',
+                    status='OK',
+                    details={
+                        'path': path,
+                        'count': len(options),
+                        'inactive_ignored': inactive_count,
+                        'status_filter_applied': status_filter_applied,
+                        'order': 'alphabetical_by_name',
+                        'api_base': _api_base_url(),
+                        'responsible_file': RESPONSIBLE_FILE,
+                    },
+                )
                 return options
         except Exception as exc:
             errors.append(f'{path}: {str(exc)[:160]}')
