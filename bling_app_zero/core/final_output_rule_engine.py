@@ -14,6 +14,7 @@ from bling_app_zero.core.final_download_resources import (
     normalize_image_separator_resource,
 )
 from bling_app_zero.core.final_measure_unit_defaults import apply_measure_unit_default_resource
+from bling_app_zero.core.final_video_link_guard import apply_video_link_guard_resource
 from bling_app_zero.core.user_rules import get_user_rules
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/final_output_rule_engine.py'
@@ -28,6 +29,9 @@ class FinalOutputRuleReport:
     measure_unit_columns: tuple[str, ...]
     measure_unit_cells_changed: int
     measure_unit_value: str
+    video_link_columns: tuple[str, ...]
+    video_links_removed: int
+    video_link_cells_changed: int
     rows_over_image_limit_before: int
     rows_over_image_limit_after: int
     rows_limited: int
@@ -44,6 +48,7 @@ class FinalOutputRuleReport:
         data = asdict(self)
         data['image_columns'] = list(self.image_columns)
         data['measure_unit_columns'] = list(self.measure_unit_columns)
+        data['video_link_columns'] = list(self.video_link_columns)
         data['warnings'] = list(self.warnings)
         return data
 
@@ -97,8 +102,8 @@ def apply_final_output_rules(
     """Aplica as regras centrais do usuário no último ponto comum.
 
     Este motor é chamado antes de gerar CSV e antes do envio por API. Assim,
-    recursos como separador de imagens, limite de 6 imagens e Unidade das medidas
-    valem para os dois fluxos: exportação sem conectar e envio direto ao Bling.
+    recursos como separador de imagens, bloqueio de links de vídeo, limite de 6
+    imagens e Unidade das medidas valem para os dois fluxos.
     """
     original = _safe_df(df)
     current = original.copy()
@@ -112,6 +117,9 @@ def apply_final_output_rules(
     if normalize_images_enabled:
         current = normalize_image_separator_resource(current, enabled=True, limit_to_bling_max=False).df
 
+    video_result = apply_video_link_guard_resource(current)
+    current = video_result.df
+
     if limit_images_enabled:
         current = limit_bling_images_resource(current, enabled=True).df
 
@@ -120,7 +128,7 @@ def apply_final_output_rules(
 
     columns_after = _image_columns(current)
     excess_after = rows_over_bling_image_limit(current)
-    changed_columns = sorted(set(columns_before + columns_after + list(measure_result.columns)))
+    changed_columns = sorted(set(columns_before + columns_after + list(measure_result.columns) + list(video_result.columns)))
     changed = _changed_cells(original, current, changed_columns)
     rows_limited = max(0, len(excess_before) - len(excess_after)) if limit_images_enabled else 0
 
@@ -135,6 +143,9 @@ def apply_final_output_rules(
         if str(context or '').strip().lower() == 'api' and block_api_when_rule_disabled:
             blocked_for_api = True
             warnings.append('Envio por API bloqueado: o Bling pode recusar produtos com mais de 6 imagens.')
+
+    if video_result.video_links_removed:
+        warnings.append(f'{video_result.video_links_removed} link(s) de vídeo foram removidos do arquivo final.')
 
     if changed:
         add_audit_event(
@@ -153,6 +164,9 @@ def apply_final_output_rules(
                 'measure_unit_columns': list(measure_result.columns),
                 'measure_unit_cells_changed': int(measure_result.changed),
                 'measure_unit_value': measure_result.fill_value,
+                'video_link_columns': list(video_result.columns),
+                'video_links_removed': int(video_result.video_links_removed),
+                'video_link_cells_changed': int(video_result.changed),
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
@@ -168,6 +182,8 @@ def apply_final_output_rules(
                 'limit_bling_images': limit_images_enabled,
                 'image_columns': columns_before,
                 'measure_unit_columns': list(measure_result.columns),
+                'video_link_columns': list(video_result.columns),
+                'video_links_removed': int(video_result.video_links_removed),
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
@@ -180,6 +196,9 @@ def apply_final_output_rules(
         measure_unit_columns=tuple(measure_result.columns),
         measure_unit_cells_changed=int(measure_result.changed),
         measure_unit_value=measure_result.fill_value,
+        video_link_columns=tuple(video_result.columns),
+        video_links_removed=int(video_result.video_links_removed),
+        video_link_cells_changed=int(video_result.changed),
         rows_over_image_limit_before=len(excess_before),
         rows_over_image_limit_after=len(excess_after),
         rows_limited=rows_limited,
