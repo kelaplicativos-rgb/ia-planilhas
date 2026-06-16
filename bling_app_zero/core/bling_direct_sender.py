@@ -345,11 +345,13 @@ def _product_store_price_payloads(product_store_id: str, product_id: str, channe
 
 def _general_price_payloads(product_id: str, price: float, field: str) -> list[tuple[str, str, str, dict[str, Any]]]:
     price_value = _api_number(price)
+    product_id = str(product_id or '').strip()
     configured_path = _configured_path_or_default('price_update_path', '', 'bling_price_general_update_path_legacy_ignored')
     configured_method = (_secret('price_update_method', 'PATCH') or 'PATCH').upper()
     attempts: list[tuple[str, str, str, dict[str, Any]]] = []
-    for path in _unique_non_empty([configured_path, f'/produtos/{product_id}']):
-        method = configured_method if path == configured_path else 'PATCH'
+    for raw_path in _unique_non_empty([configured_path, f'/produtos/{product_id}']):
+        path = str(raw_path or '').replace('{idProduto}', product_id).replace('{id}', product_id).strip()
+        method = configured_method if raw_path == configured_path else 'PATCH'
         attempts.append((method, path, f'produto_{field}', {field: price_value}))
         if method != 'PUT':
             attempts.append(('PUT', path, f'produto_{field}', {field: price_value}))
@@ -361,7 +363,7 @@ def _dedupe_price_attempts(attempts: list[tuple[str, str, str, dict[str, Any]]])
     seen: set[str] = set()
     for method, path, label, payload in attempts:
         method = str(method or 'PATCH').upper()
-        path = str(path or '').replace('{id}', '').replace('{idProduto}', '').strip()
+        path = str(path or '').strip()
         if not path or '{' in path or _path_contains_forbidden_price_endpoint(path):
             continue
         key = f'{method}|{path}|{label}|{payload}'
@@ -381,7 +383,7 @@ def _send_price_attempts(token: dict[str, Any], attempts: list[tuple[str, str, s
             attempts_log.append({'method': method, 'path': path, 'strategy': strategy, 'status': response.status_code, 'payload': payload, 'response_preview': str(response.text or '')[:220]})
             if response.status_code < 400:
                 return True, last_response, attempts_log
-            if response.status_code in {401, 403, 404}:
+            if response.status_code in {401, 403}:
                 break
         except Exception as exc:
             attempts_log.append({'method': method, 'path': path, 'strategy': strategy, 'status': 'EXCEPTION', 'error': str(exc)[:180]})
