@@ -405,6 +405,18 @@ def _stock_endpoint_attempts(product_id: str) -> list[tuple[str, str]]:
     return out
 
 
+def _product_update_endpoint_attempts(product_id: str) -> list[tuple[str, str]]:
+    configured_path = _secret('product_update_path', '/produtos/{id}') or '/produtos/{id}'
+    configured_method = (_secret('product_update_method', 'PATCH') or 'PATCH').upper()
+    raw = [(configured_method, configured_path), ('PATCH', f'/produtos/{product_id}'), ('PUT', f'/produtos/{product_id}')]
+    out: list[tuple[str, str]] = []
+    for method, path in raw:
+        path = str(path or '').replace('{idProduto}', product_id).replace('{id}', product_id)
+        if path and '{' not in path and (method, path) not in out:
+            out.append((method, path))
+    return out
+
+
 def _emit_progress(callback: Callable[[dict[str, Any]], None] | None, payload: dict[str, Any]) -> None:
     if callback:
         try:
@@ -468,11 +480,17 @@ def _cadastro_preview_payloads(df: pd.DataFrame, *, limit: int = 5) -> list[dict
     mapping = _column_map(df.columns)
     previews: list[dict[str, Any]] = []
     for position, (_index, row) in enumerate(df.fillna('').head(limit).iterrows(), start=1):
+        category_name = _category_name_from_row(row, mapping)
         if isinstance(token, dict) and token.get('access_token'):
             variants = _cadastro_payload_variants(token, row, mapping, line=position)
             payload = variants[0][1] if variants else None
             category = payload.get('categoria', {}) if isinstance(payload, dict) else {}
-            reason = 'Categoria API: ID resolvido' if isinstance(category, dict) and category.get('id') else 'Categoria API: não resolvida ou ausente'
+            if isinstance(category, dict) and category.get('id'):
+                reason = 'Categoria API: ID resolvido/criado; cadastro ou atualização vai enviar a categoria.'
+            elif category_name:
+                reason = 'Categoria API: não criada/resolvida; envio dessa linha será bloqueado para não salvar produto sem categoria.'
+            else:
+                reason = 'Categoria ausente na planilha.'
         else:
             payload = _base_cadastro_payload(row, mapping)
             reason = 'Bling não conectado: preview sem resolução de categoria por API.' if payload else 'Nome/código insuficiente para cadastro.'
@@ -537,7 +555,7 @@ def _send_cadastro_dataframe_to_bling(df: pd.DataFrame, *, limit: int | None = N
     sent = failed = skipped = 0
     errors: list[str] = []
     create_path = _secret('product_create_path', '/produtos') or '/produtos'
-    _emit_progress(progress_callback, {'stage': 'Iniciando cadastro', 'processed': 0, 'total': total, 'sent': 0, 'failed': 0, 'skipped': 0, 'progress': 0.0})
+    _emit_progress(progress_callback, {'stage': 'Iniciando cadastro/atualização', 'processed': 0, 'total': total, 'sent': 0, 'failed': 0, 'skipped': 0, 'progress': 0.0})
     for position, (index, row) in enumerate(rows.iterrows(), start=1):
         line = int(index) + 1 if isinstance(index, int) else position
         variants = _cadastro_payload_variants(token, row, mapping, line=line)
@@ -546,23 +564,44 @@ def _send_cadastro_dataframe_to_bling(df: pd.DataFrame, *, limit: int | None = N
             if len(errors) < 8:
                 errors.append(f'Linha {line}: nome/código insuficiente para cadastro.')
             continue
+
+        category_name = _category_name_from_row(row, mapping)
+        has_category_id = any(isinstance(payload.get('categoria'), dict) and payload.get('categoria', {}).get('id') for _strategy, payload in variants)
+        if category_name and not has_category_id:
+            failed += 1
+            if len(errors) < 8:
+                errors.append(f'Linha {line}: categoria "{category_name}" não foi criada/localizada no Bling; produto não enviado sem categoria.')
+            add_audit_event('bling_safe_cadastro_category_required_blocked', area='BLING_ENVIO', status='BLOQUEADO', details={'line': line, 'category': category_name, 'reason': 'Categoria informada na planilha, mas sem ID resolvido/criado pela API.', 'responsible_file': RESPONSIBLE_FILE})
+            _emit_progress(progress_callback, {'stage': 'Salvando produtos no Bling', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
+            continue
+
+        product_id = ''
+        for candidate in _row_candidates(row, mapping):
+            product_id = _resolve_product_by_candidate(token, candidate)
+            if product_id:
+                break
+        endpoint_attempts = _product_update_endpoint_attempts(product_id) if product_id else [('POST', create_path)]
+        action = 'atualizacao' if product_id else 'cadastro'
         ok = False
         attempt_logs: list[dict[str, Any]] = []
         last_response: requests.Response | None = None
         for strategy, payload in variants:
-            try:
-                response = requests.post(_url(create_path), headers=_headers(token), json=payload, timeout=SEND_TIMEOUT)
-                last_response = response
-                category = payload.get('categoria') if isinstance(payload.get('categoria'), dict) else {}
-                attempt_logs.append({'strategy': strategy, 'status': int(response.status_code), 'category_id': category.get('id', ''), 'payload_keys': sorted(payload.keys()), 'response_preview': str(response.text or '')[:300]})
-                if response.status_code < 400:
-                    ok = True
-                    add_audit_event('bling_safe_cadastro_strategy_succeeded', area='BLING_ENVIO', status='OK', details={'line': line, 'strategy': strategy, 'category_id': category.get('id', ''), 'attempts': attempt_logs[-3:], 'responsible_file': RESPONSIBLE_FILE})
-                    break
-                if response.status_code in {401, 403}:
-                    break
-            except Exception as exc:
-                attempt_logs.append({'strategy': strategy, 'status': 'EXCEPTION', 'error': str(exc)[:240], 'payload': payload})
+            for method, path in endpoint_attempts:
+                try:
+                    response = requests.request(method, _url(path), headers=_headers(token), json=payload, timeout=SEND_TIMEOUT)
+                    last_response = response
+                    category = payload.get('categoria') if isinstance(payload.get('categoria'), dict) else {}
+                    attempt_logs.append({'action': action, 'method': method, 'path': path, 'strategy': strategy, 'status': int(response.status_code), 'product_id': product_id, 'category_id': category.get('id', ''), 'payload_keys': sorted(payload.keys()), 'response_preview': str(response.text or '')[:300]})
+                    if response.status_code < 400:
+                        ok = True
+                        add_audit_event('bling_safe_cadastro_strategy_succeeded', area='BLING_ENVIO', status='OK', details={'line': line, 'action': action, 'method': method, 'path': path, 'strategy': strategy, 'product_id': product_id, 'category_id': category.get('id', ''), 'attempts': attempt_logs[-3:], 'responsible_file': RESPONSIBLE_FILE})
+                        break
+                    if response.status_code in {401, 403}:
+                        break
+                except Exception as exc:
+                    attempt_logs.append({'action': action, 'method': method, 'path': path, 'strategy': strategy, 'status': 'EXCEPTION', 'error': str(exc)[:240], 'payload': payload})
+            if ok or (last_response is not None and last_response.status_code in {401, 403}):
+                break
         if ok:
             sent += 1
         else:
@@ -570,11 +609,11 @@ def _send_cadastro_dataframe_to_bling(df: pd.DataFrame, *, limit: int | None = N
             status = getattr(last_response, 'status_code', 'sem resposta')
             preview = str(getattr(last_response, 'text', '') or '')[:500]
             if len(errors) < 8:
-                errors.append(f'Linha {line}: Bling recusou cadastro ({status}) após {len(variants)} tentativa(s). {preview}')
-            add_audit_event('bling_safe_cadastro_payload_failed', area='BLING_ENVIO', status='AVISO', details={'line': line, 'status': status, 'attempts': attempt_logs[-5:], 'responsible_file': RESPONSIBLE_FILE})
-        _emit_progress(progress_callback, {'stage': 'Cadastrando no Bling', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
-    _emit_progress(progress_callback, {'stage': 'Cadastro concluído', 'processed': total, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': 1.0})
-    add_audit_event('bling_safe_cadastro_send_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'attempted': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'payload_mode': 'category_id_only_no_description_fallback_with_audit_empty_guarded', 'responsible_file': RESPONSIBLE_FILE})
+                errors.append(f'Linha {line}: Bling recusou {action} ({status}) após {len(attempt_logs)} tentativa(s). {preview}')
+            add_audit_event('bling_safe_cadastro_payload_failed', area='BLING_ENVIO', status='AVISO', details={'line': line, 'action': action, 'product_id': product_id, 'status': status, 'attempts': attempt_logs[-5:], 'responsible_file': RESPONSIBLE_FILE})
+        _emit_progress(progress_callback, {'stage': 'Salvando produtos no Bling', 'processed': position, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': position / max(total, 1)})
+    _emit_progress(progress_callback, {'stage': 'Cadastro/atualização concluído', 'processed': total, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': 1.0})
+    add_audit_event('bling_safe_cadastro_send_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'attempted': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'payload_mode': 'category_id_required_for_rows_with_category_create_or_update', 'responsible_file': RESPONSIBLE_FILE})
     return DirectSendResult(total, sent, failed, skipped, tuple(errors), tuple())
 
 
