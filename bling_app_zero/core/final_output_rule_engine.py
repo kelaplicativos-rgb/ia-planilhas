@@ -156,7 +156,7 @@ def apply_final_title_guard(df: pd.DataFrame | None, *, context: str = 'download
                     changed += 1
     empty_rows = tuple(title_guard_empty_rows(out))
     if changed or empty_rows:
-        add_audit_event('final_title_guard_applied', area='FINAL_OUTPUT', status='OK' if not empty_rows else 'AVISO', details={'context': context, 'title_columns': titles, 'source_columns': sources[:30], 'changed_cells': changed, 'empty_rows_after': list(empty_rows[:50]), 'empty_rows_after_count': len(empty_rows), 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('final_title_guard_applied', area='FINAL_OUTPUT', status='OK' if not empty_rows else 'BLOQUEADO', details={'context': context, 'title_columns': titles, 'source_columns': sources[:30], 'changed_cells': changed, 'empty_rows_after': list(empty_rows[:50]), 'empty_rows_after_count': len(empty_rows), 'responsible_file': RESPONSIBLE_FILE})
     return out.copy().fillna(''), changed, empty_rows
 
 
@@ -244,9 +244,8 @@ def apply_final_output_rules(
         sample = ', '.join(map(str, list(title_empty_rows)[:12]))
         suffix = '...' if len(title_empty_rows) > 12 else ''
         warnings.append(f'{len(title_empty_rows)} produto(s) ainda estão sem título/nome. Linhas: {sample}{suffix}.')
-        if str(context or '').strip().lower() == 'api':
-            blocked_for_api = True
-            warnings.append('Envio por API bloqueado: produto sem título pode cadastrar item errado no Bling.')
+        blocked_for_api = True
+        warnings.append('Saída bloqueada: produto sem título pode cadastrar item errado no Bling.')
 
     if video_result.video_links_removed:
         warnings.append(f'{video_result.video_links_removed} link(s) de vídeo foram removidos do arquivo final.')
