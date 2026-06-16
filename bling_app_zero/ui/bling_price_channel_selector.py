@@ -129,10 +129,18 @@ def _filter_active_options(options: list[dict[str, str]]) -> tuple[list[dict[str
     return active, max(0, len(options) - len(active)), True
 
 
+def _prepare_options(options: list[dict[str, str]]) -> tuple[list[dict[str, str]], int, bool]:
+    valid_options = [item for item in _unique_options(options) if _option_has_valid_id(item)]
+    return _filter_active_options(valid_options)
+
+
 def load_price_channels(*, force: bool = False) -> list[dict[str, str]]:
     cached = st.session_state.get(PRICE_CHANNEL_OPTIONS_KEY)
     if not force and isinstance(cached, list) and cached:
-        return [item for item in cached if isinstance(item, dict) and _option_has_valid_id(item)]
+        options, _inactive_count, _status_filter_applied = _prepare_options([item for item in cached if isinstance(item, dict)])
+        if options:
+            st.session_state[PRICE_CHANNEL_OPTIONS_KEY] = options
+            return options
 
     token, _meta = load_token()
     if not isinstance(token, dict) or not token.get('access_token'):
@@ -160,8 +168,7 @@ def load_price_channels(*, force: bool = False) -> list[dict[str, str]]:
                 normalized = _normalize_channel_item(item)
                 if normalized:
                     found.append(normalized)
-            options = [item for item in _unique_options(found) if _option_has_valid_id(item)]
-            options, inactive_count, status_filter_applied = _filter_active_options(options)
+            options, inactive_count, status_filter_applied = _prepare_options(found)
             if options:
                 st.session_state[PRICE_CHANNEL_OPTIONS_KEY] = options
                 add_audit_event(
