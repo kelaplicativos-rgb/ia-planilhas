@@ -14,6 +14,7 @@ from bling_app_zero.core.final_csv_exporter import (
     sanitize_final_dataframe,
     validate_contract_identity,
 )
+from bling_app_zero.core.final_output_rule_engine import apply_final_title_guard
 from bling_app_zero.core.final_output_state import STATUS_DONE, STATUS_ERROR, FinalOutputRequest, FinalOutputResult, FinalOutputState
 from bling_app_zero.universal.output_builder import build_universal_output, empty_universal_output
 from bling_app_zero.universal.universal_contract import build_universal_contract, validate_universal_output
@@ -45,7 +46,9 @@ def build_final_dataframe(source: pd.DataFrame, contract: pd.DataFrame, mapping:
         output = empty_universal_output(contract, rows=0)
     else:
         output = build_universal_output(source, contract, dict(mapping or {}))
-    return apply_text_rules(output)
+    output = apply_text_rules(output)
+    output, _title_filled, _title_empty_rows = apply_final_title_guard(output, context='preview_final')
+    return output
 
 
 def build_final_output(
@@ -72,11 +75,19 @@ def build_final_output(
     # criar/remover/reordenar colunas. O contrato do modelo anexado é reaplicado
     # depois da IA e antes da validação/download.
     output = sanitize_final_dataframe(output, operation=operation, contract_columns=list(contract_columns), run_download_features=False)
+    output, _title_filled, title_empty_rows = apply_final_title_guard(output, context='preview_final_after_smartcore')
 
     identity_errors = tuple(str(item) for item in validate_contract_identity(output, list(contract_columns)) or ())
     if identity_errors:
         result = FinalOutputResult(status=STATUS_ERROR, file_name=file_name, errors=identity_errors, message='Saída final bloqueada por divergência de colunas.')
         return FinalOutputCommandResult(FinalOutputState(request=request, result=result), output=None, csv_bytes=b'', smartcore_result=smartcore_result, errors=identity_errors)
+
+    if title_empty_rows:
+        sample = ', '.join(map(str, list(title_empty_rows)[:12]))
+        suffix = '...' if len(title_empty_rows) > 12 else ''
+        title_errors = (f'Saída final bloqueada: {len(title_empty_rows)} produto(s) ainda estão sem título/nome. Linhas: {sample}{suffix}.',)
+        result = FinalOutputResult(status=STATUS_ERROR, file_name=file_name, errors=title_errors, message='Saída final bloqueada por produto sem título.')
+        return FinalOutputCommandResult(FinalOutputState(request=request, result=result), output=None, csv_bytes=b'', smartcore_result=smartcore_result, errors=title_errors)
 
     try:
         csv_data = final_csv_bytes(output, operation=operation, contract_columns=list(contract_columns), run_download_features=True)
