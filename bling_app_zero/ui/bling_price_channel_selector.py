@@ -353,6 +353,34 @@ def render_price_channel_selector(download_df: pd.DataFrame, operation: str) -> 
         options = load_price_channels(force=True)
         st.rerun()
 
+    manual_override_id = st.text_input(
+        'Usar ID manual do canal (opcional)',
+        value=str(st.session_state.get('bling_price_channel_manual_override_id') or ''),
+        placeholder='Ex.: 205541563',
+        key='bling_price_channel_manual_override_id',
+    )
+    if str(manual_override_id or '').strip():
+        manual_id = _manual_channel_id_from_query(manual_override_id)
+        manual_name = st.text_input(
+            'Nome do canal manual',
+            value=str(st.session_state.get('bling_price_channel_manual_override_name') or st.session_state.get(PRICE_CHANNEL_NAME_KEY) or manual_override_id),
+            placeholder='Ex.: Ifood 24/08/2025 10:59',
+            key='bling_price_channel_manual_override_name',
+        )
+        if not manual_id:
+            st.warning('Informe somente o ID numérico do canal manual para continuar.')
+            return None
+        st.session_state[PRICE_CHANNEL_ID_KEY] = manual_id
+        st.session_state[PRICE_CHANNEL_NAME_KEY] = str(manual_name or manual_id).strip()
+        st.success(f"Preço será atualizado no canal manual: {st.session_state[PRICE_CHANNEL_NAME_KEY]} · ID {manual_id}.")
+        add_audit_event(
+            'bling_price_channel_manual_override_selected',
+            area='BLING_ENVIO',
+            status='OK',
+            details={'channel_id': manual_id, 'channel_name': st.session_state[PRICE_CHANNEL_NAME_KEY], 'responsible_file': RESPONSIBLE_FILE},
+        )
+        return _inject_price_target_columns(download_df)
+
     if not options:
         manual_id = st.text_input('ID da loja/canal no Bling', value=str(st.session_state.get(PRICE_CHANNEL_ID_KEY) or ''), key='bling_price_manual_channel_id')
         manual_name = st.text_input('Nome da loja/canal', value=str(st.session_state.get(PRICE_CHANNEL_NAME_KEY) or ''), key='bling_price_manual_channel_name')
