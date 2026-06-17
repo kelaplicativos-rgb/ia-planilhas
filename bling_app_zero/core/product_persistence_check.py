@@ -14,9 +14,8 @@ REQUIRED_PRODUCT_FIELDS = (
     'dimensoes',
     'volumes',
     'itensPorCaixa',
-    'imagens',
 )
-IMPORTANT_PRODUCT_FIELDS = REQUIRED_PRODUCT_FIELDS
+IMPORTANT_PRODUCT_FIELDS = REQUIRED_PRODUCT_FIELDS + ('imagens',)
 
 
 def _filled(value: Any) -> bool:
