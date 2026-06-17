@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from html import unescape
 from typing import Any, Callable
 from urllib.parse import urljoin, urlparse
@@ -14,10 +15,16 @@ from bling_app_zero.core.text import clean_cell
 from bling_app_zero.pipelines.site_pipeline import run_pipeline as _base_run_pipeline
 
 RESPONSIBLE_FILE = 'bling_app_zero/pipelines/site_pipeline_blingfix.py'
-PAGE_TIMEOUT = 14
+PAGE_TIMEOUT = 12
 PLAYWRIGHT_TIMEOUT_MS = 18_000
-PLAYWRIGHT_WAIT_MS = 1_800
-MAX_ROWS = 180
+PLAYWRIGHT_WAIT_MS = 1_500
+# BLINGFIX SITE 2026-06-16:
+# Antes o reforco parava em 180 linhas. Em capturas reais o motor pode achar
+# 300, 600 ou 1200 produtos; portanto o reforco agora acompanha o limite do
+# fluxo e trabalha em lote, sem abrir Playwright para todos os itens.
+MAX_ROWS = 1200
+MAX_WORKERS = 8
+PLAYWRIGHT_FALLBACK_MAX = 12
 IMAGE_COLUMNS = ('imagens', 'imagem', 'url_imagens', 'url imagem', 'fotos', 'foto')
 TITLE_COLUMNS = ('nome', 'produto', 'titulo', 'título', 'descricao produto', 'descrição produto')
 DESC_COLUMNS = ('descricao', 'descrição', 'descricao curta', 'descrição curta', 'descricao_complementar', 'descrição_complementar', 'detalhes')
@@ -257,9 +264,9 @@ def _rendered_html_with_playwright(url: str) -> str:
             page.wait_for_timeout(PLAYWRIGHT_WAIT_MS)
             try:
                 page.evaluate('window.scrollTo(0, Math.max(document.body.scrollHeight, document.documentElement.scrollHeight));')
-                page.wait_for_timeout(700)
+                page.wait_for_timeout(500)
                 page.evaluate('window.scrollTo(0, 0);')
-                page.wait_for_timeout(400)
+                page.wait_for_timeout(250)
             except Exception:
                 pass
             html = page.content()
@@ -299,14 +306,10 @@ def _extract_from_html(html: str, url: str) -> dict[str, str]:
     }
 
 
-def _fetch_product_page(url: str) -> dict[str, str]:
-    clean_url = clean_cell(url)
-    if not clean_url.startswith(('http://', 'https://')):
-        return {}
-    html = ''
+def _requests_html(url: str) -> str:
     try:
         response = requests.get(
-            clean_url,
+            url,
             timeout=PAGE_TIMEOUT,
             headers={
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
@@ -315,13 +318,24 @@ def _fetch_product_page(url: str) -> dict[str, str]:
             },
         )
         if response.status_code < 400:
-            html = response.text or ''
+            return response.text or ''
     except Exception:
-        html = ''
+        return ''
+    return ''
 
+
+def _fetch_product_page(url: str, *, allow_playwright: bool = False) -> dict[str, str]:
+    clean_url = clean_cell(url)
+    if not clean_url.startswith(('http://', 'https://')):
+        return {}
+
+    html = _requests_html(clean_url)
     data = _extract_from_html(html, clean_url) if html else {}
     if data and data.get('imagens'):
         return data
+
+    if not allow_playwright:
+        return data or {}
 
     rendered_html = _rendered_html_with_playwright(clean_url)
     rendered_data = _extract_from_html(rendered_html, clean_url) if rendered_html else {}
@@ -334,6 +348,33 @@ def _fetch_product_page(url: str) -> dict[str, str]:
             merged['imagens'] = rendered_data['imagens']
         return merged
     return data or {}
+
+
+def _needs_text(value: object) -> bool:
+    text = clean_cell(value)
+    return not text or len(text) < 6
+
+
+def _needs_enrichment(row: pd.Series, *, title_col: str, desc_col: str, image_col: str) -> bool:
+    return bool(
+        _needs_text(row.get(title_col, ''))
+        or _needs_text(row.get(desc_col, ''))
+        or not clean_cell(row.get(image_col, ''))
+    )
+
+
+def _apply_data(out: pd.DataFrame, index: object, *, row: pd.Series, title_col: str, desc_col: str, image_col: str, data: dict[str, str]) -> bool:
+    changed = False
+    if _needs_text(row.get(title_col, '')) and data.get('nome'):
+        out.at[index, title_col] = data['nome'][:180]
+        changed = True
+    if _needs_text(row.get(desc_col, '')) and data.get('descricao'):
+        out.at[index, desc_col] = data['descricao'][:2400]
+        changed = True
+    if not clean_cell(row.get(image_col, '')) and data.get('imagens'):
+        out.at[index, image_col] = data['imagens']
+        changed = True
+    return changed
 
 
 def enrich_product_pages_for_bling(df: pd.DataFrame, *, operation: str, progress_callback: Callable[[dict], None] | None = None) -> pd.DataFrame:
@@ -349,48 +390,85 @@ def enrich_product_pages_for_bling(df: pd.DataFrame, *, operation: str, progress
     desc_col = _ensure_col(out, 'descricao', DESC_COLUMNS)
     image_col = _ensure_col(out, 'imagens', IMAGE_COLUMNS)
 
-    enriched = 0
-    checked = 0
+    candidates: list[tuple[object, str]] = []
     for index, row in out.head(MAX_ROWS).iterrows():
         url = clean_cell(row.get(url_col, ''))
-        if not url:
-            continue
-        needs_title = not clean_cell(row.get(title_col, ''))
-        needs_desc = not clean_cell(row.get(desc_col, ''))
-        needs_images = not clean_cell(row.get(image_col, ''))
-        if not (needs_title or needs_desc or needs_images):
-            continue
-        checked += 1
-        data = _fetch_product_page(url)
-        if not data:
-            continue
-        if needs_title and data.get('nome'):
-            out.at[index, title_col] = data['nome'][:160]
-        if needs_desc and data.get('descricao'):
-            out.at[index, desc_col] = data['descricao'][:2200]
-        if needs_images and data.get('imagens'):
-            out.at[index, image_col] = data['imagens']
-        enriched += 1
-        if progress_callback and enriched % 5 == 0:
-            progress_callback({'stage': 'BLINGFIX imagens', 'message': f'{enriched} produto(s) com nome/descrição/imagem reforçados pela página.', 'progress': 0.975})
+        if url and _needs_enrichment(row, title_col=title_col, desc_col=desc_col, image_col=image_col):
+            candidates.append((index, url))
 
-    if enriched:
-        add_audit_event(
-            'site_pipeline_blingfix_product_media_enriched',
-            area='SITE',
-            status='OK',
-            details={
-                'checked_rows': checked,
-                'enriched_rows': enriched,
-                'url_column': url_col,
-                'title_column': title_col,
-                'description_column': desc_col,
-                'image_column': image_col,
-                'operation': operation,
-                'playwright_fallback_enabled': True,
-                'responsible_file': RESPONSIBLE_FILE,
-            },
-        )
+    if not candidates:
+        return out.fillna('')
+
+    rows_by_index = {index: out.loc[index].copy() for index, _url in candidates}
+    enriched = 0
+    checked = 0
+    workers = max(1, min(MAX_WORKERS, len(candidates)))
+
+    if progress_callback:
+        progress_callback({
+            'stage': 'BLINGFIX por lote',
+            'message': f'Reforçando dados ausentes em até {len(candidates)} produto(s), sem cortar nos primeiros 180.',
+            'progress': 0.955,
+            'checked_rows': len(candidates),
+            'max_rows': MAX_ROWS,
+        })
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(_fetch_product_page, url, allow_playwright=False): (index, url) for index, url in candidates}
+        for future in as_completed(futures):
+            index, _url = futures[future]
+            checked += 1
+            try:
+                data = future.result() or {}
+            except Exception:
+                data = {}
+            row = rows_by_index.get(index, out.loc[index])
+            if data and _apply_data(out, index, row=row, title_col=title_col, desc_col=desc_col, image_col=image_col, data=data):
+                enriched += 1
+            if progress_callback and (checked % 25 == 0 or checked == len(candidates)):
+                progress_callback({
+                    'stage': 'BLINGFIX por lote',
+                    'message': f'{checked}/{len(candidates)} página(s) conferida(s). {enriched} produto(s) reforçado(s).',
+                    'progress': 0.955 + min(0.03, 0.03 * checked / max(len(candidates), 1)),
+                    'checked_rows': checked,
+                    'enriched_rows': enriched,
+                })
+
+    # Playwright é caro. Usar só como reforço final nos primeiros casos que ainda
+    # ficaram sem imagem, para evitar travar lote grande de 300/600/1200 produtos.
+    playwright_used = 0
+    if PLAYWRIGHT_FALLBACK_MAX > 0:
+        for index, url in candidates:
+            if playwright_used >= PLAYWRIGHT_FALLBACK_MAX:
+                break
+            row = out.loc[index]
+            if clean_cell(row.get(image_col, '')):
+                continue
+            data = _fetch_product_page(url, allow_playwright=True)
+            playwright_used += 1
+            if data and _apply_data(out, index, row=row, title_col=title_col, desc_col=desc_col, image_col=image_col, data=data):
+                enriched += 1
+
+    add_audit_event(
+        'site_pipeline_blingfix_product_media_enriched',
+        area='SITE',
+        status='OK' if enriched else 'INFO',
+        details={
+            'checked_rows': checked,
+            'candidate_rows': len(candidates),
+            'enriched_rows': enriched,
+            'url_column': url_col,
+            'title_column': title_col,
+            'description_column': desc_col,
+            'image_column': image_col,
+            'operation': operation,
+            'max_rows': MAX_ROWS,
+            'workers': workers,
+            'playwright_fallback_max': PLAYWRIGHT_FALLBACK_MAX,
+            'playwright_fallback_used': playwright_used,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
     return out.fillna('')
 
 
