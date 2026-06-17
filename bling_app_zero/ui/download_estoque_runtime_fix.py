@@ -52,8 +52,17 @@ def _force_universal_state() -> None:
     _safe_state_set(st, 'flow_spine_primary_action_label', DOWNLOAD_LABEL_TEXT.replace('⬇️ ', ''))
 
 
+def _install_retry_result_visual_fix() -> None:
+    try:
+        from bling_app_zero.ui.bling_retry_result_runtime_fix import install_bling_retry_result_runtime_fix
+        install_bling_retry_result_runtime_fix()
+    except Exception as exc:
+        add_audit_event('retry_result_visual_fix_install_failed', area='BLING_ENVIO', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
+
+
 def install_download_estoque_runtime_fix() -> bool:
     _force_universal_state()
+    _install_retry_result_visual_fix()
 
     try:
         from bling_app_zero.ui.exact_model_download_runtime import install_exact_model_download_runtime
@@ -83,7 +92,7 @@ def install_download_estoque_runtime_fix() -> bool:
 
     home_download._operation_contract_mismatch_error = guarded_contract_mismatch
     setattr(home_download, _PATCH_ATTR, True)
-    add_audit_event('download_universal_runtime_fix_installed', area='DOWNLOAD', status='OK', details={'exact_model_runtime': True, 'exact_template_file_runtime': False, 'template_runtime_removed': True, 'download_label': DOWNLOAD_LABEL_TEXT, 'safe_state_write': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('download_universal_runtime_fix_installed', area='DOWNLOAD', status='OK', details={'exact_model_runtime': True, 'exact_template_file_runtime': False, 'template_runtime_removed': True, 'download_label': DOWNLOAD_LABEL_TEXT, 'safe_state_write': True, 'retry_result_visual_fix': True, 'responsible_file': RESPONSIBLE_FILE})
     return True
 
 
