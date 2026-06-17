@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-APP_VERSION = '4.0.0-carona-ai'
+APP_VERSION = '3.9.6'
 
 PAGE_CONFIG = {
-    'page_title': 'Carona AI',
-    'page_icon': '🚗',
+    'page_title': 'MapeiaAI',
+    'page_icon': '🧭',
     'layout': 'wide',
     'initial_sidebar_state': 'collapsed',
 }
