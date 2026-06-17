@@ -12,6 +12,11 @@ import requests
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.text import clean_cell
+from bling_app_zero.engines.fast_site_scraper.constants import (
+    SITE_ENRICH_MAX_ROWS,
+    SITE_ENRICH_WORKERS,
+    SITE_PLAYWRIGHT_FALLBACK_MAX,
+)
 from bling_app_zero.pipelines.site_pipeline import run_pipeline as _base_run_pipeline
 
 RESPONSIBLE_FILE = 'bling_app_zero/pipelines/site_pipeline_blingfix.py'
@@ -22,9 +27,9 @@ PLAYWRIGHT_WAIT_MS = 1_500
 # Antes o reforco parava em 180 linhas. Em capturas reais o motor pode achar
 # 300, 600 ou 1200 produtos; portanto o reforco agora acompanha o limite do
 # fluxo e trabalha em lote, sem abrir Playwright para todos os itens.
-MAX_ROWS = 1200
-MAX_WORKERS = 8
-PLAYWRIGHT_FALLBACK_MAX = 12
+MAX_ROWS = SITE_ENRICH_MAX_ROWS
+MAX_WORKERS = SITE_ENRICH_WORKERS
+PLAYWRIGHT_FALLBACK_MAX = SITE_PLAYWRIGHT_FALLBACK_MAX
 IMAGE_COLUMNS = ('imagens', 'imagem', 'url_imagens', 'url imagem', 'fotos', 'foto')
 TITLE_COLUMNS = ('nome', 'produto', 'titulo', 'título', 'descricao produto', 'descrição produto')
 DESC_COLUMNS = ('descricao', 'descrição', 'descricao curta', 'descrição curta', 'descricao_complementar', 'descrição_complementar', 'detalhes')
