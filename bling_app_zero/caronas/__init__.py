@@ -18,6 +18,7 @@ from bling_app_zero.caronas.blablacar_public import (
     parse_public_search_mhtml,
     trips_to_table,
 )
+from bling_app_zero.caronas.rota_cheia_strategy import CityDayScore, parse_event_agenda, rank_best_days
 
 __all__ = [
     'BlaRecommendation',
@@ -25,6 +26,7 @@ __all__ = [
     'BlaTrip',
     'BlaValidationResult',
     'CARPOOL_START_URL',
+    'CityDayScore',
     'PRIMARY_ACCOUNT',
     'SECONDARY_ACCOUNT',
     'STRICT_NOT_CONFIRMED',
@@ -32,6 +34,8 @@ __all__ = [
     'build_public_search_url',
     'build_recommendations',
     'fetch_public_search',
+    'parse_event_agenda',
     'parse_public_search_mhtml',
+    'rank_best_days',
     'trips_to_table',
 ]
