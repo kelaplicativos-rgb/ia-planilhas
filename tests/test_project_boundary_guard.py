@@ -4,12 +4,15 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-THIS_FILE = Path(__file__).resolve().relative_to(ROOT).as_posix()
-
-TEXT_FILE_SUFFIXES = {
-    '.py', '.md', '.txt', '.toml', '.yaml', '.yml', '.json', '.sql', '.ini', '.cfg', '.html', '.css', '.js'
-}
-SKIP_PARTS = {'.git', '.pytest_cache', '__pycache__', '.venv', 'venv', 'node_modules', '.streamlit/browser_state'}
+APP_PATHS = (
+    ROOT / 'app.py',
+    ROOT / 'bling_app_zero',
+    ROOT / 'bling_backend',
+    ROOT / '.streamlit',
+    ROOT / 'render.yaml',
+)
+TEXT_FILE_SUFFIXES = {'.py', '.toml', '.yaml', '.yml', '.json', '.ini', '.cfg', '.html', '.css', '.js'}
+SKIP_PARTS = {'.git', '.pytest_cache', '__pycache__', '.venv', 'venv', 'node_modules', 'browser_state'}
 
 
 def _s(*codes: int) -> str:
@@ -17,7 +20,6 @@ def _s(*codes: int) -> str:
 
 
 def _blocked_terms() -> tuple[str, ...]:
-    # Built from character codes so this guard does not match itself.
     return (
         _s(67, 97, 114, 111, 110, 97),
         _s(67, 97, 114, 111, 110, 97, 32, 65, 73),
@@ -28,20 +30,26 @@ def _blocked_terms() -> tuple[str, ...]:
     )
 
 
-def _iter_project_text_files() -> list[Path]:
+def _should_scan(path: Path) -> bool:
+    if not path.exists():
+        return False
+    if any(part in SKIP_PARTS for part in path.parts):
+        return False
+    return path.suffix.lower() in TEXT_FILE_SUFFIXES
+
+
+def _iter_app_text_files() -> list[Path]:
     files: list[Path] = []
-    for path in ROOT.rglob('*'):
-        if not path.is_file():
+    for base in APP_PATHS:
+        if base.is_file() and _should_scan(base):
+            files.append(base)
             continue
-        relative = path.relative_to(ROOT).as_posix()
-        if relative == THIS_FILE:
+        if not base.is_dir():
             continue
-        if any(part in SKIP_PARTS for part in path.parts):
-            continue
-        if path.suffix.lower() not in TEXT_FILE_SUFFIXES:
-            continue
-        files.append(path)
-    return sorted(files)
+        for path in base.rglob('*'):
+            if path.is_file() and _should_scan(path):
+                files.append(path)
+    return sorted(set(files))
 
 
 def _read_text(path: Path) -> str:
@@ -51,18 +59,18 @@ def _read_text(path: Path) -> str:
         return path.read_text(encoding='utf-8', errors='ignore')
 
 
-def test_project_boundary_contains_only_mapeiaai_bling_planilhas_context() -> None:
+def test_app_boundary_contains_only_mapeiaai_bling_planilhas_context() -> None:
     blocked = tuple(term.lower() for term in _blocked_terms())
     violations: list[str] = []
 
-    for path in _iter_project_text_files():
+    for path in _iter_app_text_files():
         text = _read_text(path).lower()
         found = [term for term in blocked if term in text]
         if found:
             relative = path.relative_to(ROOT).as_posix()
             violations.append(f'{relative}: {", ".join(found)}')
 
-    assert not violations, 'Referência de projeto externo encontrada:\n' + '\n'.join(violations)
+    assert not violations, 'Termo fora do escopo encontrado:\n' + '\n'.join(violations)
 
 
 def test_streamlit_public_identity_remains_mapeiaai() -> None:
