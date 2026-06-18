@@ -14,21 +14,10 @@ GENERIC_CATEGORY_TERMS = {
     'promocoes', 'promoções', 'mais vendidos', 'novidades', 'mega center', 'stoqui',
 }
 
-CATEGORY_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ('Teclados', ('teclado', 'keyboard', 'abnt', 'usb al-', 'multimidia')),
-    ('Mouses', ('mouse', 'mice', 'dpi', 'optico', 'óptico', 'sem fio')),
-    ('Fones de ouvido', ('fone', 'headset', 'earphone', 'auricular', 'bluetooth')),
-    ('Caixas de som', ('caixa de som', 'speaker', 'subwoofer', 'soundbar')),
-    ('Carregadores', ('carregador', 'charger', 'fonte usb', 'turbo', 'tomada usb')),
-    ('Cabos e adaptadores', ('cabo', 'adaptador', 'hdmi', 'usb-c', 'tipo c', 'p2', 'p10', 'vga')),
-    ('Capas e películas', ('capinha', 'capa ', 'pelicula', 'película', 'case')),
-    ('Suportes', ('suporte', 'tripé', 'tripe', 'holder', 'base para')),
-    ('Informática', ('notebook', 'computador', 'pc ', 'monitor', 'hub usb', 'webcam')),
-    ('Eletrônicos', ('eletronico', 'eletrônico', 'digital', 'controle remoto', 'relogio', 'relógio')),
-    ('Acessórios para celular', ('celular', 'smartphone', 'iphone', 'android', 'samsung', 'motorola')),
-    ('Ferramentas', ('chave', 'alicate', 'furadeira', 'parafusadeira', 'solda')),
-    ('Iluminação', ('lampada', 'lâmpada', 'led', 'refletor', 'luminaria', 'luminária')),
-)
+# Mantido apenas para compatibilidade histórica. O envio ao Bling não pode mais
+# inferir categoria aqui: a categoria final precisa vir da etapa de
+# Categorização Inteligente/CSV validado, com assinatura antes do envio.
+CATEGORY_RULES: tuple[tuple[str, tuple[str, ...]], ...] = tuple()
 
 BAD_IMAGE_TERMS = (
     'logo', 'banner', 'placeholder', 'no-image', 'no_image', 'sem-imagem', 'semimagem',
@@ -211,10 +200,8 @@ def clean_category(raw_category: object, *, title: object = '', description: obj
             if len(normalized) >= 3 and not looks_like_code(part):
                 return _clean_text(part, 80)
 
-    haystack = _norm(f'{title} {description}')
-    for category, terms in CATEGORY_RULES:
-        if any(_norm(term) in haystack for term in terms):
-            return category
+    # BLINGFIX: não inferir categoria no último passo do payload.
+    # Se chegou vazia/genérica aqui, o guard final deve bloquear antes da API.
     return ''
 
 
