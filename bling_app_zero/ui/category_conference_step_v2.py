@@ -24,6 +24,7 @@ CATEGORY_VALUES_SIGNATURE_KEY = 'category_conference_values_signature_v1'
 CATEGORY_DATASET_SIGNATURE_KEY = 'category_conference_dataset_signature_v1'
 CATEGORY_AUTO_APPLIED_SIGNATURE_KEY = 'category_conference_auto_applied_signature_v1'
 CATEGORY_AUTO_BLOCKED_SIGNATURE_KEY = 'category_conference_auto_blocked_signature_v1'
+CATEGORY_REBUILD_BUTTON_KEY = 'category_conference_rebuild_auto_v1'
 
 # Não existe controle manual de confiança nesta etapa. Ao ligar a categorização,
 # o sistema aplica automaticamente e só libera quando 100% dos produtos tiverem
@@ -108,12 +109,7 @@ def _reset_if_source_changed(df: pd.DataFrame, source_key: str) -> None:
     signature = _source_signature(df, source_key)
     previous = str(st.session_state.get(CATEGORY_SOURCE_SIGNATURE_KEY) or '')
     if previous and previous != signature:
-        for key in (
-            CATEGORY_DONE_KEY, CATEGORY_SKIP_KEY, CATEGORY_STATS_KEY, CATEGORY_ANALYZED_KEY,
-            CATEGORY_VALUES_SIGNATURE_KEY, CATEGORY_DATASET_SIGNATURE_KEY, GLOBAL_DECISION_DATASET_SIGNATURE_KEY,
-            CATEGORY_AUTO_APPLIED_SIGNATURE_KEY, CATEGORY_AUTO_BLOCKED_SIGNATURE_KEY,
-        ):
-            st.session_state.pop(key, None)
+        _clear_category_decision_state(reason='live_source_changed', keep_source_signature=True)
         add_audit_event(
             'category_conference_live_source_changed',
             area='CATEGORIAS',
@@ -123,6 +119,34 @@ def _reset_if_source_changed(df: pd.DataFrame, source_key: str) -> None:
         )
     st.session_state[CATEGORY_SOURCE_SIGNATURE_KEY] = signature
     st.session_state[GLOBAL_LIVE_DATASET_SIGNATURE_KEY] = _dataset_identity(df)
+
+
+def _clear_category_decision_state(*, reason: str, keep_source_signature: bool = False) -> None:
+    keys = [
+        CATEGORY_DONE_KEY,
+        CATEGORY_SKIP_KEY,
+        CATEGORY_STATS_KEY,
+        CATEGORY_ANALYZED_KEY,
+        CATEGORY_VALUES_SIGNATURE_KEY,
+        CATEGORY_DATASET_SIGNATURE_KEY,
+        GLOBAL_DECISION_DATASET_SIGNATURE_KEY,
+        CATEGORY_AUTO_APPLIED_SIGNATURE_KEY,
+        CATEGORY_AUTO_BLOCKED_SIGNATURE_KEY,
+    ]
+    if not keep_source_signature:
+        keys.append(CATEGORY_SOURCE_SIGNATURE_KEY)
+    removed = []
+    for key in keys:
+        if key in st.session_state:
+            removed.append(key)
+            st.session_state.pop(key, None)
+    add_audit_event(
+        'category_conference_auto_rebuild_requested',
+        area='CATEGORIAS',
+        step='conferencia_categorias',
+        status='OK',
+        details={'reason': reason, 'removed_keys': removed, 'responsible_file': RESPONSIBLE_FILE},
+    )
 
 
 def _catalog() -> tuple[str, ...]:
@@ -261,7 +285,7 @@ def render_category_conference_step() -> None:
     _reset_if_source_changed(df, source_key)
 
     st.markdown('### Conferência inteligente de categorias')
-    st.caption('Aplicação 100% automática: ao ligar a categorização, o sistema corrige e padroniza sem botão, sem slider e sem ação manual.')
+    st.caption('Aplicação 100% automática: ao ligar a categorização, o sistema corrige e padroniza sem botão de aplicar e sem controle manual de confiança.')
     st.warning('Trava 100%: nenhum produto será liberado enquanto existir categoria final vazia ou “REVISAR MANUALMENTE”.')
 
     if CATEGORY_CATALOG_KEY not in st.session_state:
@@ -296,6 +320,11 @@ def render_category_conference_step() -> None:
         st.dataframe(action_df[display_cols].head(500), use_container_width=True, hide_index=True, height=360)
         if len(action_df) > 500:
             st.caption(f'Mostrando 500 de {len(action_df)} produtos com ação de categoria.')
+
+    if category_conference_ready():
+        if st.button('🔄 Refazer categorização automática', use_container_width=True, key=CATEGORY_REBUILD_BUTTON_KEY):
+            _clear_category_decision_state(reason='rebuild_button_clicked')
+            st.rerun()
 
     if category_conference_was_skipped():
         st.warning('Conferência pulada porque a categorização foi desligada antes de entrar no painel.')
