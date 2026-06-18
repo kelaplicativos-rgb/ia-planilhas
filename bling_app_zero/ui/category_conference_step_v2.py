@@ -25,6 +25,8 @@ CATEGORY_SOURCE_SIGNATURE_KEY = 'category_conference_source_signature_v1'
 CATEGORY_VALUES_SIGNATURE_KEY = 'category_conference_values_signature_v1'
 CATEGORY_DATASET_SIGNATURE_KEY = 'category_conference_dataset_signature_v1'
 
+BLOCKED_FINAL_CATEGORY_VALUES = {'', 'nan', 'none', 'null', '<na>', 'na', 'n/a', 'sem categoria', 'revisar manualmente'}
+
 DATAFRAME_KEYS = (
     'df_final_bling_api', 'df_final_universal', 'df_final_cadastro', 'df_final_cadastro_preview_rules_applied',
     'df_final_download_operation', 'df_final_preview_operation', 'final_download_df_snapshot',
@@ -67,6 +69,40 @@ def _dataset_identity(df: pd.DataFrame) -> str:
 def category_values_signature(df: pd.DataFrame) -> str:
     category_col = detect_category_column(df) if _valid_df(df) else None
     return global_category_values_signature(df, category_col, context='category_conference')
+
+
+def _final_category_issue_rows(df: pd.DataFrame) -> tuple[int, ...]:
+    """Linhas 1-based sem categoria final válida após aplicar IA.
+
+    Quando o usuário escolhe categorização automática, a confirmação só é segura
+    se cada produto tiver uma categoria final gravável no Bling. Valores vazios
+    ou marcadores de revisão não podem ser tratados como categoria gerada.
+    """
+    if not _valid_df(df):
+        return tuple()
+    category_col = detect_category_column(df)
+    if not category_col or category_col not in df.columns:
+        return tuple(range(1, int(len(df)) + 1))
+    bad_rows: list[int] = []
+    for pos, value in enumerate(df[category_col].fillna('').astype(str), start=1):
+        normalized = ' '.join(str(value or '').strip().lower().split())
+        if normalized in BLOCKED_FINAL_CATEGORY_VALUES:
+            bad_rows.append(pos)
+    return tuple(bad_rows)
+
+
+def _category_issue_preview(df: pd.DataFrame, rows: tuple[int, ...], *, limit: int = 80) -> pd.DataFrame:
+    if not _valid_df(df) or not rows:
+        return pd.DataFrame()
+    indexes = [row - 1 for row in rows[:limit] if 0 <= row - 1 < len(df)]
+    preview = df.iloc[indexes].copy().fillna('')
+    preview.insert(0, 'linha', [row for row in rows[:len(indexes)]])
+    preferred = [
+        'linha', 'Código', 'SKU', 'GTIN', 'Nome', 'Descrição', 'Descricao', 'Produto', 'Categoria',
+        'categoria_atual_ia', 'categoria_sugerida_ia', 'acao_categoria_ia', 'confianca_categoria_ia', 'motivo_categoria_ia',
+    ]
+    cols = [col for col in preferred if col in preview.columns]
+    return preview[cols] if cols else preview
 
 
 def _reset_if_source_changed(df: pd.DataFrame, source_key: str) -> None:
@@ -118,6 +154,24 @@ def _apply_category_values(target: pd.DataFrame, corrected: pd.DataFrame) -> pd.
 def _store_corrected_everywhere(corrected: pd.DataFrame, source_key: str, *, applied_count: int, stats: dict[str, int]) -> None:
     if not _valid_df(corrected):
         return
+    blocked_rows = _final_category_issue_rows(corrected)
+    if blocked_rows:
+        st.session_state[CATEGORY_DONE_KEY] = False
+        st.session_state[CATEGORY_SKIP_KEY] = False
+        add_audit_event(
+            'category_conference_store_blocked_incomplete',
+            area='CATEGORIAS',
+            step='conferencia_categorias',
+            status='BLOQUEADO',
+            details={
+                'rows': int(len(corrected)),
+                'blocked_rows_count': len(blocked_rows),
+                'blocked_rows_sample': list(blocked_rows[:50]),
+                'category_column': detect_category_column(corrected),
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+        return
     for key in DATAFRAME_KEYS:
         value = st.session_state.get(key)
         if _valid_df(value) and len(value) == len(corrected):
@@ -143,6 +197,7 @@ def _store_corrected_everywhere(corrected: pd.DataFrame, source_key: str, *, app
             'applied_count': int(applied_count), 'stats': dict(stats or {}),
             'category_column': detect_category_column(corrected), 'category_values_signature': st.session_state.get(CATEGORY_VALUES_SIGNATURE_KEY),
             'dataset_identity_signature': dataset_sig, 'full_table_signature': st.session_state.get(CATEGORY_SOURCE_SIGNATURE_KEY),
+            'category_completion_required': True, 'blocked_rows_count': 0,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -197,8 +252,33 @@ def render_category_conference_step() -> None:
     with c1:
         if st.button('Aplicar categorias corrigidas', type='primary', use_container_width=True, key='category_conference_apply_v1'):
             corrected, applied_count = apply_category_suggestions(analyzed.copy(), confidence_min=confidence_min, keep_helper_columns=False)
+            blocked_rows = _final_category_issue_rows(corrected)
+            if blocked_rows:
+                st.session_state[CATEGORY_DONE_KEY] = False
+                st.session_state[CATEGORY_SKIP_KEY] = False
+                add_audit_event(
+                    'category_conference_apply_blocked_incomplete',
+                    area='CATEGORIAS',
+                    step='conferencia_categorias',
+                    status='BLOQUEADO',
+                    details={
+                        'rows': int(len(corrected)),
+                        'applied_count': int(applied_count),
+                        'blocked_rows_count': len(blocked_rows),
+                        'blocked_rows_sample': list(blocked_rows[:50]),
+                        'confidence_min': float(confidence_min),
+                        'category_column': detect_category_column(corrected),
+                        'responsible_file': RESPONSIBLE_FILE,
+                    },
+                )
+                st.error(f'Categorização automática bloqueada: {len(blocked_rows)} produto(s) ainda ficaram sem categoria final válida.')
+                st.warning('Nenhum produto será liberado para envio ao Bling enquanto existir categoria vazia ou “REVISAR MANUALMENTE”. Reduza a confiança mínima, ajuste o catálogo ou corrija manualmente esses produtos.')
+                preview = _category_issue_preview(analyzed, blocked_rows)
+                if _valid_df(preview):
+                    st.dataframe(preview, use_container_width=True, hide_index=True, height=360)
+                return
             _store_corrected_everywhere(corrected, source_key, applied_count=applied_count, stats=stats)
-            st.success(f'{applied_count} categoria(s) corrigida(s)/padronizada(s).')
+            st.success(f'{applied_count} categoria(s) corrigida(s)/padronizada(s). Todos os produtos têm categoria final válida.')
             st.rerun()
     with c2:
         if st.button('Pular sem alterar categorias', use_container_width=True, key='category_conference_skip_v1'):
