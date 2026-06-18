@@ -13,30 +13,12 @@ PROGRESS_LAST_SEEN_AT_KEY = 'site_progress_last_seen_at'
 NEUTRAL_PROGRESS_STATE_KEY = 'neutral_site_progress_state_v1'
 PROGRESS_CALLBACK_LAST_RENDER_KEY = 'site_progress_callback_last_render_at'
 PROGRESS_CALLBACK_LAST_PERCENT_KEY = 'site_progress_callback_last_percent'
-SITE_CHECKPOINT_KEY = 'site_capture_auto_resume_checkpoint_v2'
-SITE_CHECKPOINT_OPERATION_KEY = 'site_capture_auto_resume_checkpoint_operation_v2'
 LIVE_WARNING_SECONDS = 60
 LIVE_HARD_STALE_SECONDS = 900
 MAX_PROGRESS_EVENTS = 25
 CALLBACK_RENDER_INTERVAL_SECONDS = 6.0
 CALLBACK_RENDER_MIN_PERCENT_DELTA = 10
 RESPONSIBLE_FILE = 'bling_app_zero/ui/site_progress.py'
-
-HEAVY_PROGRESS_KEYS = (
-    'partial_checkpoint_rows',
-    'partial_checkpoint_processed_urls',
-    'partial_checkpoint_pending_urls',
-    'processed_urls',
-    'pending_urls',
-    'site_checkpoint_pending_urls',
-)
-CHECKPOINT_STAGES = {
-    'checkpoint preservado',
-    'montando origem',
-    'pronto',
-    'lote parcial preservado',
-    'busca suficiente',
-}
 
 
 def _progress_state_from_streamlit() -> SiteProgressState:
@@ -60,37 +42,6 @@ def _sync_progress_state(state: SiteProgressState) -> None:
     st.session_state[PROGRESS_LAST_KEY] = data.get('last', {})
 
 
-def _stage_key(payload: dict) -> str:
-    return str((payload or {}).get('stage') or '').strip().lower()
-
-
-def _save_checkpoint_payload(payload: dict) -> None:
-    if not isinstance(payload, dict):
-        return
-    rows = payload.get('partial_checkpoint_rows')
-    has_rows = isinstance(rows, list) and bool(rows)
-    has_resume = bool(payload.get('partial_checkpoint_pending_urls') or payload.get('pending_urls'))
-    if not (has_rows or has_resume or _stage_key(payload) in CHECKPOINT_STAGES):
-        return
-    frozen = dict(payload)
-    st.session_state[SITE_CHECKPOINT_KEY] = frozen
-    operation = str(frozen.get('partial_checkpoint_operation') or frozen.get('operation') or '').strip()
-    if operation:
-        st.session_state[SITE_CHECKPOINT_OPERATION_KEY] = operation
-
-
-def _light_progress_payload(payload: dict) -> dict:
-    data = dict(payload or {})
-    for key in HEAVY_PROGRESS_KEYS:
-        value = data.pop(key, None)
-        if isinstance(value, list):
-            data[f'{key}_count'] = len(value)
-    slow_links = data.get('slow_links')
-    if isinstance(slow_links, list):
-        data['slow_links'] = slow_links[-3:]
-    return data
-
-
 def reset_site_progress() -> None:
     _sync_progress_state(SiteProgressState())
     st.session_state[PROGRESS_LAST_SEEN_AT_KEY] = time.time()
@@ -99,9 +50,7 @@ def reset_site_progress() -> None:
 
 
 def append_site_progress(payload: dict) -> None:
-    payload = payload or {}
-    _save_checkpoint_payload(payload)
-    state = _progress_state_from_streamlit().append(_light_progress_payload(payload))
+    state = _progress_state_from_streamlit().append(payload or {})
     _sync_progress_state(state)
     st.session_state[PROGRESS_LAST_SEEN_AT_KEY] = time.time()
 
