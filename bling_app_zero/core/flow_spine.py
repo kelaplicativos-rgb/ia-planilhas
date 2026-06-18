@@ -21,6 +21,7 @@ STEP_ORIGEM = 'origem'
 STEP_ENTRADA = 'entrada'
 STEP_PRECIFICACAO = 'precificacao'
 STEP_MAPEAMENTO = 'mapeamento'
+STEP_CATEGORIZACAO = 'categorizacao'
 STEP_REGRAS = 'regras'
 STEP_PREVIEW = 'preview'
 STEP_DOWNLOAD = 'download'
@@ -35,6 +36,7 @@ DEFAULT_RENDER_STEPS = (
     STEP_ENTRADA,
     STEP_PRECIFICACAO,
     STEP_MAPEAMENTO,
+    STEP_CATEGORIZACAO,
     STEP_REGRAS,
     STEP_PREVIEW,
     STEP_DOWNLOAD,
@@ -46,6 +48,7 @@ DEFAULT_LABELS = {
     STEP_ENTRADA: 'Dados',
     STEP_PRECIFICACAO: 'Precificação',
     STEP_MAPEAMENTO: 'Mapeamento',
+    STEP_CATEGORIZACAO: 'Conferência e Correção de Categorias',
     STEP_REGRAS: 'Regras e IA',
     STEP_PREVIEW: 'Prévia final',
     STEP_DOWNLOAD: 'Download',
@@ -216,6 +219,8 @@ def pending_message_for(plan: FlowSpinePlan, step: str) -> str:
         return 'Revise ou confirme a precificação para continuar.'
     if normalized == STEP_MAPEAMENTO:
         return 'Confirme o mapeamento obrigatório antes de avançar.'
+    if normalized == STEP_CATEGORIZACAO:
+        return 'Escolha se vai categorizar. Se sim, aplique a conferência; se não, pule a etapa.'
     if normalized in {STEP_REGRAS, STEP_PREVIEW}:
         return 'Confirme o mapeamento e revise os dados antes de continuar.'
     return 'Conclua esta etapa para continuar.'
@@ -234,6 +239,7 @@ __all__ = [
     'DESTINATION_API',
     'DESTINATION_CSV',
     'FlowSpinePlan',
+    'STEP_CATEGORIZACAO',
     'STEP_DOWNLOAD',
     'STEP_ENTRADA',
     'STEP_MAPEAMENTO',
