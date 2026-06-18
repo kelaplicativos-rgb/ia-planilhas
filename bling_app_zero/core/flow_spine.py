@@ -20,8 +20,8 @@ STEP_MODELO = 'modelo'
 STEP_ORIGEM = 'origem'
 STEP_ENTRADA = 'entrada'
 STEP_PRECIFICACAO = 'precificacao'
-STEP_MAPEAMENTO = 'mapeamento'
 STEP_CATEGORIZACAO = 'categorizacao'
+STEP_MAPEAMENTO = 'mapeamento'
 STEP_REGRAS = 'regras'
 STEP_PREVIEW = 'preview'
 STEP_DOWNLOAD = 'download'
@@ -35,8 +35,8 @@ DEFAULT_RENDER_STEPS = (
     STEP_ORIGEM,
     STEP_ENTRADA,
     STEP_PRECIFICACAO,
-    STEP_MAPEAMENTO,
     STEP_CATEGORIZACAO,
+    STEP_MAPEAMENTO,
     STEP_REGRAS,
     STEP_PREVIEW,
     STEP_DOWNLOAD,
@@ -47,8 +47,8 @@ DEFAULT_LABELS = {
     STEP_ORIGEM: 'Origem dos dados',
     STEP_ENTRADA: 'Dados',
     STEP_PRECIFICACAO: 'Precificação',
+    STEP_CATEGORIZACAO: 'Categorização Inteligente Automática',
     STEP_MAPEAMENTO: 'Mapeamento',
-    STEP_CATEGORIZACAO: 'Conferência e Correção de Categorias',
     STEP_REGRAS: 'Regras e IA',
     STEP_PREVIEW: 'Prévia final',
     STEP_DOWNLOAD: 'Download',
@@ -217,10 +217,10 @@ def pending_message_for(plan: FlowSpinePlan, step: str) -> str:
         return 'Carregue os dados da origem para liberar a próxima etapa.'
     if normalized == STEP_PRECIFICACAO:
         return 'Revise ou confirme a precificação para continuar.'
+    if normalized == STEP_CATEGORIZACAO:
+        return 'Escolha se vai categorizar. Se sim, aplique a conferência; se não, siga sem alterar categorias.'
     if normalized == STEP_MAPEAMENTO:
         return 'Confirme o mapeamento obrigatório antes de avançar.'
-    if normalized == STEP_CATEGORIZACAO:
-        return 'Escolha se vai categorizar. Se sim, aplique a conferência; se não, pule a etapa.'
     if normalized in {STEP_REGRAS, STEP_PREVIEW}:
         return 'Confirme o mapeamento e revise os dados antes de continuar.'
     return 'Conclua esta etapa para continuar.'
