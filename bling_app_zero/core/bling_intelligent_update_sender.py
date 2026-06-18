@@ -12,6 +12,7 @@ from bling_app_zero.core.bling_pre_send_defaults import apply_dataframe_send_def
 from bling_app_zero.core.bling_product_update_intelligence import ACTION_PENDING, analyze_stock_update_need
 from bling_app_zero.core.operation_contract import OP_ATUALIZACAO_PRECO, OP_CADASTRO, OP_ESTOQUE, normalize_operation
 from bling_app_zero.core.operation_safety_guard import require_rows_before_api
+from bling_app_zero.core.send_validation_v2 import validate_before_bling_send
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_intelligent_update_sender.py'
 
@@ -166,6 +167,49 @@ def _block_empty_before_api(operation: str, progress_callback: Callable[[dict[st
     return DirectSendResult(0, 0, 0, 0, (message,), tuple())
 
 
+def _block_send_validation_before_api(df: pd.DataFrame, operation: str, progress_callback: Callable[[dict[str, Any]], None] | None = None) -> DirectSendResult | None:
+    """Última barreira antes de qualquer request ao Bling.
+
+    Não confia em cache, estado de UI nem fluxo antigo. A validação olha a tabela
+    viva que chegou ao sender e bloqueia cadastro sem categoria final válida.
+    """
+    result = validate_before_bling_send(df, operation)
+    if result.ok:
+        return None
+    messages = tuple(str(message) for message in result.messages if str(message).strip()) or ('Envio bloqueado antes da API por validação final.',)
+    _emit(
+        progress_callback,
+        {
+            'stage': 'Envio bloqueado antes da API',
+            'operation': normalize_operation(operation),
+            'processed': 0,
+            'total': len(df) if isinstance(df, pd.DataFrame) else 0,
+            'sent': 0,
+            'failed': 0,
+            'skipped': len(df) if isinstance(df, pd.DataFrame) else 0,
+            'progress': 1.0,
+            'blocked_before_api': True,
+            'reason': 'send_validation_v2',
+            'messages': list(messages),
+        },
+    )
+    add_audit_event(
+        'bling_intelligent_update_blocked_by_send_validation',
+        area='BLING_ENVIO',
+        status='BLOQUEADO',
+        details={
+            'operation': normalize_operation(operation),
+            'rows': len(df) if isinstance(df, pd.DataFrame) else 0,
+            'messages': list(messages),
+            'guard': result.to_dict(),
+            'no_api_request_sent': True,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+    rows = len(df) if isinstance(df, pd.DataFrame) else 0
+    return DirectSendResult(rows, 0, 0, rows, messages, tuple())
+
+
 def _send_allowed_rows_to_bling(
     allowed_df: pd.DataFrame,
     op: str,
@@ -229,6 +273,10 @@ def send_dataframe_to_bling_intelligent(
     op = normalize_operation(operation)
     if not isinstance(df, pd.DataFrame) or df.empty:
         return _block_empty_before_api(op, progress_callback)
+
+    blocked = _block_send_validation_before_api(df, op, progress_callback)
+    if blocked is not None:
+        return blocked
 
     allowed_df, pending = split_intelligent_update_rows(df, op)
     skipped_before_api = len(pending)
