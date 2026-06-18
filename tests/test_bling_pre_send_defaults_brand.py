@@ -11,6 +11,14 @@ def test_presend_keeps_unknown_brand_inferred_from_title() -> None:
     assert fixed['Marca'] == 'Zorplax'
 
 
+def test_presend_skips_common_product_terms_before_unknown_brand() -> None:
+    row = {'Nome': 'Fone de Ouvido para Iphone Zorplax ZP-100', 'Marca': '', 'Código': '7891234567890'}
+
+    fixed = apply_product_send_defaults(row)
+
+    assert fixed['Marca'] == 'Zorplax'
+
+
 def test_presend_keeps_imenso_inferred_from_title() -> None:
     row = {'Nome': 'Fone de Ouvido para Iphone Imenso IMS-871L', 'Marca': '', 'Código': '7899988478719'}
 
