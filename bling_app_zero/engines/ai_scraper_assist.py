@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Iterable
 
 import httpx
@@ -10,10 +11,17 @@ import streamlit as st
 from bling_app_zero.core.column_contract import RequestedField
 from bling_app_zero.core.gtin import clean_gtin
 from bling_app_zero.core.text import clean_cell, normalize_key
+from bling_app_zero.engines.brand_title_detector import detect_brand_from_title
 
 OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions'
 DEFAULT_MODEL = 'gpt-4o-mini'
 MAX_CONTEXT_CHARS = 12000
+BRAND_BLOCK_TERMS = {
+    'produto', 'controle', 'carregador', 'cabo', 'fone', 'mouse', 'teclado', 'caixa', 'som', 'adaptador',
+    'suporte', 'camera', 'câmera', 'pelicula', 'película', 'fonte', 'usb', 'tipo', 'type', 'sem', 'fio',
+    'bluetooth', 'gamer', 'modelo', 'model', 'mod', 'ref', 'referencia', 'referência', 'codigo', 'código',
+    'cod', 'sku', 'preto', 'branco', 'azul', 'vermelho', 'verde', 'rosa', 'cinza', 'portatil', 'portátil',
+}
 
 
 def _unique_names(*names: str) -> list[str]:
@@ -176,12 +184,37 @@ def _safe_json_loads(text: str) -> dict:
         return {}
 
 
-def _clean_ai_row(row: dict[str, object], contract: list[RequestedField]) -> dict[str, str]:
+def _clean_ai_brand(value: object, page_text: str) -> str:
+    candidate = clean_cell(value)
+    if not candidate:
+        return ''
+    known = detect_brand_from_title(page_text, fallback=candidate)
+    if known:
+        return known
+    key = normalize_key(candidate)
+    if not key or re.search(r'\d', key):
+        return ''
+    words = key.split()
+    if len(words) > 3 or any(word in BRAND_BLOCK_TERMS for word in words):
+        return ''
+    if len(candidate) < 3 or len(candidate) > 40:
+        return ''
+    page_key = normalize_key(page_text)
+    if key not in page_key:
+        return ''
+    if not re.fullmatch(r'[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9 .&’\'-]{1,38}', candidate):
+        return ''
+    return candidate.replace("'", '’')
+
+
+def _clean_ai_row(row: dict[str, object], contract: list[RequestedField], page_text: str = '') -> dict[str, str]:
     cleaned: dict[str, str] = {}
     for field in contract:
         value = clean_cell(row.get(field.original, ''))
         if field.kind == 'gtin':
             value = clean_gtin(value)
+        if field.kind == 'marca':
+            value = _clean_ai_brand(value, page_text)
         if field.kind == 'imagem':
             parts = [clean_cell(part) for part in value.replace('\n', '|').replace(',', '|').split('|')]
             value = '|'.join(dict.fromkeys([part for part in parts if part.startswith(('http://', 'https://'))]))
@@ -223,7 +256,9 @@ def enrich_row_with_ai(
     system = (
         'Você é um assistente de extração de dados para importação no Bling. '
         'Extraia somente os campos solicitados. Se não encontrar um campo com segurança, devolva string vazia. '
-        'Não invente valores. Para imagens, use URLs separadas por |. Para sem estoque/indisponível, use 0.'
+        'Não invente valores. Para imagens, use URLs separadas por |. Para sem estoque/indisponível, use 0. '
+        'Para marca/fabricante, retorne somente o nome da marca real do produto. Nunca retorne modelo, SKU, código, cor, tamanho, voltagem, tipo do produto ou adjetivo. '
+        'Se a marca for desconhecida mas aparecer claramente no título/texto como fabricante, retorne apenas essa palavra ou nome curto; se houver dúvida, retorne vazio.'
     )
     user = {
         'operation': operation,
@@ -231,6 +266,7 @@ def enrich_row_with_ai(
         'requested_fields': _field_schema(contract),
         'current_partial_row': current_row,
         'missing_columns': missing,
+        'brand_extraction_rule': 'Para coluna Marca/Fabricante: identificar fabricante real; não usar modelo, referência, SKU, código, cor, tamanho, potência, mAh, GB, USB, Bluetooth, tipo do produto ou palavras genéricas.',
         'page_text': context,
         'output_rule': 'Responda apenas JSON com uma chave row contendo exatamente as colunas solicitadas.',
     }
@@ -259,7 +295,7 @@ def enrich_row_with_ai(
         ai_row = parsed.get('row', parsed)
         if not isinstance(ai_row, dict):
             return current_row
-        cleaned = _clean_ai_row(ai_row, contract)
+        cleaned = _clean_ai_row(ai_row, contract, page_text=context)
         merged = dict(current_row)
         for field in contract:
             if not str(merged.get(field.original, '')).strip() and str(cleaned.get(field.original, '')).strip():
