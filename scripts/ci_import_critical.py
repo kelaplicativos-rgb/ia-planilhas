@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import importlib
 import pathlib
-import sys
 import traceback
 
 MODULES = [
     'app',
     'bling_app_zero.ui.home',
+    'bling_app_zero.ui.home_wizard_v2',
+    'bling_app_zero.ui.rules_center_step',
+    'bling_app_zero.ui.ai_real_advanced_panel',
+    'bling_app_zero.core.flow_spine',
+    'bling_app_zero.core.wizard_state',
+    'bling_app_zero.core.wizard_engine',
+    'bling_app_zero.features_runtime.registry',
     'bling_app_zero.ui.home_shared',
     'bling_app_zero.ui.smart_upload',
     'bling_app_zero.ui.cadastro_panel',
@@ -38,12 +44,11 @@ def main() -> int:
             importlib.import_module(module)
         except Exception as exc:
             tb = traceback.format_exc()
-            message = [
+            text = '\n'.join([
                 f'BLING_IMPORT_FAIL::{module}',
                 f'{type(exc).__name__}: {exc}',
                 tb,
-            ]
-            text = '\n'.join(message)
+            ])
             print(text, flush=True)
             REPORT.write_text(text, encoding='utf-8')
             return 1
