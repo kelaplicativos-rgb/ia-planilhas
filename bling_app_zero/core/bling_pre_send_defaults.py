@@ -6,6 +6,8 @@ from urllib.parse import urlparse
 
 import pandas as pd
 
+from bling_app_zero.engines.brand_title_detector import detect_brand_from_title
+
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_pre_send_defaults.py'
 DEFAULT_BRAND = 'Genérico'
 DEFAULT_CONDITION = 'Novo'
@@ -100,11 +102,9 @@ def _brand_is_valid(value: str) -> bool:
     low = brand.lower()
     if low in _STORE_BRANDS or any(low.startswith(item) for item in _STORE_BRANDS):
         return False
-    if low in _STOPWORDS:
-        return False
     if len(brand) < 2 or len(brand) > 40:
         return False
-    return True
+    return bool(detect_brand_from_title('', fallback=brand))
 
 
 def _first(data: Mapping[str, Any], fields: tuple[str, ...]) -> str:
@@ -151,40 +151,7 @@ def _first_real_product_url(data: Mapping[str, Any]) -> str:
 
 
 def infer_brand_from_title(title: str) -> str:
-    text = _clean(title).replace('’', "'")
-    if not text:
-        return ''
-    upper_text = text.upper()
-    for brand in _KNOWN_BRANDS:
-        pattern = r'(?<![A-Z0-9])' + re.escape(brand.upper()) + r'(?![A-Z0-9])'
-        if re.search(pattern, upper_text):
-            if brand.upper() in {'H\'MASTON', 'HMASTON'}:
-                return "H'maston"
-            return _norm_brand(brand.title() if brand.isupper() and len(brand) > 3 else brand)
-
-    patterns = [
-        r'\bmarca\s+([A-Za-z0-9\'\-]{2,30})\b',
-        r'\bmodelo\s+([A-Za-z]{2,30})\b',
-        r'[-|/]\s*([A-Za-z][A-Za-z0-9\'\-]{2,30})\b',
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, text, flags=re.IGNORECASE)
-        if match:
-            candidate = _norm_brand(match.group(1))
-            if _brand_is_valid(candidate):
-                return candidate
-
-    tokens = re.findall(r"[A-Za-z][A-Za-z0-9'\-]{2,30}", text)
-    for token in tokens:
-        candidate = _norm_brand(token)
-        if not _brand_is_valid(candidate):
-            continue
-        low = candidate.lower()
-        if low in _STOPWORDS:
-            continue
-        if candidate.isupper() or "'" in candidate or '-' in candidate:
-            return candidate
-    return ''
+    return _norm_brand(detect_brand_from_title(title))
 
 
 def apply_product_send_defaults(row: Any) -> dict[str, Any]:
