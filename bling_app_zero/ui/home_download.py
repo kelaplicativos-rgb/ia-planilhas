@@ -26,6 +26,7 @@ from bling_app_zero.core.validators import validate_final_df
 from bling_app_zero.ui.bling_api_batch_panel import render_bling_api_batch_panel
 from bling_app_zero.ui.bling_price_channel_selector import render_price_channel_selector
 from bling_app_zero.ui.bling_stock_target_panel import render_stock_target_panel
+from bling_app_zero.ui.category_conference_step import category_conference_ready, render_category_conference_step
 from bling_app_zero.ui.flow_context import (
     entry_context as _entry_context,
     is_bling_api_context as _legacy_is_api_context,
@@ -127,6 +128,13 @@ def _looks_like_stock_contract(df: pd.DataFrame) -> bool:
 def _looks_like_cadastro_contract(df: pd.DataFrame) -> bool:
     columns = _normalized_columns(df)
     return _has_term(columns, CADASTRO_NAME_TERMS) and _has_term(columns, CADASTRO_PRICE_TERMS)
+
+
+def _has_category_column(df: pd.DataFrame) -> bool:
+    if not isinstance(df, pd.DataFrame):
+        return False
+    aliases = {'categoria', 'category', 'nome da categoria', 'categoria do produto'}
+    return any(normalize_key(column) in aliases for column in df.columns)
 
 
 def _operation_contract_mismatch_error(raw_df: pd.DataFrame, download_df: pd.DataFrame, operation: str) -> str:
@@ -283,7 +291,6 @@ def download_dataframe_for_contract(df: pd.DataFrame, operation: str) -> tuple[p
 
 
 def _render_final_output_rule_report(report: FinalOutputRuleReport) -> bool:
-    """Mostra o efeito das regras finais. Retorna False quando deve bloquear."""
     st.session_state['final_output_rule_report'] = report.to_dict()
     if report.changed_cells:
         if report.rows_limited:
@@ -350,6 +357,10 @@ def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: st
         return
     targeted_df = _apply_required_api_target(download_df, operation)
     if not isinstance(targeted_df, pd.DataFrame) or targeted_df.empty:
+        return
+    if normalize_operation(operation) == OP_CADASTRO and _has_category_column(targeted_df) and not category_conference_ready():
+        st.warning('Antes de enviar ao Bling, escolha se quer aplicar a Conferência inteligente de categorias ou pular sem alterar categorias.')
+        render_category_conference_step()
         return
     if not _guard_before_api_send(targeted_df, operation):
         return
