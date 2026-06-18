@@ -53,6 +53,19 @@ def _safe_tuple_attr(obj: object, name: str) -> tuple[Any, ...]:
     return (value,)
 
 
+def _validation_dataframe(df: pd.DataFrame, validation_df: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Tabela usada apenas pela trava final antes da API.
+
+    Em envio normal, a própria tabela enviada é validada. Em envio em lote, o
+    sender recebe só um pedaço da tabela; nesse caso a trava precisa olhar a
+    base final completa que gerou a prévia/assinatura, senão o último lote de 1
+    linha parece uma tabela alterada contra a assinatura da prévia de 318 linhas.
+    """
+    if isinstance(validation_df, pd.DataFrame) and not validation_df.empty:
+        return validation_df.copy().fillna('')
+    return df
+
+
 def _pending_reason_text(item: dict[str, Any]) -> str:
     for key in ('reason', 'motivo', 'message', 'mensagem', 'title', 'titulo'):
         value = str(item.get(key) or '').strip()
@@ -167,26 +180,35 @@ def _block_empty_before_api(operation: str, progress_callback: Callable[[dict[st
     return DirectSendResult(0, 0, 0, 0, (message,), tuple())
 
 
-def _block_send_validation_before_api(df: pd.DataFrame, operation: str, progress_callback: Callable[[dict[str, Any]], None] | None = None) -> DirectSendResult | None:
+def _block_send_validation_before_api(
+    df: pd.DataFrame,
+    operation: str,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    *,
+    validation_df: pd.DataFrame | None = None,
+) -> DirectSendResult | None:
     """Última barreira antes de qualquer request ao Bling.
 
-    Não confia em cache, estado de UI nem fluxo antigo. A validação olha a tabela
-    viva que chegou ao sender e bloqueia cadastro sem categoria final válida.
+    Não confia em cache, estado de UI nem fluxo antigo. Em lote, valida a base
+    final completa e envia somente o pedaço recebido pelo sender.
     """
-    result = validate_before_bling_send(df, operation)
+    guard_df = _validation_dataframe(df, validation_df)
+    result = validate_before_bling_send(guard_df, operation)
     if result.ok:
         return None
     messages = tuple(str(message) for message in result.messages if str(message).strip()) or ('Envio bloqueado antes da API por validação final.',)
+    send_rows = len(df) if isinstance(df, pd.DataFrame) else 0
+    validation_rows = len(guard_df) if isinstance(guard_df, pd.DataFrame) else 0
     _emit(
         progress_callback,
         {
             'stage': 'Envio bloqueado antes da API',
             'operation': normalize_operation(operation),
             'processed': 0,
-            'total': len(df) if isinstance(df, pd.DataFrame) else 0,
+            'total': send_rows,
             'sent': 0,
             'failed': 0,
-            'skipped': len(df) if isinstance(df, pd.DataFrame) else 0,
+            'skipped': send_rows,
             'progress': 1.0,
             'blocked_before_api': True,
             'reason': 'send_validation_v2',
@@ -199,15 +221,16 @@ def _block_send_validation_before_api(df: pd.DataFrame, operation: str, progress
         status='BLOQUEADO',
         details={
             'operation': normalize_operation(operation),
-            'rows': len(df) if isinstance(df, pd.DataFrame) else 0,
+            'rows': send_rows,
+            'validation_rows': validation_rows,
+            'validation_uses_full_dataset': validation_rows != send_rows,
             'messages': list(messages),
             'guard': result.to_dict(),
             'no_api_request_sent': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
-    rows = len(df) if isinstance(df, pd.DataFrame) else 0
-    return DirectSendResult(rows, 0, 0, rows, messages, tuple())
+    return DirectSendResult(send_rows, 0, 0, send_rows, messages, tuple())
 
 
 def _send_allowed_rows_to_bling(
@@ -268,13 +291,14 @@ def send_dataframe_to_bling_intelligent(
     *,
     limit: int | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    validation_df: pd.DataFrame | None = None,
 ) -> DirectSendResult:
     patch_bling_api_base_urls()
     op = normalize_operation(operation)
     if not isinstance(df, pd.DataFrame) or df.empty:
         return _block_empty_before_api(op, progress_callback)
 
-    blocked = _block_send_validation_before_api(df, op, progress_callback)
+    blocked = _block_send_validation_before_api(df, op, progress_callback, validation_df=validation_df)
     if blocked is not None:
         return blocked
 
@@ -345,6 +369,7 @@ def send_dataframe_to_bling_intelligent(
         details={
             'operation': op,
             'total_input': len(df),
+            'validation_rows': len(validation_df) if isinstance(validation_df, pd.DataFrame) else len(df),
             'attempted_after_api': attempted_after_api,
             'attempted_total': attempted_total,
             'allowed_rows': len(allowed_df),
