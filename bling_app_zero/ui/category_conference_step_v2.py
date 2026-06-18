@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import io
-
 import pandas as pd
 import streamlit as st
 
@@ -27,8 +25,9 @@ CATEGORY_DATASET_SIGNATURE_KEY = 'category_conference_dataset_signature_v1'
 CATEGORY_AUTO_APPLIED_SIGNATURE_KEY = 'category_conference_auto_applied_signature_v1'
 CATEGORY_AUTO_BLOCKED_SIGNATURE_KEY = 'category_conference_auto_blocked_signature_v1'
 
-# A confiança visual da etapa não é mais uma decisão do usuário. O sistema aplica
-# automaticamente e só libera quando 100% dos produtos tiverem categoria final válida.
+# Não existe controle manual de confiança nesta etapa. Ao ligar a categorização,
+# o sistema aplica automaticamente e só libera quando 100% dos produtos tiverem
+# categoria final válida.
 CATEGORY_AUTO_CONFIDENCE_MIN = 0.80
 BLOCKED_FINAL_CATEGORY_VALUES = {'', 'nan', 'none', 'null', '<na>', 'na', 'n/a', 'sem categoria', 'revisar manualmente'}
 
@@ -77,12 +76,7 @@ def category_values_signature(df: pd.DataFrame) -> str:
 
 
 def _final_category_issue_rows(df: pd.DataFrame) -> tuple[int, ...]:
-    """Linhas 1-based sem categoria final válida após aplicar IA.
-
-    Quando o usuário escolhe categorização automática, a confirmação só é segura
-    se cada produto tiver uma categoria final gravável no Bling. Valores vazios
-    ou marcadores de revisão não podem ser tratados como categoria gerada.
-    """
+    """Linhas 1-based sem categoria final válida após aplicar IA."""
     if not _valid_df(df):
         return tuple()
     category_col = detect_category_column(df)
@@ -129,12 +123,6 @@ def _reset_if_source_changed(df: pd.DataFrame, source_key: str) -> None:
         )
     st.session_state[CATEGORY_SOURCE_SIGNATURE_KEY] = signature
     st.session_state[GLOBAL_LIVE_DATASET_SIGNATURE_KEY] = _dataset_identity(df)
-
-
-def _csv_bytes(df: pd.DataFrame) -> bytes:
-    buffer = io.StringIO()
-    df.to_csv(buffer, index=False, sep=';', encoding='utf-8-sig')
-    return buffer.getvalue().encode('utf-8-sig')
 
 
 def _catalog() -> tuple[str, ...]:
@@ -209,22 +197,15 @@ def _store_corrected_everywhere(corrected: pd.DataFrame, source_key: str, *, app
     )
 
 
-def _apply_or_block(
-    analyzed: pd.DataFrame,
-    source_key: str,
-    *,
-    stats: dict[str, int],
-    confidence_min: float,
-    mode: str,
-) -> tuple[bool, tuple[int, ...], int, pd.DataFrame]:
-    corrected, applied_count = apply_category_suggestions(analyzed.copy(), confidence_min=confidence_min, keep_helper_columns=False)
+def _apply_or_block(analyzed: pd.DataFrame, source_key: str, *, stats: dict[str, int]) -> tuple[bool, tuple[int, ...], int, pd.DataFrame]:
+    corrected, applied_count = apply_category_suggestions(analyzed.copy(), confidence_min=CATEGORY_AUTO_CONFIDENCE_MIN, keep_helper_columns=False)
     blocked_rows = _final_category_issue_rows(corrected)
     if blocked_rows:
         st.session_state[CATEGORY_DONE_KEY] = False
         st.session_state[CATEGORY_SKIP_KEY] = False
         st.session_state[CATEGORY_AUTO_BLOCKED_SIGNATURE_KEY] = _dataset_identity(corrected)
         add_audit_event(
-            f'category_conference_{mode}_blocked_incomplete',
+            'category_conference_automatic_blocked_incomplete',
             area='CATEGORIAS',
             step='conferencia_categorias',
             status='BLOQUEADO',
@@ -233,7 +214,6 @@ def _apply_or_block(
                 'applied_count': int(applied_count),
                 'blocked_rows_count': len(blocked_rows),
                 'blocked_rows_sample': list(blocked_rows[:50]),
-                'confidence_min': float(confidence_min),
                 'required_completion_percent': 100,
                 'category_column': detect_category_column(corrected),
                 'responsible_file': RESPONSIBLE_FILE,
@@ -243,14 +223,13 @@ def _apply_or_block(
     _store_corrected_everywhere(corrected, source_key, applied_count=applied_count, stats=stats)
     st.session_state[CATEGORY_AUTO_APPLIED_SIGNATURE_KEY] = _dataset_identity(corrected)
     add_audit_event(
-        f'category_conference_{mode}_auto_completed',
+        'category_conference_automatic_completed',
         area='CATEGORIAS',
         step='conferencia_categorias',
         status='OK',
         details={
             'rows': int(len(corrected)),
             'applied_count': int(applied_count),
-            'confidence_min': float(confidence_min),
             'required_completion_percent': 100,
             'responsible_file': RESPONSIBLE_FILE,
         },
@@ -264,31 +243,6 @@ def _render_blocked(blocked_rows: tuple[int, ...], analyzed: pd.DataFrame) -> No
     preview = _category_issue_preview(analyzed, blocked_rows)
     if _valid_df(preview):
         st.dataframe(preview, use_container_width=True, hide_index=True, height=360)
-
-
-def _inject_apply_button_style() -> None:
-    st.markdown(
-        """
-        <style>
-        div[data-testid="stButton"] button[kind="primary"] {
-            background: linear-gradient(90deg, #16a34a 0%, #22c55e 45%, #84cc16 100%) !important;
-            color: #052e16 !important;
-            border: 3px solid #065f46 !important;
-            border-radius: 14px !important;
-            font-weight: 900 !important;
-            font-size: 1.03rem !important;
-            min-height: 3.25rem !important;
-            box-shadow: 0 0 0 3px rgba(34, 197, 94, .28), 0 10px 24px rgba(22, 163, 74, .30) !important;
-            text-transform: uppercase !important;
-        }
-        div[data-testid="stButton"] button[kind="primary"]:hover {
-            filter: brightness(1.07) !important;
-            transform: translateY(-1px);
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
 
 
 def category_conference_ready() -> bool:
@@ -307,29 +261,20 @@ def render_category_conference_step() -> None:
     _reset_if_source_changed(df, source_key)
 
     st.markdown('### Conferência inteligente de categorias')
-    st.caption('Aplicação automática: ao ligar a categorização, o sistema corrige e padroniza categorias sem esperar clique do usuário.')
+    st.caption('Aplicação 100% automática: ao ligar a categorização, o sistema corrige e padroniza sem botão, sem slider e sem ação manual.')
     st.warning('Trava 100%: nenhum produto será liberado enquanto existir categoria final vazia ou “REVISAR MANUALMENTE”.')
-    _inject_apply_button_style()
 
     if CATEGORY_CATALOG_KEY not in st.session_state:
         st.session_state[CATEGORY_CATALOG_KEY] = '\n'.join(DEFAULT_CATEGORY_CATALOG)
     with st.expander('Catálogo oficial de categorias', expanded=False):
         st.text_area('Uma categoria por linha', height=210, key=CATEGORY_CATALOG_KEY, help='Este catálogo define o nome final correto que será enviado/criado no Bling.')
 
-    confidence_min = CATEGORY_AUTO_CONFIDENCE_MIN
-    st.info('Aplicação automática ativa. O sistema exige 100% dos produtos com categoria final válida e usa trava anti-cache da base viva atual.')
     analyzed, stats = classify_dataframe(df, category_catalog=_catalog())
     st.session_state[CATEGORY_ANALYZED_KEY] = analyzed
     st.session_state[CATEGORY_STATS_KEY] = stats
 
     if not category_conference_ready():
-        ok, blocked_rows, applied_count, _corrected = _apply_or_block(
-            analyzed,
-            source_key,
-            stats=stats,
-            confidence_min=confidence_min,
-            mode='automatic',
-        )
+        ok, blocked_rows, applied_count, _corrected = _apply_or_block(analyzed, source_key, stats=stats)
         if not ok:
             _render_blocked(blocked_rows, analyzed)
             return
@@ -352,45 +297,8 @@ def render_category_conference_step() -> None:
         if len(action_df) > 500:
             st.caption(f'Mostrando 500 de {len(action_df)} produtos com ação de categoria.')
 
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        if st.button('✅ REAPLICAR CATEGORIAS AGORA', type='primary', use_container_width=True, key='category_conference_apply_v1'):
-            ok, blocked_rows, applied_count, _corrected = _apply_or_block(
-                analyzed,
-                source_key,
-                stats=stats,
-                confidence_min=confidence_min,
-                mode='manual_reapply',
-            )
-            if not ok:
-                _render_blocked(blocked_rows, analyzed)
-                return
-            st.success(f'{applied_count} categoria(s) corrigida(s)/padronizada(s). 100% dos produtos têm categoria final válida.')
-            st.rerun()
-    with c2:
-        if st.button('Pular sem alterar categorias', use_container_width=True, key='category_conference_skip_v1'):
-            dataset_sig = _dataset_identity(df)
-            st.session_state[CATEGORY_SKIP_KEY] = True
-            st.session_state[CATEGORY_DONE_KEY] = False
-            st.session_state[CATEGORY_SOURCE_SIGNATURE_KEY] = _source_signature(df, source_key)
-            st.session_state[CATEGORY_VALUES_SIGNATURE_KEY] = category_values_signature(df)
-            st.session_state[CATEGORY_DATASET_SIGNATURE_KEY] = dataset_sig
-            st.session_state[GLOBAL_DECISION_DATASET_SIGNATURE_KEY] = dataset_sig
-            st.session_state[GLOBAL_LIVE_DATASET_SIGNATURE_KEY] = dataset_sig
-            add_audit_event(
-                'category_conference_skipped_by_user',
-                area='CATEGORIAS',
-                step='conferencia_categorias',
-                status='PULADO',
-                details={'rows': int(len(df)), 'source_key': source_key, 'category_values_signature': st.session_state.get(CATEGORY_VALUES_SIGNATURE_KEY), 'dataset_identity_signature': dataset_sig, 'responsible_file': RESPONSIBLE_FILE},
-            )
-            st.warning('Etapa pulada pelo usuário. O sistema não alterará categorias nesta execução.')
-            st.rerun()
-    with c3:
-        st.download_button('Baixar relatório da conferência', data=_csv_bytes(analyzed), file_name='conferencia_inteligente_categorias.csv', mime='text/csv', use_container_width=True, key='category_conference_download_v1')
-
     if category_conference_was_skipped():
-        st.warning('Conferência pulada. O envio usará as categorias exatamente como estão na origem viva atual.')
+        st.warning('Conferência pulada porque a categorização foi desligada antes de entrar no painel.')
     elif category_conference_ready():
         st.success('Conferência confirmada automaticamente. O envio ao Bling usará o nome corrigido da categoria.')
     else:
