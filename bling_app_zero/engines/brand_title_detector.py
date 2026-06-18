@@ -34,6 +34,10 @@ GENERIC_WORDS = {
     'drive', 'adaptador', 'suporte', 'camera', 'câmera', 'pelicula', 'película', 'capinha', 'fonte',
     'usb', 'tipo', 'type', 'sem', 'fio', 'recarregavel', 'recarregável', 'completo', 'micro', 'gamer',
     'para', 'com', 'sem', 'novo', 'original', 'premium', 'universal', 'digital', 'wireless', 'bluetooth',
+    'ouvido', 'ouvidos', 'orelha', 'headset', 'headphone', 'earphone', 'auricular', 'intra', 'estereo',
+    'estéreo', 'mono', 'bt', 'power', 'bank', 'smart', 'led', 'rgb', 'full', 'hd', 'tv', 'lampada',
+    'lâmpada', 'relogio', 'relógio', 'celular', 'smartphone', 'tablet', 'notebook', 'computador',
+    'iphone', 'ipad', 'ipod', 'ios', 'android', 'veicular', 'automotivo', 'automotiva',
 }
 
 ATTRIBUTE_WORDS = {
