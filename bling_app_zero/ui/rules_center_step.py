@@ -3,6 +3,7 @@ from __future__ import annotations
 import streamlit as st
 
 from bling_app_zero.core.user_rules import get_user_rules, set_user_rules
+from bling_app_zero.ui.category_conference_step import category_conference_ready, render_category_conference_step
 from bling_app_zero.ui.rules_center_state import RULES_CENTER_READY_KEY, rules_center_ready
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/rules_center_step.py'
@@ -25,13 +26,13 @@ def _disable_legacy_final_protections() -> dict:
 
 
 def render_rules_center_step(key_scope: str = 'ia_real') -> None:
-    """Mantém compatibilidade sem alterar o DataFrame final.
-
-    O arquivo final agora obedece somente ao mapeamento e aos valores fixos
-    escolhidos pelo usuário. As antigas proteções desta tela não podem limpar,
-    preencher ou deduplicar dados depois do mapeamento.
-    """
+    """Renderiza guardas finais sem alterar valores fora das decisões explícitas do usuário."""
     _ = key_scope
+    render_category_conference_step()
+    if not category_conference_ready():
+        st.info('Para seguir com segurança, aplique a conferência de categorias ou pule explicitamente esta etapa.')
+        return
+
     _disable_legacy_final_protections()
     st.markdown(
         '''
