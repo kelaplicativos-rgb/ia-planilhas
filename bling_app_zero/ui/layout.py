@@ -4,41 +4,41 @@ import streamlit as st
 
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/layout.py'
-LAYOUT_STYLE_ID = 'bling-app-master-layout-style-v3'
+LAYOUT_STYLE_ID = 'bling-app-master-layout-style-v4-minimal-steps'
 TOOLBAR_STYLE_ID = 'bling-toolbar-fix-style-v1'
 
 
 _MASTER_THEME_CSS = '''
 :root {
-    --bling-bg: #f8fafc;
-    --bling-bg-strong: #eef6ff;
+    --bling-bg: #fbfcff;
+    --bling-bg-strong: #eef7ff;
     --bling-card: #ffffff;
-    --bling-card-soft: #f9fbff;
-    --bling-border: #e2e8f0;
-    --bling-border-strong: #cbd5e1;
-    --bling-text: #0f172a;
-    --bling-muted: #64748b;
-    --bling-muted-strong: #475569;
-    --bling-soft: #f1f5f9;
-    --bling-primary: #2563eb;
-    --bling-primary-strong: #1d4ed8;
-    --bling-primary-soft: #eff6ff;
-    --bling-primary-border: #bfdbfe;
-    --bling-success: #16a34a;
-    --bling-success-soft: #ecfdf5;
-    --bling-success-border: #bbf7d0;
-    --bling-warning: #f97316;
-    --bling-warning-strong: #c2410c;
-    --bling-warning-soft: #fff7ed;
-    --bling-warning-border: #fed7aa;
+    --bling-card-soft: #f7fbff;
+    --bling-border: #e6edf5;
+    --bling-border-strong: #d8e4f0;
+    --bling-text: #111827;
+    --bling-muted: #6b7280;
+    --bling-muted-strong: #4b5563;
+    --bling-soft: #f4f8fc;
+    --bling-primary: #1683ef;
+    --bling-primary-strong: #0f6fd0;
+    --bling-primary-soft: #eaf5ff;
+    --bling-primary-border: #b9dcff;
+    --bling-success: #0f9f6e;
+    --bling-success-soft: #edfff8;
+    --bling-success-border: #bfefdc;
+    --bling-warning: #f59e0b;
+    --bling-warning-strong: #9a5b00;
+    --bling-warning-soft: #fff8eb;
+    --bling-warning-border: #ffe2a9;
     --bling-error: #dc2626;
-    --bling-error-soft: #fef2f2;
-    --bling-error-border: #fecaca;
+    --bling-error-soft: #fff1f1;
+    --bling-error-border: #ffd1d1;
     --bling-radius-sm: 12px;
     --bling-radius-md: 16px;
     --bling-radius-lg: 22px;
-    --bling-shadow-sm: 0 8px 20px rgba(15, 23, 42, 0.045);
-    --bling-shadow-md: 0 14px 34px rgba(15, 23, 42, 0.06);
+    --bling-shadow-sm: 0 6px 16px rgba(17, 24, 39, 0.035);
+    --bling-shadow-md: 0 10px 26px rgba(17, 24, 39, 0.055);
 }
 
 html,
@@ -48,17 +48,17 @@ body,
 }
 
 [data-testid="stAppViewContainer"] > .main {
-    background: linear-gradient(180deg, #ffffff 0%, var(--bling-bg) 30%, var(--bling-bg) 100%);
+    background: linear-gradient(180deg, #ffffff 0%, var(--bling-bg) 28%, var(--bling-bg) 100%);
 }
 
 .block-container {
-    padding-top: 1.05rem;
-    padding-bottom: 2.25rem;
-    max-width: 1120px;
+    max-width: 780px;
+    padding-top: 0.82rem;
+    padding-bottom: 5rem;
 }
 
 section[data-testid="stSidebar"] {
-    border-right: 1px solid rgba(148, 163, 184, 0.22);
+    border-right: 1px solid rgba(148, 163, 184, 0.18);
     background: #ffffff;
 }
 
@@ -72,7 +72,7 @@ h1,
 h2,
 h3,
 h4 {
-    letter-spacing: -0.025em;
+    letter-spacing: -0.03em;
     color: var(--bling-text);
 }
 
@@ -92,6 +92,27 @@ a:hover {
     text-decoration: underline;
 }
 
+.stTextInput input,
+.stNumberInput input,
+.stDateInput input,
+.stTimeInput input,
+.stTextArea textarea,
+[data-baseweb="select"] > div {
+    border-radius: 15px !important;
+    border-color: var(--bling-border) !important;
+    background: #ffffff !important;
+    min-height: 2.85rem !important;
+}
+
+.stTextInput input:focus,
+.stNumberInput input:focus,
+.stDateInput input:focus,
+.stTimeInput input:focus,
+.stTextArea textarea:focus {
+    border-color: var(--bling-primary-border) !important;
+    box-shadow: 0 0 0 3px rgba(22, 131, 239, 0.10) !important;
+}
+
 [data-testid="stMetric"] {
     background: var(--bling-card);
     border: 1px solid var(--bling-border);
@@ -103,17 +124,17 @@ a:hover {
 div[data-testid="stVerticalBlockBorderWrapper"] {
     border-radius: 18px;
     border-color: var(--bling-border) !important;
-    box-shadow: var(--bling-shadow-md);
+    box-shadow: var(--bling-shadow-sm);
     background: var(--bling-card);
 }
 
 .stButton > button,
 .stDownloadButton > button,
 .stLinkButton > a {
-    border-radius: 13px !important;
-    font-weight: 760 !important;
-    min-height: 2.65rem;
-    border-color: #dbe3ef !important;
+    border-radius: 999px !important;
+    font-weight: 850 !important;
+    min-height: 2.85rem;
+    border: 1px solid var(--bling-border-strong) !important;
     box-shadow: none !important;
     transition: background .16s ease, border-color .16s ease, transform .16s ease;
 }
@@ -121,16 +142,23 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
 .stButton > button:hover,
 .stDownloadButton > button:hover,
 .stLinkButton > a:hover {
-    border-color: #93c5fd !important;
+    border-color: var(--bling-primary-border) !important;
     background: var(--bling-primary-soft) !important;
     transform: translateY(-1px);
 }
 
 .stButton > button:disabled,
 .stDownloadButton > button:disabled {
-    opacity: .62 !important;
+    opacity: .58 !important;
     cursor: not-allowed !important;
     transform: none !important;
+}
+
+.stButton > button[kind="primary"],
+.stDownloadButton > button[kind="primary"] {
+    background: var(--bling-primary) !important;
+    color: #ffffff !important;
+    border-color: var(--bling-primary) !important;
 }
 
 .stAlert {
@@ -176,13 +204,13 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
 
 [data-testid="stExpander"] {
     border: 1px solid var(--bling-border);
-    border-radius: 14px;
-    background: rgba(255, 255, 255, 0.78);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.82);
 }
 
 [data-testid="stExpander"] details summary {
     color: var(--bling-text);
-    font-weight: 760;
+    font-weight: 800;
 }
 
 [data-testid="stFileUploader"] {
@@ -199,23 +227,23 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
 .bling-home-eyebrow {
     font-size: .74rem;
     font-weight: 900;
-    color: var(--bling-muted-strong);
+    color: var(--bling-primary-strong);
     text-transform: uppercase;
-    letter-spacing: .12em;
+    letter-spacing: .11em;
 }
 
 .bling-home-hero {
-    padding: 1.15rem 1.2rem;
+    padding: 1rem 1.05rem;
     border: 1px solid var(--bling-border);
     border-radius: var(--bling-radius-lg);
-    background: linear-gradient(135deg, #ffffff 0%, var(--bling-card-soft) 58%, var(--bling-bg-strong) 100%);
-    margin-bottom: 1rem;
-    box-shadow: 0 18px 42px rgba(15, 23, 42, 0.055);
+    background: linear-gradient(135deg, #ffffff 0%, var(--bling-card-soft) 70%, var(--bling-bg-strong) 100%);
+    margin-bottom: .85rem;
+    box-shadow: var(--bling-shadow-sm);
 }
 
 .bling-home-title {
     color: var(--bling-text);
-    font-size: clamp(1.45rem, 3.5vw, 2rem);
+    font-size: clamp(1.35rem, 3.8vw, 1.88rem);
     font-weight: 950;
     line-height: 1.08;
     margin-top: .34rem;
@@ -224,26 +252,26 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
 
 .bling-home-subtitle {
     color: var(--bling-muted);
-    font-size: 1rem;
-    line-height: 1.55;
-    margin-top: .55rem;
-    max-width: 820px;
+    font-size: .96rem;
+    line-height: 1.45;
+    margin-top: .52rem;
+    max-width: 760px;
 }
 
 .bling-step-pills {
     display: flex;
     flex-wrap: wrap;
-    gap: .45rem;
-    margin-top: .9rem;
+    gap: .42rem;
+    margin-top: .82rem;
 }
 
 .bling-step-pill {
     border: 1px solid var(--bling-primary-border);
-    background: rgba(239, 246, 255, .86);
-    color: #1e3a8a;
+    background: rgba(234, 245, 255, .86);
+    color: #075985;
     border-radius: 999px;
     padding: .34rem .62rem;
-    font-size: .78rem;
+    font-size: .76rem;
     font-weight: 850;
 }
 
@@ -282,26 +310,49 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
     color: var(--bling-warning-strong);
 }
 
+.bling-topline {
+    display: flex;
+    align-items: center;
+    gap: .55rem;
+    margin: 0 0 .55rem 0;
+    color: var(--bling-muted-strong);
+    font-size: .84rem;
+    font-weight: 850;
+}
+
+.bling-topline-dot {
+    width: .52rem;
+    height: .52rem;
+    border-radius: 999px;
+    background: var(--bling-primary);
+    display: inline-block;
+}
+
 @media (max-width: 768px) {
     .block-container {
-        padding-left: 0.85rem;
-        padding-right: 0.85rem;
-        padding-top: 0.75rem;
+        max-width: 100vw;
+        padding-left: 0.78rem;
+        padding-right: 0.78rem;
+        padding-top: 0.64rem;
     }
 
     .bling-home-hero {
-        padding: 1rem;
+        padding: .95rem;
         border-radius: 18px;
     }
 
     .bling-home-title {
-        font-size: 1.35rem;
+        font-size: 1.34rem;
+    }
+
+    .bling-home-subtitle {
+        font-size: .9rem;
     }
 
     .stButton > button,
     .stDownloadButton > button,
     .stLinkButton > a {
-        min-height: 2.8rem;
+        min-height: 2.95rem;
         width: 100%;
     }
 }
@@ -329,7 +380,7 @@ footer {{
 
 
 def inject_app_layout() -> None:
-    """Injeta o tema mestre global, profissional, leve e responsivo."""
+    """Injeta o tema mestre global, leve, minimalista e responsivo."""
     st.markdown(
         f'''
 <style id="{LAYOUT_STYLE_ID}">
@@ -341,18 +392,20 @@ def inject_app_layout() -> None:
 
 
 def render_compact_hero() -> None:
-    """Renderiza cabeçalho compacto alinhado ao tema mestre."""
+    """Renderiza cabeçalho compacto inspirado em apps mobile de etapas."""
     st.markdown(
         '''
+<div class="bling-topline"><span class="bling-topline-dot"></span><span>MapeiaAI · Bling</span></div>
 <div class="bling-home-hero">
-  <div class="bling-home-eyebrow">MapeiaAI · Bling</div>
-  <div class="bling-home-title">Prepare planilhas para o Bling com menos cliques.</div>
-  <div class="bling-home-subtitle">Escolha um modelo, carregue a origem dos dados, revise o mapeamento e baixe o arquivo final pronto para importar.</div>
+  <div class="bling-home-eyebrow">Fluxo simples por etapas</div>
+  <div class="bling-home-title">Prepare, revise e finalize sem trocar de caminho.</div>
+  <div class="bling-home-subtitle">Interface leve para celular: escolha a origem, carregue os dados, confirme o mapeamento e finalize em arquivo ou Bling.</div>
   <div class="bling-step-pills">
-    <span class="bling-step-pill">1. Modelo</span>
-    <span class="bling-step-pill">2. Origem</span>
-    <span class="bling-step-pill">3. Mapeamento</span>
-    <span class="bling-step-pill">4. Download</span>
+    <span class="bling-step-pill">1. Origem</span>
+    <span class="bling-step-pill">2. Dados</span>
+    <span class="bling-step-pill">3. Modelo</span>
+    <span class="bling-step-pill">4. Revisão</span>
+    <span class="bling-step-pill">5. Saída</span>
   </div>
 </div>
 ''',
