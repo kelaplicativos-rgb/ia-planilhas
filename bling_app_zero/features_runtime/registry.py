@@ -6,24 +6,24 @@ STEP_MODELO = 'modelo'
 STEP_ORIGEM = 'origem'
 STEP_ENTRADA = 'entrada'
 STEP_PRECIFICACAO = 'precificacao'
-STEP_MAPEAMENTO = 'mapeamento'
 STEP_CATEGORIZACAO = 'categorizacao'
+STEP_MAPEAMENTO = 'mapeamento'
 STEP_REGRAS = 'regras'
 STEP_PREVIEW = 'preview'
 STEP_DOWNLOAD = 'download'
 
 API_STEPS = (STEP_ORIGEM, STEP_ENTRADA, STEP_DOWNLOAD)
 
-# BLINGSCAN 2026-06-18:
-# Categorização precisa ser uma etapa própria, opcional, fora de Regras e IA.
-# Ordem correta do fluxo universal: origem/dados/modelo/preço/mapeamento/categorias/regras/prévia/saída.
+# BLINGFIX 2026-06-18:
+# Categorização precisa ser uma etapa própria, opcional, logo após o usuário formular os preços.
+# Ordem correta do fluxo universal: origem/dados/modelo/preço/categorias/mapeamento/regras/prévia/saída.
 UNIVERSAL_STEPS = (
     STEP_ORIGEM,
     STEP_ENTRADA,
     STEP_MODELO,
     STEP_PRECIFICACAO,
-    STEP_MAPEAMENTO,
     STEP_CATEGORIZACAO,
+    STEP_MAPEAMENTO,
     STEP_REGRAS,
     STEP_PREVIEW,
     STEP_DOWNLOAD,
