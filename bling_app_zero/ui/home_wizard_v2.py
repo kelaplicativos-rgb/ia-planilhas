@@ -7,19 +7,21 @@ from bling_app_zero.ui.category_conference_wizard_step import category_wizard_re
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_wizard_v2.py'
 STEP_CATEGORIZACAO = 'categorizacao'
+STEP_PRECIFICACAO = 'precificacao'
 STEP_MAPEAMENTO = 'mapeamento'
 STEP_REGRAS = 'regras'
 _PATCHED_KEY = 'home_wizard_v2_category_patch_applied'
 
 
 def _insert_category_step() -> None:
-    steps = list(getattr(legacy, 'ACTIVE_RENDER_STEPS', []))
-    if STEP_CATEGORIZACAO in steps:
-        return
+    steps = [step for step in list(getattr(legacy, 'ACTIVE_RENDER_STEPS', [])) if step != STEP_CATEGORIZACAO]
     try:
-        index = steps.index(STEP_MAPEAMENTO) + 1
+        index = steps.index(STEP_PRECIFICACAO) + 1
     except ValueError:
-        index = len(steps)
+        try:
+            index = steps.index(STEP_MAPEAMENTO)
+        except ValueError:
+            index = len(steps)
     steps.insert(index, STEP_CATEGORIZACAO)
     legacy.ACTIVE_RENDER_STEPS = steps
 
@@ -35,12 +37,12 @@ def _patch_legacy_wizard() -> None:
 
     def _render_category_step(section_number: int) -> None:
         legacy.render_step_anchor(STEP_CATEGORIZACAO)
-        legacy._section_title(section_number, 'Conferência e Correção de Categorias')
+        legacy._section_title(section_number, 'Categorização Inteligente Automática')
         if not legacy._model_available():
-            legacy.render_pending_notice('Liberado após modelo/dados e mapeamento.')
+            legacy.render_pending_notice('Liberado após modelo/dados e precificação.')
             return
-        if not legacy.universal_mapping_ready():
-            legacy.render_pending_notice('Confirme o mapeamento manual primeiro.')
+        if not legacy.universal_context_ready():
+            legacy.render_pending_notice('Carregue os dados e formule os preços primeiro.')
             return
         render_category_conference_wizard_step()
 
@@ -92,6 +94,7 @@ __all__ = [
     'STEP_DOWNLOAD',
     'STEP_GERAR_ESTOQUE',
     'STEP_MAPEAMENTO_LEGACY',
+    'STEP_PRECIFICACAO',
     'STEP_REGRAS_LEGACY',
     'render_home_wizard',
     'wizard_next_target',
