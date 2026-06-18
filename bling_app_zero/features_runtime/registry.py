@@ -7,22 +7,23 @@ STEP_ORIGEM = 'origem'
 STEP_ENTRADA = 'entrada'
 STEP_PRECIFICACAO = 'precificacao'
 STEP_MAPEAMENTO = 'mapeamento'
+STEP_CATEGORIZACAO = 'categorizacao'
 STEP_REGRAS = 'regras'
 STEP_PREVIEW = 'preview'
 STEP_DOWNLOAD = 'download'
 
 API_STEPS = (STEP_ORIGEM, STEP_ENTRADA, STEP_DOWNLOAD)
 
-# BLINGSCAN 2026-06-13:
-# O fluxo declarado precisa bater com o fluxo real da Home.
-# Antes o contrato começava por Modelo, mas a Home iniciava por Origem.
-# Isso fazia Origem/Dados travarem quando o modelo ainda não existia.
+# BLINGSCAN 2026-06-18:
+# Categorização precisa ser uma etapa própria, opcional, fora de Regras e IA.
+# Ordem correta do fluxo universal: origem/dados/modelo/preço/mapeamento/categorias/regras/prévia/saída.
 UNIVERSAL_STEPS = (
     STEP_ORIGEM,
     STEP_ENTRADA,
     STEP_MODELO,
     STEP_PRECIFICACAO,
     STEP_MAPEAMENTO,
+    STEP_CATEGORIZACAO,
     STEP_REGRAS,
     STEP_PREVIEW,
     STEP_DOWNLOAD,
@@ -56,7 +57,7 @@ def list_feature_contracts() -> list[FeatureContract]:
 
 __all__ = [
     'API_STEPS', 'CSV_PRICE_STEPS', 'CSV_PRODUCT_STEPS', 'CSV_STOCK_STEPS',
-    'CONTRACTS', 'MODE_ALIASES', 'OPERATION_ALIASES', 'STEP_DOWNLOAD',
+    'CONTRACTS', 'MODE_ALIASES', 'OPERATION_ALIASES', 'STEP_CATEGORIZACAO', 'STEP_DOWNLOAD',
     'STEP_ENTRADA', 'STEP_MAPEAMENTO', 'STEP_MODELO', 'STEP_ORIGEM',
     'STEP_PRECIFICACAO', 'STEP_PREVIEW', 'STEP_REGRAS', 'UNIVERSAL_STEPS',
     'get_feature_contract', 'list_feature_contracts', 'normalize_mode', 'normalize_operation',
