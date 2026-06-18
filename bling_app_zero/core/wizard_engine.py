@@ -39,7 +39,7 @@ def required_flag_for_step(step: str) -> str:
     if step == STEP_PRECIFICACAO:
         return 'has_data'
     if step == STEP_CATEGORIZACAO:
-        return 'has_pricing'
+        return 'has_data'
     if step == STEP_MAPEAMENTO:
         return 'has_pricing'
     if step == STEP_REGRAS:
@@ -70,8 +70,8 @@ def can_enter_step(wizard: WizardState, step: str) -> tuple[bool, str]:
     messages = {
         'has_model': 'Confirme o modelo antes de escolher a origem.',
         'has_origin': 'Escolha a origem dos dados antes de continuar.',
-        'has_data': 'Carregue os dados antes de precificar.',
-        'has_pricing': 'Finalize a precificação antes de categorizar ou mapear.',
+        'has_data': 'Carregue os dados antes de continuar.',
+        'has_pricing': 'Finalize a precificação antes de mapear.',
         'has_mapping': 'Finalize o mapeamento antes de revisar regras.',
         'has_rules': 'Revise as regras antes da IA ou da prévia.',
         'has_preview': 'Gere o preview antes de baixar/enviar.',
