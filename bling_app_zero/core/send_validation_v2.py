@@ -22,6 +22,7 @@ CATEGORY_VALUES_SIGNATURE_KEY = 'category_conference_values_signature_v1'
 # e mantém o contexto local apenas como diagnóstico.
 TABLE_SIGNATURE_CONTEXTS = ('final_download', 'send_validation_v2', '')
 CATEGORY_SIGNATURE_CONTEXTS = ('category_conference', 'send_validation_v2', '')
+BLOCKED_FINAL_CATEGORY_VALUES = {'', 'nan', 'none', 'null', '<na>', 'na', 'n/a', 'sem categoria', 'revisar manualmente'}
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,21 @@ def _category_decision_done() -> bool:
     return bool(st.session_state.get(CATEGORY_DONE_KEY) or st.session_state.get(CATEGORY_SKIP_KEY))
 
 
+def _category_was_auto_applied() -> bool:
+    return bool(st.session_state.get(CATEGORY_DONE_KEY)) and not bool(st.session_state.get(CATEGORY_SKIP_KEY))
+
+
+def _final_category_issue_rows(df: pd.DataFrame, category_col: str) -> tuple[int, ...]:
+    if not isinstance(df, pd.DataFrame) or df.empty or not category_col or category_col not in df.columns:
+        return tuple(range(1, int(len(df)) + 1)) if isinstance(df, pd.DataFrame) else tuple()
+    bad_rows: list[int] = []
+    for pos, value in enumerate(df[category_col].fillna('').astype(str), start=1):
+        normalized = ' '.join(str(value or '').strip().lower().split())
+        if normalized in BLOCKED_FINAL_CATEGORY_VALUES:
+            bad_rows.append(pos)
+    return tuple(bad_rows)
+
+
 def _expected_table_signature() -> str:
     return str(st.session_state.get(FINAL_DOWNLOAD_SIGNATURE_KEY) or st.session_state.get(GLOBAL_FINAL_DATASET_SIGNATURE_KEY) or '').strip()
 
@@ -100,6 +116,8 @@ def validate_before_bling_send(df: pd.DataFrame, operation: object) -> SendGuard
     category_signatures = _category_signatures(df, category_col) if isinstance(df, pd.DataFrame) else {'category_conference': 'empty'}
     current_category = category_signatures.get('category_conference') or next(iter(category_signatures.values()), 'empty')
     expected_category = str(st.session_state.get(CATEGORY_VALUES_SIGNATURE_KEY) or '')
+    auto_category_applied = _category_was_auto_applied()
+    category_issue_rows = _final_category_issue_rows(df, category_col) if auto_category_applied and isinstance(df, pd.DataFrame) else tuple()
     details: dict[str, Any] = {
         'operation': op,
         'rows': int(len(df)) if isinstance(df, pd.DataFrame) else 0,
@@ -107,12 +125,17 @@ def validate_before_bling_send(df: pd.DataFrame, operation: object) -> SendGuard
         'expected_table_signature': expected_table,
         'table_signature_context': 'final_download',
         'table_validation_signature': table_signatures.get('send_validation_v2', current_table),
+        'category_column': category_col,
         'category_signature': current_category,
         'expected_category_signature': expected_category,
         'category_signature_context': 'category_conference',
         'category_validation_signature': category_signatures.get('send_validation_v2', current_category),
         'category_decision_done': bool(st.session_state.get(CATEGORY_DONE_KEY)),
         'category_decision_skipped': bool(st.session_state.get(CATEGORY_SKIP_KEY)),
+        'auto_category_applied': auto_category_applied,
+        'auto_category_required_complete': auto_category_applied,
+        'auto_category_missing_count': len(category_issue_rows),
+        'auto_category_missing_rows_sample': list(category_issue_rows[:50]),
         'responsible_file': RESPONSIBLE_FILE,
     }
 
@@ -120,13 +143,20 @@ def validate_before_bling_send(df: pd.DataFrame, operation: object) -> SendGuard
         return SendGuardResult(False, 'PARAR', ('Nenhuma linha pronta para envio.',), details)
     if expected_table and expected_table not in set(table_signatures.values()):
         messages.append('A tabela atual mudou depois da última prévia. Gere a prévia final novamente.')
-    if op == 'cadastro' and category_col:
-        if not _category_decision_done():
-            messages.append('Confirme ou pule a conferência de categorias antes do envio.')
-        elif expected_category and expected_category not in set(category_signatures.values()):
-            messages.append('As categorias mudaram depois da conferência. Confirme novamente.')
-        elif not expected_category:
-            messages.append('As categorias ainda não têm assinatura de conferência. Confirme novamente.')
+    if op == 'cadastro':
+        if auto_category_applied and not category_col:
+            messages.append('Categorização automática aplicada, mas a tabela final não possui coluna de categoria. Nenhum produto será enviado ao Bling sem categoria.')
+        if category_col:
+            if not _category_decision_done():
+                messages.append('Confirme ou pule a conferência de categorias antes do envio.')
+            elif expected_category and expected_category not in set(category_signatures.values()):
+                messages.append('As categorias mudaram depois da conferência. Confirme novamente.')
+            elif not expected_category:
+                messages.append('As categorias ainda não têm assinatura de conferência. Confirme novamente.')
+        if auto_category_applied and category_issue_rows:
+            sample = ', '.join(map(str, list(category_issue_rows[:20])))
+            suffix = '...' if len(category_issue_rows) > 20 else ''
+            messages.append(f'Categorização automática aplicada, mas {len(category_issue_rows)} produto(s) ainda estão sem categoria final válida. Linhas: {sample}{suffix}. Corrija antes de enviar ao Bling.')
     if op == 'atualizacao_preco':
         price_details = price_validation_details(df)
         details['price_columns'] = list(price_details.get('price_columns') or [])
