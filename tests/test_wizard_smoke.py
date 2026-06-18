@@ -12,5 +12,5 @@ def test_flow_order():
 
 
 def test_flow_labels():
-    assert c.STEP_LABELS['regras'].startswith('Regras')
-    assert c.STEP_LABELS['ia'].startswith('Intelig')
+    assert c.STEP_LABELS['regras'] == 'Regras e Recursos Inteligentes'
+    assert c.STEP_LABELS['ia'] == 'Inteligência Artificial'
