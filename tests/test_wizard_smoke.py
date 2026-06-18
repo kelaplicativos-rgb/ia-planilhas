@@ -9,3 +9,8 @@ def test_flow_order():
     assert r.UNIVERSAL_STEPS.index('regras') < r.UNIVERSAL_STEPS.index('ia')
     assert r.UNIVERSAL_STEPS.index('ia') < r.UNIVERSAL_STEPS.index('preview')
     assert e.required_flag_for_step('ia') == 'has_rules'
+
+
+def test_flow_labels():
+    assert c.STEP_LABELS['regras'].startswith('Regras')
+    assert c.STEP_LABELS['ia'].startswith('Intelig')
