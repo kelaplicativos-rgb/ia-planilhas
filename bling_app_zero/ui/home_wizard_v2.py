@@ -16,6 +16,19 @@ STEP_PREVIEW = 'preview'
 _PATCHED_KEY = 'home_wizard_v2_category_ai_split_patch_applied'
 
 
+def _register_router_steps() -> None:
+    try:
+        import bling_app_zero.ui.home_router as home_router
+
+        home_router.VALID_SINGLE_PAGE_STEPS.add(STEP_CATEGORIZACAO)
+        home_router.VALID_SINGLE_PAGE_STEPS.add(STEP_IA)
+    except Exception:
+        pass
+
+
+_register_router_steps()
+
+
 def _insert_category_and_ai_steps() -> None:
     steps = [
         step
@@ -115,6 +128,7 @@ def _render_ai_step(section_number: int) -> None:
 
 
 def _patch_legacy_wizard() -> None:
+    _register_router_steps()
     _insert_category_and_ai_steps()
     if bool(getattr(legacy, _PATCHED_KEY, False)):
         return
