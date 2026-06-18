@@ -9,7 +9,7 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.alerts import enforce_attention_alert_policy
 from bling_app_zero.ui.bottom_nav import render_bottom_nav, render_persistent_operation_controls
 from bling_app_zero.ui.home_router import render_home as render_home_router
-from bling_app_zero.ui.layout import inject_app_layout, render_compact_hero
+from bling_app_zero.ui.layout import inject_app_layout
 from bling_app_zero.ui.scroll_position import inject_scroll_position_keeper
 from bling_app_zero.ui.wizard_state_guard import run_wizard_state_guard
 
@@ -47,11 +47,10 @@ def render_home() -> None:
     run_home_autofluxo()
     inject_app_layout()
     inject_scroll_position_keeper()
-    render_compact_hero()
     _render_blingfix_runtime_stamp()
 
-    # Apenas os dois comandos essenciais carregam cedo. Diagnóstico, atalhos e
-    # links auxiliares ficam para depois, reduzindo trabalho em aparelhos modestos.
+    # A Home mantém um único cabeçalho: o router renderiza a entrada principal.
+    # Evita duplicidade visual e mantém o fluxo leve em aparelhos modestos.
     render_persistent_operation_controls()
     render_home_router()
     render_bottom_nav()
