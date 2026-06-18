@@ -9,6 +9,7 @@ STEP_MODELO = 'modelo'
 STEP_ORIGEM = 'origem'
 STEP_ENTRADA = 'entrada'
 STEP_PRECIFICACAO = 'precificacao'
+STEP_CATEGORIZACAO = 'categorizacao'
 STEP_MAPEAMENTO = 'mapeamento'
 STEP_REGRAS = 'regras'
 STEP_IA = 'ia'
@@ -20,6 +21,7 @@ WIZARD_STEPS: tuple[str, ...] = (
     STEP_ORIGEM,
     STEP_ENTRADA,
     STEP_PRECIFICACAO,
+    STEP_CATEGORIZACAO,
     STEP_MAPEAMENTO,
     STEP_REGRAS,
     STEP_IA,
@@ -50,7 +52,7 @@ CONTEXT_UNIVERSAL = 'universal'
 
 @dataclass(frozen=True)
 class WizardState:
-    step: str = STEP_ORIGEM
+    step: str = STEP_MODELO
     operation: str = OP_CADASTRO
     origin: str = ''
     context: str = CONTEXT_CSV
@@ -154,6 +156,7 @@ __all__ = [
     'OP_UNIVERSAL',
     'ORIGIN_FILE',
     'ORIGIN_SITE',
+    'STEP_CATEGORIZACAO',
     'STEP_DOWNLOAD',
     'STEP_ENTRADA',
     'STEP_IA',
