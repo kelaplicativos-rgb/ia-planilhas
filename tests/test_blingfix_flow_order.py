@@ -24,5 +24,6 @@ def test_blingfix_flow_order() -> None:
     assert c.UNIVERSAL_STEPS.index('ia') < c.UNIVERSAL_STEPS.index('preview')
     assert r.UNIVERSAL_STEPS.index('regras') < r.UNIVERSAL_STEPS.index('ia')
     assert s.WIZARD_STEPS.index('regras') < s.WIZARD_STEPS.index('ia')
-    assert e.required_flag_for_step('categorizacao') == 'has_pricing'
+    assert e.required_flag_for_step('categorizacao') == 'has_data'
+    assert e.required_flag_for_step('mapeamento') == 'has_pricing'
     assert e.required_flag_for_step('ia') == 'has_rules'
