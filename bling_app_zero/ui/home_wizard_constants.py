@@ -22,6 +22,7 @@ STEP_OPERACAO = 'operacao'
 STEP_PRECIFICACAO = 'precificacao'
 STEP_ORIGEM = 'origem'
 STEP_ENTRADA = 'entrada'
+STEP_CATEGORIZACAO = 'categorizacao'
 STEP_REGRAS = 'regras'
 STEP_MAPEAMENTO = 'mapeamento'
 STEP_GERAR_ESTOQUE = 'gerar_estoque'
@@ -35,6 +36,7 @@ UNIVERSAL_STEPS = [
     STEP_ENTRADA,
     STEP_PRECIFICACAO,
     STEP_MAPEAMENTO,
+    STEP_CATEGORIZACAO,
     STEP_REGRAS,
     STEP_PREVIEW,
     STEP_DOWNLOAD,
@@ -51,6 +53,7 @@ STEP_LABELS = {
     STEP_ENTRADA: 'Dados importados',
     STEP_PRECIFICACAO: 'Precificação',
     STEP_MAPEAMENTO: 'Mapeamento',
+    STEP_CATEGORIZACAO: 'Conferência e Correção de Categorias',
     STEP_GERAR_ESTOQUE: 'Etapa legada ocultada',
     STEP_REGRAS: 'Revisão final',
     STEP_PREVIEW: 'Prévia final',
@@ -99,6 +102,17 @@ RESET_OUTPUT_KEYS = [
     'mapping_confidence_bling_api',
     'rules_center_reviewed',
     'bling_user_rules',
+    'category_wizard_use_categorization_v1',
+    'category_wizard_decision_v1',
+    'category_wizard_source_key_v1',
+    'category_conference_confirmed_v1',
+    'category_conference_skipped_v1',
+    'category_conference_stats_v1',
+    'category_conference_analyzed_df_v1',
+    'category_conference_source_signature_v1',
+    'category_conference_values_signature_v1',
+    'category_conference_dataset_signature_v1',
+    'global_decision_dataset_signature_v1',
     'home_precificacao_inicial',
     'home_pricing_config',
     'cadastro_preco_calculado_ativo',
@@ -208,10 +222,10 @@ __all__ = [
     'HOME_ESTOQUE_MODEL_KEY',
     'LEGACY_ORIGIN_RADIO_KEY',
     'RESET_OUTPUT_KEYS',
+    'STEP_CATEGORIZACAO',
     'STEP_DOWNLOAD',
     'STEP_ENTRADA',
     'STEP_GERAR_ESTOQUE',
-    'STEP_LABELS',
     'STEP_MAPEAMENTO',
     'STEP_MODELO',
     'STEP_OPERACAO',
@@ -220,6 +234,7 @@ __all__ = [
     'STEP_PREVIEW',
     'STEP_PROCESSAR',
     'STEP_REGRAS',
+    'STEP_LABELS',
     'UNIVERSAL_OPERATION_VALUE',
     'UNIVERSAL_STEPS',
     'WIZARD_STEP_KEY',
