@@ -9,4 +9,7 @@ def test_blingfix_rules_ai_split_marker() -> None:
     assert 'def _render_rules_resources_step' in wizard_v2
     assert 'def _render_ai_step' in wizard_v2
     assert wizard_v2.index('def _render_rules_resources_step') < wizard_v2.index('def _render_ai_step')
+    assert 'if not rules_center_ready()' in wizard_v2
+    assert 'Revise e salve as Regras e Recursos Inteligentes antes de usar ou pular a IA.' in wizard_v2
+    assert "normalized == STEP_IA" in wizard_v2
     assert 'render_ai_real_advanced_panel' not in rules_step
