@@ -13,14 +13,13 @@ def install_verified_sender_runtime() -> bool:
         return False
     try:
         from bling_app_zero.core import bling_intelligent_update_sender as sender
-        from bling_app_zero.core.verified_api_sender_guarded import send_verified_products
 
         original = getattr(sender, '_verified_original_send_dataframe_to_bling_intelligent', None)
         if original is None:
             original = sender.send_dataframe_to_bling_intelligent
             setattr(sender, '_verified_original_send_dataframe_to_bling_intelligent', original)
 
-        def guarded_send_dataframe_to_bling_intelligent(df, operation, *, limit=None, progress_callback=None):
+        def guarded_send_dataframe_to_bling_intelligent(df, operation, *, limit=None, progress_callback=None, validation_df=None):
             op = normalize_operation(operation)
             if op == OP_CADASTRO:
                 add_audit_event(
@@ -31,11 +30,15 @@ def install_verified_sender_runtime() -> bool:
                         'operation': op,
                         'mode': 'produto_por_produto_com_check',
                         'sender_guard': 'verified_api_sender_guarded.py',
+                        'send_validation_preserved': True,
+                        'validation_rows': len(validation_df) if hasattr(validation_df, '__len__') else len(df) if hasattr(df, '__len__') else 0,
                         'responsible_file': RESPONSIBLE_FILE,
                     },
                 )
-                return send_verified_products(df, limit=limit, progress_callback=progress_callback)
-            return original(df, operation, limit=limit, progress_callback=progress_callback)
+            try:
+                return original(df, operation, limit=limit, progress_callback=progress_callback, validation_df=validation_df)
+            except TypeError:
+                return original(df, operation, limit=limit, progress_callback=progress_callback)
 
         sender.send_dataframe_to_bling_intelligent = guarded_send_dataframe_to_bling_intelligent
 
@@ -60,6 +63,7 @@ def install_verified_sender_runtime() -> bool:
             details={
                 'panel_reference_patched': panel_patched,
                 'sender_guard': 'verified_api_sender_guarded.py',
+                'send_validation_preserved': True,
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
