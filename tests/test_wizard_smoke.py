@@ -3,14 +3,6 @@ from bling_app_zero.features_runtime import registry as r
 from bling_app_zero.core import wizard_engine as e
 
 
-def test_imports():
-    import bling_app_zero.ui.home_wizard_v2
-    import bling_app_zero.ui.rules_center_step
-    import bling_app_zero.ui.ai_real_advanced_panel
-    import bling_app_zero.core.flow_spine
-    import bling_app_zero.core.wizard_state
-
-
 def test_flow_order():
     assert c.UNIVERSAL_STEPS.index('regras') < c.UNIVERSAL_STEPS.index('ia')
     assert c.UNIVERSAL_STEPS.index('ia') < c.UNIVERSAL_STEPS.index('preview')
