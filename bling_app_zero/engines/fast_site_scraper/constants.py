@@ -8,30 +8,31 @@ SMART_STOP_COMPLETE_RATIO = 0.70
 SMART_STOP_NO_GAIN_WINDOW = 40
 SMART_STOP_MIN_FOUND = 40
 DEVTOOLS_FALLBACK_MAX_PER_RUN = 8
-SITE_ENRICH_MAX_ROWS = 1200
+SITE_ENRICH_MAX_ROWS = 3000
 SITE_ENRICH_WORKERS = 8
 SITE_PLAYWRIGHT_FALLBACK_MAX = 12
 
 SAFE_CAPTURE_MAX_PAGES = 500
-SAFE_CAPTURE_MAX_PRODUCTS = 1200
+SAFE_CAPTURE_MAX_PRODUCTS = 3000
 SAFE_CAPTURE_MAX_DEPTH = 2
 SAFE_CAPTURE_TIMEOUT_SECONDS = 240
 
 DEEP_CAPTURE_MAX_PAGES = 500
-DEEP_CAPTURE_MAX_PRODUCTS = 1200
+DEEP_CAPTURE_MAX_PRODUCTS = 3000
 DEEP_CAPTURE_MAX_DEPTH = 2
 DEEP_CAPTURE_TIMEOUT_SECONDS = 300
 
 FLOW_CAPTURE_MAX_PAGES = 500
-FLOW_CAPTURE_MAX_PRODUCTS = 1200
+FLOW_CAPTURE_MAX_PRODUCTS = 3000
 FLOW_CAPTURE_MAX_DEPTH = 2
 FLOW_CAPTURE_TIMEOUT_SECONDS = 300
 
-# BLINGFIX SITE 2026-06-16:
-# O diagnóstico mostrou que a busca por site encontrava centenas de URLs,
-# mas pausava a descoberta com 60s antes de converter tudo em produtos.
-# Mantemos limites de quantidade, porém damos mais fôlego para descoberta,
-# leitura e retomada dentro do Streamlit.
+# BLINGFIX SITE 2026-06-18:
+# O diagnóstico mostrou que catálogos reais podem passar de 1200 itens
+# (ex.: 2699 produtos). O limite antigo cortava a origem antes da leitura.
+# Mantemos um teto técnico para proteger o Streamlit, mas ele agora cobre
+# catálogos médios inteiros e preserva URL de produto mesmo quando a página
+# individual ainda precisa de reforço/retomada.
 STREAMLIT_HARD_BUDGET_SECONDS = 330
 DISCOVERY_BUDGET_SECONDS = 120
 PRODUCT_READ_BUDGET_SECONDS = 260
