@@ -4,10 +4,13 @@ from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
+import streamlit as st
 
 from bling_app_zero.core.validators import price_validation_details, validate_price_update_values
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_api_send_guard.py'
+CATEGORY_DONE_KEY = 'category_conference_confirmed_v1'
+CATEGORY_SKIP_KEY = 'category_conference_skipped_v1'
 
 
 @dataclass(frozen=True)
@@ -30,7 +33,7 @@ def _operation(value: object) -> str:
     text = str(value or '').strip().lower()
     if 'estoque' in text or 'saldo' in text or 'stock' in text:
         return 'estoque'
-    if 'preco' in text or 'price' in text:
+    if 'preco' in text or 'preço' in text or 'price' in text:
         return 'atualizacao_preco'
     if 'cadastro' in text or 'produto' in text:
         return 'cadastro'
@@ -49,17 +52,31 @@ def _non_blank_column(df: pd.DataFrame, name: str) -> bool:
     return False
 
 
+def _has_category_column(df: pd.DataFrame) -> bool:
+    names = {'categoria', 'category', 'nome da categoria', 'categoria do produto'}
+    return any(str(col or '').strip().lower() in names for col in df.columns)
+
+
+def _category_conference_decided() -> bool:
+    return bool(st.session_state.get(CATEGORY_DONE_KEY) or st.session_state.get(CATEGORY_SKIP_KEY))
+
+
 def validate_before_bling_send(df: pd.DataFrame, operation: object) -> SendGuardResult:
     op = _operation(operation)
     messages: list[str] = []
     details: dict[str, Any] = {
         'operation': op,
         'rows': int(len(df)) if isinstance(df, pd.DataFrame) else 0,
+        'category_conference_done': bool(st.session_state.get(CATEGORY_DONE_KEY)),
+        'category_conference_skipped': bool(st.session_state.get(CATEGORY_SKIP_KEY)),
         'responsible_file': RESPONSIBLE_FILE,
     }
 
     if not isinstance(df, pd.DataFrame) or df.empty:
         return SendGuardResult(False, 'BLOQUEADO', ('Nenhuma linha pronta para envio ao Bling.',), details)
+
+    if op == 'cadastro' and _has_category_column(df) and not _category_conference_decided():
+        messages.append('Envio bloqueado: aplique a Conferência inteligente de categorias ou use “Pular sem alterar categorias”. Isso evita enviar categoria antiga/cache para o Bling.')
 
     if op == 'atualizacao_preco':
         price_details = price_validation_details(df)
