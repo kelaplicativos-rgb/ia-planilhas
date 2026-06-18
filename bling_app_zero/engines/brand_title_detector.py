@@ -11,6 +11,7 @@ KNOWN_BRANDS = [
     'Aquario', 'Aquário', 'Geonav', 'I2GO', 'Elg', 'Viniks', 'Fortrek', 'C3Tech', 'Hayom', 'Kimaster',
     'Sumay', 'Kaidi', 'Baseus', 'Ugreen', 'Awei', 'B-Max', 'Jeway', 'Gshield', 'Mox', 'Kross', 'Bright',
     'Leadership', 'Goldentec', 'Oex', 'Maxprint', 'Lehmox', 'Dazz', 'Multikids', 'Tedge', 'Vinik',
+    'Imenso',
 ]
 
 BRAND_ALIASES = {
@@ -25,6 +26,7 @@ BRAND_ALIASES = {
     'tp link': 'TP-Link',
     'd link': 'D-Link',
     'aquario': 'Aquário',
+    'imenso': 'Imenso',
 }
 
 GENERIC_WORDS = {
@@ -32,6 +34,13 @@ GENERIC_WORDS = {
     'drive', 'adaptador', 'suporte', 'camera', 'câmera', 'pelicula', 'película', 'capinha', 'fonte',
     'usb', 'tipo', 'type', 'sem', 'fio', 'recarregavel', 'recarregável', 'completo', 'micro', 'gamer',
     'para', 'com', 'sem', 'novo', 'original', 'premium', 'universal', 'digital', 'wireless', 'bluetooth',
+}
+
+ATTRIBUTE_WORDS = {
+    'preto', 'branco', 'azul', 'vermelho', 'verde', 'rosa', 'cinza', 'dourado', 'prata', 'amarelo',
+    'grande', 'pequeno', 'medio', 'médio', 'mini', 'max', 'super', 'ultra', 'turbo', 'rapido', 'rápido',
+    'portatil', 'portátil', 'profissional', 'infantil', 'adulto', 'masculino', 'feminino', 'duplo', 'triplo',
+    'dobravel', 'dobrável', 'resistente', 'reforcado', 'reforçado', 'leve', 'compacto', 'novo', 'plus', 'pro',
 }
 
 MODEL_HINT_WORDS = {
@@ -52,7 +61,7 @@ def _tokens(title: str) -> list[str]:
 
 def _is_generic_token(token: str) -> bool:
     key = normalize_key(token)
-    if not key or key in GENERIC_WORDS:
+    if not key or key in GENERIC_WORDS or key in ATTRIBUTE_WORDS:
         return True
     if key.isdigit():
         return True
@@ -66,7 +75,7 @@ def _looks_like_model_or_code(value: str) -> bool:
     key = normalize_key(text)
     if not key:
         return True
-    if key in GENERIC_WORDS or key in MODEL_HINT_WORDS:
+    if key in GENERIC_WORDS or key in MODEL_HINT_WORDS or key in ATTRIBUTE_WORDS:
         return True
     if any(part in MODEL_HINT_WORDS for part in key.split()):
         return True
@@ -93,7 +102,7 @@ def _is_trusted_brand_value(value: str) -> bool:
     words = key.split()
     if len(words) > 3:
         return False
-    if any(word in GENERIC_WORDS or word in MODEL_HINT_WORDS for word in words):
+    if any(word in GENERIC_WORDS or word in MODEL_HINT_WORDS or word in ATTRIBUTE_WORDS for word in words):
         return False
     return bool(re.fullmatch(r'[a-z0-9]+(?: [a-z0-9]+){0,2}', key))
 
@@ -126,6 +135,47 @@ def _known_brand_from_text(text: str) -> str:
     return ''
 
 
+def _looks_like_capitalized_brand_token(token: str) -> bool:
+    text = clean_cell(token)
+    key = normalize_key(text)
+    if not text or not key or _looks_like_model_or_code(text):
+        return False
+    if key in GENERIC_WORDS or key in ATTRIBUTE_WORDS or key in MODEL_HINT_WORDS:
+        return False
+    if not re.fullmatch(r'[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ’\'-]{2,24}', text):
+        return False
+    return text[:1].isupper() or any(ch in text for ch in "’'-")
+
+
+def _unknown_brand_candidate_from_title(text: str) -> str:
+    tokens = _tokens(text)
+    if len(tokens) < 2:
+        return ''
+
+    product_context_seen = False
+    for index, token in enumerate(tokens):
+        key = normalize_key(token)
+        if not key:
+            continue
+        if key in GENERIC_WORDS or key in ATTRIBUTE_WORDS:
+            product_context_seen = True
+            continue
+        if key in MODEL_HINT_WORDS:
+            continue
+        if not product_context_seen:
+            continue
+        if not _looks_like_capitalized_brand_token(token):
+            continue
+
+        next_token = tokens[index + 1] if index + 1 < len(tokens) else ''
+        previous_window = ' '.join(normalize_key(item) for item in tokens[max(0, index - 4):index])
+        has_product_context = any(word in previous_window for word in GENERIC_WORDS)
+        has_model_after = bool(next_token and _looks_like_model_or_code(next_token))
+        if has_product_context or has_model_after:
+            return _clean_brand(token)
+    return ''
+
+
 def detect_brand_from_title(title: str, fallback: str = '') -> str:
     text = clean_cell(title or '')
     fallback_clean = _clean_brand(fallback or '')
@@ -142,5 +192,9 @@ def detect_brand_from_title(title: str, fallback: str = '') -> str:
 
     if fallback_clean and _is_known_brand_value(fallback_clean):
         return fallback_clean
+
+    candidate = _unknown_brand_candidate_from_title(text)
+    if candidate:
+        return candidate
 
     return ''
