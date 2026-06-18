@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Sequence
 
 import pandas as pd
@@ -20,10 +21,60 @@ PRESERVED_TEMPLATE_ACTIVE_KEY = 'final_preserved_template_download_active'
 PRESERVED_TEMPLATE_FILENAME_KEY = 'final_preserved_template_download_filename'
 PRESERVED_TEMPLATE_FORMAT_KEY = 'final_preserved_template_download_format'
 PRESERVED_TEMPLATE_ERROR_KEY = 'final_preserved_template_download_error'
+GTIN_COLUMNS = {'gtin', 'gtin/ean', 'ean', 'codigo de barras', 'código de barras'}
+IMAGE_COLUMN_SIGNALS = ('imagem', 'imagens', 'url imagens', 'url imagens externas', 'foto', 'fotos')
+URL_RE = re.compile(r'https?://[^\s|;,]+', re.I)
+
+
+def _column_key(value: object) -> str:
+    text = str(value or '').strip().lower()
+    text = text.replace('\ufeff', '').replace('\x00', '')
+    text = re.sub(r'\s+', ' ', text)
+    return text
+
+
+def _is_gtin_column(column: object) -> bool:
+    key = _column_key(column)
+    return key in GTIN_COLUMNS or key.replace(' ', '') in {'gtin', 'gtinean', 'ean'}
+
+
+def _is_image_column(column: object) -> bool:
+    key = _column_key(column)
+    return any(signal in key for signal in IMAGE_COLUMN_SIGNALS)
+
+
+def _clean_gtin(value: object) -> str:
+    digits = re.sub(r'\D+', '', str(value or ''))
+    return digits if len(digits) in {8, 12, 13, 14} else ''
 
 
 def normalize_image_urls(value):
-    return value
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    parts: list[str] = []
+    for match in URL_RE.findall(text.replace('|', ' ').replace(';', ' ').replace(',', ' ')):
+        url = match.strip().rstrip('.,;)')
+        if url and url not in parts:
+            parts.append(url)
+    if parts:
+        return '|'.join(parts)
+    raw_parts = re.split(r'[|;,]+', text)
+    for item in raw_parts:
+        url = item.strip()
+        if url and url not in parts:
+            parts.append(url)
+    return '|'.join(parts)
+
+
+def _sanitize_legacy_fields(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy().fillna('') if isinstance(df, pd.DataFrame) else pd.DataFrame()
+    for column in out.columns:
+        if _is_gtin_column(column):
+            out[column] = out[column].map(_clean_gtin)
+        elif _is_image_column(column):
+            out[column] = out[column].map(normalize_image_urls)
+    return out.fillna('')
 
 
 def _session_state():
@@ -94,14 +145,14 @@ def sanitize_for_bling(
     contract_columns: Sequence[object] | None = None,
     explicit_empty_columns: Sequence[object] | None = None,
 ) -> pd.DataFrame:
-    # Nome legado mantido, mas agora é sanitização universal mínima.
-    return sanitize_final_dataframe(
+    safe = sanitize_final_dataframe(
         df,
         operation='universal',
         contract_columns=contract_columns,
         explicit_empty_columns=explicit_empty_columns,
         run_download_features=False,
     )
+    return _sanitize_legacy_fields(safe)
 
 
 def to_bling_csv_bytes(
@@ -110,9 +161,6 @@ def to_bling_csv_bytes(
     contract_columns: Sequence[object] | None = None,
     explicit_empty_columns: Sequence[object] | None = None,
 ) -> bytes:
-    # Nome legado mantido por compatibilidade. Quando existe modelo original
-    # XLSX/XLSM/CSV anexado, o download preserva nome, extensão, abas e layout,
-    # alterando somente os valores das colunas mapeadas.
     safe = sanitize_for_bling(
         df,
         operation='universal',
