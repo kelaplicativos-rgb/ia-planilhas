@@ -35,11 +35,10 @@ def _column_keys(columns: Iterable[object]) -> list[str]:
 
 
 def detect_model_contract(df: pd.DataFrame | None) -> ModelContractDetection:
-    """Retorna sempre um contrato universal.
+    """Retorna sempre um contrato universal para o modelo anexado.
 
-    A aplicação passou a trabalhar com qualquer planilha/marketplace/layout.
-    Portanto o arquivo enviado pelo usuário é apenas o modelo a ser mapeado,
-    sem classificação por tipo e sem reconhecimento de layout de sistema externo.
+    A classificação do arquivo do usuário é neutra; a operação explícita do fluxo
+    continua sendo respeitada em ``normalize_contract_operation``.
     """
     if not isinstance(df, pd.DataFrame) or not len(df.columns):
         return ModelContractDetection('universal', CONTRACT_LABELS['universal'], 0.0, 'modelo_ausente_ou_sem_colunas', {}, [])
@@ -56,10 +55,15 @@ def detect_model_contract(df: pd.DataFrame | None) -> ModelContractDetection:
 
 
 def normalize_contract_operation(value: object) -> str:
-    text = str(value or '').strip().lower()
-    text = text.replace('-', '_').replace(' ', '_')
-    if text in {'', 'universal', 'modelo', 'modelo_destino', 'modelo_para_mapear', 'planilha', 'wizard_cadastro_estoque'}:
+    text = normalize_key(str(value or '').replace('-', ' ').replace('_', ' '))
+    if text in {'', 'universal', 'modelo', 'modelo destino', 'modelo para mapear', 'planilha', 'wizard cadastro estoque'}:
         return 'universal'
+    if text in {'cadastro', 'cadastro site', 'produtos', 'produto', 'cadastrar produtos'}:
+        return 'cadastro'
+    if text in {'estoque', 'stock', 'atualizacao estoque', 'atualização estoque', 'atualizacao de estoque', 'atualização de estoque', 'estoque site'}:
+        return 'estoque'
+    if text in {'atualizacao preco', 'atualização preço', 'atualizacao de preco', 'atualização de preço', 'preco', 'preço', 'price'}:
+        return 'atualizacao_preco'
     return 'universal'
 
 
