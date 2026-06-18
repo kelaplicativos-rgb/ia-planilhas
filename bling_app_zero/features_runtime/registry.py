@@ -9,6 +9,7 @@ STEP_PRECIFICACAO = 'precificacao'
 STEP_CATEGORIZACAO = 'categorizacao'
 STEP_MAPEAMENTO = 'mapeamento'
 STEP_REGRAS = 'regras'
+STEP_IA = 'ia'
 STEP_PREVIEW = 'preview'
 STEP_DOWNLOAD = 'download'
 
@@ -17,7 +18,7 @@ API_STEPS = (STEP_ORIGEM, STEP_ENTRADA, STEP_DOWNLOAD)
 # BLINGFIX 2026-06-18:
 # Categorização precisa ser etapa própria e opcional. Quando houver precificação,
 # aparece logo depois dela; quando não houver, continua disponível antes do mapeamento.
-# Ordem base do fluxo universal: origem/dados/modelo/preço/categorias/mapeamento/regras/prévia/saída.
+# Ordem base do fluxo universal: origem/dados/modelo/preço/categorias/mapeamento/regras/IA/prévia/saída.
 UNIVERSAL_STEPS = (
     STEP_ORIGEM,
     STEP_ENTRADA,
@@ -26,6 +27,7 @@ UNIVERSAL_STEPS = (
     STEP_CATEGORIZACAO,
     STEP_MAPEAMENTO,
     STEP_REGRAS,
+    STEP_IA,
     STEP_PREVIEW,
     STEP_DOWNLOAD,
 )
@@ -59,7 +61,7 @@ def list_feature_contracts() -> list[FeatureContract]:
 __all__ = [
     'API_STEPS', 'CSV_PRICE_STEPS', 'CSV_PRODUCT_STEPS', 'CSV_STOCK_STEPS',
     'CONTRACTS', 'MODE_ALIASES', 'OPERATION_ALIASES', 'STEP_CATEGORIZACAO', 'STEP_DOWNLOAD',
-    'STEP_ENTRADA', 'STEP_MAPEAMENTO', 'STEP_MODELO', 'STEP_ORIGEM',
+    'STEP_ENTRADA', 'STEP_IA', 'STEP_MAPEAMENTO', 'STEP_MODELO', 'STEP_ORIGEM',
     'STEP_PRECIFICACAO', 'STEP_PREVIEW', 'STEP_REGRAS', 'UNIVERSAL_STEPS',
     'get_feature_contract', 'list_feature_contracts', 'normalize_mode', 'normalize_operation',
 ]
