@@ -3,7 +3,7 @@ from __future__ import annotations
 import streamlit as st
 
 from bling_app_zero.core.user_rules import get_user_rules, set_user_rules
-from bling_app_zero.ui.category_conference_step import category_conference_ready, render_category_conference_step
+from bling_app_zero.ui.category_conference_step_v2 import category_conference_ready, render_category_conference_step
 from bling_app_zero.ui.rules_center_state import RULES_CENTER_READY_KEY, rules_center_ready
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/rules_center_step.py'
