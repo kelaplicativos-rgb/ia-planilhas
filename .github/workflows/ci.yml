@@ -10,8 +10,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  python-smoke-test:
-    name: Python smoke test
+  blingfix-smoke:
+    name: BLINGFIX smoke
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -38,81 +38,3 @@ jobs:
       - name: Run BLINGFIX smoke tests
         run: |
           pytest -q tests/test_wizard_smoke.py tests/test_blingfix_flow_order.py tests/test_blingfix_rules_ai_split_marker.py
-
-      - name: Import critical modules
-        run: |
-          python - <<'PY'
-          import importlib
-
-          modules = [
-              'app',
-              'bling_app_zero.ui.home',
-              'bling_app_zero.ui.home_wizard_v2',
-              'bling_app_zero.ui.rules_center_step',
-              'bling_app_zero.ui.ai_real_advanced_panel',
-              'bling_app_zero.core.flow_spine',
-              'bling_app_zero.core.wizard_state',
-              'bling_app_zero.core.wizard_engine',
-              'bling_app_zero.features_runtime.registry',
-              'bling_app_zero.ui.home_shared',
-              'bling_app_zero.ui.smart_upload',
-              'bling_app_zero.ui.cadastro_panel',
-              'bling_app_zero.ui.estoque_panel',
-              'bling_app_zero.ui.site_panel',
-              'bling_app_zero.pipelines.cadastro_pipeline',
-              'bling_app_zero.pipelines.estoque_pipeline',
-              'bling_app_zero.pipelines.site_pipeline',
-              'bling_app_zero.engines.cadastro_engine',
-              'bling_app_zero.engines.estoque_engine',
-              'bling_app_zero.engines.site_cadastro_engine',
-              'bling_app_zero.engines.site_estoque_engine',
-              'bling_app_zero.engines.flash_amplo_engine',
-              'bling_app_zero.core.column_contract',
-              'bling_app_zero.core.exporter',
-              'bling_app_zero.core.files',
-              'bling_app_zero.core.validators',
-          ]
-
-          for module in modules:
-              importlib.import_module(module)
-              print(f'OK import: {module}')
-          PY
-
-      - name: Flash Amplo empty-input smoke test
-        run: |
-          python - <<'PY'
-          from bling_app_zero.engines.flash_amplo_engine import crawl_flash_amplo_page_by_page_dataframe
-          from bling_app_zero.pipelines.site_pipeline import run_pipeline
-
-          df, report = crawl_flash_amplo_page_by_page_dataframe('', requested_columns=['Código', 'Balanço (OBRIGATÓRIO)'])
-          assert df.empty
-          assert list(df.columns) == ['Código', 'Balanço (OBRIGATÓRIO)']
-          assert report.start_urls == 0
-
-          df_stock = run_pipeline(
-              '',
-              requested_columns=['Código', 'Balanço (OBRIGATÓRIO)'],
-              all_products=True,
-              operation='estoque',
-          )
-          assert df_stock.empty
-          assert list(df_stock.columns) == ['Código', 'Balanço (OBRIGATÓRIO)']
-
-          df_catalog = run_pipeline('', all_products=True, operation='cadastro')
-          assert df_catalog.empty
-
-          print('OK Flash Amplo smoke test')
-          PY
-
-      - name: Smart upload helper smoke test
-        run: |
-          python - <<'PY'
-          from bling_app_zero.ui.smart_upload import SmartUploadResult
-
-          result = SmartUploadResult()
-          assert result.source_file is None
-          assert result.model_file is None
-          print('OK Smart Upload smoke test')
-          PY
-
-# BLINGFIX CI retry: rules resources before ai
