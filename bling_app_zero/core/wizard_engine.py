@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from bling_app_zero.core.wizard_state import (
     STEP_DOWNLOAD,
     STEP_ENTRADA,
+    STEP_IA,
     STEP_MAPEAMENTO,
     STEP_MODELO,
     STEP_ORIGEM,
@@ -40,6 +41,8 @@ def required_flag_for_step(step: str) -> str:
         return 'has_pricing'
     if step == STEP_REGRAS:
         return 'has_mapping'
+    if step == STEP_IA:
+        return 'has_rules'
     if step == STEP_PREVIEW:
         return 'has_rules'
     if step == STEP_DOWNLOAD:
@@ -67,7 +70,7 @@ def can_enter_step(wizard: WizardState, step: str) -> tuple[bool, str]:
         'has_data': 'Carregue os dados antes de precificar.',
         'has_pricing': 'Finalize a precificação antes de mapear.',
         'has_mapping': 'Finalize o mapeamento antes de revisar regras.',
-        'has_rules': 'Revise as regras antes do preview.',
+        'has_rules': 'Revise as regras antes da IA ou da prévia.',
         'has_preview': 'Gere o preview antes de baixar/enviar.',
     }
     return False, messages.get(required, 'Etapa anterior pendente.')
@@ -110,6 +113,8 @@ def mark_step_ready(wizard: WizardState, step: str | None = None) -> WizardState
     elif current == STEP_MAPEAMENTO:
         updates['has_mapping'] = True
     elif current == STEP_REGRAS:
+        updates['has_rules'] = True
+    elif current == STEP_IA:
         updates['has_rules'] = True
     elif current == STEP_PREVIEW:
         updates['has_preview'] = True
