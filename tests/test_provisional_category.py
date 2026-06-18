@@ -20,6 +20,26 @@ def test_recover_real_category_from_ai_column(monkeypatch):
     assert result.payload['categoria'] == {'id': '123'}
 
 
+def test_infer_real_category_before_provisional(monkeypatch):
+    monkeypatch.setattr(
+        'bling_app_zero.core.provisional_category.get_user_rules',
+        lambda: {'allow_provisional_category': True, 'provisional_category_name': 'Produtos não classificados'},
+    )
+
+    result = apply_category_guard_to_payload(
+        {'nome': 'Fone de ouvido Bluetooth sem fio'},
+        row={},
+        meta={},
+        category_id_resolver=lambda name: '321' if name == 'Fones de ouvido' else '',
+    )
+
+    assert result.applied is True
+    assert result.provisional is False
+    assert result.source == 'category_intelligence'
+    assert result.category_name == 'Fones de ouvido'
+    assert result.payload['categoria'] == {'id': '321'}
+
+
 def test_apply_default_provisional_when_missing(monkeypatch):
     monkeypatch.setattr(
         'bling_app_zero.core.provisional_category.get_user_rules',
