@@ -8,7 +8,7 @@ from bling_app_zero.core import APP_VERSION
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.alerts import enforce_attention_alert_policy
 from bling_app_zero.ui.bottom_nav import render_bottom_nav, render_persistent_operation_controls
-from bling_app_zero.ui.home_router import render_home as render_home_router
+from bling_app_zero.ui.home_router_v2 import render_home as render_home_router
 from bling_app_zero.ui.layout import inject_app_layout
 from bling_app_zero.ui.scroll_position import inject_scroll_position_keeper
 from bling_app_zero.ui.wizard_state_guard import run_wizard_state_guard
@@ -34,7 +34,7 @@ def _render_blingfix_runtime_stamp() -> None:
                 'version': APP_VERSION,
                 'responsible_file': RESPONSIBLE_FILE,
                 'rendered_at_utc': rendered_at,
-                'purpose': 'silent_route_proof_after_minimal_ui_update',
+                'purpose': 'silent_route_proof_after_category_and_multistore_route_update',
             },
         )
 
