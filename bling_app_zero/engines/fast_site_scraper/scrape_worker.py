@@ -25,10 +25,6 @@ from bling_app_zero.engines.fast_site_scraper.page_parser import parse_product_p
 from bling_app_zero.engines.fast_site_scraper.progress import inside_executor_thread
 
 
-# BLINGFIX SITE 2026-06-18:
-# Em catálogo grande, URL encontrada não pode sumir do df final só porque a
-# página individual falhou, demorou ou veio incompleta. A linha mínima com URL
-# mantém o produto rastreável para enriquecimento/retomada posterior.
 def url_only_row(url: str) -> FastProductData:
     return FastProductData(url=url)
 
@@ -39,8 +35,6 @@ def has_useful_data(product: FastProductData, needed: set[str]) -> bool:
         product.ficha_tecnica, product.caracteristicas, product.preco, product.estoque,
         product.imagem, product.marca, product.categoria,
     ]):
-        return True
-    if product.url:
         return True
     return 'url' in needed and bool(product.url)
 
