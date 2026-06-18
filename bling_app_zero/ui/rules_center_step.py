@@ -3,7 +3,6 @@ from __future__ import annotations
 import streamlit as st
 
 from bling_app_zero.core.user_rules import get_user_rules, set_user_rules
-from bling_app_zero.ui.category_conference_step_v2 import category_conference_ready, render_category_conference_step
 from bling_app_zero.ui.rules_center_state import RULES_CENTER_READY_KEY, rules_center_ready
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/rules_center_step.py'
@@ -26,14 +25,10 @@ def _disable_legacy_final_protections() -> dict:
 
 
 def render_rules_center_step(key_scope: str = 'ia_real') -> None:
-    """Renderiza guardas finais sem alterar valores fora das decisões explícitas do usuário."""
+    """Renderiza apenas regras/proteções finais. Categorias ficam em etapa própria."""
     _ = key_scope
-    render_category_conference_step()
-    if not category_conference_ready():
-        st.info('Para seguir com segurança, aplique a conferência de categorias ou pule explicitamente esta etapa.')
-        st.stop()
-
     _disable_legacy_final_protections()
+    st.caption('Regras finais liberadas. A conferência de categorias agora fica em etapa independente antes desta tela.')
     st.markdown(
         '''
 <style>
