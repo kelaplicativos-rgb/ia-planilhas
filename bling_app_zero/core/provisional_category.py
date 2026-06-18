@@ -74,6 +74,12 @@ GENERIC_OR_BLOCKED_CATEGORIES = {
     'alimentos',
     'revisar manualmente',
     'revisar',
+    'produtos nao classificados',
+    'produtos não classificados',
+    'nao classificados',
+    'não classificados',
+    'sem classificacao',
+    'sem classificação',
 }
 
 
@@ -109,11 +115,16 @@ def _clean_category(value: object, *, limit: int = 80) -> str:
     return candidate[:limit].strip()
 
 
+def _is_blocked_category(value: object) -> bool:
+    normalized = _norm(_clean_category(value))
+    return not normalized or normalized in {_norm(item) for item in GENERIC_OR_BLOCKED_CATEGORIES}
+
+
 def _usable_category(value: object) -> str:
     category = _clean_category(value)
-    normalized = _norm(category)
-    if not normalized or normalized in {_norm(item) for item in GENERIC_OR_BLOCKED_CATEGORIES}:
+    if _is_blocked_category(category):
         return ''
+    normalized = _norm(category)
     if len(normalized) < 3:
         return ''
     if re.fullmatch(r'[0-9._/-]+', normalized):
@@ -125,9 +136,12 @@ def _payload_has_category(payload: dict[str, Any]) -> bool:
     if not isinstance(payload, dict):
         return False
     category = payload.get('categoria')
+    values: list[str] = []
     if isinstance(category, dict):
-        return any(str(value or '').strip() for value in category.values())
-    return bool(str(category or '').strip())
+        values = [str(value or '').strip() for value in category.values()]
+    elif str(category or '').strip():
+        values = [str(category or '').strip()]
+    return any(value and not _is_blocked_category(value) for value in values)
 
 
 def _row_value(row: Any, key: str) -> str:
@@ -212,7 +226,9 @@ def provisional_category_from_rules() -> tuple[bool, str]:
     except Exception:
         rules = {}
     enabled = bool(rules.get('allow_provisional_category', True))
-    category_name = _usable_category(rules.get('provisional_category_name')) or DEFAULT_PROVISIONAL_CATEGORY
+    category_name = _clean_category(rules.get('provisional_category_name')) or DEFAULT_PROVISIONAL_CATEGORY
+    if _is_blocked_category(category_name) and _norm(category_name) != _norm(DEFAULT_PROVISIONAL_CATEGORY):
+        category_name = DEFAULT_PROVISIONAL_CATEGORY
     return enabled, category_name
 
 
@@ -226,17 +242,18 @@ def apply_category_guard_to_payload(
     """Garante categoria no payload sem inventar categoria real.
 
     Ordem segura:
-    1. Se o payload já tem categoria, não altera.
-    2. Recupera categoria real de meta/linha, inclusive colunas auxiliares da IA.
-    3. Tenta classificar categoria real pelo contexto do produto com confiança mínima.
-    4. Se ainda não existir, aplica categoria provisória universal.
-    5. Só bloqueia se a regra provisória for desligada manualmente.
+    1. Se o payload já tem categoria real, não altera.
+    2. Se a categoria atual for provisória/genérica, ignora e tenta substituir.
+    3. Recupera categoria real de meta/linha, inclusive colunas auxiliares da IA.
+    4. Tenta classificar categoria real pelo contexto do produto com confiança mínima.
+    5. Se ainda não existir, aplica categoria provisória universal.
+    6. Só bloqueia se a regra provisória for desligada manualmente.
     """
     current = dict(payload or {})
     rule_enabled, provisional_name = provisional_category_from_rules()
 
     if _payload_has_category(current):
-        return CategoryGuardResult(current, False, False, '', '', 'payload', 'payload_already_has_category', rule_enabled, 1.0)
+        return CategoryGuardResult(current, False, False, '', '', 'payload', 'payload_already_has_real_category', rule_enabled, 1.0)
 
     real_category, real_source = category_from_row(row, meta)
     confidence = 1.0 if real_category else 0.0
