@@ -69,11 +69,24 @@ def _render_price_multistore_route() -> None:
     render_price_multistore_v2()
 
 
+def _render_price_multistore_home_entry() -> None:
+    active_flow = str(st.session_state.get(ACTIVE_FLOW_KEY) or FLOW_HOME).strip()
+    if active_flow not in {'', FLOW_HOME}:
+        return
+    st.markdown('---')
+    st.markdown('### Fluxo independente')
+    st.caption('Use este caminho somente para atualizar preços por loja/canal. Ele não passa pelo wizard de cadastro/estoque.')
+    if st.button('Atualizar preços multilojas', use_container_width=True, key='home_start_price_multistore_v2'):
+        start_price_multistore_flow()
+        st.rerun()
+
+
 def render_home() -> None:
     if _price_multistore_requested():
         _render_price_multistore_route()
         return
     legacy.render_home()
+    _render_price_multistore_home_entry()
 
 
 __all__ = ['FLOW_PRICE_UPDATE', 'render_home', 'start_price_multistore_flow']
