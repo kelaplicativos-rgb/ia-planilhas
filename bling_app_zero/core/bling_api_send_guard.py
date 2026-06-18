@@ -11,6 +11,7 @@ from bling_app_zero.core.validators import price_validation_details, validate_pr
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_api_send_guard.py'
 CATEGORY_DONE_KEY = 'category_conference_confirmed_v1'
 CATEGORY_SKIP_KEY = 'category_conference_skipped_v1'
+CATEGORY_VALUES_SIGNATURE_KEY = 'category_conference_values_signature_v1'
 
 
 @dataclass(frozen=True)
@@ -52,9 +53,27 @@ def _non_blank_column(df: pd.DataFrame, name: str) -> bool:
     return False
 
 
-def _has_category_column(df: pd.DataFrame) -> bool:
+def _category_column(df: pd.DataFrame) -> str:
     names = {'categoria', 'category', 'nome da categoria', 'categoria do produto'}
-    return any(str(col or '').strip().lower() in names for col in df.columns)
+    for col in df.columns:
+        if str(col or '').strip().lower() in names:
+            return str(col)
+    return ''
+
+
+def _has_category_column(df: pd.DataFrame) -> bool:
+    return bool(_category_column(df))
+
+
+def _category_values_signature(df: pd.DataFrame) -> str:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return 'empty'
+    category_col = _category_column(df)
+    if not category_col:
+        return f'{len(df)}:no-category-column'
+    values = df[category_col].fillna('').astype(str).str.strip()
+    sample = pd.util.hash_pandas_object(values, index=True).sum()
+    return f'{len(df)}:{category_col}:{sample}'
 
 
 def _category_conference_decided() -> bool:
@@ -64,19 +83,26 @@ def _category_conference_decided() -> bool:
 def validate_before_bling_send(df: pd.DataFrame, operation: object) -> SendGuardResult:
     op = _operation(operation)
     messages: list[str] = []
+    current_category_signature = _category_values_signature(df) if isinstance(df, pd.DataFrame) else 'empty'
+    expected_category_signature = str(st.session_state.get(CATEGORY_VALUES_SIGNATURE_KEY) or '')
     details: dict[str, Any] = {
         'operation': op,
         'rows': int(len(df)) if isinstance(df, pd.DataFrame) else 0,
         'category_conference_done': bool(st.session_state.get(CATEGORY_DONE_KEY)),
         'category_conference_skipped': bool(st.session_state.get(CATEGORY_SKIP_KEY)),
+        'category_values_signature': current_category_signature,
+        'expected_category_values_signature': expected_category_signature,
         'responsible_file': RESPONSIBLE_FILE,
     }
 
     if not isinstance(df, pd.DataFrame) or df.empty:
         return SendGuardResult(False, 'BLOQUEADO', ('Nenhuma linha pronta para envio ao Bling.',), details)
 
-    if op == 'cadastro' and _has_category_column(df) and not _category_conference_decided():
-        messages.append('Envio bloqueado: aplique a Conferência inteligente de categorias ou use “Pular sem alterar categorias”. Isso evita enviar categoria antiga/cache para o Bling.')
+    if op == 'cadastro' and _has_category_column(df):
+        if not _category_conference_decided():
+            messages.append('Envio bloqueado: aplique a Conferência inteligente de categorias ou use “Pular sem alterar categorias”. Isso evita enviar categoria antiga/cache para o Bling.')
+        elif not expected_category_signature or expected_category_signature != current_category_signature:
+            messages.append('Envio bloqueado: as categorias atuais não batem com a última conferência aplicada/pulada. Volte em Regras e IA e confirme novamente para evitar envio de cache antigo.')
 
     if op == 'atualizacao_preco':
         price_details = price_validation_details(df)
