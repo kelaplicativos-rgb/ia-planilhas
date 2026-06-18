@@ -8,8 +8,10 @@ from typing import Any, Callable
 import requests
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.engines.brand_title_detector import detect_brand_from_title
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_v3_product_client.py'
+DEFAULT_BRAND = 'Genérico'
 
 
 @dataclass(frozen=True)
@@ -119,13 +121,18 @@ def _fields(payload: dict[str, Any]) -> list[str]:
 
 
 def _infer_brand(nome: str) -> str:
-    text = str(nome or '').strip()
-    known = ('Kdpan', 'Kapbom', 'Kaidi', 'Knup', 'Inova', 'Kimaster', 'Kemei', 'Lelong', 'X-Cell', 'Mox', 'Hoco', 'Baseus')
-    low = f' {text.lower()} '
-    for brand in known:
-        if re.search(rf'(?<![a-z0-9]){re.escape(brand.lower())}(?![a-z0-9])', low):
-            return brand
-    return ''
+    return detect_brand_from_title(nome)
+
+
+def _safe_brand(value: Any, nome: str) -> str:
+    current = str(value or '').strip()
+    if current.lower() in {'generico', 'genérico'}:
+        return DEFAULT_BRAND
+    detected = detect_brand_from_title('', fallback=current)
+    if detected:
+        return detected
+    detected = detect_brand_from_title(nome)
+    return detected or DEFAULT_BRAND
 
 
 def _first_text(payload: dict[str, Any], keys: tuple[str, ...]) -> str:
@@ -145,10 +152,7 @@ def _force_defaults(payload: dict[str, Any]) -> dict[str, Any]:
     if descricao:
         out['descricaoCurta'] = descricao
         out.setdefault('descricaoComplementar', descricao)
-    if not str(out.get('marca') or '').strip():
-        brand = _infer_brand(nome)
-        if brand:
-            out['marca'] = brand
+    out['marca'] = _safe_brand(out.get('marca'), nome)
     out.setdefault('tipo', 'P')
     out.setdefault('situacao', 'A')
     out.setdefault('formato', 'S')
