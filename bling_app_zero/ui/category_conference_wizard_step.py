@@ -10,6 +10,7 @@ from bling_app_zero.ui.category_conference_step_v2 import (
     CATEGORY_DATASET_SIGNATURE_KEY,
     CATEGORY_DONE_KEY,
     CATEGORY_SKIP_KEY,
+    CATEGORY_STATS_KEY,
     CATEGORY_VALUES_SIGNATURE_KEY,
     category_conference_ready,
     category_values_signature,
@@ -97,7 +98,7 @@ def _mark_skipped(df: pd.DataFrame | None, source_key: str, *, reason: str) -> N
     st.session_state[CATEGORY_DATASET_SIGNATURE_KEY] = dataset_sig
     st.session_state[GLOBAL_DECISION_DATASET_SIGNATURE_KEY] = dataset_sig
     st.session_state[GLOBAL_LIVE_DATASET_SIGNATURE_KEY] = dataset_sig
-    st.session_state[CATEGORY_WIZARD_DECISION_KEY] = 'skip'
+    st.session_state[CATEGORY_WIZARD_DECISION_KEY] = f'skip_{reason}'
     st.session_state[CATEGORY_WIZARD_SOURCE_KEY] = source_key
     add_audit_event(
         'category_wizard_skipped',
@@ -115,6 +116,25 @@ def _mark_skipped(df: pd.DataFrame | None, source_key: str, *, reason: str) -> N
     )
 
 
+def _clear_toggle_off_skip_state() -> None:
+    """Ao ligar o toggle, remove apenas o pulo automático criado pelo toggle desligado.
+
+    Não remove um pulo/manual feito dentro do painel, nem uma aplicação já confirmada.
+    """
+    if str(st.session_state.get(CATEGORY_WIZARD_DECISION_KEY) or '') != 'skip_toggle_off':
+        return
+    for key in (
+        CATEGORY_SKIP_KEY,
+        CATEGORY_DONE_KEY,
+        CATEGORY_STATS_KEY,
+        CATEGORY_VALUES_SIGNATURE_KEY,
+        CATEGORY_DATASET_SIGNATURE_KEY,
+        GLOBAL_DECISION_DATASET_SIGNATURE_KEY,
+    ):
+        st.session_state.pop(key, None)
+    st.session_state[CATEGORY_WIZARD_DECISION_KEY] = 'enabled_panel'
+
+
 def category_wizard_ready() -> bool:
     df, _source_key = _source_df()
     if not _categorization_applicable(df):
@@ -127,8 +147,8 @@ def category_wizard_ready() -> bool:
 
 def render_category_conference_wizard_step() -> None:
     df, source_key = _source_df()
-    st.markdown('### Conferência e Correção de Categorias')
-    st.caption('Etapa independente. Use apenas quando quiser corrigir plural, ortografia, digitação e nomes de categorias antes da prévia final.')
+    st.markdown('### Categorização Inteligente Automática')
+    st.caption('Recurso opcional. Ao ligar, abre o painel para revisar, corrigir e padronizar categorias antes da prévia final.')
 
     if not _categorization_applicable(df):
         _mark_skipped(df, source_key, reason='not_applicable')
@@ -136,20 +156,22 @@ def render_category_conference_wizard_step() -> None:
         return
 
     if CATEGORY_WIZARD_TOGGLE_KEY not in st.session_state:
-        st.session_state[CATEGORY_WIZARD_TOGGLE_KEY] = True
+        st.session_state[CATEGORY_WIZARD_TOGGLE_KEY] = False
 
     use_categorization = st.toggle(
-        'Vai categorizar?',
-        value=bool(st.session_state.get(CATEGORY_WIZARD_TOGGLE_KEY, True)),
+        'Usar Categorização Inteligente Automática',
+        value=bool(st.session_state.get(CATEGORY_WIZARD_TOGGLE_KEY, False)),
         key=CATEGORY_WIZARD_TOGGLE_KEY,
-        help='Ligado: revisar e corrigir categorias. Desligado: seguir sem alterar categorias.',
+        help='Ligado: abre o painel inteligente de categorias. Desligado: segue sem alterar categorias, igual ao comportamento opcional da precificação.',
     )
 
     if not use_categorization:
         _mark_skipped(df, source_key, reason='toggle_off')
-        st.warning('Categorização pulada. O sistema seguirá com as categorias exatamente como vieram da origem viva atual.')
+        st.info('Categorização desligada. Ligue o toggle acima para abrir o painel inteligente e usar o recurso.')
         return
 
+    _clear_toggle_off_skip_state()
+    st.success('Categorização ligada. Use o painel abaixo para revisar e aplicar as categorias corrigidas.')
     render_category_conference_step()
     if category_conference_ready():
         st.success('Etapa de categorias concluída. Você pode avançar para a próxima etapa.')
