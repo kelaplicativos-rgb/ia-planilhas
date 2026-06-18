@@ -24,6 +24,7 @@ STEP_ORIGEM = 'origem'
 STEP_ENTRADA = 'entrada'
 STEP_CATEGORIZACAO = 'categorizacao'
 STEP_REGRAS = 'regras'
+STEP_IA = 'ia'
 STEP_MAPEAMENTO = 'mapeamento'
 STEP_GERAR_ESTOQUE = 'gerar_estoque'
 STEP_PREVIEW = 'preview'
@@ -38,6 +39,7 @@ UNIVERSAL_STEPS = [
     STEP_CATEGORIZACAO,
     STEP_MAPEAMENTO,
     STEP_REGRAS,
+    STEP_IA,
     STEP_PREVIEW,
     STEP_DOWNLOAD,
 ]
@@ -55,7 +57,8 @@ STEP_LABELS = {
     STEP_CATEGORIZACAO: 'Categorização Inteligente Automática',
     STEP_MAPEAMENTO: 'Mapeamento',
     STEP_GERAR_ESTOQUE: 'Etapa legada ocultada',
-    STEP_REGRAS: 'Revisão final',
+    STEP_REGRAS: 'Regras e Recursos Inteligentes',
+    STEP_IA: 'Inteligência Artificial',
     STEP_PREVIEW: 'Prévia final',
     STEP_DOWNLOAD: 'Download',
     STEP_PROCESSAR: 'Processar',
@@ -66,6 +69,9 @@ DEFAULT_PENDING_MESSAGE = 'Conclua esta etapa para continuar.'
 RESET_OUTPUT_KEYS = [
     FLOW_ORIGIN_KEY,
     FLOW_ACTIVE_KEY,
+    FLOW_OPERATION_KEY,
+    LEGACY_ORIGIN_RADIO_KEY,
+    WIZARD_STEP_KEY,
     'origem_final',
     'origem_dados',
     'origem_tipo',
@@ -102,6 +108,7 @@ RESET_OUTPUT_KEYS = [
     'mapping_confidence_bling_api',
     'rules_center_reviewed',
     'bling_user_rules',
+    'home_wizard_ai_real_advanced_applied',
     'category_wizard_use_categorization_v1',
     'category_wizard_decision_v1',
     'category_wizard_source_key_v1',
@@ -109,10 +116,6 @@ RESET_OUTPUT_KEYS = [
     'category_conference_skipped_v1',
     'category_conference_stats_v1',
     'category_conference_analyzed_df_v1',
-    'category_conference_source_signature_v1',
-    'category_conference_values_signature_v1',
-    'category_conference_dataset_signature_v1',
-    'global_decision_dataset_signature_v1',
     'home_precificacao_inicial',
     'home_pricing_config',
     'cadastro_preco_calculado_ativo',
@@ -173,22 +176,6 @@ RESET_OUTPUT_KEYS = [
     'site_progress_last',
     'site_progress_log',
     'site_progress_last_seen_at',
-    'neutral_site_progress_state_v1',
-    'neutral_site_capture_state_v1',
-    'neutral_site_capture_report_v1',
-    'live_operation_progress_state_v1',
-    'live_operation_progress_last_v1',
-    'live_operation_progress_log_v1',
-    'live_operation_progress_last_seen_at_v1',
-    'site_stock_requested_columns_enforced',
-    'site_stock_requested_columns_count',
-    'guided_login_capture_config',
-    'guided_login_capture_prompt',
-    'guided_login_capture_last_prepared_at',
-    'guided_login_security_resolved',
-    'guided_login_confirmed_logged_in',
-    'guided_login_products_page_ready',
-    'guided_login_capture_mode',
 ]
 
 
@@ -226,6 +213,7 @@ __all__ = [
     'STEP_DOWNLOAD',
     'STEP_ENTRADA',
     'STEP_GERAR_ESTOQUE',
+    'STEP_IA',
     'STEP_MAPEAMENTO',
     'STEP_MODELO',
     'STEP_OPERACAO',
