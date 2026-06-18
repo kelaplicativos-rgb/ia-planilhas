@@ -43,6 +43,20 @@ def _product_page_only_link(verified, row) -> str:
     return ''
 
 
+def _safe_brand_for_payload(verified, payload, row_fixed) -> str:
+    payload_fixed = apply_product_send_defaults(payload)
+    for candidate in (
+        payload_fixed.get('marca') if isinstance(payload_fixed, dict) else '',
+        payload_fixed.get('Marca') if isinstance(payload_fixed, dict) else '',
+        row_fixed.get('marca') if isinstance(row_fixed, dict) else '',
+        row_fixed.get('Marca') if isinstance(row_fixed, dict) else '',
+    ):
+        text = str(candidate or '').strip()
+        if verified._brand_ok(text):
+            return text
+    return 'Genérico'
+
+
 def apply_blingfix_to_verified_module(verified):
     verified.DEFAULT_UNIT = 'UN'
     verified.DEFAULT_PRODUCTION = 'Terceiros'
@@ -58,8 +72,7 @@ def apply_blingfix_to_verified_module(verified):
         updated = dict(payload)
         row_fixed = apply_product_send_defaults(row) if row is not None else {}
 
-        if not verified._brand_ok(updated.get('marca')):
-            updated['marca'] = 'Genérico'
+        updated['marca'] = _safe_brand_for_payload(verified, updated, row_fixed)
         updated['condicao'] = 'Novo'
         updated['producao'] = 'Terceiros'
         updated['unidade'] = 'UN'
