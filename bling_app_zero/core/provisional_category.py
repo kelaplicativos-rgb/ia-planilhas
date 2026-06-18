@@ -9,6 +9,7 @@ from bling_app_zero.core.user_rules import get_user_rules
 RESPONSIBLE_FILE = 'bling_app_zero/core/provisional_category.py'
 
 DEFAULT_PROVISIONAL_CATEGORY = 'Produtos não classificados'
+DEFAULT_CATEGORY_CONFIDENCE_MIN = 0.80
 
 CATEGORY_FIELD_CANDIDATES = (
     'Categoria',
@@ -19,6 +20,31 @@ CATEGORY_FIELD_CANDIDATES = (
     'category',
     'categoria_sugerida_ia',
     'categoria_atual_ia',
+)
+
+PRODUCT_NAME_CANDIDATES = (
+    'Descrição',
+    'Descricao',
+    'Nome',
+    'Nome do produto',
+    'Produto',
+    'Título',
+    'Titulo',
+    'name',
+    'nome',
+)
+
+PRODUCT_DESCRIPTION_CANDIDATES = (
+    'Descrição Curta',
+    'Descricao Curta',
+    'Descrição complementar',
+    'Descricao complementar',
+    'Características',
+    'Caracteristicas',
+    'Ficha técnica',
+    'Ficha tecnica',
+    'description',
+    'descricao',
 )
 
 GENERIC_OR_BLOCKED_CATEGORIES = {
@@ -46,6 +72,8 @@ GENERIC_OR_BLOCKED_CATEGORIES = {
     'informatica',
     'informática',
     'alimentos',
+    'revisar manualmente',
+    'revisar',
 }
 
 
@@ -59,6 +87,7 @@ class CategoryGuardResult:
     source: str
     reason: str
     rule_enabled: bool
+    confidence: float = 0.0
 
 
 def _norm(value: object) -> str:
@@ -109,6 +138,14 @@ def _row_value(row: Any, key: str) -> str:
     return '' if value is None else str(value).strip()
 
 
+def _first_row_value(row: Any, keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = _row_value(row, key)
+        if value:
+            return value
+    return ''
+
+
 def category_from_row(row: Any, meta: dict[str, Any] | None = None) -> tuple[str, str]:
     meta_category = _usable_category((meta or {}).get('category'))
     if meta_category:
@@ -118,6 +155,55 @@ def category_from_row(row: Any, meta: dict[str, Any] | None = None) -> tuple[str
         if value:
             return value, key
     return '', ''
+
+
+def _category_confidence_min() -> float:
+    try:
+        rules = get_user_rules()
+    except Exception:
+        rules = {}
+    raw = rules.get('category_ai_confidence_min', DEFAULT_CATEGORY_CONFIDENCE_MIN)
+    try:
+        value = float(raw)
+    except Exception:
+        value = DEFAULT_CATEGORY_CONFIDENCE_MIN
+    if value > 1:
+        value = value / 100
+    return min(0.99, max(0.50, value))
+
+
+def category_from_intelligence(row: Any, payload: dict[str, Any] | None = None, meta: dict[str, Any] | None = None) -> tuple[str, str, float, str]:
+    """Classifica categoria real por contexto do produto antes da categoria provisória.
+
+    Usa a inteligência determinística de categoria já usada na etapa de categorização.
+    Não substitui categoria captada; só atua quando ela veio vazia/genérica.
+    """
+    try:
+        from bling_app_zero.core.category_intelligence import suggest_category_for_product
+    except Exception:
+        return '', '', 0.0, 'category_intelligence_unavailable'
+
+    payload = payload or {}
+    meta = meta or {}
+    name = str(payload.get('nome') or '').strip() or _first_row_value(row, PRODUCT_NAME_CANDIDATES)
+    description = str(payload.get('descricaoCurta') or '').strip() or _first_row_value(row, PRODUCT_DESCRIPTION_CANDIDATES)
+    current_category = str(meta.get('category') or '').strip() or _first_row_value(row, CATEGORY_FIELD_CANDIDATES)
+    if not name and not description:
+        return '', '', 0.0, 'sem_nome_ou_descricao_para_classificar'
+
+    try:
+        suggestion = suggest_category_for_product(name, description=description, current_category=current_category)
+    except Exception as exc:
+        return '', '', 0.0, f'category_intelligence_exception:{str(exc)[:120]}'
+
+    category = _usable_category(getattr(suggestion, 'category', ''))
+    confidence = float(getattr(suggestion, 'confidence', 0.0) or 0.0)
+    reason = str(getattr(suggestion, 'reason', '') or 'categoria por inteligência')
+    if not category:
+        return '', '', confidence, reason or 'categoria_nao_confiavel'
+    if confidence < _category_confidence_min():
+        return '', '', confidence, f'confianca_baixa:{reason}'
+    return category, 'category_intelligence', confidence, reason
 
 
 def provisional_category_from_rules() -> tuple[bool, str]:
@@ -142,19 +228,25 @@ def apply_category_guard_to_payload(
     Ordem segura:
     1. Se o payload já tem categoria, não altera.
     2. Recupera categoria real de meta/linha, inclusive colunas auxiliares da IA.
-    3. Se ainda não existir, aplica categoria provisória universal.
-    4. Só bloqueia se a regra provisória for desligada manualmente.
+    3. Tenta classificar categoria real pelo contexto do produto com confiança mínima.
+    4. Se ainda não existir, aplica categoria provisória universal.
+    5. Só bloqueia se a regra provisória for desligada manualmente.
     """
     current = dict(payload or {})
     rule_enabled, provisional_name = provisional_category_from_rules()
 
     if _payload_has_category(current):
-        return CategoryGuardResult(current, False, False, '', '', 'payload', 'payload_already_has_category', rule_enabled)
+        return CategoryGuardResult(current, False, False, '', '', 'payload', 'payload_already_has_category', rule_enabled, 1.0)
 
     real_category, real_source = category_from_row(row, meta)
+    confidence = 1.0 if real_category else 0.0
+    reason = 'real_category_recovered' if real_category else ''
+    if not real_category:
+        real_category, real_source, confidence, reason = category_from_intelligence(row, current, meta)
+
     category_name = real_category or (provisional_name if rule_enabled else '')
     if not category_name:
-        return CategoryGuardResult(current, False, False, '', '', '', 'missing_category_and_provisional_disabled', rule_enabled)
+        return CategoryGuardResult(current, False, False, '', '', '', 'missing_category_and_provisional_disabled', rule_enabled, confidence)
 
     category_id = ''
     if category_id_resolver is not None:
@@ -176,8 +268,9 @@ def apply_category_guard_to_payload(
         category_name,
         category_id,
         real_source if real_category else 'provisional_rule',
-        'real_category_recovered' if real_category else 'provisional_category_applied',
+        reason if real_category else 'provisional_category_applied',
         rule_enabled,
+        confidence,
     )
 
 
@@ -186,6 +279,7 @@ __all__ = [
     'DEFAULT_PROVISIONAL_CATEGORY',
     'RESPONSIBLE_FILE',
     'apply_category_guard_to_payload',
+    'category_from_intelligence',
     'category_from_row',
     'provisional_category_from_rules',
 ]
