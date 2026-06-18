@@ -7,11 +7,12 @@ import pandas as pd
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_direct_sender import DirectSendResult
-from bling_app_zero.core.bling_direct_sender_smart import _column_map, _headers, _payload_variants, _resolve_product_id, _url
+from bling_app_zero.core.bling_direct_sender_smart import _column_map, _headers, _payload_variants, _resolve_or_create_category, _resolve_product_id, _url
 from bling_app_zero.core.bling_pre_send_defaults import apply_product_send_defaults
 from bling_app_zero.core.bling_token_store import load_token
 from bling_app_zero.core.bling_v3_product_client import BlingV3ProductClient
 from bling_app_zero.core.product_persistence_check import IMPORTANT_PRODUCT_FIELDS, missing_product_fields, product_persistence_flags
+from bling_app_zero.core.provisional_category import apply_category_guard_to_payload
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/verified_api_sender.py'
 DEFAULT_BRAND = 'Genérico'
@@ -149,7 +150,7 @@ def send_verified_products(df: pd.DataFrame, *, limit: int | None = None, progre
     total = len(rows)
     sent = failed = skipped = 0
     errors: list[str] = []
-    add_audit_event('verified_api_sender_started', area='BLING_ENVIO', status='OK', details={'total': total, 'mode': 'one_product_verify_before_next', 'default_brand_guard': DEFAULT_BRAND, 'default_condition_guard': DEFAULT_CONDITION, 'default_production_guard': DEFAULT_PRODUCTION, 'default_unit_guard': DEFAULT_UNIT, 'default_department_guard': DEFAULT_DEPARTMENT, 'descricao_complementar_forced_empty': True, 'category_required_before_api': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('verified_api_sender_started', area='BLING_ENVIO', status='OK', details={'total': total, 'mode': 'one_product_verify_before_next', 'default_brand_guard': DEFAULT_BRAND, 'default_condition_guard': DEFAULT_CONDITION, 'default_production_guard': DEFAULT_PRODUCTION, 'default_unit_guard': DEFAULT_UNIT, 'default_department_guard': DEFAULT_DEPARTMENT, 'descricao_complementar_forced_empty': True, 'category_required_before_api': True, 'provisional_category_default': 'Produtos não classificados', 'responsible_file': RESPONSIBLE_FILE})
 
     for pos, (index, row) in enumerate(rows.iterrows(), start=1):
         line = int(index) + 1 if isinstance(index, int) else pos
@@ -162,6 +163,29 @@ def send_verified_products(df: pd.DataFrame, *, limit: int | None = None, progre
         _emit(progress_callback, {'stage': f'Verificando produto {pos}/{total}', 'processed': pos - 1, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': (pos - 1) / max(total, 1)})
         _label, payload, meta = variants[0]
         payload = _force_default_fields(payload, row)
+        category_guard = apply_category_guard_to_payload(
+            payload,
+            row=row,
+            meta=meta,
+            category_id_resolver=lambda name: _resolve_or_create_category(token, name),
+        )
+        payload = category_guard.payload
+        if category_guard.applied:
+            add_audit_event(
+                'verified_api_sender_category_guard_applied',
+                area='BLING_ENVIO',
+                status='OK',
+                details={
+                    'line': line,
+                    'category': category_guard.category_name,
+                    'category_id': category_guard.category_id,
+                    'source': category_guard.source,
+                    'provisional': category_guard.provisional,
+                    'reason': category_guard.reason,
+                    'will_update_on_next_real_category': bool(category_guard.provisional),
+                    'responsible_file': RESPONSIBLE_FILE,
+                },
+            )
         if not _payload_has_category(payload):
             failed += 1
             message = f'Linha {line}: envio bloqueado antes da API porque o payload está sem categoria final.'
@@ -176,6 +200,8 @@ def send_verified_products(df: pd.DataFrame, *, limit: int | None = None, progre
                     'payload_keys': sorted(payload.keys()),
                     'meta_category': str(meta.get('category') or ''),
                     'no_api_request_sent_for_line': True,
+                    'provisional_category_rule_enabled': category_guard.rule_enabled,
+                    'category_guard_reason': category_guard.reason,
                     'responsible_file': RESPONSIBLE_FILE,
                 },
             )
@@ -207,7 +233,7 @@ def send_verified_products(df: pd.DataFrame, *, limit: int | None = None, progre
 
         flags = product_persistence_flags(saved)
         missing_important = missing_product_fields(saved, IMPORTANT_PRODUCT_FIELDS)
-        add_audit_event('verified_api_product_checkpoint', area='BLING_ENVIO', status='OK' if not missing else 'ERRO', details={'line': line, 'product_id': product_id, 'persisted_flags': flags, 'missing_required': missing, 'missing_important': missing_important, 'image_pending': not flags.get('imagens'), 'next_product_allowed': not bool(missing), 'default_brand_guard': DEFAULT_BRAND, 'default_condition_guard': DEFAULT_CONDITION, 'default_production_guard': DEFAULT_PRODUCTION, 'default_unit_guard': DEFAULT_UNIT, 'default_department_guard': DEFAULT_DEPARTMENT, 'descricao_complementar_forced_empty': True, 'link_externo_forced': bool(payload.get('linkExterno')), 'category_required_before_api': True, 'attempts': attempts[-6:], 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('verified_api_product_checkpoint', area='BLING_ENVIO', status='OK' if not missing else 'ERRO', details={'line': line, 'product_id': product_id, 'persisted_flags': flags, 'missing_required': missing, 'missing_important': missing_important, 'image_pending': not flags.get('imagens'), 'next_product_allowed': not bool(missing), 'default_brand_guard': DEFAULT_BRAND, 'default_condition_guard': DEFAULT_CONDITION, 'default_production_guard': DEFAULT_PRODUCTION, 'default_unit_guard': DEFAULT_UNIT, 'default_department_guard': DEFAULT_DEPARTMENT, 'descricao_complementar_forced_empty': True, 'link_externo_forced': bool(payload.get('linkExterno')), 'category_required_before_api': True, 'provisional_category_applied': bool(category_guard.provisional), 'category_guard_source': category_guard.source, 'category_guard_category': category_guard.category_name, 'will_update_on_next_real_category': bool(category_guard.provisional), 'attempts': attempts[-6:], 'responsible_file': RESPONSIBLE_FILE})
 
         if missing:
             failed += 1
@@ -220,7 +246,7 @@ def send_verified_products(df: pd.DataFrame, *, limit: int | None = None, progre
 
         _emit(progress_callback, {'stage': 'Produto aprovado; seguindo para o proximo' if not missing else 'Produto reprovado; seguindo com erro registrado', 'processed': pos, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': pos / max(total, 1)})
 
-    add_audit_event('verified_api_sender_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'default_brand_guard': DEFAULT_BRAND, 'default_condition_guard': DEFAULT_CONDITION, 'default_production_guard': DEFAULT_PRODUCTION, 'default_unit_guard': DEFAULT_UNIT, 'default_department_guard': DEFAULT_DEPARTMENT, 'descricao_complementar_forced_empty': True, 'category_required_before_api': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('verified_api_sender_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'default_brand_guard': DEFAULT_BRAND, 'default_condition_guard': DEFAULT_CONDITION, 'default_production_guard': DEFAULT_PRODUCTION, 'default_unit_guard': DEFAULT_UNIT, 'default_department_guard': DEFAULT_DEPARTMENT, 'descricao_complementar_forced_empty': True, 'category_required_before_api': True, 'provisional_category_default': 'Produtos não classificados', 'responsible_file': RESPONSIBLE_FILE})
     return DirectSendResult(total, sent, failed, skipped, tuple(errors), tuple())
 
 
