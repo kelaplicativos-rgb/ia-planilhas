@@ -26,12 +26,16 @@ DATAFRAME_KEYS = (
     'df_final_bling_api', 'df_final_universal', 'df_final_cadastro', 'df_final_cadastro_preview_rules_applied',
     'df_final_download_operation', 'df_final_preview_operation', 'final_download_df_snapshot',
     'cadastro_wizard_df_origem', 'cadastro_wizard_df_para_mapear', 'df_origem_cadastro_precificada',
-    'df_origem_site_como_planilha', 'df_produtos_origem',
+    'df_origem_site_como_planilha', 'df_origem_site_como_planilha_cadastro', 'df_origem_site_como_planilha_universal',
+    'df_produtos_origem', 'df_origem', 'df_origem_planilha', 'df_origem_cadastro', 'df_origem_universal',
+    'df_site_bruto', 'df_site_bruto_cadastro', 'df_site_bruto_universal',
 )
 
 PRIMARY_KEYS = (
     'cadastro_wizard_df_origem', 'df_origem_cadastro_precificada', 'df_origem_site_como_planilha',
-    'df_produtos_origem', 'cadastro_wizard_df_para_mapear', 'df_final_bling_api', 'df_final_universal', 'df_final_cadastro',
+    'df_origem_site_como_planilha_cadastro', 'df_origem_site_como_planilha_universal', 'df_produtos_origem',
+    'cadastro_wizard_df_para_mapear', 'df_origem', 'df_origem_planilha', 'df_origem_cadastro', 'df_origem_universal',
+    'df_final_bling_api', 'df_final_universal', 'df_final_cadastro',
 )
 
 
@@ -55,7 +59,16 @@ def _df_signature(df: pd.DataFrame) -> str:
     return f'{len(df)}x{len(df.columns)}:{columns}:{sample}'
 
 
+def _source_signature(df: pd.DataFrame, source_key: str) -> str:
+    return f'{source_key}:{_df_signature(df)}'
+
+
 def category_values_signature(df: pd.DataFrame) -> str:
+    """Assina somente os valores da categoria, sem depender do nome da coluna.
+
+    O modelo final pode chamar a coluna de Categoria, Nome da categoria ou outro alias.
+    O que precisa bater para segurança anti-cache é a sequência de valores enviada.
+    """
     if not _valid_df(df):
         return 'empty'
     category_col = detect_category_column(df)
@@ -63,11 +76,11 @@ def category_values_signature(df: pd.DataFrame) -> str:
         return f'{len(df)}:no-category-column'
     values = df[category_col].fillna('').astype(str).str.strip()
     sample = pd.util.hash_pandas_object(values, index=True).sum()
-    return f'{len(df)}:{category_col}:{sample}'
+    return f'{len(df)}:{sample}'
 
 
 def _reset_if_source_changed(df: pd.DataFrame, source_key: str) -> None:
-    signature = f'{source_key}:{_df_signature(df)}'
+    signature = _source_signature(df, source_key)
     previous = str(st.session_state.get(CATEGORY_SOURCE_SIGNATURE_KEY) or '')
     if previous and previous != signature:
         for key in (CATEGORY_DONE_KEY, CATEGORY_SKIP_KEY, CATEGORY_STATS_KEY, CATEGORY_ANALYZED_KEY, CATEGORY_VALUES_SIGNATURE_KEY):
@@ -119,6 +132,7 @@ def _store_corrected_everywhere(corrected: pd.DataFrame, source_key: str, *, app
         st.session_state[source_key] = corrected.copy().fillna('')
     st.session_state[CATEGORY_DONE_KEY] = True
     st.session_state[CATEGORY_SKIP_KEY] = False
+    st.session_state[CATEGORY_SOURCE_SIGNATURE_KEY] = _source_signature(corrected, source_key)
     st.session_state[CATEGORY_VALUES_SIGNATURE_KEY] = category_values_signature(corrected)
     st.session_state[CATEGORY_STATS_KEY] = dict(stats or {})
     add_audit_event(
@@ -191,6 +205,7 @@ def render_category_conference_step() -> None:
         if st.button('⏭️ Pular sem alterar categorias', use_container_width=True, key='category_conference_skip_v1'):
             st.session_state[CATEGORY_SKIP_KEY] = True
             st.session_state[CATEGORY_DONE_KEY] = False
+            st.session_state[CATEGORY_SOURCE_SIGNATURE_KEY] = _source_signature(df, source_key)
             st.session_state[CATEGORY_VALUES_SIGNATURE_KEY] = category_values_signature(df)
             add_audit_event(
                 'category_conference_skipped_by_user',
