@@ -86,9 +86,7 @@ def _is_trusted_brand_value(value: str) -> bool:
     key = normalize_key(text)
     if not key:
         return False
-    if key in {normalize_key(brand) for brand in KNOWN_BRANDS}:
-        return True
-    if key in BRAND_ALIASES:
+    if _is_known_brand_value(text):
         return True
     if _looks_like_model_or_code(text):
         return False
@@ -98,6 +96,11 @@ def _is_trusted_brand_value(value: str) -> bool:
     if any(word in GENERIC_WORDS or word in MODEL_HINT_WORDS for word in words):
         return False
     return bool(re.fullmatch(r'[a-z0-9]+(?: [a-z0-9]+){0,2}', key))
+
+
+def _is_known_brand_value(value: str) -> bool:
+    key = normalize_key(value)
+    return key in BRAND_ALIASES or key in {normalize_key(brand) for brand in KNOWN_BRANDS}
 
 
 def _clean_brand(value: str) -> str:
@@ -137,7 +140,7 @@ def detect_brand_from_title(title: str, fallback: str = '') -> str:
     if detected:
         return detected
 
-    if fallback_clean and _is_trusted_brand_value(fallback_clean):
+    if fallback_clean and _is_known_brand_value(fallback_clean):
         return fallback_clean
 
     return ''
