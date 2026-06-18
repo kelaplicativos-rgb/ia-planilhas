@@ -64,6 +64,21 @@ STOCK_SITE_DISCOVERY_BUDGET_SECONDS = SITE_BATCH_DISCOVERY_BUDGET_SECONDS
 SUPPORTED_SITE_OPERATIONS = {'cadastro', 'estoque', 'atualizacao_preco', UNIVERSAL_OPERATION}
 
 
+def show_contract(*args, **kwargs):
+    from bling_app_zero.ui.home_shared import show_contract as _show_contract
+    return _show_contract(*args, **kwargs)
+
+
+def render_mirror_planner_panel(*args, **kwargs):
+    from bling_app_zero.ui.mirror_planner_panel import render_mirror_planner_panel as _render_mirror_planner_panel
+    return _render_mirror_planner_panel(*args, **kwargs)
+
+
+def render_site_progress_history(*args, **kwargs):
+    from bling_app_zero.ui.site_progress import render_site_progress_history as _render_site_progress_history
+    return _render_site_progress_history(*args, **kwargs)
+
+
 def _columns_from_contract() -> list[str]:
     contract = active_contract()
     columns = list(dict.fromkeys([*contract.required_columns, *contract.optional_columns]))
@@ -334,4 +349,4 @@ def render_site_panel() -> None:
     _render_universal_fallback(operation=operation, requested_columns=requested_columns, df_modelo_cadastro=df_modelo_cadastro, df_modelo_estoque=df_modelo_estoque, df_modelo=df_modelo)
 
 
-__all__ = ['render_site_panel']
+__all__ = ['render_site_panel', 'show_contract', 'render_mirror_planner_panel', 'render_site_progress_history']
