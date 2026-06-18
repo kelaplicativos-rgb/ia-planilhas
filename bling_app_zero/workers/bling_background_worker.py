@@ -88,7 +88,7 @@ def run_one_background_job(job: dict[str, Any], *, max_batches: int = DEFAULT_MA
         batch_df = df.iloc[offset:batch_end].copy().fillna('')
         started = time.monotonic()
         try:
-            result = send_dataframe_to_bling_intelligent(batch_df, operation)
+            result = send_dataframe_to_bling_intelligent(batch_df, operation, validation_df=df)
         except Exception as exc:
             _mark_error(job_id, f'Falha no lote {offset + 1}-{batch_end}: {exc}', job)
             return {'ok': False, 'job_id': job_id, 'error': str(exc), 'offset': offset}
@@ -141,6 +141,7 @@ def run_one_background_job(job: dict[str, Any], *, max_batches: int = DEFAULT_MA
                 'failed': int(result.failed),
                 'skipped': int(result.skipped),
                 'elapsed_seconds': round(elapsed, 2),
+                'validation_rows': len(df),
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
