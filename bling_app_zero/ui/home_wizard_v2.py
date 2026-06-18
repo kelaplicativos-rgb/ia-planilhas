@@ -121,7 +121,10 @@ def _render_ai_step(section_number: int) -> None:
         legacy.render_pending_notice('Liberado após modelo/dados e mapeamento.')
         return
     if not legacy.universal_mapping_ready():
-        legacy.render_pending_notice('Confirme o mapeamento e as regras primeiro.')
+        legacy.render_pending_notice('Confirme o mapeamento manual primeiro.')
+        return
+    if not rules_center_ready():
+        legacy.render_pending_notice('Revise e salve as Regras e Recursos Inteligentes antes de usar ou pular a IA.')
         return
     st.caption('Etapa opcional e separada: a IA só aparece depois das regras e recursos inteligentes independentes.')
     legacy.render_ai_real_advanced_panel()
@@ -159,7 +162,7 @@ def _patch_legacy_wizard() -> None:
         if normalized == STEP_REGRAS:
             return bool(legacy.universal_mapping_ready() and rules_center_ready())
         if normalized == STEP_IA:
-            return bool(legacy.universal_mapping_ready())
+            return bool(legacy.universal_mapping_ready() and rules_center_ready())
         return bool(original_can_advance_from(step))
 
     def _step_is_done(step: str) -> bool:
@@ -169,7 +172,7 @@ def _patch_legacy_wizard() -> None:
         if normalized == STEP_REGRAS:
             return bool(legacy.universal_mapping_ready() and rules_center_ready())
         if normalized == STEP_IA:
-            return bool(legacy.universal_mapping_ready())
+            return bool(legacy.universal_mapping_ready() and rules_center_ready())
         return bool(original_step_is_done(step))
 
     def _step_after_model_when_source_ready(contract, steps: list[str], active_step: str) -> str:
