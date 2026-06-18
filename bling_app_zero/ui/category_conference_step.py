@@ -20,6 +20,7 @@ CATEGORY_STATS_KEY = 'category_conference_stats_v1'
 CATEGORY_ANALYZED_KEY = 'category_conference_analyzed_df_v1'
 CATEGORY_CATALOG_KEY = 'category_conference_catalog_text_v1'
 CATEGORY_SOURCE_SIGNATURE_KEY = 'category_conference_source_signature_v1'
+CATEGORY_VALUES_SIGNATURE_KEY = 'category_conference_values_signature_v1'
 
 DATAFRAME_KEYS = (
     'df_final_bling_api', 'df_final_universal', 'df_final_cadastro', 'df_final_cadastro_preview_rules_applied',
@@ -54,11 +55,22 @@ def _df_signature(df: pd.DataFrame) -> str:
     return f'{len(df)}x{len(df.columns)}:{columns}:{sample}'
 
 
+def category_values_signature(df: pd.DataFrame) -> str:
+    if not _valid_df(df):
+        return 'empty'
+    category_col = detect_category_column(df)
+    if not category_col or category_col not in df.columns:
+        return f'{len(df)}:no-category-column'
+    values = df[category_col].fillna('').astype(str).str.strip()
+    sample = pd.util.hash_pandas_object(values, index=True).sum()
+    return f'{len(df)}:{category_col}:{sample}'
+
+
 def _reset_if_source_changed(df: pd.DataFrame, source_key: str) -> None:
     signature = f'{source_key}:{_df_signature(df)}'
     previous = str(st.session_state.get(CATEGORY_SOURCE_SIGNATURE_KEY) or '')
     if previous and previous != signature:
-        for key in (CATEGORY_DONE_KEY, CATEGORY_SKIP_KEY, CATEGORY_STATS_KEY, CATEGORY_ANALYZED_KEY):
+        for key in (CATEGORY_DONE_KEY, CATEGORY_SKIP_KEY, CATEGORY_STATS_KEY, CATEGORY_ANALYZED_KEY, CATEGORY_VALUES_SIGNATURE_KEY):
             st.session_state.pop(key, None)
         add_audit_event(
             'category_conference_live_source_changed',
@@ -107,6 +119,7 @@ def _store_corrected_everywhere(corrected: pd.DataFrame, source_key: str, *, app
         st.session_state[source_key] = corrected.copy().fillna('')
     st.session_state[CATEGORY_DONE_KEY] = True
     st.session_state[CATEGORY_SKIP_KEY] = False
+    st.session_state[CATEGORY_VALUES_SIGNATURE_KEY] = category_values_signature(corrected)
     st.session_state[CATEGORY_STATS_KEY] = dict(stats or {})
     add_audit_event(
         'category_conference_applied',
@@ -116,7 +129,8 @@ def _store_corrected_everywhere(corrected: pd.DataFrame, source_key: str, *, app
         details={
             'rows': int(len(corrected)), 'columns': int(len(corrected.columns)), 'source_key': source_key,
             'applied_count': int(applied_count), 'stats': dict(stats or {}),
-            'category_column': detect_category_column(corrected), 'responsible_file': RESPONSIBLE_FILE,
+            'category_column': detect_category_column(corrected), 'category_values_signature': st.session_state.get(CATEGORY_VALUES_SIGNATURE_KEY),
+            'responsible_file': RESPONSIBLE_FILE,
         },
     )
 
@@ -177,7 +191,14 @@ def render_category_conference_step() -> None:
         if st.button('⏭️ Pular sem alterar categorias', use_container_width=True, key='category_conference_skip_v1'):
             st.session_state[CATEGORY_SKIP_KEY] = True
             st.session_state[CATEGORY_DONE_KEY] = False
-            add_audit_event('category_conference_skipped_by_user', area='CATEGORIAS', step='conferencia_categorias', status='PULADO', details={'rows': int(len(df)), 'source_key': source_key, 'responsible_file': RESPONSIBLE_FILE})
+            st.session_state[CATEGORY_VALUES_SIGNATURE_KEY] = category_values_signature(df)
+            add_audit_event(
+                'category_conference_skipped_by_user',
+                area='CATEGORIAS',
+                step='conferencia_categorias',
+                status='PULADO',
+                details={'rows': int(len(df)), 'source_key': source_key, 'category_values_signature': st.session_state.get(CATEGORY_VALUES_SIGNATURE_KEY), 'responsible_file': RESPONSIBLE_FILE},
+            )
             st.warning('Etapa pulada pelo usuário. O sistema não alterará categorias nesta execução.')
             st.rerun()
     with c3:
@@ -191,4 +212,4 @@ def render_category_conference_step() -> None:
         st.info('Aplique as categorias corrigidas ou pule explicitamente para liberar o envio.')
 
 
-__all__ = ['CATEGORY_DONE_KEY', 'CATEGORY_SKIP_KEY', 'category_conference_ready', 'category_conference_was_skipped', 'render_category_conference_step']
+__all__ = ['CATEGORY_DONE_KEY', 'CATEGORY_SKIP_KEY', 'CATEGORY_VALUES_SIGNATURE_KEY', 'category_values_signature', 'category_conference_ready', 'category_conference_was_skipped', 'render_category_conference_step']
