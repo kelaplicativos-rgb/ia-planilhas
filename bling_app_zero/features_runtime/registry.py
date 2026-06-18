@@ -16,13 +16,12 @@ STEP_DOWNLOAD = 'download'
 API_STEPS = (STEP_ORIGEM, STEP_ENTRADA, STEP_DOWNLOAD)
 
 # BLINGFIX 2026-06-18:
-# Categorização precisa ser etapa própria e opcional. Quando houver precificação,
-# aparece logo depois dela; quando não houver, continua disponível antes do mapeamento.
-# Ordem base do fluxo universal: origem/dados/modelo/preço/categorias/mapeamento/regras/IA/prévia/saída.
+# Ordem oficial única do fluxo universal:
+# modelo/origem/dados/preço/categorias/mapeamento/regras/IA/prévia/saída.
 UNIVERSAL_STEPS = (
+    STEP_MODELO,
     STEP_ORIGEM,
     STEP_ENTRADA,
-    STEP_MODELO,
     STEP_PRECIFICACAO,
     STEP_CATEGORIZACAO,
     STEP_MAPEAMENTO,
