@@ -22,9 +22,11 @@ CATEGORY_WIZARD_TOGGLE_KEY = 'category_wizard_use_categorization_v1'
 CATEGORY_WIZARD_DECISION_KEY = 'category_wizard_decision_v1'
 CATEGORY_WIZARD_SOURCE_KEY = 'category_wizard_source_key_v1'
 
+# Depois que o usuário formula os preços, a categorização deve operar sobre a
+# base já precificada. A base crua fica como fallback para fluxos sem preço.
 SOURCE_KEYS = (
-    'cadastro_wizard_df_origem',
     'df_origem_cadastro_precificada',
+    'cadastro_wizard_df_origem',
     'df_origem_site_como_planilha_cadastro',
     'df_origem_site_como_planilha_universal',
     'df_origem_site_como_planilha',
