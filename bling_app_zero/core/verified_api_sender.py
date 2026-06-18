@@ -8,6 +8,7 @@ import pandas as pd
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_direct_sender import DirectSendResult
 from bling_app_zero.core.bling_direct_sender_smart import _column_map, _headers, _payload_variants, _resolve_product_id, _url
+from bling_app_zero.core.bling_pre_send_defaults import apply_product_send_defaults
 from bling_app_zero.core.bling_token_store import load_token
 from bling_app_zero.core.bling_v3_product_client import BlingV3ProductClient
 from bling_app_zero.core.product_persistence_check import IMPORTANT_PRODUCT_FIELDS, missing_product_fields, product_persistence_flags
@@ -33,6 +34,21 @@ def _emit(callback: Callable[[dict[str, Any]], None] | None, payload: dict[str, 
 def _brand_ok(value: Any) -> bool:
     text = str(value or '').strip()
     return bool(text) and text.lower() not in BAD_BRANDS
+
+
+def _safe_brand(payload: dict[str, Any], row: Any | None = None) -> str:
+    payload_fixed = apply_product_send_defaults(payload)
+    row_fixed = apply_product_send_defaults(row) if row is not None else {}
+    for candidate in (
+        payload_fixed.get('marca') if isinstance(payload_fixed, dict) else '',
+        payload_fixed.get('Marca') if isinstance(payload_fixed, dict) else '',
+        row_fixed.get('marca') if isinstance(row_fixed, dict) else '',
+        row_fixed.get('Marca') if isinstance(row_fixed, dict) else '',
+    ):
+        text = str(candidate or '').strip()
+        if _brand_ok(text):
+            return text
+    return DEFAULT_BRAND
 
 
 def _digits(value: Any) -> str:
@@ -78,8 +94,7 @@ def _force_default_fields(payload: dict[str, Any], row: Any | None = None) -> di
     if not isinstance(payload, dict):
         return payload
     updated = dict(payload)
-    if not _brand_ok(updated.get('marca')):
-        updated['marca'] = DEFAULT_BRAND
+    updated['marca'] = _safe_brand(updated, row)
     if not str(updated.get('condicao') or updated.get('condição') or '').strip():
         updated['condicao'] = DEFAULT_CONDITION
     if not str(updated.get('producao') or updated.get('produção') or '').strip():
