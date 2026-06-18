@@ -29,7 +29,8 @@ def test_flow_order():
     assert r.UNIVERSAL_STEPS.index('ia') < r.UNIVERSAL_STEPS.index('preview')
     assert s.WIZARD_STEPS.index('regras') < s.WIZARD_STEPS.index('ia')
     assert s.WIZARD_STEPS.index('ia') < s.WIZARD_STEPS.index('preview')
-    assert e.required_flag_for_step('categorizacao') == 'has_pricing'
+    assert e.required_flag_for_step('categorizacao') == 'has_data'
+    assert e.required_flag_for_step('mapeamento') == 'has_pricing'
     assert e.required_flag_for_step('ia') == 'has_rules'
 
 
@@ -42,3 +43,10 @@ def test_wizard_state_defaults_to_first_official_step():
     wizard = s.WizardState()
     assert wizard.step == 'modelo'
     assert wizard.steps[0] == 'modelo'
+
+
+def test_categorization_can_open_with_data_without_pricing():
+    wizard = s.WizardState(has_model=True, has_origin=True, has_data=True, has_pricing=False)
+    allowed, warning = e.can_enter_step(wizard, 'categorizacao')
+    assert allowed is True
+    assert warning == ''
