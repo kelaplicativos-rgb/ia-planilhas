@@ -23,6 +23,7 @@ STEP_PRECIFICACAO = 'precificacao'
 STEP_CATEGORIZACAO = 'categorizacao'
 STEP_MAPEAMENTO = 'mapeamento'
 STEP_REGRAS = 'regras'
+STEP_IA = 'ia'
 STEP_PREVIEW = 'preview'
 STEP_DOWNLOAD = 'download'
 
@@ -38,6 +39,7 @@ DEFAULT_RENDER_STEPS = (
     STEP_CATEGORIZACAO,
     STEP_MAPEAMENTO,
     STEP_REGRAS,
+    STEP_IA,
     STEP_PREVIEW,
     STEP_DOWNLOAD,
 )
@@ -49,7 +51,8 @@ DEFAULT_LABELS = {
     STEP_PRECIFICACAO: 'Precificação',
     STEP_CATEGORIZACAO: 'Categorização Inteligente Automática',
     STEP_MAPEAMENTO: 'Mapeamento',
-    STEP_REGRAS: 'Regras e IA',
+    STEP_REGRAS: 'Regras e Recursos Inteligentes',
+    STEP_IA: 'Inteligência Artificial',
     STEP_PREVIEW: 'Prévia final',
     STEP_DOWNLOAD: 'Download',
 }
@@ -166,7 +169,7 @@ def build_flow_spine_plan(*, render_steps: Iterable[str] = DEFAULT_RENDER_STEPS)
     if not feature_needs_mapping():
         steps = [step for step in steps if step != STEP_MAPEAMENTO]
     if not feature_needs_rules_review():
-        steps = [step for step in steps if step != STEP_REGRAS]
+        steps = [step for step in steps if step not in {STEP_REGRAS, STEP_IA}]
     if not steps:
         steps = [STEP_ORIGEM, STEP_ENTRADA, STEP_DOWNLOAD]
 
@@ -221,7 +224,11 @@ def pending_message_for(plan: FlowSpinePlan, step: str) -> str:
         return 'Escolha se vai categorizar. Se sim, aplique a conferência; se não, siga sem alterar categorias.'
     if normalized == STEP_MAPEAMENTO:
         return 'Confirme o mapeamento obrigatório antes de avançar.'
-    if normalized in {STEP_REGRAS, STEP_PREVIEW}:
+    if normalized == STEP_REGRAS:
+        return 'Revise as regras determinísticas e os recursos inteligentes antes de continuar para a IA.'
+    if normalized == STEP_IA:
+        return 'A IA é opcional. Use os recursos de enriquecimento ou siga para a prévia final.'
+    if normalized == STEP_PREVIEW:
         return 'Confirme o mapeamento e revise os dados antes de continuar.'
     return 'Conclua esta etapa para continuar.'
 
@@ -242,6 +249,7 @@ __all__ = [
     'STEP_CATEGORIZACAO',
     'STEP_DOWNLOAD',
     'STEP_ENTRADA',
+    'STEP_IA',
     'STEP_MAPEAMENTO',
     'STEP_MODELO',
     'STEP_ORIGEM',
