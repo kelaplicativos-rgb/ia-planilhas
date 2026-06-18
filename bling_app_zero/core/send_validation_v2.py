@@ -23,6 +23,14 @@ CATEGORY_VALUES_SIGNATURE_KEY = 'category_conference_values_signature_v1'
 TABLE_SIGNATURE_CONTEXTS = ('final_download', 'send_validation_v2', '')
 CATEGORY_SIGNATURE_CONTEXTS = ('category_conference', 'send_validation_v2', '')
 BLOCKED_FINAL_CATEGORY_VALUES = {'', 'nan', 'none', 'null', '<na>', 'na', 'n/a', 'sem categoria', 'revisar manualmente'}
+FULL_VALIDATION_SESSION_KEYS = (
+    'df_final_bling_api',
+    'df_final_download_operation',
+    'final_download_df_snapshot',
+    'df_final_cadastro_preview_rules_applied',
+    'df_final_cadastro',
+    'df_final_universal',
+)
 
 
 @dataclass(frozen=True)
@@ -43,6 +51,10 @@ def _operation(value: object) -> str:
     if 'preco' in text or 'preço' in text or 'price' in text:
         return 'atualizacao_preco'
     return 'cadastro'
+
+
+def _valid_df(value: object) -> bool:
+    return isinstance(value, pd.DataFrame) and not value.empty and len(value.columns) > 0
 
 
 def _category_column(df: pd.DataFrame) -> str:
@@ -106,21 +118,61 @@ def _category_signatures(df: pd.DataFrame, category_col: str) -> dict[str, str]:
     }
 
 
+def _full_validation_dataframe_from_session(df: pd.DataFrame, expected_table: str) -> tuple[pd.DataFrame, str]:
+    """Recupera a tabela final completa quando a validação recebe apenas um lote.
+
+    O envio API processa lotes menores, mas a assinatura salva na prévia final é
+    da tabela inteira. Sem isso, o último lote de 1 linha é bloqueado como se a
+    tabela tivesse mudado. Só trocamos para a tabela completa se ela bater com a
+    assinatura final esperada.
+    """
+    if not _valid_df(df) or not expected_table:
+        return df, ''
+    input_rows = int(len(df))
+    input_columns = [str(col) for col in df.columns]
+    for key in FULL_VALIDATION_SESSION_KEYS:
+        candidate = st.session_state.get(key)
+        if not _valid_df(candidate):
+            continue
+        candidate_df = candidate.copy().fillna('')
+        if int(len(candidate_df)) < input_rows:
+            continue
+        if [str(col) for col in candidate_df.columns] != input_columns:
+            continue
+        try:
+            candidate_signatures = _table_signatures(candidate_df)
+        except Exception:
+            continue
+        if expected_table in set(candidate_signatures.values()):
+            return candidate_df, key
+    return df, ''
+
+
 def validate_before_bling_send(df: pd.DataFrame, operation: object) -> SendGuardResult:
     op = _operation(operation)
     messages: list[str] = []
     expected_table = _expected_table_signature()
-    table_signatures = _table_signatures(df) if isinstance(df, pd.DataFrame) else {'final_download': 'empty'}
+    input_rows = int(len(df)) if isinstance(df, pd.DataFrame) else 0
+    input_columns = int(len(df.columns)) if isinstance(df, pd.DataFrame) else 0
+    validation_df = df
+    validation_source_key = ''
+    if isinstance(df, pd.DataFrame):
+        validation_df, validation_source_key = _full_validation_dataframe_from_session(df, expected_table)
+    table_signatures = _table_signatures(validation_df) if isinstance(validation_df, pd.DataFrame) else {'final_download': 'empty'}
     current_table = table_signatures.get('final_download') or next(iter(table_signatures.values()), 'empty')
-    category_col = _category_column(df) if isinstance(df, pd.DataFrame) else ''
-    category_signatures = _category_signatures(df, category_col) if isinstance(df, pd.DataFrame) else {'category_conference': 'empty'}
+    category_col = _category_column(validation_df) if isinstance(validation_df, pd.DataFrame) else ''
+    category_signatures = _category_signatures(validation_df, category_col) if isinstance(validation_df, pd.DataFrame) else {'category_conference': 'empty'}
     current_category = category_signatures.get('category_conference') or next(iter(category_signatures.values()), 'empty')
     expected_category = str(st.session_state.get(CATEGORY_VALUES_SIGNATURE_KEY) or '')
     auto_category_applied = _category_was_auto_applied()
-    category_issue_rows = _final_category_issue_rows(df, category_col) if op == 'cadastro' and isinstance(df, pd.DataFrame) else tuple()
+    category_issue_rows = _final_category_issue_rows(validation_df, category_col) if op == 'cadastro' and isinstance(validation_df, pd.DataFrame) else tuple()
     details: dict[str, Any] = {
         'operation': op,
-        'rows': int(len(df)) if isinstance(df, pd.DataFrame) else 0,
+        'rows': int(len(validation_df)) if isinstance(validation_df, pd.DataFrame) else 0,
+        'input_rows': input_rows,
+        'input_columns': input_columns,
+        'validation_source_key': validation_source_key,
+        'validation_uses_full_dataset': bool(validation_source_key),
         'table_signature': current_table,
         'expected_table_signature': expected_table,
         'table_signature_context': 'final_download',
@@ -158,18 +210,18 @@ def validate_before_bling_send(df: pd.DataFrame, operation: object) -> SendGuard
             elif not expected_category:
                 messages.append('As categorias ainda não têm assinatura de conferência. Confirme novamente.')
     if op == 'atualizacao_preco':
-        price_details = price_validation_details(df)
+        price_details = price_validation_details(validation_df)
         details['price_columns'] = list(price_details.get('price_columns') or [])
         details['invalid_price_count'] = int(price_details.get('invalid_count') or 0)
         details['invalid_price_rows'] = list(price_details.get('invalid_rows') or [])[:30]
-        messages.extend(validate_price_update_values(df, label='Envio de preços'))
-        if not _has_column(df, 'Bling preço destino'):
+        messages.extend(validate_price_update_values(validation_df, label='Envio de preços'))
+        if not _has_column(validation_df, 'Bling preço destino'):
             messages.append('Escolha Preço geral ou Canal de venda antes de enviar preços.')
-        elif str(df['Bling preço destino'].fillna('').astype(str).iloc[0]).strip().lower() != 'preço geral':
-            if not _non_blank_column(df, 'Bling canal venda id'):
+        elif str(validation_df['Bling preço destino'].fillna('').astype(str).iloc[0]).strip().lower() != 'preço geral':
+            if not _non_blank_column(validation_df, 'Bling canal venda id'):
                 messages.append('Canal de venda selecionado sem ID.')
     elif op == 'estoque':
-        if not _non_blank_column(df, 'Bling depósito id'):
+        if not _non_blank_column(validation_df, 'Bling depósito id'):
             messages.append('Selecione o depósito antes de atualizar estoque.')
     if messages:
         return SendGuardResult(False, 'PARAR', tuple(messages), details)
