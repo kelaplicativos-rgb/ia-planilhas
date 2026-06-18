@@ -8,39 +8,119 @@ from typing import Iterable, Sequence
 
 import pandas as pd
 
+
 RESPONSIBLE_FILE = 'bling_app_zero/core/category_intelligence.py'
 
 DEFAULT_CATEGORY_CATALOG: tuple[str, ...] = (
-    'Fones de ouvido', 'Carregadores para celular', 'Controles para televisão', 'Caixas de som',
-    'Máquinas para corte de cabelo', 'Cabos de rede', 'Capas para celulares', 'Suportes',
-    'Mouses', 'Cabos', 'Chips', 'Pen drives', 'Pilhas e baterias', 'Controles gamer',
-    'Cartões de memória', 'Projetores', 'Antenas', 'Assistência', 'Game sticks', 'Barbeadores',
-    'Fontes', 'Rádios AM/FM', 'Celulares', 'Smartwatches', 'Teclados', 'Calculadoras',
-    'Conversores', 'Câmeras', 'Telefones fixos', 'Óculos', 'Adaptadores', 'DVD', 'Ferramentas',
-    'Guarda-chuvas', 'Lanternas', 'Películas', 'Power banks', 'Microfones', 'Iluminação',
-    'Games e consoles', 'Redes e internet', 'Cartuchos e impressão', 'Relógios', 'Energia e tomadas',
-    'Eletrodomésticos', 'Utilidades diversas', 'Cuidados pessoais', 'Tablets', 'Brinquedos e utilidades',
-    'TV Box e streaming', 'Informática e peças', 'Logística e embalagem',
+    'Fones de ouvido',
+    'Carregadores para celular',
+    'Controles para televisão',
+    'Caixas de som',
+    'Máquinas para corte de cabelo',
+    'Cabos de rede',
+    'Capas para celulares',
+    'Suportes',
+    'Mouses',
+    'Cabos',
+    'Chips',
+    'Pen drives',
+    'Pilhas e baterias',
+    'Controles gamer',
+    'Cartões de memória',
+    'Projetores',
+    'Antenas',
+    'Assistência',
+    'Game sticks',
+    'Barbeadores',
+    'Fontes',
+    'Rádios AM/FM',
+    'Celulares',
+    'Smartwatches',
+    'Teclados',
+    'Calculadoras',
+    'Conversores',
+    'Câmeras',
+    'Telefones fixos',
+    'Óculos',
+    'Adaptadores',
+    'DVD',
+    'Ferramentas',
+    'Guarda-chuvas',
+    'Lanternas',
+    'Películas',
+    'Power banks',
+    'Microfones',
+    'Iluminação',
+    'Games e consoles',
+    'Redes e internet',
+    'Cartuchos e impressão',
+    'Relógios',
+    'Energia e tomadas',
+    'Eletrodomésticos',
+    'Utilidades diversas',
+    'Cuidados pessoais',
+    'Tablets',
+    'Brinquedos e utilidades',
+    'TV Box e streaming',
+    'Informática e peças',
+    'Logística e embalagem',
 )
 
-BLOCKED_GENERIC_CATEGORIES = {'informatica', 'mais vendidos'}
+BLOCKED_GENERIC_CATEGORIES = {
+    'informatica',
+    'mais vendidos',
+    'alimentos',
+}
 
 CATEGORY_ALIASES = {
-    'fone de ouvido': 'Fones de ouvido', 'fones de ouvido': 'Fones de ouvido',
-    'carregador celular': 'Carregadores para celular', 'carregadores': 'Carregadores para celular',
-    'controle para televisao': 'Controles para televisão', 'controles para televisao': 'Controles para televisão',
-    'caixa de som': 'Caixas de som', 'caixas de som': 'Caixas de som',
-    'maquina para corte de cabelo': 'Máquinas para corte de cabelo', 'maquinas para corte de cabelo': 'Máquinas para corte de cabelo',
-    'capas para celulares': 'Capas para celulares', 'capas para celular': 'Capas para celulares',
-    'suporte': 'Suportes', 'suportes': 'Suportes', 'mouse': 'Mouses', 'mouses': 'Mouses',
-    'pen drive': 'Pen drives', 'pendrive': 'Pen drives', 'pen drives': 'Pen drives',
-    'pilha bateria': 'Pilhas e baterias', 'pilhas e baterias': 'Pilhas e baterias',
-    'cartao de memoria': 'Cartões de memória', 'cartoes de memoria': 'Cartões de memória',
-    'radio am fm': 'Rádios AM/FM', 'radios am fm': 'Rádios AM/FM',
-    'smartwatch': 'Smartwatches', 'smartwatches': 'Smartwatches',
-    'calculadora': 'Calculadoras', 'conversor': 'Conversores', 'camera': 'Câmeras', 'cameras': 'Câmeras',
-    'telefone fixo': 'Telefones fixos', 'adaptador': 'Adaptadores', 'adaptadores': 'Adaptadores',
-    'dvd': 'DVD', 'guarda chuva': 'Guarda-chuvas', 'power bank': 'Power banks', 'informatica e pecas': 'Informática e peças',
+    'fone de ouvido': 'Fones de ouvido',
+    'fones de ouvido': 'Fones de ouvido',
+    'carregador celular': 'Carregadores para celular',
+    'carregadores': 'Carregadores para celular',
+    'carregadores para celular': 'Carregadores para celular',
+    'controle para televisao': 'Controles para televisão',
+    'controles para televisao': 'Controles para televisão',
+    'caixa de som': 'Caixas de som',
+    'caixas de som': 'Caixas de som',
+    'maquinas para corte de cabelo': 'Máquinas para corte de cabelo',
+    'maquina para corte de cabelo': 'Máquinas para corte de cabelo',
+    'capas para celulares': 'Capas para celulares',
+    'capas para celular': 'Capas para celulares',
+    'suporte': 'Suportes',
+    'suportes': 'Suportes',
+    'mouse': 'Mouses',
+    'mouses': 'Mouses',
+    'pen drive': 'Pen drives',
+    'pendrive': 'Pen drives',
+    'pen drives': 'Pen drives',
+    'pilha bateria': 'Pilhas e baterias',
+    'pilha baterias': 'Pilhas e baterias',
+    'pilhas e baterias': 'Pilhas e baterias',
+    'controles gamer': 'Controles gamer',
+    'cartao de memoria': 'Cartões de memória',
+    'cartoes de memoria': 'Cartões de memória',
+    'game sticks': 'Game sticks',
+    'game stick': 'Game sticks',
+    'radio am fm': 'Rádios AM/FM',
+    'radios am fm': 'Rádios AM/FM',
+    'smartwatch': 'Smartwatches',
+    'smartwatches': 'Smartwatches',
+    'calculadora': 'Calculadoras',
+    'calculadoras': 'Calculadoras',
+    'conversor': 'Conversores',
+    'conversores': 'Conversores',
+    'camera': 'Câmeras',
+    'cameras': 'Câmeras',
+    'telefone fixo': 'Telefones fixos',
+    'telefones fixos': 'Telefones fixos',
+    'adaptador': 'Adaptadores',
+    'adaptadores': 'Adaptadores',
+    'dvd': 'DVD',
+    'guarda chuva': 'Guarda-chuvas',
+    'guarda chuvas': 'Guarda-chuvas',
+    'power bank': 'Power banks',
+    'power banks': 'Power banks',
+    'informatica e pecas': 'Informática e peças',
 }
 
 PRODUCT_NAME_COLUMNS = ('Descrição', 'Descricao', 'Nome', 'Nome do produto', 'Produto', 'Título', 'Titulo', 'name', 'nome')
@@ -62,11 +142,22 @@ def normalize_text(value: object) -> str:
     text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
     text = text.lower().replace('&', ' e ').replace('/', ' ')
     replacements = {
-        'adaptaroes': 'adaptadores', 'adptador': 'adaptador', 'adapitador': 'adaptador',
-        'fome de ouvido': 'fone de ouvido', 'fone ouvido': 'fone de ouvido',
-        'carregador celuar': 'carregador celular', 'pen driver': 'pen drive',
-        'radio am/fm': 'radio am fm', 'maquina corte': 'maquina de corte', 'marina de corte': 'maquina de corte',
-        'heaset': 'headset', 'headfone': 'headphone', 'bombox': 'boombox', 'flashlinght': 'flashlight',
+        'adaptaroes': 'adaptadores',
+        'adptador': 'adaptador',
+        'adapitador': 'adaptador',
+        'fome de ouvido': 'fone de ouvido',
+        'fone ouvido': 'fone de ouvido',
+        'carregador celuar': 'carregador celular',
+        'cabos usb': 'cabo usb',
+        'pen driver': 'pen drive',
+        'radios am/fm': 'radio am fm',
+        'radio am/fm': 'radio am fm',
+        'maquina corte': 'maquina de corte',
+        'marina de corte': 'maquina de corte',
+        'heaset': 'headset',
+        'headfone': 'headphone',
+        'bombox': 'boombox',
+        'flashlinght': 'flashlight',
     }
     for old, new in replacements.items():
         text = text.replace(old, new)
@@ -147,16 +238,23 @@ def canonicalize_category(value: object, catalog: Sequence[str] = DEFAULT_CATEGO
 
 
 def _classify_text(text: str) -> tuple[str, float, str]:
-    if _has(text, (r'\btroca\b', r'\bconserto\b', r'\bformatacao\b', r'\bconfiguracao\b', r'\borcament\w*\b', r'\breparo\b', r'\btirar senha\b')):
-        return 'Assistência', 0.97, 'serviço/orçamento/reparo'
     if _has(text, (r'\bcontrole\b', r'\bjoystick\b')):
         if _has(text, (r'\btv\b', r'\btelevisao\b', r'\bphilco\b', r'\bsamsung\b', r'\baoc\b', r'\breceptor\b', r'\buniversal\b', r'\bremoto\b')):
             return 'Controles para televisão', 0.94, 'controle remoto TV/box'
         return 'Controles gamer', 0.88, 'controle para jogo'
+    if _has(text, (r'\bcabo de rede\b', r'\bpatch cord\b', r'\brj45\b', r'\butp\b')):
+        return 'Cabos de rede', 0.95, 'cabo de rede'
+    if _has(text, (r'\bcabo(?:s)?\b', r'\blightning\b')) and _has(text, (r'\btipo c\b', r'\biphone\b', r'\busb\b', r'\blightning\b')):
+        return 'Cabos', 0.94, 'cabo de celular/dados'
+    if _has(text, (r'\bcarregador(?:es)?\b', r'\btomada usb\b', r'\btomada veicular\b', r'\bcarregamento\b')):
+        return 'Carregadores para celular', 0.91, 'carregador/tomada de celular'
+    if _has(text, (r'\bporteiro\b', r'\bvideo porteiro\b', r'\bporteiro eletronico\b')):
+        return 'Telefones fixos', 0.88, 'telefone/interfone/porteiro'
     if _has(text, (r'\bcapa(?:s)?\b', r'\bcapinha\b', r'\bcase\b', r'\btampa traseira\b')):
         if _has(text, (r'\bcase para hd\b', r'\bcapa para notebook\b', r'\bcapa para piscina\b')):
             return 'Utilidades diversas', 0.78, 'capa/utilidade fora celular'
         return 'Capas para celulares', 0.92, 'capa/acessório de celular'
+
     rules: tuple[tuple[str, float, str, tuple[str, ...]], ...] = (
         ('Rádios AM/FM', 0.93, 'rádio/transmissor FM', (r'\bradio\b', r'\bam fm\b', r'\btransmissor fm\b', r'\bmp3 player\b')),
         ('Fones de ouvido', 0.94, 'fone/headset', (r'\bfones?\b', r'\bheadset\b', r'\bheadphone(?:s)?\b', r'\bearbuds?\b', r'\bearphones?\b')),
@@ -193,10 +291,14 @@ def _classify_text(text: str) -> tuple[str, float, str]:
         ('Informática e peças', 0.86, 'peça/acessório de informática', (r'\bssd\b', r'\bhd interno\b', r'\bcooler\b', r'\bpasta termica\b', r'\bplaca de captura\b', r'\bnotebook\b')),
         ('Cartuchos e impressão', 0.90, 'cartucho/impressão', (r'\bcartucho\b', r'\bepson\b', r'\bhp colorido\b', r'\bhp preto\b', r'\btoner\b')),
         ('Games e consoles', 0.88, 'console/jogos', (r'\bvideo game\b', r'\bvideogame\b', r'\bplaystation\b', r'\bxbox\b', r'\bkinect\b', r'\bconsole\b', r'\bmini game\b', r'\bps2\b')),
-        ('Antenas', 0.90, 'antena', (r'\bantena(?:s)?\b',)), ('Projetores', 0.90, 'projetor', (r'\bprojetor(?:es)?\b',)),
-        ('Calculadoras', 0.88, 'calculadora/balança', (r'\bcalculadora(?:s)?\b', r'\bbalanca\b')), ('DVD', 0.86, 'DVD/player', (r'\bdvd\b',)),
-        ('Óculos', 0.86, 'óculos', (r'\boculos\b',)), ('Guarda-chuvas', 0.90, 'guarda-chuva/sombrinha', (r'\bguarda chuva\b', r'\bsombrinha\b')),
-        ('Lanternas', 0.90, 'lanterna', (r'\blanterna\b', r'\bflashlight\b')), ('Ferramentas', 0.84, 'ferramenta', (r'\bferramenta(?:s)?\b', r'\bchave\b', r'\balicate\b')),
+        ('Antenas', 0.90, 'antena', (r'\bantena(?:s)?\b',)),
+        ('Projetores', 0.90, 'projetor', (r'\bprojetor(?:es)?\b',)),
+        ('Calculadoras', 0.88, 'calculadora/balança', (r'\bcalculadora(?:s)?\b', r'\bbalanca\b')),
+        ('DVD', 0.86, 'DVD/player', (r'\bdvd\b',)),
+        ('Óculos', 0.86, 'óculos', (r'\boculos\b',)),
+        ('Guarda-chuvas', 0.90, 'guarda-chuva/sombrinha', (r'\bguarda chuva\b', r'\bsombrinha\b')),
+        ('Lanternas', 0.90, 'lanterna', (r'\blanterna\b', r'\bflashlight\b')),
+        ('Ferramentas', 0.84, 'ferramenta', (r'\bferramenta(?:s)?\b', r'\bchave\b', r'\balicate\b', r'\bkit de agulhas\b')),
         ('Brinquedos e utilidades', 0.82, 'brinquedo/utilidade', (r'\blousa digital\b', r'\blousa magica\b', r'\bpop it\b', r'\bbrinquedo\b', r'\banti stress\b')),
         ('Iluminação', 0.88, 'luz/LED/efeito', (r'\bring light\b', r'\bfita de led\b', r'\bled\b', r'\bluminaria\b', r'\blampada\b', r'\bjogo de luz\b', r'\blaser\b')),
         ('Relógios', 0.86, 'relógio/cronômetro', (r'\brelogio\b', r'\bdespertador\b', r'\bcronometro\b')),
@@ -206,13 +308,20 @@ def _classify_text(text: str) -> tuple[str, float, str]:
     for category, confidence, reason, patterns in rules:
         if _has(text, patterns):
             return category, confidence, reason
+    if _has(text, (r'\btroca\b', r'\bconserto\b', r'\bformatacao\b', r'\bconfiguracao\b', r'\borcament\w*\b', r'\breparo\b', r'\btirar senha\b')):
+        return 'Assistência', 0.97, 'serviço/orçamento/reparo'
     return 'REVISAR MANUALMENTE', 0.0, 'sem regra segura'
 
 
 def suggest_category_for_product(product_name: object, description: object = '', current_category: object = '', category_catalog: Sequence[str] = DEFAULT_CATEGORY_CATALOG) -> CategorySuggestion:
     current_canonical, changed_by_alias, alias_reason = canonicalize_category(current_category, category_catalog)
-    text = f'{normalize_text(product_name)} {normalize_text(description)}'.strip()
-    classified, confidence, reason = _classify_text(text) if text else ('REVISAR MANUALMENTE', 0.0, 'nome vazio')
+    name_text = normalize_text(product_name)
+    description_text = normalize_text(description)
+    classified, confidence, reason = _classify_text(name_text) if name_text else ('REVISAR MANUALMENTE', 0.0, 'nome vazio')
+    if classified == 'REVISAR MANUALMENTE' and description_text:
+        text = f'{name_text} {description_text}'.strip()
+        classified, confidence, reason = _classify_text(text)
+
     if classified != 'REVISAR MANUALMENTE':
         category = classified
     elif current_canonical:
@@ -221,18 +330,24 @@ def suggest_category_for_product(product_name: object, description: object = '',
         reason = alias_reason
     else:
         category = 'REVISAR MANUALMENTE'
+
     current_norm = normalize_text(str(current_category or ''))
     category_norm = normalize_text(category)
     if category == 'REVISAR MANUALMENTE':
         action = 'REVISAR'
     elif not current_norm:
         action = 'CRIAR/VINCULAR CATEGORIA'
-    elif current_norm != category_norm or changed_by_alias:
+    elif current_norm != category_norm:
+        action = 'CORRIGIR CATEGORIA'
+    elif changed_by_alias:
         action = 'CORRIGIR CATEGORIA'
     else:
         action = 'MANTER'
-    if current_norm in BLOCKED_GENERIC_CATEGORIES and category == 'REVISAR MANUALMENTE':
+
+    if normalize_text(str(current_category or '')) in BLOCKED_GENERIC_CATEGORIES and category == 'REVISAR MANUALMENTE':
+        action = 'REVISAR'
         reason = 'categoria genérica bloqueada; produto precisa de categoria específica'
+
     return CategorySuggestion(category, float(confidence), reason, action)
 
 
@@ -251,8 +366,14 @@ def classify_dataframe(df: pd.DataFrame, category_catalog: Sequence[str] = DEFAU
         result['confianca_categoria_ia'] = 0.0
         result['motivo_categoria_ia'] = 'coluna de nome não encontrada'
         return result, {'total': int(len(result)), 'revisar': int(len(result))}
+
     suggestions = [
-        suggest_category_for_product(row.get(name_col, ''), row.get(desc_col, '') if desc_col else '', row.get(category_col, ''), category_catalog)
+        suggest_category_for_product(
+            product_name=row.get(name_col, ''),
+            description=row.get(desc_col, '') if desc_col else '',
+            current_category=row.get(category_col, ''),
+            category_catalog=category_catalog,
+        )
         for _, row in result.iterrows()
     ]
     result['categoria_atual_ia'] = result[category_col].fillna('').astype(str).str.strip()
@@ -260,7 +381,7 @@ def classify_dataframe(df: pd.DataFrame, category_catalog: Sequence[str] = DEFAU
     result['acao_categoria_ia'] = [item.action for item in suggestions]
     result['confianca_categoria_ia'] = [round(float(item.confidence), 2) for item in suggestions]
     result['motivo_categoria_ia'] = [item.reason for item in suggestions]
-    return result, {
+    stats = {
         'total': int(len(result)),
         'sem_categoria': int((~result[category_col].apply(_is_filled)).sum()),
         'manter': int((result['acao_categoria_ia'] == 'MANTER').sum()),
@@ -268,6 +389,7 @@ def classify_dataframe(df: pd.DataFrame, category_catalog: Sequence[str] = DEFAU
         'criar_vincular': int((result['acao_categoria_ia'] == 'CRIAR/VINCULAR CATEGORIA').sum()),
         'revisar': int((result['acao_categoria_ia'] == 'REVISAR').sum()),
     }
+    return result, stats
 
 
 def apply_category_suggestions(df: pd.DataFrame, confidence_min: float = 0.80, only_missing: bool = False, keep_helper_columns: bool = False) -> tuple[pd.DataFrame, int]:
@@ -302,7 +424,16 @@ def analyze_and_apply_safe_categories(df: pd.DataFrame, confidence_min: float = 
 
 
 __all__ = [
-    'DEFAULT_CATEGORY_CATALOG', 'CategorySuggestion', 'analyze_and_apply_safe_categories', 'apply_category_suggestions',
-    'canonicalize_category', 'classify_dataframe', 'detect_category_column', 'detect_product_description_column',
-    'detect_product_name_column', 'ensure_category_column', 'normalize_text', 'suggest_category_for_product',
+    'DEFAULT_CATEGORY_CATALOG',
+    'CategorySuggestion',
+    'analyze_and_apply_safe_categories',
+    'apply_category_suggestions',
+    'canonicalize_category',
+    'classify_dataframe',
+    'detect_category_column',
+    'detect_product_description_column',
+    'detect_product_name_column',
+    'ensure_category_column',
+    'normalize_text',
+    'suggest_category_for_product',
 ]
