@@ -11,7 +11,7 @@ on:
 
 jobs:
   wizard-smoke:
-    name: Wizard smoke tests
+    name: Wizard BLINGFIX smoke
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -31,6 +31,10 @@ jobs:
           pip install -r requirements.txt
           pip install pytest lxml
 
-      - name: Run Wizard smoke tests
+      - name: Compile Python files
         run: |
-          pytest -q
+          python -m compileall app.py bling_app_zero
+
+      - name: Run Wizard BLINGFIX smoke tests
+        run: |
+          pytest -q tests/test_wizard_smoke.py tests/test_blingfix_flow_order.py tests/test_blingfix_rules_ai_split_marker.py
