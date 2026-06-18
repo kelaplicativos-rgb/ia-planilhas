@@ -66,6 +66,7 @@ def _has_category_column(df: pd.DataFrame) -> bool:
 
 
 def _category_values_signature(df: pd.DataFrame) -> str:
+    """Assina somente os valores, não o nome da coluna."""
     if not isinstance(df, pd.DataFrame) or df.empty:
         return 'empty'
     category_col = _category_column(df)
@@ -73,7 +74,7 @@ def _category_values_signature(df: pd.DataFrame) -> str:
         return f'{len(df)}:no-category-column'
     values = df[category_col].fillna('').astype(str).str.strip()
     sample = pd.util.hash_pandas_object(values, index=True).sum()
-    return f'{len(df)}:{category_col}:{sample}'
+    return f'{len(df)}:{sample}'
 
 
 def _category_conference_decided() -> bool:
