@@ -6,7 +6,7 @@ import streamlit as st
 from bling_app_zero.core.flow_spine import build_flow_spine_plan, is_api_destination
 from bling_app_zero.core.global_dataset_guard import GLOBAL_FINAL_DATASET_SIGNATURE_KEY
 from bling_app_zero.ui.cadastro_wizard_state import get_context_final_df, set_context_final_df, valid_df
-from bling_app_zero.ui.home_download_v2 import df_signature, download_final
+from bling_app_zero.ui.home_download_v3 import df_signature, download_final
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/cadastro_download_step_v2.py'
 HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
