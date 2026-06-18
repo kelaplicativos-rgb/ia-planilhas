@@ -28,14 +28,16 @@ CATEGORY_DATASET_SIGNATURE_KEY = 'category_conference_dataset_signature_v1'
 DATAFRAME_KEYS = (
     'df_final_bling_api', 'df_final_universal', 'df_final_cadastro', 'df_final_cadastro_preview_rules_applied',
     'df_final_download_operation', 'df_final_preview_operation', 'final_download_df_snapshot',
-    'cadastro_wizard_df_origem', 'cadastro_wizard_df_para_mapear', 'df_origem_cadastro_precificada',
+    'df_origem_cadastro_precificada', 'cadastro_wizard_df_origem', 'cadastro_wizard_df_para_mapear',
     'df_origem_site_como_planilha', 'df_origem_site_como_planilha_cadastro', 'df_origem_site_como_planilha_universal',
     'df_produtos_origem', 'df_origem', 'df_origem_planilha', 'df_origem_cadastro', 'df_origem_universal',
     'df_site_bruto', 'df_site_bruto_cadastro', 'df_site_bruto_universal',
 )
 
+# Depois da Precificação, o painel deve analisar a base já formulada com preços.
+# A base crua continua como fallback para operações sem precificação.
 PRIMARY_KEYS = (
-    'cadastro_wizard_df_origem', 'df_origem_cadastro_precificada', 'df_origem_site_como_planilha',
+    'df_origem_cadastro_precificada', 'cadastro_wizard_df_origem', 'df_origem_site_como_planilha',
     'df_origem_site_como_planilha_cadastro', 'df_origem_site_como_planilha_universal', 'df_produtos_origem',
     'cadastro_wizard_df_para_mapear', 'df_origem', 'df_origem_planilha', 'df_origem_cadastro', 'df_origem_universal',
     'df_final_bling_api', 'df_final_universal', 'df_final_cadastro',
