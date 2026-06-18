@@ -87,6 +87,30 @@ def _categorization_applicable(df: pd.DataFrame | None) -> bool:
     return bool(detect_category_column(df) or detect_product_name_column(df))
 
 
+def _inject_toggle_state_style() -> None:
+    """Deixa o estado ligado visualmente verde e reduz o risco de parecer erro.
+
+    Streamlit herda a cor primária do tema; nesta app ela pode aparecer vermelha.
+    O badge textual abaixo garante clareza mesmo se o seletor CSS mudar em versão futura.
+    """
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stToggle"] label:has(input:checked) span,
+        div[data-testid="stToggle"] label:has(input[aria-checked="true"]) span {
+            color: #047857 !important;
+            font-weight: 800 !important;
+        }
+        div[data-testid="stToggle"] label:has(input:checked) [data-testid="stMarkdownContainer"],
+        div[data-testid="stToggle"] label:has(input[aria-checked="true"]) [data-testid="stMarkdownContainer"] {
+            color: #047857 !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _mark_skipped(df: pd.DataFrame | None, source_key: str, *, reason: str) -> None:
     if not _valid_df(df):
         st.session_state[CATEGORY_SKIP_KEY] = True
@@ -146,7 +170,8 @@ def category_wizard_ready() -> bool:
 
 def render_category_conference_wizard_step() -> None:
     df, source_key = _source_df()
-    st.markdown('### Categorização Inteligente Automática')
+    # O título principal já é renderizado pelo wizard como "4. Categorização...".
+    # Aqui fica apenas a explicação para evitar título duplicado na tela.
     st.caption('Recurso opcional. Ao ligar, o sistema categoriza automaticamente e só libera avanço com 100% dos produtos contendo categoria final válida.')
 
     if not _categorization_applicable(df):
@@ -157,9 +182,12 @@ def render_category_conference_wizard_step() -> None:
     if CATEGORY_WIZARD_TOGGLE_KEY not in st.session_state:
         st.session_state[CATEGORY_WIZARD_TOGGLE_KEY] = False
 
+    _inject_toggle_state_style()
+    toggle_is_on = bool(st.session_state.get(CATEGORY_WIZARD_TOGGLE_KEY, False))
+    toggle_label = '✅ Categorização automática ATIVADA' if toggle_is_on else 'Usar Categorização Inteligente Automática'
     use_categorization = st.toggle(
-        'Usar Categorização Inteligente Automática',
-        value=bool(st.session_state.get(CATEGORY_WIZARD_TOGGLE_KEY, False)),
+        toggle_label,
+        value=toggle_is_on,
         key=CATEGORY_WIZARD_TOGGLE_KEY,
         help='Ligado: o sistema categoriza automaticamente. Desligado: segue sem alterar categorias.',
     )
@@ -170,11 +198,10 @@ def render_category_conference_wizard_step() -> None:
         return
 
     _clear_toggle_off_skip_state()
-    st.success('Categorização ligada. O sistema está aplicando automaticamente com trava de 100%.')
+    if not category_conference_ready():
+        st.info('Categorização ativada. O sistema está processando automaticamente com trava de 100%.')
     render_category_conference_step()
-    if category_conference_ready():
-        st.success('Etapa de categorias concluída automaticamente. Você pode avançar para a próxima etapa.')
-    else:
+    if not category_conference_ready():
         st.info('Sistema processando categorias automaticamente. Se alguma categoria não for segura, a etapa será bloqueada.')
 
 
