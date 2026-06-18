@@ -18,24 +18,11 @@ RUNTIME_STAMP_KEY = 'blingfix_runtime_route_stamp_rendered_v1'
 
 
 def _render_blingfix_runtime_stamp() -> None:
-    """Mostra e registra a prova da rota ativa carregada pelo Streamlit.
-
-    Esse carimbo existe para encerrar a dúvida de correções aplicadas no arquivo errado.
-    Se ele aparecer no app e no diagnóstico, a Home ativa veio por este arquivo.
-    """
+    """Registra a prova da rota ativa sem poluir a interface principal."""
     rendered_at = datetime.utcnow().isoformat(timespec='seconds') + 'Z'
     st.session_state['blingfix_runtime_route_version'] = APP_VERSION
     st.session_state['blingfix_runtime_route_file'] = RESPONSIBLE_FILE
     st.session_state['blingfix_runtime_route_rendered_at'] = rendered_at
-
-    st.markdown(
-        f'''
-<div style="border:1px solid rgba(234,88,12,.32);background:rgba(255,237,213,.70);color:#7c2d12;border-radius:14px;padding:.62rem .72rem;margin:.35rem 0 .7rem 0;font-size:.82rem;line-height:1.35;font-weight:800;">
-  BLINGFIX ativo · versão <code>{APP_VERSION}</code> · rota <code>{RESPONSIBLE_FILE}</code>
-</div>
-''',
-        unsafe_allow_html=True,
-    )
 
     if not bool(st.session_state.get(RUNTIME_STAMP_KEY)):
         st.session_state[RUNTIME_STAMP_KEY] = True
@@ -47,7 +34,7 @@ def _render_blingfix_runtime_stamp() -> None:
                 'version': APP_VERSION,
                 'responsible_file': RESPONSIBLE_FILE,
                 'rendered_at_utc': rendered_at,
-                'purpose': 'prove_active_route_after_blingfix',
+                'purpose': 'silent_route_proof_after_minimal_ui_update',
             },
         )
 
