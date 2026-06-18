@@ -6,6 +6,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.column_contract import infer_kind
 from bling_app_zero.ui.home_models import get_home_cadastro_model, get_home_estoque_model
 
 
@@ -20,6 +21,8 @@ UNIVERSAL_ALIASES = {'universal', 'modelo', 'modelo_destino', 'planilha', 'wizar
 NEUTRAL_SITE_COLUMNS = ['Codigo', 'SKU', 'GTIN', 'Nome', 'Descricao', 'Preco', 'Estoque', 'Quantidade', 'Categoria', 'Marca', 'URL', 'Imagem']
 NEUTRAL_STOCK_COLUMNS = ['Codigo', 'SKU', 'GTIN', 'Nome', 'Estoque', 'Quantidade', 'Deposito', 'URL']
 NEUTRAL_PRICE_COLUMNS = ['Codigo', 'SKU', 'GTIN', 'Nome', 'Preco', 'URL']
+STOCK_KINDS = {'estoque', 'deposito'}
+CADASTRO_RICH_KINDS = {'descricao', 'descricao_complementar', 'descricao_curta', 'preco_unitario', 'preco_custo', 'imagem', 'marca', 'categoria', 'ncm'}
 
 
 def unique_columns(columns: list[str]) -> list[str]:
@@ -49,13 +52,22 @@ def _upload_attr(upload: Any, name: str) -> pd.DataFrame | None:
     return _df_or_none(getattr(upload, name, None))
 
 
+def _model_kinds(df: pd.DataFrame | None) -> set[str]:
+    return {infer_kind(str(column)) for column in columns_from_df(df)}
+
+
+def _looks_like_stock_model(df: pd.DataFrame | None) -> bool:
+    kinds = _model_kinds(df)
+    return bool(kinds & STOCK_KINDS) and not bool(kinds & CADASTRO_RICH_KINDS)
+
+
 def _uploaded_cadastro_model(upload: Any) -> pd.DataFrame | None:
     cadastro = _upload_attr(upload, 'cadastro_model_df')
     if isinstance(cadastro, pd.DataFrame):
         return cadastro
     estoque = _upload_attr(upload, 'estoque_model_df')
     generic = _upload_attr(upload, 'model_df')
-    if isinstance(generic, pd.DataFrame) and not isinstance(estoque, pd.DataFrame):
+    if isinstance(generic, pd.DataFrame) and not isinstance(estoque, pd.DataFrame) and not _looks_like_stock_model(generic):
         return generic
     return None
 
@@ -120,7 +132,8 @@ def requested_columns_for_site_capture(
     normalized = str(operation or '').strip().lower()
     if normalized == 'estoque':
         columns = unique_columns(columns_from_df(df_modelo_estoque))
-    elif normalized in UNIVERSAL_ALIASES:
+        return columns or None
+    if normalized in UNIVERSAL_ALIASES:
         columns = unique_columns(columns_from_df(df_modelo_cadastro) + columns_from_df(df_modelo_estoque))
     else:
         columns = unique_columns(columns_from_df(df_modelo_cadastro))
