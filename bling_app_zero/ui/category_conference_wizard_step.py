@@ -119,10 +119,7 @@ def _mark_skipped(df: pd.DataFrame | None, source_key: str, *, reason: str) -> N
 
 
 def _clear_toggle_off_skip_state() -> None:
-    """Ao ligar o toggle, remove apenas o pulo automático criado pelo toggle desligado.
-
-    Não remove um pulo/manual feito dentro do painel, nem uma aplicação já confirmada.
-    """
+    """Ao ligar o toggle, remove apenas o pulo automático criado pelo toggle desligado."""
     if str(st.session_state.get(CATEGORY_WIZARD_DECISION_KEY) or '') != 'skip_toggle_off':
         return
     for key in (
@@ -150,7 +147,7 @@ def category_wizard_ready() -> bool:
 def render_category_conference_wizard_step() -> None:
     df, source_key = _source_df()
     st.markdown('### Categorização Inteligente Automática')
-    st.caption('Recurso opcional. Ao ligar, abre o painel para revisar, corrigir e padronizar categorias antes da prévia final.')
+    st.caption('Recurso opcional. Ao ligar, o sistema categoriza automaticamente e só libera avanço com 100% dos produtos contendo categoria final válida.')
 
     if not _categorization_applicable(df):
         _mark_skipped(df, source_key, reason='not_applicable')
@@ -164,21 +161,21 @@ def render_category_conference_wizard_step() -> None:
         'Usar Categorização Inteligente Automática',
         value=bool(st.session_state.get(CATEGORY_WIZARD_TOGGLE_KEY, False)),
         key=CATEGORY_WIZARD_TOGGLE_KEY,
-        help='Ligado: abre o painel inteligente de categorias. Desligado: segue sem alterar categorias, igual ao comportamento opcional da precificação.',
+        help='Ligado: o sistema categoriza automaticamente. Desligado: segue sem alterar categorias.',
     )
 
     if not use_categorization:
         _mark_skipped(df, source_key, reason='toggle_off')
-        st.info('Categorização desligada. Ligue o toggle acima para abrir o painel inteligente e usar o recurso.')
+        st.info('Categorização desligada. Ligue o toggle acima se quiser que o sistema categorize automaticamente.')
         return
 
     _clear_toggle_off_skip_state()
-    st.success('Categorização ligada. Use o painel abaixo para revisar e aplicar as categorias corrigidas.')
+    st.success('Categorização ligada. O sistema está aplicando automaticamente com trava de 100%.')
     render_category_conference_step()
     if category_conference_ready():
-        st.success('Etapa de categorias concluída. Você pode avançar para a próxima etapa.')
+        st.success('Etapa de categorias concluída automaticamente. Você pode avançar para a próxima etapa.')
     else:
-        st.info('Para avançar, aplique as categorias corrigidas ou use “Pular sem alterar categorias”.')
+        st.info('Sistema processando categorias automaticamente. Se alguma categoria não for segura, a etapa será bloqueada.')
 
 
 __all__ = [
