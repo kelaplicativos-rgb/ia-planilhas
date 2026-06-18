@@ -11,6 +11,7 @@ STEP_ENTRADA = 'entrada'
 STEP_PRECIFICACAO = 'precificacao'
 STEP_MAPEAMENTO = 'mapeamento'
 STEP_REGRAS = 'regras'
+STEP_IA = 'ia'
 STEP_PREVIEW = 'preview'
 STEP_DOWNLOAD = 'download'
 
@@ -21,6 +22,7 @@ WIZARD_STEPS: tuple[str, ...] = (
     STEP_PRECIFICACAO,
     STEP_MAPEAMENTO,
     STEP_REGRAS,
+    STEP_IA,
     STEP_PREVIEW,
     STEP_DOWNLOAD,
 )
@@ -154,6 +156,7 @@ __all__ = [
     'ORIGIN_SITE',
     'STEP_DOWNLOAD',
     'STEP_ENTRADA',
+    'STEP_IA',
     'STEP_MAPEAMENTO',
     'STEP_MODELO',
     'STEP_ORIGEM',
