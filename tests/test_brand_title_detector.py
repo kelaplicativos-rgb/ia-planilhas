@@ -16,6 +16,12 @@ def test_rejects_model_code_as_brand() -> None:
     assert detect_brand_from_title('Fone Bluetooth XP-900', fallback='XP-900') == ''
 
 
+def test_skips_common_product_terms_before_unknown_brand() -> None:
+    assert detect_brand_from_title('Fone de Ouvido Zorplax ZP-100') == 'Zorplax'
+    assert detect_brand_from_title('Fone de Ouvido para Iphone Zorplax ZP-100') == 'Zorplax'
+    assert detect_brand_from_title('Power Bank Portátil Zorplax ZP-20') == 'Zorplax'
+
+
 def test_keeps_real_hyphenated_brands() -> None:
     assert detect_brand_from_title('Suporte Universal para TV B-Max BMG-49') == 'B-Max'
     assert detect_brand_from_title('Mouse com fio C3TECH MS-35') == 'C3Tech'
