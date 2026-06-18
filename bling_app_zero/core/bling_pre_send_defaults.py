@@ -95,7 +95,11 @@ def _norm_brand(value: str) -> str:
     return re.sub(r'\s+', ' ', str(value or '').replace('’', "'").strip()).strip(' -_/|.,;:')
 
 
-def _brand_is_valid(value: str) -> bool:
+def _brand_key(value: str) -> str:
+    return re.sub(r'[^a-z0-9]+', ' ', _norm_brand(value).lower()).strip()
+
+
+def _brand_is_valid(value: str, title_context: str = '') -> bool:
     brand = _norm_brand(value)
     if not brand:
         return False
@@ -104,7 +108,13 @@ def _brand_is_valid(value: str) -> bool:
         return False
     if len(brand) < 2 or len(brand) > 40:
         return False
-    return bool(detect_brand_from_title('', fallback=brand))
+
+    detected = _norm_brand(detect_brand_from_title(title_context or '', fallback=brand))
+    if not detected:
+        return False
+    if not title_context:
+        return True
+    return _brand_key(detected) == _brand_key(brand)
 
 
 def _first(data: Mapping[str, Any], fields: tuple[str, ...]) -> str:
@@ -178,10 +188,11 @@ def apply_product_send_defaults(row: Any) -> dict[str, Any]:
         key = _target_key(data, 'descricao', _DESC_FIELDS)
         data[key] = nome
 
-    if not _brand_is_valid(marca):
-        inferred = infer_brand_from_title(nome or descricao)
+    brand_context = nome or descricao
+    if not _brand_is_valid(marca, title_context=brand_context):
+        inferred = infer_brand_from_title(brand_context)
         key = _target_key(data, 'marca', _BRAND_FIELDS)
-        data[key] = inferred if _brand_is_valid(inferred) else DEFAULT_BRAND
+        data[key] = inferred if _brand_is_valid(inferred, title_context=brand_context) else DEFAULT_BRAND
 
     data[_target_key(data, 'condicao', _CONDITION_FIELDS)] = DEFAULT_CONDITION
     data[_target_key(data, 'producao', _PRODUCTION_FIELDS)] = DEFAULT_PRODUCTION
