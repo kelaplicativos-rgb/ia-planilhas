@@ -115,4 +115,4 @@ jobs:
           print('OK Smart Upload smoke test')
           PY
 
-# BLINGFIX CI retry: rules resources before ai
+# BLINGFIX CI pull_request retry: rules resources before ai
