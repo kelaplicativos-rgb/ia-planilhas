@@ -31,7 +31,7 @@ def render_rules_center_step(key_scope: str = 'ia_real') -> None:
     render_category_conference_step()
     if not category_conference_ready():
         st.info('Para seguir com segurança, aplique a conferência de categorias ou pule explicitamente esta etapa.')
-        return
+        st.stop()
 
     _disable_legacy_final_protections()
     st.markdown(
