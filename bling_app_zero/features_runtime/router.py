@@ -12,6 +12,8 @@ HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
 FINISH_MODE_KEY = 'bling_finish_mode'
 UNIFIED_BLING_SEND_KEY = 'home_bling_connected_same_flow_api_send'
 WIZARD_STEP_KEY = 'bling_wizard_step'
+SOURCE_FIRST_CONFIRMED_KEY = 'source_first_operation_user_confirmed'
+SOURCE_FIRST_SELECTED_KEY = 'source_first_selected_operation'
 
 OP_UNIVERSAL = 'universal'
 OP_API_PENDING = 'api_pending'
@@ -50,7 +52,6 @@ SOURCE_DF_KEYS = (
     'estoque_wizard_df_origem_site',
 )
 API_OPERATION_STATE_KEYS = (
-    'source_first_selected_operation',
     'api_operation',
     'bling_api_operation',
     'home_bling_api_operation_choice',
@@ -218,13 +219,30 @@ def _site_capture_ready() -> bool:
     return False
 
 
-def _source_first_choice_pending() -> bool:
-    try:
-        if _source_data_ready() and not _normalize_api_operation(st.session_state.get('source_first_selected_operation')):
-            return True
-    except Exception:
-        return False
+def _source_first_operation_confirmed() -> bool:
+    return bool(st.session_state.get(SOURCE_FIRST_CONFIRMED_KEY))
+
+
+def _confirmed_source_first_operation() -> str:
+    if not _source_first_operation_confirmed():
+        return ''
+    return _normalize_api_operation(st.session_state.get(SOURCE_FIRST_SELECTED_KEY))
+
+
+def _source_first_choice_required() -> bool:
+    if _source_data_ready() or _site_capture_ready():
+        return True
+    if bool(st.session_state.get('source_first_operation_pending_choice')):
+        return True
+    if SOURCE_FIRST_SELECTED_KEY in st.session_state or SOURCE_FIRST_CONFIRMED_KEY in st.session_state:
+        return True
     return False
+
+
+def _source_first_choice_pending() -> bool:
+    if not _source_first_choice_required():
+        return False
+    return _confirmed_source_first_operation() not in CONCRETE_API_OPERATIONS
 
 
 def active_mode() -> str:
@@ -243,15 +261,20 @@ def active_api_operation(default: str = '') -> str:
     - No modo API não existe operação universal.
     - Depois que a origem foi carregada, a API fica pendente até o usuário escolher
       cadastro, estoque por depósito ou atualização de preços.
-    - Site/origem nunca força cadastro automaticamente.
+    - Chaves antigas em cache não valem sem source_first_operation_user_confirmed.
     """
+    confirmed = _confirmed_source_first_operation()
+    if confirmed in CONCRETE_API_OPERATIONS:
+        return confirmed
+
+    if _source_first_choice_pending():
+        return ''
+
+    # Compatibilidade: só usa sinais antigos quando ainda não é fluxo source-first.
     for key in API_OPERATION_STATE_KEYS:
         op = _normalize_api_operation(_state_value(key))
         if op in CONCRETE_API_OPERATIONS:
             return op
-
-    if _source_first_choice_pending():
-        return ''
 
     joined_hints = ' '.join(_state_text(key) for key in API_OPERATION_HINT_KEYS)
     op = _normalize_api_operation(joined_hints)
