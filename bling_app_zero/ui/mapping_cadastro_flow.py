@@ -8,6 +8,7 @@ from bling_app_zero.ui.home_autofluxo import pause_home_autofluxo_for_manual_rev
 from bling_app_zero.ui.home_shared import df_signature, preview_df
 from bling_app_zero.ui.home_wizard_scroll import render_mapping_fields_anchor
 from bling_app_zero.ui.layout import inject_mapping_css
+from bling_app_zero.ui.mapping_auto_decision import AUTO_MAPPING_LABEL, seed_mapping_toggle_from_global, set_mapping_auto_decision
 from bling_app_zero.ui.mapping_auto_suggestions import build_super_mapping
 from bling_app_zero.ui.mapping_confirmation import render_confirm_mapping_button
 from bling_app_zero.ui.mapping_confidence_state import current_confidence_from_widgets, ordered_targets_once, required_targets
@@ -30,7 +31,6 @@ CONTEXT_UNIVERSAL = 'universal'
 CONTEXT_MAPPING_KEYS = {
     CONTEXT_UNIVERSAL: ('mapping_universal', 'mapping_confidence_universal', 'df_final_universal'),
 }
-AUTO_MAPPING_LABEL = 'Ativar mapeamento automático'
 
 
 def _entry_context() -> str:
@@ -131,15 +131,17 @@ def _reset_cadastro_mapping(
 
 
 def _render_auto_mapping_toggle(mapping_key: str) -> bool:
+    widget_key = _auto_toggle_key(mapping_key)
+    seed_mapping_toggle_from_global(widget_key)
     enabled = st.toggle(
         AUTO_MAPPING_LABEL,
-        value=False,
-        key=_auto_toggle_key(mapping_key),
+        key=widget_key,
         help=(
             'Desligado: os campos começam vazios e você escolhe manualmente. '
             'Ligado: o sistema tenta sugerir as colunas automaticamente, mas você ainda precisa revisar e confirmar.'
         ),
     )
+    set_mapping_auto_decision(bool(enabled), source='mapeamento_cadastro')
     if enabled:
         st.caption('Mapeamento automático ligado: sugestões serão preenchidas para revisão antes da prévia final.')
     else:
