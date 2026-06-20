@@ -14,6 +14,7 @@ FLOW_OPERATION_KEY = 'home_slim_flow_operation'
 FLOW_ACTIVE_KEY = 'home_slim_active_panel'
 LEGACY_ORIGIN_RADIO_KEY = 'frontpage_origin_radio'
 WIZARD_STEP_KEY = 'bling_wizard_step'
+HOME_CHOICE_TARGET = 'home_choice_target'
 
 UNIVERSAL_OPERATION_VALUE = 'universal'
 
@@ -73,6 +74,7 @@ RESET_OUTPUT_KEYS = [
     FLOW_OPERATION_KEY,
     LEGACY_ORIGIN_RADIO_KEY,
     WIZARD_STEP_KEY,
+    HOME_CHOICE_TARGET,
     'origem_final',
     'origem_dados',
     'origem_tipo',
@@ -209,6 +211,7 @@ __all__ = [
     'GLOBAL_CADASTRO_MODEL_KEYS',
     'GLOBAL_ESTOQUE_MODEL_KEYS',
     'HOME_CADASTRO_MODEL_KEY',
+    'HOME_CHOICE_TARGET',
     'HOME_ESTOQUE_MODEL_KEY',
     'LEGACY_ORIGIN_RADIO_KEY',
     'RESET_OUTPUT_KEYS',
