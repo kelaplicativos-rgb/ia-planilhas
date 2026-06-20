@@ -5,8 +5,11 @@ from typing import Callable
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.api_operation_lock import CONCRETE_API_OPERATIONS, resolve_api_operation
+from bling_app_zero.core.operation_contract import normalize_operation
 from bling_app_zero.features_runtime.router import active_steps as runtime_active_steps
 from bling_app_zero.features_runtime.router import feature_needs_model
+from bling_app_zero.ui.flow_context import CONTEXT_BLING_API, entry_context as _entry_context
 from bling_app_zero.ui.home_wizard_constants import (
     CADASTRO_STEPS,
     ESTOQUE_STEPS,
@@ -32,6 +35,7 @@ HOME_CHOICE_TARGET = '__home_choice__'
 ORIGIN_RADIO_KEY = 'frontpage_origin_radio_universal'
 QUICK_MODEL_READY_KEY = 'bling_quick_model_ready_origin'
 UNIVERSAL_OPERATION = 'universal'
+API_PENDING_OPERATION = 'api_pending'
 UNIVERSAL_REVIEW_OPERATION = 'modelo_destino'
 UNIVERSAL_STEPS = [step for step in CADASTRO_STEPS if step != STEP_OPERACAO]
 FINAL_CHECK_REPORT_KEY = 'home_wizard_final_check_report'
@@ -47,7 +51,45 @@ STALE_CADASTRO_OPERATION_KEYS = (
 )
 
 
+def _api_context_active() -> bool:
+    try:
+        if _entry_context() == CONTEXT_BLING_API:
+            return True
+    except Exception:
+        pass
+    return bool(
+        st.session_state.get('home_bling_connected_same_flow_api_send')
+        or st.session_state.get('bling_connected_api_flow_active')
+        or st.session_state.get('direct_bling_api_contract_active')
+        or str(st.session_state.get('flow_spine_final_destination') or '').strip().lower() == 'api_bling'
+    )
+
+
+def _concrete_operation(value: object) -> str:
+    op = normalize_operation(value, default='')
+    return op if op in CONCRETE_API_OPERATIONS else ''
+
+
+def _source_first_operation() -> str:
+    return _concrete_operation(st.session_state.get('source_first_selected_operation'))
+
+
+def _source_first_is_pending() -> bool:
+    if bool(st.session_state.get('source_first_operation_user_confirmed')):
+        return False
+    return bool(st.session_state.get('source_first_operation_pending_choice', True)) or not _source_first_operation()
+
+
+def _api_contract_operation() -> str:
+    if _source_first_is_pending():
+        return API_PENDING_OPERATION
+    op = _source_first_operation() or resolve_api_operation()
+    return op if op in CONCRETE_API_OPERATIONS else API_PENDING_OPERATION
+
+
 def _contract_operation() -> str:
+    if _api_context_active():
+        return _api_contract_operation()
     for value in (
         st.session_state.get(MODEL_CONTRACT_TYPE_KEY),
         st.session_state.get(FLOW_OPERATION_KEY),
@@ -62,7 +104,10 @@ def _contract_operation() -> str:
 
 
 def _operation_from_state_key(key: str) -> str:
-    return normalize_contract_operation(st.session_state.get(key))
+    raw = str(st.session_state.get(key) or '').strip().lower()
+    if raw == API_PENDING_OPERATION:
+        return API_PENDING_OPERATION
+    return normalize_contract_operation(raw)
 
 
 def _clear_runtime_flow_state(reason: str, *, target_operation: str = '') -> list[str]:
@@ -240,7 +285,11 @@ def ensure_universal_operation_state() -> str:
     st.session_state['tipo_operacao_final'] = operation
     st.session_state['home_detected_operation'] = operation
     st.session_state['home_slim_flow_operation'] = operation
-    if operation != 'universal':
+    if operation in CONCRETE_API_OPERATIONS:
+        st.session_state[MODEL_CONTRACT_TYPE_KEY] = operation
+    elif operation == API_PENDING_OPERATION:
+        st.session_state.pop(MODEL_CONTRACT_TYPE_KEY, None)
+    elif operation != 'universal':
         st.session_state[MODEL_CONTRACT_TYPE_KEY] = operation
     st.session_state.pop('tipo_operacao_site', None)
     return operation
@@ -323,7 +372,11 @@ def select_origin(origin: str, *, set_scroll_target: Callable[[str], None] | Non
     st.session_state['origem_final'] = origin
     st.session_state.pop('tipo_operacao_site', None)
     st.session_state['home_slim_flow_operation'] = operation
-    if operation != 'universal':
+    if operation in CONCRETE_API_OPERATIONS:
+        st.session_state[MODEL_CONTRACT_TYPE_KEY] = operation
+    elif operation == API_PENDING_OPERATION:
+        st.session_state.pop(MODEL_CONTRACT_TYPE_KEY, None)
+    elif operation != 'universal':
         st.session_state[MODEL_CONTRACT_TYPE_KEY] = operation
     clear_stale_cadastro_operation_state()
     set_step_without_rerun(STEP_ENTRADA)
