@@ -13,6 +13,7 @@ from bling_app_zero.features_runtime.router import active_contract
 from bling_app_zero.pipelines.site_pipeline import run_pipeline as run_site_pipeline
 from bling_app_zero.ui.flow_context import CONTEXT_UNIVERSAL, activate_csv_finish_mode, set_entry_context
 from bling_app_zero.ui.home_wizard_rerun import safe_rerun
+from bling_app_zero.ui.mapping_auto_decision import render_mapping_auto_decision_toggle
 from bling_app_zero.ui.shared_calculator import render_shared_calculator
 from bling_app_zero.ui.shared_final_csv import render_shared_final_csv
 from bling_app_zero.ui.shared_mapping import clear_shared_mapping_widgets, render_shared_contract_mapping, suggest_shared_mapping
@@ -131,7 +132,7 @@ def _progress_callback(progress_bar, status_box):
 
 
 def _render_source_upload() -> pd.DataFrame | None:
-    st.caption('Anexe a planilha fonte de dados: fornecedor, marketplace, CSV, planilha, XML, HTML, MHTML ou PDF.')
+    st.caption('Anexe a planilha fonte de dados: fornecedor, marketplace, CSV, planilha, XML, MHTML ou PDF.')
     st.caption(SUPPORTED_UPLOAD_LABEL)
     uploaded = st.file_uploader('Planilha fonte de dados', type=None, key='mapeiaai_universal_source_upload')
     df = _read_upload(uploaded)
@@ -202,28 +203,35 @@ def _render_toggles() -> dict[str, bool]:
     st.markdown('### 3. Toggles do processamento')
     col1, col2 = st.columns(2)
     with col1:
-        price = st.toggle('Preco / calculo marketplace', value=False, key='mapeiaai_universal_toggle_price')
-        category = st.toggle('Categorizacao inteligente', value=False, key='mapeiaai_universal_toggle_category')
+        price = st.toggle('Preço / cálculo marketplace', value=False, key='mapeiaai_universal_toggle_price')
+        category = st.toggle('Categorização inteligente', value=False, key='mapeiaai_universal_toggle_category')
     with col2:
-        mapping_ai = st.toggle('IA para sugestao de mapeamento', value=True, key='mapeiaai_universal_toggle_mapping_ai')
+        st.markdown('##### Mapeamento automático')
+        mapping_ai = render_mapping_auto_decision_toggle(
+            widget_key='mapeiaai_universal_toggle_mapping_auto',
+            source='universal_flow',
+            default=False,
+            label='Mapeamento automático',
+        )
         rules = st.toggle('Regras e recursos inteligentes no download', value=True, key='mapeiaai_universal_toggle_rules')
+    st.session_state['mapeiaai_universal_toggle_mapping_ai'] = bool(mapping_ai)
     toggles = {'price': bool(price), 'category': bool(category), 'mapping_ai': bool(mapping_ai), 'rules': bool(rules)}
-    _audit('mapear_planilha_toggles_definidos', **toggles)
+    _audit('mapear_planilha_toggles_definidos', **toggles, mapping_auto_user_decided=True)
     return toggles
 
 
 def _apply_category(source: pd.DataFrame, enabled: bool) -> pd.DataFrame:
     if not enabled:
         return source
-    st.markdown('### Categorizacao inteligente')
+    st.markdown('### Categorização inteligente')
     try:
         analyzed, stats = classify_dataframe(source)
-        confidence = st.slider('Confianca minima para aplicar categoria', 0.50, 0.99, 0.80, 0.01, key='mapeiaai_universal_category_confidence_min')
+        confidence = st.slider('Confiança mínima para aplicar categoria', 0.50, 0.99, 0.80, 0.01, key='mapeiaai_universal_category_confidence_min')
         output, applied = apply_category_suggestions(analyzed, confidence_min=float(confidence), keep_helper_columns=True)
     except Exception as exc:
-        st.warning(f'Categorizacao nao aplicada: {exc}')
+        st.warning(f'Categorização não aplicada: {exc}')
         return source
-    st.success(f'Categorizacao analisada: {stats.get("total", 0)} produto(s), {applied} categoria(s) aplicada(s).')
+    st.success(f'Categorização analisada: {stats.get("total", 0)} produto(s), {applied} categoria(s) aplicada(s).')
     _audit('mapear_planilha_categorizacao_aplicada', total=int(stats.get('total', 0)), applied=int(applied), confidence_min=float(confidence))
     helper = [col for col in ('Categoria', 'categoria_sugerida_ia', 'acao_categoria_ia', 'confianca_categoria_ia', 'motivo_categoria_ia') if col in output.columns]
     if helper:
@@ -232,17 +240,17 @@ def _apply_category(source: pd.DataFrame, enabled: bool) -> pd.DataFrame:
 
 
 def _render_ai_tools(source: pd.DataFrame, model: pd.DataFrame, enabled: bool) -> None:
-    st.markdown('### 4. Inteligencia Artificial')
+    st.markdown('### 4. Inteligência Artificial')
     if not enabled:
-        st.caption('IA desligada. O mapeamento comecara vazio para escolha manual.')
+        st.caption('Mapeamento automático desligado. O mapeamento começará vazio para escolha manual.')
         return
-    if st.button('Regerar sugestao de mapeamento com IA', use_container_width=True, key='mapeiaai_universal_regen_ai_mapping'):
+    if st.button('Regerar sugestão de mapeamento com IA', use_container_width=True, key='mapeiaai_universal_regen_ai_mapping'):
         suggested, engine = suggest_shared_mapping(source, model, operation='universal')
         st.session_state[UNIVERSAL_MAPPING_KEY] = suggested
         st.session_state[UNIVERSAL_ENGINE_KEY] = engine
         clear_shared_mapping_widgets('mapeiaai_universal')
         _audit('mapear_planilha_ia_mapeamento_regenerada', engine=engine, targets=int(len(suggested)))
-        st.success('Sugestoes de mapeamento atualizadas.')
+        st.success('Sugestões de mapeamento atualizadas.')
         safe_rerun('universal_ai_mapping_regenerated')
 
 
@@ -252,7 +260,7 @@ def render_universal_flow() -> None:
         return
     _audit('mapear_planilha_fluxo_aberto', order='fonte_primeiro_modelo_depois', api=False)
     st.markdown('## Mapear planilha sem API')
-    st.caption('Planilha fonte primeiro, modelo final depois, toggles opcionais, mapeamento, preview e download. Nao conecta e nao envia por API.')
+    st.caption('Planilha fonte primeiro, modelo final depois, toggles opcionais, mapeamento, preview e download. Não conecta e não envia por API.')
     source = _render_source_step()
     if not isinstance(source, pd.DataFrame):
         return
@@ -265,7 +273,7 @@ def render_universal_flow() -> None:
         processed = render_shared_calculator(processed, key_prefix='mapeiaai_universal', force_enabled=True)
         _audit('mapear_planilha_preco_processado', rows=int(len(processed)), columns=int(len(processed.columns)))
     else:
-        st.caption('Preco desligado: valores mantidos como vieram da fonte.')
+        st.caption('Preço desligado: valores mantidos como vieram da fonte.')
     processed = _apply_category(processed, toggles['category'])
     signature = _reset_universal_state_if_changed(model, processed, toggles['mapping_ai'], toggles['rules'])
     if toggles['mapping_ai'] and str(st.session_state.get(UNIVERSAL_ENGINE_KEY) or '') == 'manual_sem_ia':
