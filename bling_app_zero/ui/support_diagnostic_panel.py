@@ -5,9 +5,9 @@ from datetime import datetime
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event, get_audit_events
-from bling_app_zero.core.debug import LOG_SESSION_KEY
+from bling_app_zero.core.support_diagnostic_runtime import build_support_diagnostic_zip, collect_dataframes, collect_debug_logs
 from bling_app_zero.ui.home_wizard_rerun import safe_rerun
-from bling_app_zero.ui.maintenance_panel import LOG_BUNDLE_FILENAME, _build_log_bundle_zip
+from bling_app_zero.ui.maintenance_panel import LOG_BUNDLE_FILENAME
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/support_diagnostic_panel.py'
 DIAGNOSTIC_BYTES_KEY = 'support_diagnostic_zip_bytes'
@@ -26,9 +26,10 @@ def _widget_key(namespace: str, name: str) -> str:
 
 
 def _prepare_diagnostic_zip(*, source: str = 'sidebar') -> None:
-    logs = list(st.session_state.get(LOG_SESSION_KEY, []))
+    logs = collect_debug_logs()
     audit_events = get_audit_events()
-    data = _build_log_bundle_zip()
+    dataframes = collect_dataframes()
+    data = build_support_diagnostic_zip()
 
     st.session_state[DIAGNOSTIC_BYTES_KEY] = data
     st.session_state[DIAGNOSTIC_READY_KEY] = True
@@ -41,9 +42,11 @@ def _prepare_diagnostic_zip(*, source: str = 'sidebar') -> None:
             'technical_logs': len(logs),
             'audit_events': len(audit_events),
             'session_state_keys': len(st.session_state.keys()),
+            'diagnostic_dataframes': len(dataframes),
             'zip_size_bytes': len(data),
             'source': source,
             'responsible_file': RESPONSIBLE_FILE,
+            'blingfix': 'runtime_diagnostic_zip_with_namespaced_logs_and_dataframe_samples',
         },
     )
 
@@ -51,7 +54,7 @@ def _prepare_diagnostic_zip(*, source: str = 'sidebar') -> None:
 def render_support_diagnostic_panel_content(*, namespace: str = 'default') -> None:
     """Conteúdo reutilizável do diagnóstico, sem abrir outro bloco de sidebar.
 
-    BLINGSCAN: este painel pode aparecer em mais de uma área da sidebar no mesmo
+    BLINGFIX: este painel pode aparecer em mais de uma área da sidebar no mesmo
     ciclo de renderização. Por isso os widgets recebem namespace próprio para
     evitar erro de chave duplicada no Streamlit.
     """
