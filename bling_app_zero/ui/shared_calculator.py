@@ -60,15 +60,20 @@ def apply_marketplace_calculation(
     return out
 
 
-def render_shared_calculator(source: pd.DataFrame, *, key_prefix: str = 'mapeiaai') -> pd.DataFrame:
+def render_shared_calculator(source: pd.DataFrame, *, key_prefix: str = 'mapeiaai', force_enabled: bool | None = None) -> pd.DataFrame:
     st.markdown('### Calculadora marketplace')
-    with st.expander('Aplicar cálculo marketplace antes do mapeamento', expanded=False):
+    expanded = bool(force_enabled)
+    with st.expander('Aplicar cálculo marketplace antes do mapeamento', expanded=expanded):
         columns = numeric_columns(source)
         if not columns:
             st.info('Não encontrei colunas numéricas suficientes para cálculo automático.')
             return source
 
-        enabled = st.checkbox('Usar cálculo marketplace', value=False, key=f'{key_prefix}_use_price_calc')
+        if force_enabled is None:
+            enabled = st.checkbox('Usar cálculo marketplace', value=False, key=f'{key_prefix}_use_price_calc')
+        else:
+            enabled = bool(force_enabled)
+            st.caption('Cálculo marketplace ligado pelo toggle principal do fluxo.')
         base_column = st.selectbox('Coluna base de preço/custo', columns, key=f'{key_prefix}_price_base_column')
         output_column = st.text_input('Nome da coluna calculada', value='Preço calculado marketplace', key=f'{key_prefix}_price_output_name')
         margin = Decimal(str(st.number_input('Margem (%)', min_value=0.0, max_value=1000.0, value=30.0, step=1.0, key=f'{key_prefix}_margin') or 0))
