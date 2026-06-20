@@ -36,11 +36,11 @@ def _column_keys(columns: Iterable[object]) -> list[str]:
 
 
 def detect_model_contract(df: pd.DataFrame | None) -> ModelContractDetection:
-    """Retorna sempre um contrato universal.
+    """Retorna sempre um contrato universal para modelos enviados pelo usuário.
 
-    A aplicação passou a trabalhar com qualquer planilha/marketplace/layout.
-    Portanto o arquivo enviado pelo usuário é apenas o modelo a ser mapeado,
-    sem classificação por tipo e sem reconhecimento de layout de sistema externo.
+    A aplicação trabalha com qualquer planilha/marketplace/layout. Portanto o
+    arquivo enviado pelo usuário é apenas o modelo a ser mapeado, sem classificar
+    automaticamente a operação operacional que será enviada ao Bling.
     """
     if not isinstance(df, pd.DataFrame) or not len(df.columns):
         return ModelContractDetection('universal', CONTRACT_LABELS['universal'], 0.0, 'modelo_ausente_ou_sem_colunas', {}, [])
@@ -57,13 +57,19 @@ def detect_model_contract(df: pd.DataFrame | None) -> ModelContractDetection:
 
 
 def normalize_contract_operation(value: object) -> str:
-    """Normaliza a operação explícita sem voltar tudo para universal.
+    """Normaliza somente valores de operação explicitamente informados.
 
-    O detector de modelo continua universal, mas a operação escolhida pelo usuário
-    precisa preservar cadastro/estoque/atualizacao_preco. O fluxo API usa esta
-    função para decidir contrato, renderização do depósito e envio correto.
+    Valor vazio, ausente ou desconhecido retorna vazio. Isso evita que rotinas de
+    API interpretem ausência de escolha como universal. Quando o usuário/sistema
+    escreve literalmente universal, o valor continua sendo preservado.
     """
-    return normalize_operation(value, default=OP_UNIVERSAL)
+    raw = str(value or '').strip()
+    if not raw:
+        return ''
+    op = normalize_operation(raw, default='')
+    if op:
+        return op
+    return OP_UNIVERSAL if raw.lower() == OP_UNIVERSAL else ''
 
 
 __all__ = [
