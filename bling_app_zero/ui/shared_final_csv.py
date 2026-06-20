@@ -36,6 +36,7 @@ def render_shared_final_csv(
     *,
     key_prefix: str = 'mapeiaai_shared_final',
     file_name: str = 'mapeiaai_planilha_final_mapeada.csv',
+    run_smart_features: bool = True,
 ) -> pd.DataFrame | None:
     st.markdown('### Preview final')
 
@@ -46,6 +47,7 @@ def render_shared_final_csv(
         mapping,
         operation='universal',
         file_name=file_name,
+        run_smart_features=run_smart_features,
     )
     st.session_state[FINAL_OUTPUT_STATE_KEY] = final_result.state.to_dict()
     st.session_state[FINAL_OUTPUT_REPORT_KEY] = build_final_output_report(final_result)
@@ -65,6 +67,8 @@ def render_shared_final_csv(
     st.success('Planilha final fiel ao modelo anexado: mesmas colunas, mesma ordem e sem extras.')
     if smartcore_result is not None:
         _render_smartcore_box(smartcore_result)
+    elif not run_smart_features:
+        st.caption('Recursos inteligentes desligados: o download respeita apenas o mapeamento manual/selecionado e o contrato do modelo.')
     st.dataframe(output.head(80).astype(str), use_container_width=True, height=360)
     st.caption(f'Preview: {len(output)} linha(s) x {len(output.columns)} coluna(s).')
 
@@ -92,6 +96,7 @@ def render_shared_final_csv(
             'contract_columns': contract_columns,
             'contract_identity': True,
             'blingsmartcore_score': int(final_result.state.result.smartcore_score),
+            'run_smart_features': bool(run_smart_features),
             'neutral_final_output_state': True,
             'csv_size_bytes': int(final_result.state.result.csv_size_bytes),
             'responsible_file': RESPONSIBLE_FILE,
