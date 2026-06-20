@@ -12,7 +12,12 @@ def test_api_stock_flow_patch_is_activated() -> None:
     assert "home_router.VALID_SINGLE_PAGE_STEPS.add('operacao')" in wizard_v2
     assert "home_router.VALID_SINGLE_PAGE_STEPS.add(STEP_IA)" in wizard_v2
 
-    assert 'STEP_PRECIFICACAO, STEP_REGRAS, STEP_IA, STEP_PREVIEW, STEP_DOWNLOAD' in patch_v2
+    assert '_stock_api_steps_from_base(original_steps())' in patch_v2
+    assert 'steps.insert(0, STEP_OPERACAO)' in patch_v2
+    assert 'return [STEP_ORIGEM, STEP_ENTRADA, STEP_OPERACAO' not in patch_v2
+    assert 'original_nav = legacy._nav' in patch_v2
+    assert 'if not _is_api_stock():' in patch_v2
+    assert 'original_nav(step)' in patch_v2
     assert 'api_stock_auto_base_ready' in patch_v2
     assert 'render_rules_center_step' in patch_v2
     assert 'wizard_footer_next_' in patch_v2
