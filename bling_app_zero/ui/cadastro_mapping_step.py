@@ -11,7 +11,6 @@ from bling_app_zero.core.bling_connected_flow_policy import (
     OP_ESTOQUE,
     OP_PRECO,
     activate_connected_flow,
-    annotate_dataframe_for_connected_flow,
     api_flow_explicitly_selected,
 )
 from bling_app_zero.core.files import read_uploaded_file
@@ -25,7 +24,6 @@ from bling_app_zero.ui.cadastro_wizard_state import (
     LEGACY_CADASTRO_FINAL_KEY,
     UNIVERSAL_FINAL_KEY,
     cadastro_mapping_ready,
-    ensure_api_direct_final_df,
     render_row_count_blocker,
     store_expected_source_rows,
     valid_df,
@@ -70,6 +68,7 @@ MODEL_FALLBACK_KEYS = (
     'home_modelo_universal_df',
     'modelo_universal_df',
     'mapeiaai_final_contract_df',
+    'direct_bling_api_contract_df',
     'home_modelo_cadastro_df',
     'df_modelo_cadastro',
     'modelo_cadastro_df',
@@ -100,7 +99,6 @@ ORIGIN_FALLBACK_KEYS = (
     'df_site_bruto_estoque',
     'df_site_bruto_atualizacao_preco',
     'estoque_wizard_df_origem_site',
-    'df_final_bling_api',
     UNIVERSAL_FINAL_KEY,
     LEGACY_CADASTRO_FINAL_KEY,
 )
@@ -210,7 +208,7 @@ def _render_api_operation_selector() -> str:
         if operation == OP_ESTOQUE:
             st.caption('Próximo passo obrigatório: confirmar o depósito do Bling antes de seguir com a atualização de saldo.')
         else:
-            st.caption('A etapa atual só herda a operação; não há nova escolha manual aqui.')
+            st.caption('A etapa atual herda a operação; o fluxo segue pelo mesmo mapeamento/revisão usado na origem por arquivo.')
         st.info(API_OPERATION_HELP.get(operation, ''))
         return operation
 
@@ -307,7 +305,8 @@ def _resolve_origin_df() -> pd.DataFrame | None:
 
 
 def _current_final_df() -> pd.DataFrame | None:
-    for key in ('df_final_bling_api', UNIVERSAL_FINAL_KEY, LEGACY_CADASTRO_FINAL_KEY, 'df_final_cadastro'):
+    # Prefere a saída recém-mapeada. df_final_bling_api pode existir de tentativa antiga.
+    for key in (UNIVERSAL_FINAL_KEY, LEGACY_CADASTRO_FINAL_KEY, 'df_final_cadastro', 'df_final_bling_api'):
         value = st.session_state.get(key)
         if isinstance(value, pd.DataFrame):
             return value
@@ -327,18 +326,18 @@ def _render_mapping_spine_caption() -> None:
 
 def _render_post_mapping_notice() -> None:
     if not cadastro_mapping_ready():
-        st.info('A automação ainda está preparando os dados para liberar a revisão, a prévia e o envio.')
+        st.info('Revise e confirme o mapeamento para liberar a prévia, a validação e o envio.')
         return
 
     if _is_api_context():
         op = _current_operation()
         if op == OP_PRECO:
-            st.success('Automação preparada. Continue para a prévia; antes do envio será obrigatório escolher Preço geral ou loja/canal.')
+            st.success('Mapeamento confirmado. Continue para a prévia; antes do envio será obrigatório escolher Preço geral ou loja/canal.')
         elif op == OP_ESTOQUE:
-            st.success('Automação preparada. Depósito do Bling já deve estar carregado/selecionado abaixo para atualizar o saldo.')
+            st.success('Mapeamento confirmado. Continue para a prévia; antes do envio será obrigatório confirmar o depósito do Bling.')
         else:
             label = _operation_label() or 'enviar'
-            st.success(f'Automação preparada. Continue para a prévia e {label}.')
+            st.success(f'Mapeamento confirmado. Continue para a prévia e {label}.')
         return
 
     st.success('Mapeamento confirmado. O download será liberado no final, após a revisão e a prévia.')
@@ -351,40 +350,10 @@ def _df_for_mapping(df_origem: pd.DataFrame) -> pd.DataFrame:
     return df_origem
 
 
-def _api_automation_source_df(df_origem: pd.DataFrame) -> pd.DataFrame:
-    df_precificado = st.session_state.get(CADASTRO_ORIGEM_PRICED_KEY)
-    if isinstance(df_precificado, pd.DataFrame) and not df_precificado.empty:
-        return df_precificado.copy().fillna('')
-    return df_origem.copy().fillna('')
-
-
-def _prepare_bling_api_automation(df_origem: pd.DataFrame) -> pd.DataFrame | None:
-    """Prepara a base para API sem mapeamento manual, apenas quando escolhida."""
+def _prepare_bling_api_connection_policy() -> str:
+    """Prepara a conexão API sem pular o mapeamento/revisão da origem."""
     operation = _render_api_operation_selector()
     policy = activate_connected_flow(operation, _origin_kind())
-    if not policy.api_enabled:
-        return None
-
-    df_final = ensure_api_direct_final_df()
-    if not valid_df(df_final):
-        df_final = _api_automation_source_df(df_origem)
-    if not valid_df(df_final):
-        return None
-
-    fixed = annotate_dataframe_for_connected_flow(df_final.copy().fillna(''), policy)
-    signature = df_signature(fixed)
-    st.session_state['df_final_bling_api'] = fixed
-    st.session_state[UNIVERSAL_FINAL_KEY] = fixed
-    st.session_state[LEGACY_CADASTRO_FINAL_KEY] = fixed
-    st.session_state['mapping_bling_api'] = {str(column): str(column) for column in fixed.columns}
-    st.session_state['mapping_confidence_bling_api'] = {str(column): {'level': 'verde', 'score': 100, 'api_auto': True} for column in fixed.columns}
-    st.session_state['mapping_cadastro'] = st.session_state['mapping_bling_api']
-    st.session_state['mapping_confidence_cadastro'] = st.session_state['mapping_confidence_bling_api']
-    st.session_state[CADASTRO_MAPPING_CONFIRMED_KEY] = True
-    st.session_state[CADASTRO_MAPPING_SIGNATURE_KEY] = signature
-    st.session_state['bling_api_automation_mapping_skipped'] = True
-    st.session_state['bling_api_automation_rows'] = int(len(fixed))
-    st.session_state['bling_api_automation_columns'] = int(len(fixed.columns))
     st.session_state['bling_api_required_selector'] = policy.required_selector
     st.session_state['bling_api_must_run_ai_check'] = policy.must_run_ai_check
     st.session_state['bling_api_final_action'] = policy.final_action
@@ -392,7 +361,45 @@ def _prepare_bling_api_automation(df_origem: pd.DataFrame) -> pd.DataFrame | Non
     st.session_state['flow_spine_sender_operation'] = policy.operation
     st.session_state['flow_spine_operation_resolved_for_api'] = policy.operation
     st.session_state['direct_bling_operation_applied'] = policy.operation
-    return fixed
+    st.session_state['bling_api_manual_mapping_required'] = True
+    st.session_state.pop('bling_api_automation_mapping_skipped', None)
+    try:
+        add_audit_event(
+            'bling_api_connection_prepared_with_mapping_guard',
+            area='BLING_API_FLOW',
+            status='OK' if policy.api_enabled else 'INFO',
+            details={
+                'operation': policy.operation,
+                'origin_kind': policy.origin_kind,
+                'manual_mapping_allowed': policy.manual_mapping_allowed,
+                'required_selector': policy.required_selector,
+                'next_human_step': policy.next_human_step,
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+    except Exception:
+        pass
+    return policy.operation
+
+
+def _sync_api_mapped_output() -> None:
+    if not _is_api_context():
+        return
+    df_final = _current_final_df()
+    if not valid_df(df_final):
+        return
+    fixed = df_final.copy().fillna('')
+    st.session_state['df_final_bling_api'] = fixed
+    st.session_state[UNIVERSAL_FINAL_KEY] = fixed
+    st.session_state[LEGACY_CADASTRO_FINAL_KEY] = fixed
+    mapping = st.session_state.get('mapping_cadastro') or st.session_state.get('mapping_universal')
+    confidence = st.session_state.get('mapping_confidence_cadastro') or st.session_state.get('mapping_confidence_universal')
+    if isinstance(mapping, dict):
+        st.session_state['mapping_bling_api'] = mapping
+    if isinstance(confidence, dict):
+        st.session_state['mapping_confidence_bling_api'] = confidence
+    st.session_state['bling_api_mapped_rows'] = int(len(fixed))
+    st.session_state['bling_api_mapped_columns'] = int(len(fixed.columns))
 
 
 def _stock_deposit_autoload_needs_retry() -> bool:
@@ -411,7 +418,7 @@ def _render_connected_policy_notice() -> None:
             st.session_state.pop(API_STOCK_DEPOSIT_AUTOLOAD_KEY, None)
         _render_stock_deposit_field(OP_ESTOQUE)
     else:
-        st.info('Próxima regra: comparar, rodar check IA e enviar ao Bling com mínima intervenção humana.')
+        st.info('Próxima regra: conferir prévia, rodar blindagem de validação e enviar ao Bling.')
     if final_action:
         st.caption(f'Ação final planejada: {final_action}.')
 
@@ -428,22 +435,13 @@ def render_cadastro_mapeamento_step() -> None:
     store_expected_source_rows(df_origem)
 
     if _is_api_context():
-        df_final_api = _prepare_bling_api_automation(df_origem)
-        if valid_df(df_final_api):
-            col_a, col_b = st.columns(2)
-            with col_a:
-                st.metric('Linhas preparadas', len(df_final_api))
-            with col_b:
-                st.metric('Campos para API', len(df_final_api.columns))
-            st.info('Fluxo API escolhido: o sistema preparou os campos automaticamente; o usuário não precisa mapear manualmente.')
-            _render_connected_policy_notice()
-            _render_post_mapping_notice()
-            return
-        st.warning('A automação da API ainda não conseguiu preparar os dados. Volte para Dados importados e confira a origem.')
-        return
+        _prepare_bling_api_connection_policy()
 
     if not valid_model(df_modelo):
-        st.warning('Modelo para mapear ausente. Volte para Modelo para mapear.')
+        if _is_api_context():
+            st.warning('Contrato/modelo da operação API ausente. Volte para a escolha da operação da API para carregar o contrato correto.')
+        else:
+            st.warning('Modelo para mapear ausente. Volte para Modelo para mapear.')
         return
 
     df_para_mapear = _df_for_mapping(df_origem)
@@ -457,12 +455,19 @@ def render_cadastro_mapeamento_step() -> None:
     if bool(st.session_state.get('cadastro_preco_calculado_ativo', False)):
         st.success('Preço calculado na etapa anterior. O valor calculado está disponível para o mapeamento.')
 
+    if _is_api_context():
+        st.info('Conexão API blindada: a API usa a mesma origem, o mesmo mapeamento e a mesma prévia do fluxo por arquivo. Nenhum envio será liberado sem revisão/validação.')
+
     render_shared_cadastro_mapping(df_para_mapear, df_modelo)
+    _sync_api_mapped_output()
 
     df_final = _current_final_df()
     if isinstance(df_final, pd.DataFrame) and len(df_final) != len(df_origem):
         if render_row_count_blocker(df_final):
             return
+
+    if _is_api_context():
+        _render_connected_policy_notice()
 
     _render_post_mapping_notice()
 
