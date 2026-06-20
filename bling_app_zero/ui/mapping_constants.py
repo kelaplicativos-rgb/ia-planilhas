@@ -20,6 +20,7 @@ MAPPING_PAGE_SIZE = 12
 MAPPING_WIDGET_PREFIXES = (
     'cad_map_',
     'stk_map_',
+    'universal_map_',
     'cadastro_manual_mapping_',
     'estoque_manual_mapping_from_cadastro_',
 )
