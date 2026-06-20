@@ -98,13 +98,42 @@ def _done(step: str) -> bool:
     return False
 
 
+def _fallback_active_step_for_invalid_current(current: str, steps: list[str]) -> str:
+    if source_data_ready() and not operation_ready():
+        return STEP_OPERACAO
+    if source_data_ready() and selected_operation() and STEP_OPERACAO in steps:
+        return STEP_OPERACAO
+    if source_data_ready() and STEP_ENTRADA in steps:
+        return STEP_ENTRADA
+    return steps[0]
+
+
 def _active_step() -> str:
     current = str(st.session_state.get(WIZARD_STEP_KEY) or STEP_ORIGEM).strip().lower()
+    steps = _steps()
     if source_data_ready() and not operation_ready() and current not in {STEP_ORIGEM, STEP_ENTRADA, STEP_OPERACAO}:
         return STEP_OPERACAO
     if current in {STEP_ORIGEM, STEP_ENTRADA} and source_data_ready() and not operation_ready():
         return STEP_OPERACAO
-    return current if current in _steps() else _steps()[0]
+    if current in steps:
+        return current
+    fallback = _fallback_active_step_for_invalid_current(current, steps)
+    add_audit_event(
+        'wizard_invalid_step_redirected_without_returning_origin',
+        area='WIZARD',
+        step=fallback,
+        status='OK',
+        details={
+            'invalid_current_step': current,
+            'fallback_step': fallback,
+            'selected_operation': selected_operation() or 'pending',
+            'source_data_ready': source_data_ready(),
+            'operation_ready': operation_ready(),
+            'steps': steps,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+    return fallback
 
 
 def _render_origin(n: int) -> None:
