@@ -155,8 +155,10 @@ def write_selected_operation(operation: object) -> str:
     for key in OPERATION_KEYS:
         st.session_state[key] = op
     try:
-        from bling_app_zero.ui.home_bling_api_flow import apply_direct_api_contract
+        from bling_app_zero.ui.home_bling_api_flow import apply_direct_api_contract, reset_stock_deposit_cache
         apply_direct_api_contract(op)
+        if op == OP_ESTOQUE:
+            reset_stock_deposit_cache(clear_selection=False, reason='stock_operation_confirmed')
     except Exception:
         pass
     add_audit_event('source_first_operation_selected', area='WIZARD', status='OK', details={'operation': op, 'explicit_confirmation': True, 'responsible_file': RESPONSIBLE_FILE})
