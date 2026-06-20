@@ -35,6 +35,7 @@ UNIVERSAL_STEPS = [
     STEP_MODELO,
     STEP_ORIGEM,
     STEP_ENTRADA,
+    STEP_OPERACAO,
     STEP_PRECIFICACAO,
     STEP_CATEGORIZACAO,
     STEP_MAPEAMENTO,
@@ -46,11 +47,11 @@ UNIVERSAL_STEPS = [
 
 CADASTRO_STEPS = list(UNIVERSAL_STEPS)
 ESTOQUE_STEPS = list(UNIVERSAL_STEPS)
-ALL_STEPS = list(dict.fromkeys(UNIVERSAL_STEPS + [STEP_OPERACAO, STEP_GERAR_ESTOQUE, STEP_PROCESSAR]))
+ALL_STEPS = list(dict.fromkeys(UNIVERSAL_STEPS + [STEP_GERAR_ESTOQUE, STEP_PROCESSAR]))
 
 STEP_LABELS = {
     STEP_MODELO: 'Modelo para mapear',
-    STEP_OPERACAO: 'Etapa legada ocultada',
+    STEP_OPERACAO: 'Operação',
     STEP_ORIGEM: 'Origem dos dados',
     STEP_ENTRADA: 'Dados importados',
     STEP_PRECIFICACAO: 'Precificação',
@@ -93,6 +94,8 @@ RESET_OUTPUT_KEYS = [
     'direct_bling_operation_applied',
     'direct_bling_api_contract_active',
     'direct_bling_api_contract_df',
+    'source_first_selected_operation',
+    'source_first_operation_pending_choice',
     'df_final_bling_api',
     'df_final_download_operation',
     'df_final_preview_operation',
