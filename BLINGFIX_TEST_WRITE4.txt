@@ -1,0 +1,2 @@
+def record_flow_exception(stage, e):
+    return str(e)
