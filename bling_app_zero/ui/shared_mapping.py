@@ -60,6 +60,10 @@ def suggest_shared_mapping(source: pd.DataFrame, target: pd.DataFrame, *, operat
     return safe_mapping, engine
 
 
+def blank_shared_mapping(target: pd.DataFrame) -> dict[str, str]:
+    return {str(column): '' for column in getattr(target, 'columns', [])}
+
+
 def render_shared_contract_mapping(
     source: pd.DataFrame,
     target: pd.DataFrame,
@@ -68,17 +72,33 @@ def render_shared_contract_mapping(
     mapping_state_key: str,
     engine_state_key: str,
     key_prefix: str = 'mapeiaai_shared',
+    ai_enabled: bool = True,
 ) -> dict[str, str]:
-    st.markdown('### Sugestão de IA para campos')
-    st.caption('Opcional. Use apenas se quiser revisar ou ajustar sugestões antes do preview final.')
+    st.markdown('### Mapeamento')
+    if ai_enabled:
+        st.caption('IA opcional ligada: o sistema sugere os campos, mas você revisa e pode alterar tudo antes do preview final.')
+    else:
+        st.caption('IA desligada: os campos começam vazios e somente escolhas manuais serão usadas no download.')
 
     if mapping_state_key not in st.session_state:
-        suggested, engine = suggest_shared_mapping(source, target, operation='universal')
+        if ai_enabled:
+            suggested, engine = suggest_shared_mapping(source, target, operation='universal')
+        else:
+            suggested, engine = blank_shared_mapping(target), 'manual_sem_ia'
         st.session_state[mapping_state_key] = suggested
         st.session_state[engine_state_key] = engine
 
+    if not ai_enabled and str(st.session_state.get(engine_state_key) or '') != 'manual_sem_ia':
+        st.session_state[mapping_state_key] = blank_shared_mapping(target)
+        st.session_state[engine_state_key] = 'manual_sem_ia'
+
     engine = str(st.session_state.get(engine_state_key) or 'local')
-    st.caption('Motor de sugestão: OpenAI validada' if engine == 'openai_validated' else 'Motor de sugestão: local seguro')
+    if engine == 'openai_validated':
+        st.caption('Motor de sugestão: OpenAI validada')
+    elif engine == 'manual_sem_ia':
+        st.caption('Motor de sugestão: manual sem IA')
+    else:
+        st.caption('Motor de sugestão: local seguro')
 
     current = dict(st.session_state.get(mapping_state_key) or {})
     source_options = [EMPTY_OPTION] + [str(column) for column in source.columns]
@@ -106,7 +126,7 @@ def render_shared_contract_mapping(
         )
 
     st.session_state[mapping_state_key] = edited
-    with st.expander('Resumo dos faróis da IA', expanded=False):
+    with st.expander('Resumo dos faróis do mapeamento', expanded=False):
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=260)
     return edited
 
@@ -119,6 +139,7 @@ def clear_shared_mapping_widgets(key_prefix: str = 'mapeiaai_shared') -> None:
 
 __all__ = [
     'EMPTY_OPTION',
+    'blank_shared_mapping',
     'clear_shared_mapping_widgets',
     'confidence_flag',
     'mapping_widget_key',
