@@ -67,9 +67,36 @@ def _label(step: str) -> str:
     return str(STEP_LABELS.get(step, step)).strip()
 
 
+def _is_api_context() -> bool:
+    try:
+        return _entry_context() == CONTEXT_BLING_API
+    except Exception:
+        return bool(
+            st.session_state.get('home_bling_connected_same_flow_api_send')
+            or st.session_state.get('bling_connected_api_flow_active')
+            or st.session_state.get('direct_bling_api_contract_active')
+        )
+
+
 def _steps() -> list[str]:
-    steps = [STEP_ORIGEM, STEP_ENTRADA, STEP_OPERACAO]
     op = selected_operation()
+
+    # BLINGFIX 2026-06-20:
+    # No fluxo Bling API, a operação precisa vir antes da origem/entrada.
+    # Atualização de estoque depende do depósito, e o depósito só é renderizado
+    # na etapa Operação. Mantendo Origem -> Entrada -> Operação, o wizard fica
+    # preso em api_pending e o usuário nunca consegue escolher o depósito.
+    if _is_api_context():
+        steps = [STEP_OPERACAO]
+        if op == OP_ESTOQUE:
+            steps += [STEP_ORIGEM, STEP_ENTRADA, STEP_MAPEAMENTO, STEP_PREVIEW, STEP_DOWNLOAD]
+        elif op == OP_PRECO:
+            steps += [STEP_ORIGEM, STEP_ENTRADA, STEP_PRECIFICACAO, STEP_MAPEAMENTO, STEP_PREVIEW, STEP_DOWNLOAD]
+        elif op == OP_CADASTRO:
+            steps += [STEP_ORIGEM, STEP_ENTRADA, STEP_PRECIFICACAO, STEP_MAPEAMENTO, STEP_REGRAS, STEP_PREVIEW, STEP_DOWNLOAD]
+        return steps
+
+    steps = [STEP_ORIGEM, STEP_ENTRADA, STEP_OPERACAO]
     if op == OP_ESTOQUE:
         steps += [STEP_MAPEAMENTO, STEP_PREVIEW, STEP_DOWNLOAD]
     elif op == OP_PRECO:
@@ -85,12 +112,12 @@ def _go(step: str) -> None:
 
 
 def _done(step: str) -> bool:
+    if step == STEP_OPERACAO:
+        return operation_ready()
     if step == STEP_ORIGEM:
         return current_origin_choice() in {'arquivo', 'site'}
     if step == STEP_ENTRADA:
         return source_data_ready()
-    if step == STEP_OPERACAO:
-        return operation_ready()
     if step == STEP_PRECIFICACAO:
         return True
     if step in {STEP_MAPEAMENTO, STEP_REGRAS, STEP_PREVIEW, STEP_DOWNLOAD}:
@@ -99,6 +126,14 @@ def _done(step: str) -> bool:
 
 
 def _fallback_active_step_for_invalid_current(current: str, steps: list[str]) -> str:
+    if _is_api_context():
+        if not operation_ready():
+            return STEP_OPERACAO
+        if current_origin_choice() not in {'arquivo', 'site'} and STEP_ORIGEM in steps:
+            return STEP_ORIGEM
+        if current_origin_choice() in {'arquivo', 'site'} and not source_data_ready() and STEP_ENTRADA in steps:
+            return STEP_ENTRADA
+        return steps[0]
     if source_data_ready() and not operation_ready():
         return STEP_OPERACAO
     if source_data_ready() and selected_operation() and STEP_OPERACAO in steps:
@@ -111,6 +146,28 @@ def _fallback_active_step_for_invalid_current(current: str, steps: list[str]) ->
 def _active_step() -> str:
     current = str(st.session_state.get(WIZARD_STEP_KEY) or STEP_ORIGEM).strip().lower()
     steps = _steps()
+    if _is_api_context():
+        if not operation_ready():
+            return STEP_OPERACAO
+        if current in steps:
+            return current
+        fallback = _fallback_active_step_for_invalid_current(current, steps)
+        add_audit_event(
+            'wizard_api_operation_first_redirected',
+            area='WIZARD',
+            step=fallback,
+            status='OK',
+            details={
+                'invalid_current_step': current,
+                'fallback_step': fallback,
+                'selected_operation': selected_operation() or 'pending',
+                'source_data_ready': source_data_ready(),
+                'operation_ready': operation_ready(),
+                'steps': steps,
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+        return fallback
     if source_data_ready() and not operation_ready() and current not in {STEP_ORIGEM, STEP_ENTRADA, STEP_OPERACAO}:
         return STEP_OPERACAO
     if current in {STEP_ORIGEM, STEP_ENTRADA} and source_data_ready() and not operation_ready():
@@ -140,7 +197,10 @@ def _render_origin(n: int) -> None:
     render_step_anchor(STEP_ORIGEM)
     _section_title(n, _label(STEP_ORIGEM))
     ensure_universal_operation_state()
-    st.caption('Primeiro escolha e carregue a origem. Esta etapa não define cadastro, estoque ou preço.')
+    if _is_api_context():
+        st.caption('Operação e depósito já confirmados. Agora escolha de onde virão os produtos para continuar o envio pela API.')
+    else:
+        st.caption('Primeiro escolha e carregue a origem. Esta etapa não define cadastro, estoque ou preço.')
     col1, col2 = st.columns(2)
     with col1:
         if st.button('📎 Arquivo', use_container_width=True, key='origin_choose_file'):
@@ -256,7 +316,7 @@ def render_home_wizard() -> None:
     step = _active_step()
     _go(step)
     _nav(step)
-    add_audit_event('wizard_source_first_step_rendered', area='WIZARD', step=step, details={'selected_operation': selected_operation() or 'pending', 'steps': _steps(), 'api_no_universal_operation': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('wizard_source_first_step_rendered', area='WIZARD', step=step, details={'selected_operation': selected_operation() or 'pending', 'steps': _steps(), 'api_no_universal_operation': True, 'operation_first_for_api': _is_api_context(), 'responsible_file': RESPONSIBLE_FILE})
     _render_step(step, (2 if context == CONTEXT_BLING_API else 1) + _steps().index(step))
     inject_scroll_to_target()
 
