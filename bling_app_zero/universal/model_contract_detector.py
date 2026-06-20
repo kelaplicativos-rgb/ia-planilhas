@@ -5,6 +5,7 @@ from typing import Iterable
 
 import pandas as pd
 
+from bling_app_zero.core.operation_contract import OP_UNIVERSAL, normalize_operation
 from bling_app_zero.core.text import normalize_key
 
 MODEL_CONTRACT_TYPE_KEY = 'destination_model_contract_type'
@@ -56,11 +57,13 @@ def detect_model_contract(df: pd.DataFrame | None) -> ModelContractDetection:
 
 
 def normalize_contract_operation(value: object) -> str:
-    text = str(value or '').strip().lower()
-    text = text.replace('-', '_').replace(' ', '_')
-    if text in {'', 'universal', 'modelo', 'modelo_destino', 'modelo_para_mapear', 'planilha', 'wizard_cadastro_estoque'}:
-        return 'universal'
-    return 'universal'
+    """Normaliza a operação explícita sem voltar tudo para universal.
+
+    O detector de modelo continua universal, mas a operação escolhida pelo usuário
+    precisa preservar cadastro/estoque/atualizacao_preco. O fluxo API usa esta
+    função para decidir contrato, renderização do depósito e envio correto.
+    """
+    return normalize_operation(value, default=OP_UNIVERSAL)
 
 
 __all__ = [
