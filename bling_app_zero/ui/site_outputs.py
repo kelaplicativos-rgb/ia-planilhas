@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.final_csv_exporter import final_csv_bytes
+from bling_app_zero.core.site_diag_frames_min import sync_site_diag_frames
 from bling_app_zero.flows.site_as_source import set_site_source_as_planilha
 from bling_app_zero.flows.site_operation_router import config_for_site_operation, normalize_site_operation
 from bling_app_zero.ui.home_models import save_home_models
@@ -16,6 +17,13 @@ def source_csv_bytes(df: pd.DataFrame) -> bytes:
         operation='origem_site',
         run_download_features=False,
     )
+
+
+def _sync_site_diagnostic_safe() -> None:
+    try:
+        sync_site_diag_frames()
+    except Exception:
+        pass
 
 
 def _requested_columns(requested_columns: list[str] | None) -> list[str]:
@@ -61,6 +69,7 @@ def go_to_main_flow(operation: str) -> None:
     except Exception:
         pass
     _mark_site_as_inline_source(normalized)
+    _sync_site_diagnostic_safe()
 
 
 def save_site_source(
@@ -90,6 +99,7 @@ def save_site_source(
     st.session_state['operation_site'] = normalized
     st.session_state['tipo_operacao_site'] = normalized
     _mark_site_as_inline_source(normalized)
+    _sync_site_diagnostic_safe()
 
 
 def render_site_source_summary(
@@ -108,6 +118,7 @@ def render_site_source_summary(
     """
     if not isinstance(df_site, pd.DataFrame) or df_site.empty:
         return
+    _sync_site_diagnostic_safe()
     st.success(f'Origem pronta: {len(df_site)} registro(s). Siga para o mapeamento abaixo.')
 
     if show_sample:
@@ -140,6 +151,7 @@ def render_generated_site_actions(
     config = config_for_site_operation(normalized)
     df_to_save = _stock_contract_df(df_site, requested_columns) if normalized == 'estoque' else df_site
     save_site_source(df_to_save, raw_urls, requested_columns, df_modelo_cadastro, df_modelo_estoque, df_modelo, normalized)
+    _sync_site_diagnostic_safe()
 
     st.success('Origem por site criada. Siga para o mapeamento abaixo.')
     render_site_progress_history()
