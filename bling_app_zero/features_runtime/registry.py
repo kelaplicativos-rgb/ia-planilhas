@@ -5,6 +5,7 @@ from bling_app_zero.features_runtime.contracts import FeatureContract
 STEP_MODELO = 'modelo'
 STEP_ORIGEM = 'origem'
 STEP_ENTRADA = 'entrada'
+STEP_OPERACAO = 'operacao'
 STEP_PRECIFICACAO = 'precificacao'
 STEP_CATEGORIZACAO = 'categorizacao'
 STEP_MAPEAMENTO = 'mapeamento'
@@ -13,15 +14,15 @@ STEP_IA = 'ia'
 STEP_PREVIEW = 'preview'
 STEP_DOWNLOAD = 'download'
 
-API_STEPS = (STEP_ORIGEM, STEP_ENTRADA, STEP_DOWNLOAD)
+API_STEPS = (STEP_ORIGEM, STEP_ENTRADA, STEP_OPERACAO, STEP_DOWNLOAD)
 
-# BLINGFIX 2026-06-18:
-# Ordem oficial única do fluxo universal:
-# modelo/origem/dados/preço/categorias/mapeamento/regras/IA/prévia/saída.
+# Ordem oficial source-first:
+# origem/dados alimentam a base; só depois o usuário escolhe a operação real.
 UNIVERSAL_STEPS = (
     STEP_MODELO,
     STEP_ORIGEM,
     STEP_ENTRADA,
+    STEP_OPERACAO,
     STEP_PRECIFICACAO,
     STEP_CATEGORIZACAO,
     STEP_MAPEAMENTO,
@@ -35,7 +36,7 @@ CSV_STOCK_STEPS = UNIVERSAL_STEPS
 CSV_PRICE_STEPS = UNIVERSAL_STEPS
 
 CSV_CONTRACT = FeatureContract('universal_mapping_csv', 'Modelo para mapear', 'universal', 'csv', False, True, True, True, True, True, True, 'Download Modelo Mapeado', UNIVERSAL_STEPS)
-API_CONTRACT = FeatureContract('api_compat', 'Enviar', 'universal', 'api', True, False, False, False, False, False, False, 'Enviar', API_STEPS)
+API_CONTRACT = FeatureContract('api_source_first', 'Enviar', 'universal', 'api', True, False, False, False, False, False, False, 'Enviar', API_STEPS)
 CONTRACTS = {('universal', 'csv'): CSV_CONTRACT, ('universal', 'api'): API_CONTRACT}
 OPERATION_ALIASES = {'': 'universal'}
 MODE_ALIASES = {'api_direct': 'api', 'api': 'api', 'download': 'csv', 'csv': 'csv', 'planilha': 'csv', 'universal': 'csv', '': 'csv'}
@@ -60,7 +61,7 @@ def list_feature_contracts() -> list[FeatureContract]:
 __all__ = [
     'API_STEPS', 'CSV_PRICE_STEPS', 'CSV_PRODUCT_STEPS', 'CSV_STOCK_STEPS',
     'CONTRACTS', 'MODE_ALIASES', 'OPERATION_ALIASES', 'STEP_CATEGORIZACAO', 'STEP_DOWNLOAD',
-    'STEP_ENTRADA', 'STEP_IA', 'STEP_MAPEAMENTO', 'STEP_MODELO', 'STEP_ORIGEM',
+    'STEP_ENTRADA', 'STEP_IA', 'STEP_MAPEAMENTO', 'STEP_MODELO', 'STEP_OPERACAO', 'STEP_ORIGEM',
     'STEP_PRECIFICACAO', 'STEP_PREVIEW', 'STEP_REGRAS', 'UNIVERSAL_STEPS',
     'get_feature_contract', 'list_feature_contracts', 'normalize_mode', 'normalize_operation',
 ]
