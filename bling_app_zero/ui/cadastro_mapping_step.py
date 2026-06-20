@@ -5,6 +5,7 @@ from io import BytesIO
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_connected_flow_policy import (
     OP_CADASTRO,
     OP_ESTOQUE,
@@ -76,6 +77,32 @@ MODEL_FALLBACK_KEYS = (
     'df_modelo_estoque',
     'modelo_estoque_df',
     'estoque_wizard_df_modelo',
+)
+
+ORIGIN_FALLBACK_KEYS = (
+    CADASTRO_ORIGEM_KEY,
+    'df_origem_cadastro',
+    'df_origem',
+    'df_origem_planilha',
+    'df_produtos_origem',
+    'df_source',
+    'df_origem_site',
+    'df_origem_site_como_planilha',
+    'df_origem_site_como_planilha_universal',
+    'df_origem_site_como_planilha_cadastro',
+    'df_origem_site_como_planilha_estoque',
+    'df_origem_site_como_planilha_atualizacao_preco',
+    'df_origem_estoque',
+    'df_origem_universal',
+    'df_site_bruto',
+    'df_site_bruto_universal',
+    'df_site_bruto_cadastro',
+    'df_site_bruto_estoque',
+    'df_site_bruto_atualizacao_preco',
+    'estoque_wizard_df_origem_site',
+    'df_final_bling_api',
+    UNIVERSAL_FINAL_KEY,
+    LEGACY_CADASTRO_FINAL_KEY,
 )
 
 
@@ -250,6 +277,35 @@ def _resolve_model_df() -> pd.DataFrame | None:
     return None
 
 
+def _resolve_origin_df() -> pd.DataFrame | None:
+    for key in ORIGIN_FALLBACK_KEYS:
+        value = st.session_state.get(key)
+        if valid_df(value):
+            df = value.copy().fillna('')
+            st.session_state[CADASTRO_ORIGEM_KEY] = df
+            st.session_state['df_origem'] = df
+            st.session_state['df_produtos_origem'] = df
+            try:
+                add_audit_event(
+                    'mapping_origin_resolved_from_fallback',
+                    area='MAPEAMENTO',
+                    step=st.session_state.get('bling_wizard_step'),
+                    status='OK',
+                    details={
+                        'source_key': key,
+                        'rows': int(len(df)),
+                        'columns': [str(column) for column in list(df.columns)[:60]],
+                        'operation': _current_operation(),
+                        'api_context': _is_api_context(),
+                        'responsible_file': RESPONSIBLE_FILE,
+                    },
+                )
+            except Exception:
+                pass
+            return df
+    return None
+
+
 def _current_final_df() -> pd.DataFrame | None:
     for key in ('df_final_bling_api', UNIVERSAL_FINAL_KEY, LEGACY_CADASTRO_FINAL_KEY, 'df_final_cadastro'):
         value = st.session_state.get(key)
@@ -361,7 +417,7 @@ def _render_connected_policy_notice() -> None:
 
 
 def render_cadastro_mapeamento_step() -> None:
-    df_origem = st.session_state.get(CADASTRO_ORIGEM_KEY)
+    df_origem = _resolve_origin_df()
     df_modelo = _resolve_model_df()
     _render_mapping_spine_caption()
 
