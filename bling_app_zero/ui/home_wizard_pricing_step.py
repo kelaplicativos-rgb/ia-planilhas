@@ -39,6 +39,28 @@ def _pricing_enabled_by_spine() -> bool:
     return bool(plan.needs_pricing)
 
 
+def _api_stock_pricing_optional(plan=None) -> bool:
+    if plan is None:
+        plan = _pricing_plan()
+    if plan is not None:
+        operation = str(getattr(plan, 'operation', '') or '').strip().lower()
+        destination = str(getattr(plan, 'final_destination', '') or '').strip().lower()
+        contract_key = str(getattr(plan, 'contract_key', '') or '').strip().lower()
+        if operation == 'estoque' and (destination == 'api_bling' or contract_key == 'api_estoque'):
+            return True
+    operation = str(st.session_state.get('flow_spine_operation') or st.session_state.get('active_feature_operation') or '').strip().lower()
+    destination = str(st.session_state.get('flow_spine_final_destination') or '').strip().lower()
+    return bool(
+        operation == 'estoque'
+        and (
+            destination == 'api_bling'
+            or st.session_state.get('home_bling_connected_same_flow_api_send')
+            or st.session_state.get('bling_connected_api_flow_active')
+            or st.session_state.get('direct_bling_api_contract_active')
+        )
+    )
+
+
 def _store_pricing_spine_state() -> None:
     try:
         plan = output_plan()
@@ -102,7 +124,7 @@ def _render_live_pricing_preview(df_precificado: pd.DataFrame, selected_cost_col
     st.markdown('##### Resultado ao vivo')
     st.success(
         f'Prévia atualizada: {len(df_precificado)} produto(s). '
-        f'As colunas de preço normal e promocional detectadas seguirão para o mapeamento.'
+        'As colunas de preço normal e promocional detectadas seguirão para as próximas etapas do fluxo.'
     )
     try:
         styled = preview.style.set_properties(
@@ -153,23 +175,24 @@ def render_pricing_step(
     _store_pricing_spine_state()
 
     plan = _pricing_plan()
+    optional_api_stock = _api_stock_pricing_optional(plan)
     title = 'Preço'
     if plan is not None and plan.operation == 'atualizacao_preco':
         title = 'Atualização de preços'
 
-    if not _pricing_enabled_by_spine():
+    if not _pricing_enabled_by_spine() and not optional_api_stock:
         section_title(section_number, title)
         disable_home_pricing()
         clear_cadastro_pricing_state()
         st.caption('A espinha dorsal deste fluxo não exige precificação. Esta etapa foi mantida apenas por compatibilidade visual e não altera os dados.')
         return
 
-    if is_price_update and not is_api_direct and not is_universal_entry:
-        section_title(section_number, title)
+    section_title(section_number, title)
+    if optional_api_stock:
+        st.info('Precificação opcional para estoque via API. Ligue a calculadora somente se quiser recalcular os preços antes das regras e da IA.')
+    elif is_price_update and not is_api_direct and not is_universal_entry:
         render_price_update_notice()
         st.caption('Use a calculadora somente se quiser recalcular os valores antes do mapeamento.')
-    else:
-        section_title(section_number, title)
 
     if plan is not None:
         st.caption(f'Fluxo ativo: {plan.contract_key} · operação: {plan.operation} · destino: {plan.final_destination}')
@@ -203,7 +226,7 @@ def render_pricing_step(
         if not is_price_update:
             clear_cadastro_pricing_state()
         st.session_state['flow_spine_pricing_applied'] = False
-        st.caption('Opcional. Se desligada, mantém o preço da origem ou do mapeamento.')
+        st.caption('Opcional. Se desligada, mantém os valores captados na origem e segue para as regras.')
 
 
 __all__ = ['apply_pricing_step_result', 'render_pricing_step', 'source_dataframe_for_pricing']
