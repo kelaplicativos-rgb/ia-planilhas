@@ -32,16 +32,24 @@ API_CONTRACT_COLUMNS = {
 }
 
 
-def normalize_direct_operation(value: object, default: str = OP_CADASTRO) -> str:
+def normalize_direct_operation(value: object, default: str = '') -> str:
+    """Normaliza somente operações concretas da API.
+
+    Sem escolha explícita do usuário, retorna vazio. Isso impede que o modo API
+    caia automaticamente em cadastro ou universal por cache/compatibilidade.
+    """
     operation = normalize_contract_operation(value)
     if operation in DIRECT_OPERATION_LABELS:
         return operation
-    return default
+    fallback = normalize_contract_operation(default)
+    return fallback if fallback in DIRECT_OPERATION_LABELS else ''
 
 
 def direct_operation_label(operation: object) -> str:
     normalized = normalize_direct_operation(operation)
-    return DIRECT_OPERATION_LABELS.get(normalized, str(operation or normalized))
+    if normalized in DIRECT_OPERATION_LABELS:
+        return DIRECT_OPERATION_LABELS[normalized]
+    return str(operation or '').strip()
 
 
 def direct_operation_options() -> list[str]:
@@ -50,7 +58,9 @@ def direct_operation_options() -> list[str]:
 
 def direct_api_contract_columns(operation: object | None = None) -> list[str]:
     normalized = normalize_direct_operation(operation)
-    return list(API_CONTRACT_COLUMNS.get(normalized, API_CONTRACT_COLUMNS[OP_CADASTRO]))
+    if normalized not in API_CONTRACT_COLUMNS:
+        return []
+    return list(API_CONTRACT_COLUMNS[normalized])
 
 
 def direct_api_contract_model(operation: object | None = None) -> pd.DataFrame:
