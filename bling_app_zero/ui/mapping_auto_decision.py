@@ -2,11 +2,31 @@ from __future__ import annotations
 
 import streamlit as st
 
+from bling_app_zero.core.audit import add_audit_event
+
 AUTO_MAPPING_LABEL = 'Ativar mapeamento automático'
 GLOBAL_AUTO_MAPPING_KEY = 'home_mapping_auto_enabled'
 GLOBAL_AUTO_MAPPING_DECIDED_KEY = 'home_mapping_auto_user_decided'
 GLOBAL_AUTO_MAPPING_SOURCE_KEY = 'home_mapping_auto_decision_source'
 RESPONSIBLE_FILE = 'bling_app_zero/ui/mapping_auto_decision.py'
+
+
+def _audit_mapping_toggle(*, value: bool, source: str, widget_key: str) -> None:
+    try:
+        add_audit_event(
+            'mapping_auto_toggle_rendered',
+            area='MAPEAMENTO',
+            status='OK',
+            details={
+                'value': bool(value),
+                'source': source,
+                'widget_key': widget_key,
+                'manual_mode_means_blank_mapping': True,
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+    except Exception:
+        pass
 
 
 def mapping_auto_decision(default: bool = False) -> bool:
@@ -49,6 +69,7 @@ def render_mapping_auto_decision_toggle(
         ),
     )
     set_mapping_auto_decision(bool(enabled), source=source)
+    _audit_mapping_toggle(value=bool(enabled), source=source, widget_key=widget_key)
     if enabled:
         st.caption('Mapeamento automático ligado: o próximo passo já abrirá com sugestões para revisão.')
     else:
