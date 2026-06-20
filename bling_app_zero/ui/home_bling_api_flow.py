@@ -52,6 +52,8 @@ API_STOCK_DEPOSIT_KEY = 'bling_api_stock_deposit_name'
 API_STOCK_DEPOSIT_ID_KEY = 'bling_api_stock_deposit_id'
 API_STOCK_DEPOSIT_OPTIONS_KEY = 'bling_api_stock_deposit_options'
 API_STOCK_DEPOSIT_AUTOLOAD_KEY = 'bling_api_stock_deposit_autoload_attempted'
+API_STOCK_DEPOSIT_CONTEXT_KEY = 'bling_api_stock_deposit_context_operation'
+API_STOCK_DEPOSIT_LAST_ERROR_KEY = 'bling_api_stock_deposit_last_error'
 DEFAULT_API_BASE_URL = 'https://www.bling.com.br/Api/v3'
 
 DIRECT_CONTRACT_SESSION_KEYS = (
@@ -164,6 +166,20 @@ def apply_direct_api_contract(operation: str | None = None) -> pd.DataFrame:
     return model
 
 
+def reset_stock_deposit_cache(*, clear_selection: bool = False, reason: str = '') -> None:
+    for key in (API_STOCK_DEPOSIT_OPTIONS_KEY, API_STOCK_DEPOSIT_AUTOLOAD_KEY, API_STOCK_DEPOSIT_LAST_ERROR_KEY, API_STOCK_DEPOSIT_CONTEXT_KEY):
+        st.session_state.pop(key, None)
+    if clear_selection:
+        st.session_state.pop(API_STOCK_DEPOSIT_ID_KEY, None)
+        st.session_state.pop(API_STOCK_DEPOSIT_KEY, None)
+    add_audit_event(
+        'bling_api_stock_deposit_cache_reset',
+        area='BLING_API',
+        status='OK',
+        details={'clear_selection': clear_selection, 'reason': reason, 'responsible_file': RESPONSIBLE_FILE},
+    )
+
+
 def _deposit_paths() -> list[str]:
     configured = _secret('stock_deposits_path', '')
     paths = [configured] if configured else []
@@ -213,16 +229,26 @@ def _normalize_deposit(item: dict[str, Any]) -> dict[str, str] | None:
 
 def _fetch_stock_deposits() -> tuple[list[dict[str, str]], str]:
     sync_backend_token_to_streamlit()
-    token, _meta = load_token()
+    token, meta = load_token()
     if not isinstance(token, dict) or not token.get('access_token'):
-        return [], 'Bling não conectado.'
+        error = 'Bling não conectado ou token indisponível para consultar depósitos.'
+        st.session_state[API_STOCK_DEPOSIT_LAST_ERROR_KEY] = error
+        add_audit_event(
+            'bling_api_stock_deposits_not_loaded',
+            area='BLING_API',
+            status='BLOQUEADO',
+            details={'reason': 'missing_access_token', 'token_meta': meta, 'responsible_file': RESPONSIBLE_FILE},
+        )
+        return [], error
     headers = {'Accept': 'application/json', 'Authorization': f"Bearer {token.get('access_token')}"}
     errors: list[str] = []
     for path in _deposit_paths():
+        url = _deposit_url(path)
         try:
-            response = requests.get(_deposit_url(path), headers=headers, timeout=30)
+            response = requests.get(url, headers=headers, timeout=30)
             if response.status_code >= 400:
                 errors.append(f'{path}: HTTP {response.status_code}')
+                add_audit_event('bling_api_stock_deposits_path_failed', area='BLING_API', status='ERRO', details={'path': path, 'http_status': response.status_code, 'responsible_file': RESPONSIBLE_FILE})
                 continue
             normalized: list[dict[str, str]] = []
             seen: set[tuple[str, str]] = set()
@@ -237,19 +263,24 @@ def _fetch_stock_deposits() -> tuple[list[dict[str, str]], str]:
                 normalized.append(deposit)
             if normalized:
                 st.session_state[API_STOCK_DEPOSIT_OPTIONS_KEY] = normalized
+                st.session_state.pop(API_STOCK_DEPOSIT_LAST_ERROR_KEY, None)
                 add_audit_event('bling_api_stock_deposits_loaded', area='BLING_API', status='OK', details={'path': path, 'count': len(normalized), 'responsible_file': RESPONSIBLE_FILE})
                 return normalized, ''
             errors.append(f'{path}: sem depósitos reconhecidos')
         except Exception as exc:
             errors.append(f'{path}: {exc}')
-    return [], 'Não consegui buscar depósitos automaticamente. ' + ' | '.join(errors[:4])
+            add_audit_event('bling_api_stock_deposits_path_exception', area='BLING_API', status='ERRO', details={'path': path, 'error': str(exc), 'responsible_file': RESPONSIBLE_FILE})
+    error = 'Não consegui buscar depósitos automaticamente. ' + ' | '.join(errors[:4])
+    st.session_state[API_STOCK_DEPOSIT_LAST_ERROR_KEY] = error
+    add_audit_event('bling_api_stock_deposits_not_loaded', area='BLING_API', status='ERRO', details={'errors': errors[:6], 'responsible_file': RESPONSIBLE_FILE})
+    return [], error
 
 
-def _ensure_stock_deposits_loaded() -> None:
+def _ensure_stock_deposits_loaded(*, force: bool = False) -> None:
     deposits = st.session_state.get(API_STOCK_DEPOSIT_OPTIONS_KEY)
-    if isinstance(deposits, list) and deposits:
+    if not force and isinstance(deposits, list) and deposits:
         return
-    if st.session_state.get(API_STOCK_DEPOSIT_AUTOLOAD_KEY):
+    if not force and st.session_state.get(API_STOCK_DEPOSIT_AUTOLOAD_KEY):
         return
     st.session_state[API_STOCK_DEPOSIT_AUTOLOAD_KEY] = True
     deposits, error = _fetch_stock_deposits()
@@ -266,12 +297,16 @@ def _render_stock_deposit_field(operation: str) -> None:
     st.markdown('##### Depósito do estoque')
     st.caption('O sistema tenta buscar automaticamente os depósitos reais do Bling. Se houver mais de um, selecione o correto.')
 
+    if st.session_state.get(API_STOCK_DEPOSIT_CONTEXT_KEY) != op:
+        reset_stock_deposit_cache(clear_selection=False, reason='operation_context_changed_to_stock')
+        st.session_state[API_STOCK_DEPOSIT_CONTEXT_KEY] = op
+
     _ensure_stock_deposits_loaded()
 
     if st.button('🔄 Atualizar depósitos do Bling', use_container_width=True, key='bling_scan_stock_deposits'):
         st.session_state.pop(API_STOCK_DEPOSIT_ID_KEY, None)
         st.session_state.pop(API_STOCK_DEPOSIT_KEY, None)
-        st.session_state[API_STOCK_DEPOSIT_AUTOLOAD_KEY] = True
+        st.session_state.pop(API_STOCK_DEPOSIT_AUTOLOAD_KEY, None)
         deposits, error = _fetch_stock_deposits()
         if error:
             st.warning(error)
@@ -386,29 +421,23 @@ def _activate_short_api_flow(operation: str) -> None:
 def render_bling_connection_step(section_title) -> None:
     section_title(1, 'Bling API')
     with st.container(border=True):
-        st.caption('Fluxo curto: escolha a operação, carregue os dados e envie direto ao Bling. Não usa modelo de planilha.')
+        st.caption('Fluxo curto: conecte ao Bling, carregue a origem e escolha a operação somente na etapa Operação. Não usa modelo de planilha.')
         local_status = connection_status()
         backend_status = backend_connection_status()
         connected = bool(local_status.get('connected')) or _connected_via_backend()
         callback_url = str(local_status.get('required_redirect_uri') or required_redirect_uri()).strip()
 
         if connected:
+            activate_api_finish_mode()
             source = 'backend externo' if backend_status.get('enabled') and backend_status.get('connected') else 'Streamlit'
-            st.success(f'Bling conectado via {source}. O modo API direta já está ativo.')
-            operation = st.radio(
-                'O que deseja fazer no Bling?',
-                options=direct_operation_options(),
-                format_func=lambda value: DIRECT_OPERATION_LABELS.get(value, value),
-                horizontal=True,
-                key='direct_bling_operation_choice',
-            )
-            _activate_short_api_flow(operation)
-            _render_stock_deposit_field(operation)
-            st.caption('Etapas deste caminho: Origem dos dados → Dados carregados → Enviar ao Bling.')
+            st.success(f'Bling conectado via {source}.')
+            st.info('A operação não é escolhida aqui para evitar conflito. Use a etapa Operação para confirmar Cadastro, Estoque por Depósito ou Preços.')
+            add_audit_event('bling_api_connected_source_first_ready', area='BLING_API', status='OK', details={'source': source, 'operation_chosen_in': 'source_first_operation_gate', 'responsible_file': RESPONSIBLE_FILE})
 
             if st.button('Desconectar Bling', use_container_width=True, key='entry_disconnect_bling'):
                 disconnect()
                 clear_direct_api_contract()
+                reset_stock_deposit_cache(clear_selection=True, reason='bling_disconnected')
                 clear_finish_mode()
                 safe_rerun('bling_api_disconnected', target_step=STEP_ORIGEM)
             return
@@ -449,4 +478,5 @@ __all__ = [
     'is_api_direct_mode',
     'is_bling_api_entry',
     'render_bling_connection_step',
+    'reset_stock_deposit_cache',
 ]
