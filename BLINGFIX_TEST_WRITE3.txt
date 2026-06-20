@@ -1,0 +1,2 @@
+def x(e):
+    return str(e)
