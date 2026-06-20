@@ -14,10 +14,17 @@ UNIFIED_BLING_SEND_KEY = 'home_bling_connected_same_flow_api_send'
 WIZARD_STEP_KEY = 'bling_wizard_step'
 
 OP_UNIVERSAL = 'universal'
+OP_API_PENDING = 'api_pending'
 OP_CADASTRO = 'cadastro'
 OP_ESTOQUE = 'estoque'
 OP_ATUALIZACAO_PRECO = 'atualizacao_preco'
 CONCRETE_API_OPERATIONS = {OP_CADASTRO, OP_ESTOQUE, OP_ATUALIZACAO_PRECO}
+API_CONTRACT_BY_OPERATION = {
+    OP_API_PENDING: 'api_pending',
+    OP_CADASTRO: 'api_cadastro',
+    OP_ESTOQUE: 'api_estoque',
+    OP_ATUALIZACAO_PRECO: 'api_atualizacao_preco',
+}
 
 API_FINISH_MODES = {'api_direct', 'api', 'bling_api'}
 SOURCE_FIRST_STEPS = {'origem', 'entrada'}
@@ -43,10 +50,14 @@ SOURCE_DF_KEYS = (
     'estoque_wizard_df_origem_site',
 )
 API_OPERATION_STATE_KEYS = (
+    'source_first_selected_operation',
     'api_operation',
     'bling_api_operation',
+    'home_bling_api_operation_choice',
+    'bling_connected_api_operation',
     'flow_spine_sender_operation',
     'flow_spine_operation_resolved_for_api',
+    'direct_bling_operation_choice',
     'direct_bling_operation_applied',
     'final_download_operation',
     'df_final_download_operation',
@@ -113,7 +124,7 @@ def _normalize_api_operation(value: object, *, default: str = '') -> str:
         return OP_ESTOQUE
     if 'preco' in text or 'price' in text:
         return OP_ATUALIZACAO_PRECO
-    if 'cadastro' in text or 'produto' in text or 'produtos' in text or 'catalogo' in text:
+    if 'cadastro' in text or 'catalogo' in text:
         return OP_CADASTRO
     return default
 
@@ -207,11 +218,20 @@ def _site_capture_ready() -> bool:
     return False
 
 
+def _source_first_choice_pending() -> bool:
+    try:
+        if _source_data_ready() and not _normalize_api_operation(st.session_state.get('source_first_selected_operation')):
+            return True
+    except Exception:
+        return False
+    return False
+
+
 def active_mode() -> str:
     # A conexão OAuth apenas libera recursos. Ela nunca escolhe o fluxo.
     # O modo API curto exige uma escolha explícita registrada no finish mode.
     if bool(st.session_state.get(UNIFIED_BLING_SEND_KEY)):
-        return 'csv'
+        return 'api'
     finish = _clean(st.session_state.get(FINISH_MODE_KEY))
     return 'api' if finish in API_FINISH_MODES else 'csv'
 
@@ -219,72 +239,86 @@ def active_mode() -> str:
 def active_api_operation(default: str = '') -> str:
     """Resolve a operação concreta somente para envio API.
 
-    BLINGFIX 2026-06-15:
-    - Universal continua sendo o contrato do mapeamento/download.
-    - API nunca deve receber universal como operação de envio.
-    - Conexão Bling não força API; apenas habilita o destino quando o usuário escolhe enviar.
+    BLINGFIX 2026-06-20:
+    - No modo API não existe operação universal.
+    - Depois que a origem foi carregada, a API fica pendente até o usuário escolher
+      cadastro, estoque por depósito ou atualização de preços.
+    - Site/origem nunca força cadastro automaticamente.
     """
     for key in API_OPERATION_STATE_KEYS:
         op = _normalize_api_operation(_state_value(key))
         if op in CONCRETE_API_OPERATIONS:
             return op
 
+    if _source_first_choice_pending():
+        return ''
+
     joined_hints = ' '.join(_state_text(key) for key in API_OPERATION_HINT_KEYS)
     op = _normalize_api_operation(joined_hints)
     if op in CONCRETE_API_OPERATIONS:
         return op
 
-    for key in API_OPERATION_DF_KEYS:
-        op = _operation_from_dataframe(_state_value(key))
-        if op in CONCRETE_API_OPERATIONS:
-            return op
-
-    origin = ' '.join(_state_text(key) for key in ('home_slim_flow_origin', 'origem_final', 'site_capture_raw_urls'))
-    if bool(st.session_state.get(UNIFIED_BLING_SEND_KEY)) and ('site' in origin or origin.startswith('http') or _site_capture_ready()):
-        return OP_CADASTRO
+    if not (_source_data_ready() or _site_capture_ready()):
+        for key in API_OPERATION_DF_KEYS:
+            op = _operation_from_dataframe(_state_value(key))
+            if op in CONCRETE_API_OPERATIONS:
+                return op
 
     return default if default in CONCRETE_API_OPERATIONS else ''
 
 
 def active_operation() -> str:
-    # Para o fluxo de planilha/modelo, mantém universal.
-    # Para API curta explícita, expõe a operação real quando houver.
     if active_mode() != 'api':
         return OP_UNIVERSAL
-    return active_api_operation(default=OP_UNIVERSAL) or OP_UNIVERSAL
+    return active_api_operation(default='') or OP_API_PENDING
+
+
+def _api_contract_key(api_operation: str) -> str:
+    return API_CONTRACT_BY_OPERATION.get(api_operation, OP_API_PENDING)
 
 
 def _apply_runtime_state(contract: FeatureContract) -> None:
     api_operation = active_api_operation()
-    _safe_state_set('active_feature_contract_key', 'universal_mapping')
-    _safe_state_set('active_feature_operation', OP_UNIVERSAL)
     _safe_state_set('active_feature_mode', contract.mode)
     _safe_state_set('active_feature_steps', list(contract.steps))
-    _safe_state_set('flow_spine_contract_key', 'universal_mapping')
-    _safe_state_set('flow_spine_operation', OP_UNIVERSAL)
-    _safe_state_set('flow_spine_primary_action_label', 'Download Modelo Mapeado')
 
     if contract.mode == 'api':
+        resolved_operation = api_operation if api_operation in CONCRETE_API_OPERATIONS else OP_API_PENDING
+        contract_key = _api_contract_key(resolved_operation)
+        _safe_state_set('active_feature_contract_key', contract_key)
+        _safe_state_set('active_feature_operation', resolved_operation)
+        _safe_state_set('flow_spine_contract_key', contract_key)
+        _safe_state_set('flow_spine_operation', resolved_operation)
         _safe_state_set('flow_spine_final_destination', 'api_bling')
-        _safe_state_set('flow_spine_final_title', 'Enviar')
+        _safe_state_set('flow_spine_final_title', 'Enviar' if api_operation else 'Escolher operação')
+        _safe_state_set('flow_spine_primary_action_label', 'Enviar' if api_operation else 'Escolher operação')
         if api_operation in CONCRETE_API_OPERATIONS:
             _safe_state_set('direct_bling_operation_applied', api_operation)
             _safe_state_set('flow_spine_sender_operation', api_operation)
             _safe_state_set('flow_spine_operation_resolved_for_api', api_operation)
         else:
             _safe_state_set('direct_bling_operation_applied', '')
-    else:
-        _safe_state_set('flow_spine_final_destination', 'download')
-        _safe_state_set('flow_spine_final_title', 'Download')
-        if bool(st.session_state.get(UNIFIED_BLING_SEND_KEY)) and api_operation in CONCRETE_API_OPERATIONS:
-            _safe_state_set('flow_spine_sender_operation', api_operation)
-            _safe_state_set('flow_spine_operation_resolved_for_api', api_operation)
-            _safe_state_set('direct_bling_operation_applied', api_operation)
+            _safe_state_set('flow_spine_sender_operation', '')
+            _safe_state_set('flow_spine_operation_resolved_for_api', '')
+        return
+
+    _safe_state_set('active_feature_contract_key', 'universal_mapping')
+    _safe_state_set('active_feature_operation', OP_UNIVERSAL)
+    _safe_state_set('flow_spine_contract_key', 'universal_mapping')
+    _safe_state_set('flow_spine_operation', OP_UNIVERSAL)
+    _safe_state_set('flow_spine_primary_action_label', 'Download Modelo Mapeado')
+    _safe_state_set('flow_spine_final_destination', 'download')
+    _safe_state_set('flow_spine_final_title', 'Download')
+    if bool(st.session_state.get(UNIFIED_BLING_SEND_KEY)) and api_operation in CONCRETE_API_OPERATIONS:
+        _safe_state_set('flow_spine_sender_operation', api_operation)
+        _safe_state_set('flow_spine_operation_resolved_for_api', api_operation)
+        _safe_state_set('direct_bling_operation_applied', api_operation)
 
 
 def active_contract() -> FeatureContract:
     mode = active_mode()
-    contract = get_feature_contract('universal', mode)
+    operation = active_operation() if mode == 'api' else OP_UNIVERSAL
+    contract = get_feature_contract(operation, mode)
     _apply_runtime_state(contract)
     return contract
 
@@ -330,6 +364,8 @@ def feature_needs_download() -> bool:
 
 
 def feature_primary_action_label() -> str:
+    if active_mode() == 'api':
+        return 'Enviar' if active_api_operation() else 'Escolher operação'
     return 'Download Modelo Mapeado'
 
 
