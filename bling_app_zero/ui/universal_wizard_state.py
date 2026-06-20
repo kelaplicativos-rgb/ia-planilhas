@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.operation_contract import OP_ATUALIZACAO_PRECO, OP_CADASTRO, OP_ESTOQUE, normalize_operation
 from bling_app_zero.ui.cadastro_wizard_state import (
     CADASTRO_MAPPING_CONFIRMED_KEY,
     CADASTRO_MAPPING_SIGNATURE_KEY,
@@ -18,9 +19,12 @@ from bling_app_zero.ui.cadastro_wizard_state import (
     valid_df,
     valid_model,
 )
+from bling_app_zero.ui.flow_context import CONTEXT_BLING_API, entry_context
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/universal_wizard_state.py'
 API_DESTINATION = 'api_bling'
+API_PENDING_OPERATION = 'api_pending'
+CONCRETE_API_OPERATIONS = {OP_CADASTRO, OP_ESTOQUE, OP_ATUALIZACAO_PRECO}
 
 ORIGIN_FALLBACK_KEYS = (
     UNIVERSAL_ORIGEM_KEY,
@@ -46,7 +50,69 @@ ORIGIN_FALLBACK_KEYS = (
 )
 
 
+def _api_flow_active() -> bool:
+    try:
+        if entry_context() == CONTEXT_BLING_API:
+            return True
+    except Exception:
+        pass
+    return bool(
+        st.session_state.get('home_bling_connected_same_flow_api_send')
+        or st.session_state.get('bling_connected_api_flow_active')
+        or st.session_state.get('direct_bling_api_contract_active')
+        or str(st.session_state.get('flow_spine_final_destination') or '').strip().lower() == API_DESTINATION
+    )
+
+
+def _concrete_operation(value: object) -> str:
+    op = normalize_operation(value, default='')
+    return op if op in CONCRETE_API_OPERATIONS else ''
+
+
+def _api_operation_from_state() -> str:
+    confirmed = bool(st.session_state.get('source_first_operation_user_confirmed'))
+    source_first_op = _concrete_operation(st.session_state.get('source_first_selected_operation'))
+    if confirmed:
+        return source_first_op
+    if st.session_state.get('source_first_operation_pending_choice') or not source_first_op:
+        return ''
+    for key in (
+        'api_operation',
+        'bling_api_operation',
+        'home_bling_api_operation_choice',
+        'bling_connected_api_operation',
+        'direct_bling_operation_choice',
+        'flow_spine_sender_operation',
+        'flow_spine_operation_resolved_for_api',
+        'flow_spine_api_batch_operation',
+        'site_capture_operation',
+    ):
+        op = _concrete_operation(st.session_state.get(key))
+        if op:
+            return op
+    return ''
+
+
+def _apply_api_state() -> None:
+    op = _api_operation_from_state() or API_PENDING_OPERATION
+    st.session_state['home_slim_flow_operation'] = op
+    st.session_state['home_detected_operation'] = op
+    st.session_state['operacao_final'] = op
+    st.session_state['tipo_operacao_final'] = op
+    st.session_state['flow_spine_operation'] = op
+    st.session_state['active_feature_operation'] = op
+    if op in CONCRETE_API_OPERATIONS:
+        st.session_state['destination_model_contract_type'] = op
+        st.session_state['destination_model_contract_label'] = 'Modelo para mapear'
+    else:
+        st.session_state.pop('destination_model_contract_type', None)
+        st.session_state['destination_model_contract_label'] = 'Operação API pendente'
+
+
 def _force_universal_state() -> None:
+    if _api_flow_active():
+        _apply_api_state()
+        return
     st.session_state['destination_model_contract_type'] = 'universal'
     st.session_state['destination_model_contract_label'] = 'Modelo para mapear'
     st.session_state['home_slim_flow_operation'] = 'universal'
