@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -31,6 +32,7 @@ FULL_VALIDATION_SESSION_KEYS = (
     'df_final_cadastro',
     'df_final_universal',
 )
+BATCH_SUBSET_OPERATIONS = {'estoque', 'atualizacao_preco'}
 
 
 @dataclass(frozen=True)
@@ -100,6 +102,30 @@ def _expected_table_signature() -> str:
     return str(st.session_state.get(FINAL_DOWNLOAD_SIGNATURE_KEY) or st.session_state.get(GLOBAL_FINAL_DATASET_SIGNATURE_KEY) or '').strip()
 
 
+def _table_shape_from_signature(signature: str) -> tuple[int, int]:
+    match = re.search(r':table:(\d+)x(\d+):', str(signature or ''))
+    if not match:
+        return 0, 0
+    try:
+        return int(match.group(1)), int(match.group(2))
+    except Exception:
+        return 0, 0
+
+
+def _is_allowed_batch_subset(*, op: str, expected_table: str, input_rows: int, input_columns: int, validation_source_key: str) -> bool:
+    """Permite validar lotes de estoque/preço contra prévia maior já aprovada.
+
+    O envio API inteligente processa lotes pequenos. O diagnóstico mostrou que,
+    para estoque, cada lote de 5 linhas era bloqueado contra a assinatura da
+    prévia completa de 324 linhas mesmo sem alteração real da tabela. Cadastro
+    continua rígido, pois depende da conferência de categoria na base completa.
+    """
+    if op not in BATCH_SUBSET_OPERATIONS or validation_source_key:
+        return False
+    expected_rows, expected_columns = _table_shape_from_signature(expected_table)
+    return bool(expected_rows > input_rows > 0 and expected_columns == input_columns and input_columns > 0)
+
+
 def _signature_context_label(context: str) -> str:
     return context or 'default'
 
@@ -166,6 +192,14 @@ def validate_before_bling_send(df: pd.DataFrame, operation: object) -> SendGuard
     expected_category = str(st.session_state.get(CATEGORY_VALUES_SIGNATURE_KEY) or '')
     auto_category_applied = _category_was_auto_applied()
     category_issue_rows = _final_category_issue_rows(validation_df, category_col) if op == 'cadastro' and isinstance(validation_df, pd.DataFrame) else tuple()
+    expected_rows, expected_columns = _table_shape_from_signature(expected_table)
+    batch_subset_allowed = _is_allowed_batch_subset(
+        op=op,
+        expected_table=expected_table,
+        input_rows=input_rows,
+        input_columns=input_columns,
+        validation_source_key=validation_source_key,
+    )
     details: dict[str, Any] = {
         'operation': op,
         'rows': int(len(validation_df)) if isinstance(validation_df, pd.DataFrame) else 0,
@@ -173,6 +207,9 @@ def validate_before_bling_send(df: pd.DataFrame, operation: object) -> SendGuard
         'input_columns': input_columns,
         'validation_source_key': validation_source_key,
         'validation_uses_full_dataset': bool(validation_source_key),
+        'expected_table_rows': expected_rows,
+        'expected_table_columns': expected_columns,
+        'batch_subset_allowed': batch_subset_allowed,
         'table_signature': current_table,
         'expected_table_signature': expected_table,
         'table_signature_context': 'final_download',
@@ -193,7 +230,7 @@ def validate_before_bling_send(df: pd.DataFrame, operation: object) -> SendGuard
 
     if not isinstance(df, pd.DataFrame) or df.empty:
         return SendGuardResult(False, 'PARAR', ('Nenhuma linha pronta para envio.',), details)
-    if expected_table and expected_table not in set(table_signatures.values()):
+    if expected_table and expected_table not in set(table_signatures.values()) and not batch_subset_allowed:
         messages.append('A tabela atual mudou depois da última prévia. Gere a prévia final novamente.')
     if op == 'cadastro':
         if not category_col:
