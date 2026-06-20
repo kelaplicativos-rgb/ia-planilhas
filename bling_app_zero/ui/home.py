@@ -6,6 +6,7 @@ import streamlit as st
 
 from bling_app_zero.core import APP_VERSION
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.diag_base import record_stage
 from bling_app_zero.ui.alerts import enforce_attention_alert_policy
 from bling_app_zero.ui.bottom_nav import render_bottom_nav, render_persistent_operation_controls
 from bling_app_zero.ui.home_router_v2 import render_home as render_home_router
@@ -42,6 +43,7 @@ def _render_blingfix_runtime_stamp() -> None:
 def render_home() -> None:
     from bling_app_zero.ui.home_autofluxo import run_home_autofluxo
 
+    record_stage('home_render_start', area='HOME', details={'version': APP_VERSION, 'responsible_file': RESPONSIBLE_FILE})
     enforce_attention_alert_policy()
     run_wizard_state_guard()
     run_home_autofluxo()
@@ -54,6 +56,7 @@ def render_home() -> None:
     render_persistent_operation_controls()
     render_home_router()
     render_bottom_nav()
+    record_stage('home_render_finished', area='HOME', details={'version': APP_VERSION, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['render_home']
