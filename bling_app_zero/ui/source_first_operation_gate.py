@@ -4,6 +4,7 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.operation_contract import OP_ATUALIZACAO_PRECO, OP_CADASTRO, OP_ESTOQUE, OP_UNIVERSAL, normalize_operation
+from bling_app_zero.ui.flow_context import CONTEXT_BLING_API, FINISH_MODE_API, entry_context as _entry_context, finish_mode as _finish_mode
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/source_first_operation_gate.py'
 SELECTED_OPERATION_KEY = 'source_first_selected_operation'
@@ -63,6 +64,27 @@ def _normalize(value: object, default: str = '') -> str:
     return op if op in CONCRETE_OPERATIONS else default
 
 
+def _api_flow_active() -> bool:
+    try:
+        if _entry_context() == CONTEXT_BLING_API:
+            return True
+    except Exception:
+        pass
+    return bool(
+        st.session_state.get('home_bling_connected_same_flow_api_send')
+        or st.session_state.get('bling_connected_api_flow_active')
+        or st.session_state.get('direct_bling_api_contract_active')
+        or _finish_mode() == FINISH_MODE_API
+    )
+
+
+def _mark_api_operation_flow_active() -> None:
+    if not _api_flow_active():
+        return
+    st.session_state['home_bling_connected_same_flow_api_send'] = True
+    st.session_state['bling_connected_api_flow_active'] = True
+
+
 def _has_dataframe(value: object) -> bool:
     try:
         return bool(value is not None and not getattr(value, 'empty', True) and len(getattr(value, 'columns', [])) > 0)
@@ -98,7 +120,7 @@ def operation_ready() -> bool:
     op = selected_operation()
     if op not in CONCRETE_OPERATIONS:
         return False
-    if op == OP_ESTOQUE and bool(st.session_state.get('home_bling_connected_same_flow_api_send')):
+    if op == OP_ESTOQUE and _api_flow_active():
         return deposit_selected()
     return True
 
@@ -119,6 +141,15 @@ def _clear_operation_keys(reason: str) -> None:
 
 
 def clear_inferred_operation_until_user_chooses() -> None:
+    # No Bling API a operação vem antes da origem. Portanto não limpe a escolha
+    # só porque ainda não existe dataframe de origem carregado.
+    if _api_flow_active():
+        if _user_confirmed() and _normalize(st.session_state.get(SELECTED_OPERATION_KEY)) in CONCRETE_OPERATIONS:
+            _mark_api_operation_flow_active()
+            return
+        st.session_state['source_first_operation_pending_choice'] = True
+        st.session_state['home_slim_flow_operation'] = OP_UNIVERSAL
+        return
     if not source_data_ready():
         return
     if _user_confirmed() and _normalize(st.session_state.get(SELECTED_OPERATION_KEY)) in CONCRETE_OPERATIONS:
@@ -154,6 +185,7 @@ def write_selected_operation(operation: object) -> str:
     st.session_state['source_first_operation_pending_choice'] = False
     for key in OPERATION_KEYS:
         st.session_state[key] = op
+    _mark_api_operation_flow_active()
     try:
         from bling_app_zero.ui.home_bling_api_flow import apply_direct_api_contract, reset_stock_deposit_cache
         apply_direct_api_contract(op)
@@ -161,18 +193,22 @@ def write_selected_operation(operation: object) -> str:
             reset_stock_deposit_cache(clear_selection=False, reason='stock_operation_confirmed')
     except Exception:
         pass
-    add_audit_event('source_first_operation_selected', area='WIZARD', status='OK', details={'operation': op, 'explicit_confirmation': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('source_first_operation_selected', area='WIZARD', status='OK', details={'operation': op, 'explicit_confirmation': True, 'api_flow_active': _api_flow_active(), 'responsible_file': RESPONSIBLE_FILE})
     return op
 
 
 def render_operation_gate(section_title, section_number: int) -> None:
     from bling_app_zero.ui.home_bling_api_flow import _render_stock_deposit_field
 
+    api_flow = _api_flow_active()
     section_title(section_number, 'Operação')
-    if not source_data_ready():
+    if not source_data_ready() and not api_flow:
         st.info('Carregue a origem dos dados primeiro. A operação só será escolhida depois da origem.')
         return
-    st.caption('A origem não define o fluxo. Escolha e confirme se estes dados serão cadastro, estoque por depósito ou atualização de preços.')
+    if api_flow:
+        st.caption('Escolha a operação antes da origem. Para estoque via API, o depósito é obrigatório e aparece logo após confirmar.')
+    else:
+        st.caption('A origem não define o fluxo. Escolha e confirme se estes dados serão cadastro, estoque por depósito ou atualização de preços.')
     options = [PENDING_CHOICE, OP_CADASTRO, OP_ESTOQUE, OP_ATUALIZACAO_PRECO]
     option_labels = {
         PENDING_CHOICE: 'Escolha a operação...',
@@ -198,7 +234,7 @@ def render_operation_gate(section_title, section_number: int) -> None:
         st.warning('A operação ainda não foi confirmada. Nada será tratado como cadastro, estoque ou preço automaticamente.')
         return
     if op == OP_ESTOQUE:
-        st.warning('Depósito obrigatório antes de calculadora, IA, regras, prévia e envio.')
+        st.warning('Depósito obrigatório antes de origem, calculadora, IA, regras, prévia e envio.')
         _render_stock_deposit_field(OP_ESTOQUE)
         if deposit_selected():
             st.success('Depósito confirmado. O fluxo de estoque está liberado para seguir.')
