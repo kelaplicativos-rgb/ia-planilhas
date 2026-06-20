@@ -39,26 +39,43 @@ def _pricing_enabled_by_spine() -> bool:
     return bool(plan.needs_pricing)
 
 
+def _stock_label(value: object) -> bool:
+    text = str(value or '').strip().lower()
+    return bool('estoque' in text or 'stock' in text or 'saldo' in text)
+
+
 def _api_stock_pricing_optional(plan=None) -> bool:
+    """Libera a calculadora no fluxo api_estoque mesmo quando a Flow Spine diz needs_pricing=False."""
     if plan is None:
         plan = _pricing_plan()
     if plan is not None:
         operation = str(getattr(plan, 'operation', '') or '').strip().lower()
         destination = str(getattr(plan, 'final_destination', '') or '').strip().lower()
         contract_key = str(getattr(plan, 'contract_key', '') or '').strip().lower()
-        if operation == 'estoque' and (destination == 'api_bling' or contract_key == 'api_estoque'):
+        if (contract_key == 'api_estoque' or _stock_label(operation)) and destination == 'api_bling':
             return True
-    operation = str(st.session_state.get('flow_spine_operation') or st.session_state.get('active_feature_operation') or '').strip().lower()
-    destination = str(st.session_state.get('flow_spine_final_destination') or '').strip().lower()
-    return bool(
-        operation == 'estoque'
-        and (
-            destination == 'api_bling'
-            or st.session_state.get('home_bling_connected_same_flow_api_send')
-            or st.session_state.get('bling_connected_api_flow_active')
-            or st.session_state.get('direct_bling_api_contract_active')
-        )
+    operation_values = [
+        st.session_state.get('flow_spine_operation'),
+        st.session_state.get('flow_spine_sender_operation'),
+        st.session_state.get('flow_spine_api_batch_operation'),
+        st.session_state.get('flow_spine_operation_resolved_for_api'),
+        st.session_state.get('home_slim_flow_operation'),
+        st.session_state.get('home_detected_operation'),
+        st.session_state.get('operacao_final'),
+        st.session_state.get('tipo_operacao_final'),
+        st.session_state.get('active_feature_operation'),
+        st.session_state.get('api_operation'),
+        st.session_state.get('bling_api_operation'),
+        st.session_state.get('site_capture_operation'),
+    ]
+    is_stock = any(_stock_label(value) for value in operation_values)
+    is_api = bool(
+        str(st.session_state.get('flow_spine_final_destination') or '').strip().lower() == 'api_bling'
+        or st.session_state.get('home_bling_connected_same_flow_api_send')
+        or st.session_state.get('bling_connected_api_flow_active')
+        or st.session_state.get('direct_bling_api_contract_active')
     )
+    return bool(is_stock and is_api)
 
 
 def _store_pricing_spine_state() -> None:
