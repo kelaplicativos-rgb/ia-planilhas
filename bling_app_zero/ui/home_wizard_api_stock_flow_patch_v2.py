@@ -7,14 +7,14 @@ from bling_app_zero.ui.home_wizard_constants import (
     STEP_DOWNLOAD,
     STEP_ENTRADA,
     STEP_IA,
+    STEP_MAPEAMENTO,
     STEP_OPERACAO,
     STEP_ORIGEM,
-    STEP_PRECIFICACAO,
     STEP_PREVIEW,
     STEP_REGRAS,
 )
 
-PATCHED_KEY = 'home_wizard_api_stock_flow_patch_applied_v2'
+PATCHED_KEY = 'home_wizard_api_stock_flow_patch_applied_v3'
 OP_ESTOQUE = 'estoque'
 
 
@@ -79,12 +79,58 @@ def _ensure_api_base(legacy) -> bool:
     return True
 
 
+def _insert_after(steps: list[str], anchor: str, value: str) -> list[str]:
+    if value in steps:
+        return steps
+    if anchor in steps:
+        steps.insert(steps.index(anchor) + 1, value)
+    else:
+        steps.append(value)
+    return steps
+
+
+def _stock_api_steps_from_base(base_steps: list[str]) -> list[str]:
+    """Preserva o contrato atual do wizard e só acrescenta Regras/IA.
+
+    O fluxo API precisa começar por Operação/Depósito. Forçar
+    Origem -> Entrada -> Operação faz a tela Home e a navegação entrarem em
+    estado inconsistente, porque o depósito ainda não foi definido.
+    """
+    steps = [str(step).strip().lower() for step in list(base_steps or []) if str(step or '').strip()]
+    if not steps:
+        steps = [STEP_OPERACAO]
+
+    if STEP_OPERACAO in steps and steps.index(STEP_OPERACAO) != 0:
+        steps.remove(STEP_OPERACAO)
+        steps.insert(0, STEP_OPERACAO)
+
+    regras_anchor = STEP_MAPEAMENTO if STEP_MAPEAMENTO in steps else STEP_ENTRADA
+    steps = _insert_after(steps, regras_anchor, STEP_REGRAS)
+    steps = _insert_after(steps, STEP_REGRAS, STEP_IA)
+
+    # Garante que Prévia/Envio continuem depois de Regras e IA.
+    for terminal in (STEP_PREVIEW, STEP_DOWNLOAD):
+        if terminal in steps:
+            steps.remove(terminal)
+            steps.append(terminal)
+    return steps
+
+
+def _rules_ready() -> bool:
+    try:
+        from bling_app_zero.ui.rules_center_state import rules_center_ready
+        return bool(rules_center_ready())
+    except Exception:
+        return True
+
+
 def apply_api_stock_flow_patch_v2(legacy) -> None:
     if bool(getattr(legacy, PATCHED_KEY, False)):
         return
 
     original_steps = legacy._steps
     original_done = legacy._done
+    original_nav = legacy._nav
     original_render_step = legacy._render_step
 
     def _is_api_stock() -> bool:
@@ -92,29 +138,32 @@ def apply_api_stock_flow_patch_v2(legacy) -> None:
 
     def _steps() -> list[str]:
         if _is_api_stock():
-            return [STEP_ORIGEM, STEP_ENTRADA, STEP_OPERACAO, STEP_PRECIFICACAO, STEP_REGRAS, STEP_IA, STEP_PREVIEW, STEP_DOWNLOAD]
+            return _stock_api_steps_from_base(original_steps())
         return original_steps()
 
     def _done(step: str) -> bool:
         step = str(step or '').strip().lower()
         if _is_api_stock() and step == STEP_REGRAS:
-            try:
-                from bling_app_zero.ui.rules_center_state import rules_center_ready
-                return bool(_ensure_api_base(legacy) and rules_center_ready())
-            except Exception:
-                return bool(_ensure_api_base(legacy))
+            return bool(_ensure_api_base(legacy) and _rules_ready())
         if _is_api_stock() and step == STEP_IA:
-            return bool(_ensure_api_base(legacy))
+            return bool(_ensure_api_base(legacy) and _rules_ready())
         return bool(original_done(step))
 
     def _progress_only(step: str) -> None:
+        if not _is_api_stock():
+            original_nav(step)
+            return
         steps = _steps()
+        if step not in steps:
+            return
         index = steps.index(step)
         st.caption(f'Etapa {index + 1} de {len(steps)} · {legacy._label(step)}')
         st.progress(max(1, min(100, int(((index + 1) / len(steps)) * 100))))
 
     def _footer_nav(step: str) -> None:
         steps = _steps()
+        if step not in steps:
+            return
         index = steps.index(step)
         prev_step = steps[index - 1] if index > 0 else ''
         next_step = steps[index + 1] if index + 1 < len(steps) else ''
@@ -150,21 +199,20 @@ def apply_api_stock_flow_patch_v2(legacy) -> None:
         if not _ensure_api_base(legacy):
             legacy.render_pending_notice('Carregue a origem dos dados antes da Inteligência Artificial.')
             return
-        try:
-            from bling_app_zero.ui.rules_center_state import rules_center_ready
-            if not rules_center_ready():
-                legacy.render_pending_notice('Revise e salve as Regras e Recursos Inteligentes antes de usar ou pular a IA.')
-                return
-        except Exception:
-            pass
+        if not _rules_ready():
+            legacy.render_pending_notice('Revise e salve as Regras e Recursos Inteligentes antes de usar ou pular a IA.')
+            return
         from bling_app_zero.ui.ai_real_advanced_panel import render_ai_real_advanced_panel
         render_ai_real_advanced_panel()
 
     def _render_step(step: str, n: int) -> None:
         normalized = str(step or '').strip().lower()
-        if _is_api_stock() and normalized == STEP_REGRAS:
+        if not _is_api_stock():
+            original_render_step(step, n)
+            return
+        if normalized == STEP_REGRAS:
             _render_rules(n)
-        elif _is_api_stock() and normalized == STEP_IA:
+        elif normalized == STEP_IA:
             _render_ai(n)
         else:
             original_render_step(step, n)
