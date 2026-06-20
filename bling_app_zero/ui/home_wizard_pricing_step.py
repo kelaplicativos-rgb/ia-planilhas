@@ -14,6 +14,7 @@ from bling_app_zero.ui.home_pricing_config import (
 )
 from bling_app_zero.ui.home_wizard_scroll import render_step_anchor
 from bling_app_zero.ui.home_wizard_ui import render_pending_notice
+from bling_app_zero.ui.mapping_auto_decision import render_mapping_auto_decision_toggle
 from bling_app_zero.ui.universal_wizard_state import (
     UNIVERSAL_MODELO_KEY,
     UNIVERSAL_ORIGEM_KEY,
@@ -85,6 +86,18 @@ def _store_pricing_spine_state() -> None:
         st.session_state['flow_spine_pricing_diagnostics'] = output_diagnostics()
     except Exception:
         pass
+
+
+def _render_mapping_auto_decision_block() -> None:
+    st.markdown('##### Mapeamento automático')
+    st.caption(
+        'Antes de avançar para o mapeamento, escolha se o sistema pode tentar ligar as colunas automaticamente. '
+        'A decisão será respeitada no próximo passo.'
+    )
+    render_mapping_auto_decision_toggle(
+        widget_key='home_pricing_mapping_auto_decision_toggle',
+        source='precificacao',
+    )
 
 
 def source_dataframe_for_pricing() -> pd.DataFrame | None:
@@ -202,6 +215,7 @@ def render_pricing_step(
         disable_home_pricing()
         clear_cadastro_pricing_state()
         st.caption('A espinha dorsal deste fluxo não exige precificação. Esta etapa foi mantida apenas por compatibilidade visual e não altera os dados.')
+        _render_mapping_auto_decision_block()
         return
 
     section_title(section_number, title)
@@ -244,6 +258,8 @@ def render_pricing_step(
             clear_cadastro_pricing_state()
         st.session_state['flow_spine_pricing_applied'] = False
         st.caption('Opcional. Se desligada, mantém os valores captados na origem e segue para as regras.')
+
+    _render_mapping_auto_decision_block()
 
 
 __all__ = ['apply_pricing_step_result', 'render_pricing_step', 'source_dataframe_for_pricing']
