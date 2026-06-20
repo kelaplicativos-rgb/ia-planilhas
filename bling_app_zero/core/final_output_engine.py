@@ -41,13 +41,14 @@ def apply_text_rules(output: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def build_final_dataframe(source: pd.DataFrame, contract: pd.DataFrame, mapping: Mapping[str, str]) -> pd.DataFrame:
+def build_final_dataframe(source: pd.DataFrame, contract: pd.DataFrame, mapping: Mapping[str, str], *, apply_rules: bool = True) -> pd.DataFrame:
     if not isinstance(source, pd.DataFrame) or source.empty:
         output = empty_universal_output(contract, rows=0)
     else:
         output = build_universal_output(source, contract, dict(mapping or {}))
-    output = apply_text_rules(output)
-    output, _title_filled, _title_empty_rows = apply_final_title_guard(output, context='preview_final')
+    if apply_rules:
+        output = apply_text_rules(output)
+        output, _title_filled, _title_empty_rows = apply_final_title_guard(output, context='preview_final')
     return output
 
 
@@ -58,24 +59,30 @@ def build_final_output(
     *,
     operation: str = 'universal',
     file_name: str = 'mapeiaai_planilha_final_mapeada.csv',
+    run_smart_features: bool = True,
 ) -> FinalOutputCommandResult:
     contract_columns = tuple(contract_columns_from_model(contract))
     request = FinalOutputRequest(operation=operation, file_name=file_name, contract_columns=contract_columns)
     contract_obj = build_universal_contract(contract)
-    output = build_final_dataframe(source, contract, mapping)
+    output = build_final_dataframe(source, contract, mapping, apply_rules=run_smart_features)
 
     errors = tuple(str(item) for item in validate_universal_output(output, contract_obj) or ())
     if errors:
         result = FinalOutputResult(status=STATUS_ERROR, file_name=file_name, errors=errors, message='Saída final bloqueada por erro de contrato.')
         return FinalOutputCommandResult(FinalOutputState(request=request, result=result), output=None, csv_bytes=b'', errors=errors)
 
-    output = sanitize_final_dataframe(output, operation=operation, contract_columns=list(contract_columns), run_download_features=True)
-    output, smartcore_result = apply_blingsmartcore(output, origin='preview_final', operation=operation)
-    # BLINGFIX contrato final: o SmartCore pode ajustar valores, mas não pode
-    # criar/remover/reordenar colunas. O contrato do modelo anexado é reaplicado
-    # depois da IA e antes da validação/download.
-    output = sanitize_final_dataframe(output, operation=operation, contract_columns=list(contract_columns), run_download_features=False)
-    output, _title_filled, title_empty_rows = apply_final_title_guard(output, context='preview_final_after_smartcore')
+    smartcore_result = None
+    if run_smart_features:
+        output = sanitize_final_dataframe(output, operation=operation, contract_columns=list(contract_columns), run_download_features=True)
+        output, smartcore_result = apply_blingsmartcore(output, origin='preview_final', operation=operation)
+        # BLINGFIX contrato final: o SmartCore pode ajustar valores, mas não pode
+        # criar/remover/reordenar colunas. O contrato do modelo anexado é reaplicado
+        # depois da IA e antes da validação/download.
+        output = sanitize_final_dataframe(output, operation=operation, contract_columns=list(contract_columns), run_download_features=False)
+        output, _title_filled, title_empty_rows = apply_final_title_guard(output, context='preview_final_after_smartcore')
+    else:
+        output = sanitize_final_dataframe(output, operation=operation, contract_columns=list(contract_columns), run_download_features=False)
+        title_empty_rows = []
 
     identity_errors = tuple(str(item) for item in validate_contract_identity(output, list(contract_columns)) or ())
     if identity_errors:
@@ -90,7 +97,7 @@ def build_final_output(
         return FinalOutputCommandResult(FinalOutputState(request=request, result=result), output=None, csv_bytes=b'', smartcore_result=smartcore_result, errors=title_errors)
 
     try:
-        csv_data = final_csv_bytes(output, operation=operation, contract_columns=list(contract_columns), run_download_features=True)
+        csv_data = final_csv_bytes(output, operation=operation, contract_columns=list(contract_columns), run_download_features=run_smart_features)
     except Exception as exc:
         csv_error = (str(exc),)
         result = FinalOutputResult(status=STATUS_ERROR, file_name=file_name, errors=csv_error, message='Saída final bloqueada por erro físico de CSV.')
