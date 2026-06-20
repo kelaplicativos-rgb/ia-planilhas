@@ -132,6 +132,21 @@ def _render_ai_step(section_number: int) -> None:
 
 def _patch_legacy_wizard() -> None:
     _register_router_steps()
+    required_attrs = (
+        '_render_active_step',
+        '_can_advance_from',
+        '_step_is_done',
+        '_step_after_model_when_source_ready',
+        '_resolve_active_step',
+    )
+    missing = [name for name in required_attrs if not hasattr(legacy, name)]
+    if missing:
+        # O wizard source-first novo não expõe mais estes hooks privados.
+        # Nesse caso, não aplicamos o patch antigo de categoria/IA e deixamos
+        # o fluxo principal renderizar sem quebrar a inicialização do app.
+        st.session_state['home_wizard_v2_legacy_patch_skipped_missing'] = missing
+        return
+
     _insert_category_and_ai_steps()
     if bool(getattr(legacy, _PATCHED_KEY, False)):
         return
@@ -218,12 +233,9 @@ __all__ = [
     'CADASTRO_STEPS',
     'ESTOQUE_STEPS',
     'HOME_CHOICE_TARGET',
-    'STEP_CATEGORIZACAO',
     'STEP_DOWNLOAD',
     'STEP_GERAR_ESTOQUE',
-    'STEP_IA',
     'STEP_MAPEAMENTO_LEGACY',
-    'STEP_PRECIFICACAO',
     'STEP_REGRAS_LEGACY',
     'render_home_wizard',
     'wizard_next_target',
