@@ -30,11 +30,11 @@ COMMON_FEEDS = [
 PRODUCT_PATH_HINTS = ['/produto/', '/produtos/', '/product/', '/products/', '/p/', '/item/', 'produto-', 'product-']
 PRODUCT_QUERY_HINTS = {'sku', 'cod', 'codigo', 'ref', 'idproduto', 'product_id', 'variant'}
 BLOCKED_TERMS = ['facebook', 'instagram', 'youtube', 'whatsapp', 'mailto:', 'tel:', '/login', '/conta', '/checkout', '/cart', '/carrinho', '/blog', '/politica', '/termos']
-HTML_DISCOVERY_PAGE_CAP = 350
+HTML_DISCOVERY_PAGE_CAP = 500
 HTML_DISCOVERY_BATCH = 36
 FEED_BATCH = 36
 SMART_URL_TARGET = 220
-FULL_SCAN_URL_TARGET = 2500
+FULL_SCAN_URL_TARGET = 3000
 
 
 def split_urls(raw: str) -> list[str]:

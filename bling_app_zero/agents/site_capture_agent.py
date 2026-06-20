@@ -14,7 +14,7 @@ from bling_app_zero.agents.site_platform_detector import SitePlatformSignal, det
 from bling_app_zero.core.audit import add_audit_event
 
 RESPONSIBLE_FILE = 'bling_app_zero/agents/site_capture_agent.py'
-SMARTSCAN_SAFE_URL_BATCH = 1200
+SMARTSCAN_SAFE_URL_BATCH = 3000
 
 
 @dataclass(frozen=True)
@@ -202,13 +202,13 @@ def run_bling_smartscan(
                 'operation': operation,
                 'original_urls': original_urls,
                 'used_urls': used_urls,
-                'reason': 'Evitar trava do Streamlit; captura roda em lote curto.',
+                'reason': 'Evitar trava do Streamlit; captura roda em lote controlado.',
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
         _emit(progress_callback, {
-            'stage': 'Lote seguro',
-            'message': f'{original_urls} links encontrados. Processando primeiro lote com {used_urls} para evitar travamento.',
+            'stage': 'Lote controlado',
+            'message': f'{original_urls} links encontrados. Processando lote com {used_urls} para evitar travamento sem cortar catálogo grande.',
             'progress': 0.18,
             'original_urls': original_urls,
             'used_urls': used_urls,

@@ -16,21 +16,9 @@ PROGRESS_CALLBACK_LAST_PERCENT_KEY = 'site_progress_callback_last_percent'
 LIVE_WARNING_SECONDS = 60
 LIVE_HARD_STALE_SECONDS = 900
 MAX_PROGRESS_EVENTS = 25
-CALLBACK_RENDER_INTERVAL_SECONDS = 4.0
-CALLBACK_RENDER_MIN_PERCENT_DELTA = 8
+CALLBACK_RENDER_INTERVAL_SECONDS = 6.0
+CALLBACK_RENDER_MIN_PERCENT_DELTA = 10
 RESPONSIBLE_FILE = 'bling_app_zero/ui/site_progress.py'
-
-
-# BLINGFIX 2026-06-10:
-# Em celular/Android/WebView o Streamlit pode abrir o popup:
-# "Bad message format - Tried to use SessionInfo before it was initialized"
-# quando o backend envia muitas mensagens de UI durante uma captura longa.
-# A correção abaixo mantém o progresso salvo em session_state, mas reduz o volume
-# de renderizações em tempo real e remove tabelas/sidebar pesadas durante o loop.
-# BLINGFIX 2026-06-11:
-# Nunca abrir expander dentro do histórico de progresso. Essa tela já pode estar
-# dentro de outro expander do painel do site e Streamlit bloqueia expanders
-# aninhados com StreamlitAPIException.
 
 
 def _progress_state_from_streamlit() -> SiteProgressState:
@@ -176,11 +164,6 @@ def _render_live_alerts(last_delta: int, has_payload: bool) -> None:
 
 
 def render_live_site_operation_panel() -> None:
-    """Painel leve para captura por site.
-
-    O painel evita tabelas/sidebar durante execução para não gerar excesso de
-    mensagens no frontend do Streamlit, especialmente em Android/WebView.
-    """
     state = _progress_state_from_streamlit()
     data = state.to_dict()
     last = data.get('last', {}) or {}
@@ -205,7 +188,6 @@ def render_live_site_operation_panel() -> None:
 
 
 def render_sidebar_progress_details(payload: dict) -> None:
-    """Compatibilidade: não renderiza sidebar durante captura longa."""
     append_site_progress(payload)
 
 
