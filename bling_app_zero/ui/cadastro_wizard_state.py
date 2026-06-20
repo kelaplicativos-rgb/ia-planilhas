@@ -105,6 +105,10 @@ API_STALE_FINAL_KEYS = (
     'mapping_confidence_bling_api',
     'mapping_cadastro',
     'mapping_confidence_cadastro',
+    UNIVERSAL_FINAL_KEY,
+    LEGACY_CADASTRO_FINAL_KEY,
+    'mapping_universal',
+    'mapping_confidence_universal',
     CADASTRO_MAPPING_CONFIRMED_KEY,
     CADASTRO_MAPPING_SIGNATURE_KEY,
 )
@@ -237,6 +241,9 @@ def get_context_final_df() -> pd.DataFrame | None:
     legacy = st.session_state.get(LEGACY_CADASTRO_FINAL_KEY)
     if valid_df(legacy):
         return legacy
+    universal = st.session_state.get(UNIVERSAL_FINAL_KEY)
+    if valid_df(universal):
+        return universal
     return current if isinstance(current, pd.DataFrame) else None
 
 
@@ -256,6 +263,8 @@ def set_context_final_df(df_final: pd.DataFrame | None) -> pd.DataFrame | None:
     st.session_state[_context_final_key()] = fixed
     st.session_state[LEGACY_CADASTRO_FINAL_KEY] = fixed
     if _entry_context() == CONTEXT_UNIVERSAL:
+        st.session_state[UNIVERSAL_FINAL_KEY] = fixed
+    elif _entry_context() == CONTEXT_BLING_API:
         st.session_state[UNIVERSAL_FINAL_KEY] = fixed
     return fixed
 
@@ -468,26 +477,28 @@ def ensure_api_direct_final_df() -> pd.DataFrame | None:
             _clear_stale_api_outputs('api_direct_current_final_operation_mismatch')
             return None
         return enforce_supplier_price_master_filter(current)
-    source = _api_direct_source_df()
-    if valid_df(source):
-        st.session_state['mapping_bling_api'] = {str(column): str(column) for column in source.columns}
-        st.session_state['mapping_confidence_bling_api'] = {str(column): 1.0 for column in source.columns}
-        st.session_state[CADASTRO_MAPPING_CONFIRMED_KEY] = True
-        st.session_state[CADASTRO_MAPPING_SIGNATURE_KEY] = df_signature(source)
-        set_context_final_df(source)
-        return enforce_supplier_price_master_filter(source)
+    # BLINGFIX: no fluxo API, a origem não vira final automaticamente.
+    # A tabela final precisa nascer do mesmo mapeamento/revisão usado no fluxo por arquivo.
+    return None
+
+
+def _confirmed_mapping_for_current_context() -> dict | None:
+    mapping = st.session_state.get(_context_mapping_key())
+    if isinstance(mapping, dict) and mapping:
+        return mapping
+    mapping = st.session_state.get('mapping_cadastro')
+    if isinstance(mapping, dict) and mapping:
+        return mapping
+    mapping = st.session_state.get('mapping_universal')
+    if isinstance(mapping, dict) and mapping:
+        return mapping
     return None
 
 
 def cadastro_mapping_ready() -> bool:
-    if _is_api_context():
-        df_final = ensure_api_direct_final_df()
-        return valid_df(df_final) and row_count_matches_source(df_final)
-    raw_final = get_context_final_df()
+    raw_final = get_context_final_df() if _is_api_context() else get_context_final_df()
     df_final = enforce_cadastro_model_columns(raw_final)
-    mapping = st.session_state.get(_context_mapping_key())
-    if not isinstance(mapping, dict) or not mapping:
-        mapping = st.session_state.get('mapping_cadastro')
+    mapping = _confirmed_mapping_for_current_context()
     confirmed = bool(st.session_state.get(CADASTRO_MAPPING_CONFIRMED_KEY))
     return valid_df(df_final) and row_count_matches_source(df_final) and isinstance(mapping, dict) and bool(mapping) and confirmed
 
