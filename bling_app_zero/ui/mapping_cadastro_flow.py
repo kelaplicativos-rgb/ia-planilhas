@@ -23,13 +23,14 @@ from bling_app_zero.ui.mapping_filters import filter_targets
 from bling_app_zero.ui.mapping_models import cadastro_model, source_columns_from_df, target_columns_from_model
 from bling_app_zero.ui.mapping_pagination import go_to_next_mapping_page, mapping_has_more_pages, render_mapping_page_arrows, visible_targets
 from bling_app_zero.ui.mapping_preview_builder import build_cadastro_preview
-from bling_app_zero.ui.mapping_widget_state import clear_mapping_widgets, clear_stale_mapping_widgets, is_manual_value, mapping_base
+from bling_app_zero.ui.mapping_widget_state import clear_stale_mapping_widgets, is_manual_value, mapping_base
 
 HOME_ENTRY_CONTEXT_KEY = 'home_entry_context'
 CONTEXT_UNIVERSAL = 'universal'
 CONTEXT_MAPPING_KEYS = {
     CONTEXT_UNIVERSAL: ('mapping_universal', 'mapping_confidence_universal', 'df_final_universal'),
 }
+AUTO_MAPPING_LABEL = 'Ativar mapeamento automático'
 
 
 def _entry_context() -> str:
@@ -42,6 +43,46 @@ def _context_keys() -> tuple[str, str, str]:
 
 def _context_label() -> str:
     return 'Modelo para mapear'
+
+
+def _operation_signature() -> str:
+    """Diferencia o estado do mapeamento quando a operação real muda."""
+    keys = (
+        'bling_connected_api_operation',
+        'flow_spine_sender_operation',
+        'flow_spine_operation_resolved_for_api',
+        'direct_bling_operation_applied',
+        'active_feature_operation',
+        'flow_spine_operation',
+        'operacao_final',
+        'operation',
+        'selected_operation',
+    )
+    for key in keys:
+        value = str(st.session_state.get(key) or '').strip().lower()
+        if value:
+            return value
+    return 'universal'
+
+
+def _auto_toggle_key(mapping_key: str) -> str:
+    return f'{mapping_key}__auto_mapping_enabled'
+
+
+def _auto_mode_key(mapping_key: str) -> str:
+    return f'{mapping_key}__auto_mapping_mode'
+
+
+def _blank_mapping(target_columns: list[str]) -> dict[str, str]:
+    return {str(target): '' for target in target_columns}
+
+
+def _clear_current_mapping_widgets(mapping_key: str) -> None:
+    """Limpa apenas widgets dos campos, preservando o toggle de decisão do usuário."""
+    for key in list(st.session_state.keys()):
+        text = str(key)
+        if text.startswith(f'{mapping_key}_f') or text.startswith(f'{mapping_key}_manual_fixed_'):
+            st.session_state.pop(key, None)
 
 
 def _duplicated_source_columns(mapping: dict[str, str]) -> list[str]:
@@ -83,9 +124,52 @@ def _reset_cadastro_mapping(
     st.session_state[mapping_key] = build_super_mapping(df_source, model, source_columns)
     _reset_context_outputs(context_mapping_key, confidence_key, final_key)
     st.session_state.pop(order_key, None)
-    clear_mapping_widgets(mapping_key)
+    st.session_state[_auto_mode_key(mapping_key)] = 'auto'
+    _clear_current_mapping_widgets(mapping_key)
     pause_home_autofluxo_for_manual_review('mapeamento', reason='mapping_reset_by_user')
     st.rerun()
+
+
+def _render_auto_mapping_toggle(mapping_key: str) -> bool:
+    enabled = st.toggle(
+        AUTO_MAPPING_LABEL,
+        value=False,
+        key=_auto_toggle_key(mapping_key),
+        help=(
+            'Desligado: os campos começam vazios e você escolhe manualmente. '
+            'Ligado: o sistema tenta sugerir as colunas automaticamente, mas você ainda precisa revisar e confirmar.'
+        ),
+    )
+    if enabled:
+        st.caption('Mapeamento automático ligado: sugestões serão preenchidas para revisão antes da prévia final.')
+    else:
+        st.caption('Mapeamento automático desligado: nenhuma coluna será ligada sem escolha manual do usuário.')
+    return bool(enabled)
+
+
+def _apply_mapping_mode_if_needed(
+    mapping_key: str,
+    order_key: str,
+    df_source: pd.DataFrame,
+    model: pd.DataFrame,
+    source_columns: list[str],
+    target_columns: list[str],
+    auto_enabled: bool,
+) -> None:
+    desired_mode = 'auto' if auto_enabled else 'manual'
+    current_mode = str(st.session_state.get(_auto_mode_key(mapping_key)) or '')
+    if mapping_key in st.session_state and current_mode == desired_mode:
+        return
+
+    context_mapping_key, confidence_key, final_key = _context_keys()
+    if auto_enabled:
+        st.session_state[mapping_key] = build_super_mapping(df_source, model, source_columns)
+    else:
+        st.session_state[mapping_key] = _blank_mapping(target_columns)
+    st.session_state[_auto_mode_key(mapping_key)] = desired_mode
+    st.session_state.pop(order_key, None)
+    _clear_current_mapping_widgets(mapping_key)
+    _reset_context_outputs(context_mapping_key, confidence_key, final_key)
 
 
 def _render_cadastro_actions(
@@ -94,6 +178,7 @@ def _render_cadastro_actions(
     df_source: pd.DataFrame,
     model: pd.DataFrame,
     source_columns: list[str],
+    auto_enabled: bool,
 ) -> None:
     with st.expander('Ajustar colunas', expanded=False):
         st.caption('Use aqui se quiser atualizar o resultado ou tentar ligar as colunas novamente.')
@@ -103,15 +188,22 @@ def _render_cadastro_actions(
                 pause_home_autofluxo_for_manual_review('mapeamento', reason='mapping_refresh_by_user')
                 st.rerun()
         with col_b:
-            if st.button('Tentar ligar colunas de novo', use_container_width=True, key=f'{mapping_key}_reset'):
+            if st.button(
+                'Tentar ligar colunas de novo',
+                use_container_width=True,
+                key=f'{mapping_key}_reset',
+                disabled=not auto_enabled,
+            ):
                 _reset_cadastro_mapping(mapping_key, order_key, df_source, model, source_columns)
+        if not auto_enabled:
+            st.caption('Para tentar ligar colunas automaticamente, ative primeiro o toggle “Ativar mapeamento automático”.')
 
 
 def _render_compact_mapping_header(df_source: pd.DataFrame) -> None:
     st.markdown('### Ligar colunas')
     st.caption(
         f'{len(df_source)} linha(s) carregada(s). Modelo: {_context_label()}. '
-        'O sistema tenta ligar as colunas automaticamente lendo os nomes das colunas e o conteúdo. Confira todas as páginas antes de continuar.'
+        'Você decide se quer ligar as colunas manualmente ou ativar sugestões automáticas.'
     )
     with st.expander('Ver dados enviados', expanded=False):
         preview_df('Dados enviados', df_source)
@@ -137,19 +229,15 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
     target_columns = target_columns_from_model(model)
     options = [EMPTY_CHOOSE_OPTION, MANUAL_WRITE_OPTION, EMPTY_LEAVE_OPTION] + source_columns
 
-    signature = df_signature(df_source) + ':' + _entry_context() + ':' + '|'.join(target_columns)
+    signature = df_signature(df_source) + ':' + _entry_context() + ':' + _operation_signature() + ':' + '|'.join(target_columns)
     mapping_key = mapping_base(f'{_entry_context()}_map_', signature)
     order_key = f'{mapping_key}_order'
     context_mapping_key, confidence_key, final_key = _context_keys()
 
     clear_stale_mapping_widgets(mapping_key)
-    if mapping_key not in st.session_state:
-        st.session_state[mapping_key] = build_super_mapping(df_source, model, source_columns)
-        st.session_state.pop(order_key, None)
-        st.session_state.pop(CADASTRO_MAPPING_CONFIRMED_KEY, None)
-        st.session_state.pop(CADASTRO_MAPPING_SIGNATURE_KEY, None)
-
     _render_compact_mapping_header(df_source)
+    auto_enabled = _render_auto_mapping_toggle(mapping_key)
+    _apply_mapping_mode_if_needed(mapping_key, order_key, df_source, model, source_columns, target_columns, auto_enabled)
 
     current_mapping = dict(st.session_state.get(mapping_key, {}))
     current_confidence = current_confidence_from_widgets(df_source, target_columns, current_mapping, mapping_key)
@@ -195,11 +283,11 @@ def render_manual_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | Non
         st.warning('Coluna repetida: ' + ', '.join(duplicated))
 
     if _render_continue_mapping_pages(mapping_key):
-        _render_cadastro_actions(mapping_key, order_key, df_source, model, source_columns)
+        _render_cadastro_actions(mapping_key, order_key, df_source, model, source_columns, auto_enabled)
         return
 
     render_confirm_mapping_button(edited_mapping, df_preview_manual, mapping_key, target_columns)
-    _render_cadastro_actions(mapping_key, order_key, df_source, model, source_columns)
+    _render_cadastro_actions(mapping_key, order_key, df_source, model, source_columns, auto_enabled)
 
 
 __all__ = ['render_manual_mapping']
