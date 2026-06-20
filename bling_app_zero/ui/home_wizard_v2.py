@@ -4,6 +4,7 @@ import streamlit as st
 
 import bling_app_zero.ui.home_wizard as legacy
 from bling_app_zero.ui.category_conference_wizard_step import category_wizard_ready, render_category_conference_wizard_step
+from bling_app_zero.ui.home_wizard_api_stock_flow_patch import apply_api_stock_flow_patch
 from bling_app_zero.ui.rules_center_state import rules_center_ready
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_wizard_v2.py'
@@ -20,7 +21,9 @@ def _register_router_steps() -> None:
     try:
         import bling_app_zero.ui.home_router as home_router
 
+        home_router.VALID_SINGLE_PAGE_STEPS.add('operacao')
         home_router.VALID_SINGLE_PAGE_STEPS.add(STEP_CATEGORIZACAO)
+        home_router.VALID_SINGLE_PAGE_STEPS.add(STEP_REGRAS)
         home_router.VALID_SINGLE_PAGE_STEPS.add(STEP_IA)
     except Exception:
         pass
@@ -213,6 +216,7 @@ def _patch_legacy_wizard() -> None:
 
 def render_home_wizard() -> None:
     _patch_legacy_wizard()
+    apply_api_stock_flow_patch(legacy)
     st.session_state['home_wizard_v2_active'] = True
     legacy.render_home_wizard()
 
