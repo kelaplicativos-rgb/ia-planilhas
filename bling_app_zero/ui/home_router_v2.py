@@ -12,19 +12,15 @@ ACTIVE_FLOW_KEY = 'home_active_operation_v2'
 HOME_ALLOW_FLOW_KEY = 'home_allow_operation_v2_session'
 FLOW_HOME = 'home'
 FLOW_WIZARD = 'wizard_cadastro_estoque'
-FLOW_PRICE_UPDATE = 'price_multistore_v2'
 FLOW_MAPEAR_PLANILHA = 'mapear_planilha'
 
 MAPEAR_PLANILHA_ALIASES = {
     FLOW_MAPEAR_PLANILHA,
-    FLOW_PRICE_UPDATE,
     'mapear-planilha',
     'mapear_planilha_sem_api',
     'planilha_sem_api',
     'universal_csv',
     'universal_mapping_csv',
-    'precos_multilojas',
-    'atualizar_precos_multilojas',
 }
 
 NO_API_SESSION_KEYS = (
@@ -79,12 +75,6 @@ def _clear_no_api_session_flags() -> None:
     st.session_state['flow_spine_final_destination'] = 'download'
     st.session_state['flow_spine_final_title'] = 'Download'
     st.session_state['flow_spine_primary_action_label'] = 'Download Modelo Mapeado'
-
-
-def start_price_multistore_flow() -> None:
-    # Compatibilidade: preço/multiloja não é entrada da Home.
-    # A rotina deve cair no mapeamento de planilhas.
-    start_mapear_planilha_flow()
 
 
 def start_mapear_planilha_flow() -> None:
@@ -252,8 +242,6 @@ def render_home() -> None:
 
 __all__ = [
     'FLOW_MAPEAR_PLANILHA',
-    'FLOW_PRICE_UPDATE',
     'render_home',
     'start_mapear_planilha_flow',
-    'start_price_multistore_flow',
 ]
