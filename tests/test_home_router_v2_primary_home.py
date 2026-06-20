@@ -9,6 +9,7 @@ def test_home_router_v2_prioritizes_mapear_planilha_sem_api() -> None:
     assert "Conectar ou usar Bling" in source
     assert "Atualizar preços multilojas" not in source
     assert "render_price_multistore_v2" not in source
+    assert "FLOW_PRICE_UPDATE" not in source
     assert "legacy.render_home()" in source
 
     primary_index = source.index('def _render_primary_home()')
