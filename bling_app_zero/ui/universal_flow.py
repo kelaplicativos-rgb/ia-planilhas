@@ -7,9 +7,11 @@ import streamlit as st
 
 from bling_app_zero.adapters.streamlit_mapping_bridge import build_and_sync_mapping
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.category_intelligence import apply_category_suggestions, classify_dataframe
 from bling_app_zero.core.files import read_uploaded_file
 from bling_app_zero.features_runtime.router import active_contract
 from bling_app_zero.pipelines.site_pipeline import run_pipeline as run_site_pipeline
+from bling_app_zero.ui.flow_context import CONTEXT_UNIVERSAL, activate_csv_finish_mode, set_entry_context
 from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 from bling_app_zero.ui.shared_calculator import render_shared_calculator
 from bling_app_zero.ui.shared_final_csv import render_shared_final_csv
@@ -25,11 +27,32 @@ RESPONSIBLE_FILE = 'bling_app_zero/ui/universal_flow.py'
 SOURCE_MODE_UPLOAD = 'Anexar arquivo de origem'
 SOURCE_MODE_SITE = 'Buscar produtos por site'
 SUPPORTED_UPLOAD_LABEL = 'Formatos aceitos: XLSX, XLS, CSV, XLSM, XLSB, XML, HTML, MHTML e PDF. No celular, o seletor fica livre para evitar bloqueio falso do Android.'
+NO_API_KEYS = (
+    'home_bling_connected_same_flow_api_send', 'bling_connected_api_flow_active', 'direct_bling_api_contract_active',
+    'direct_bling_operation_applied', 'direct_bling_api_contract_df', 'bling_api_operation', 'api_operation',
+    'home_bling_api_operation_choice', 'bling_connected_api_operation', 'flow_spine_sender_operation',
+    'flow_spine_operation_resolved_for_api', 'flow_spine_api_batch_operation', 'source_first_selected_operation',
+    'source_first_operation_user_confirmed', 'source_first_operation_pending_choice', 'bling_api_required_selector',
+    'bling_api_final_action', 'bling_api_manual_mapping_required', 'bling_api_must_run_ai_check',
+)
+
+
+def _force_plain_context() -> None:
+    for key in NO_API_KEYS:
+        st.session_state.pop(key, None)
+    set_entry_context(CONTEXT_UNIVERSAL)
+    activate_csv_finish_mode()
+    st.session_state['active_feature_mode'] = 'csv'
+    st.session_state['active_feature_operation'] = 'universal'
+    st.session_state['active_feature_contract_key'] = 'universal_mapping_csv'
+    st.session_state['flow_spine_contract_key'] = 'universal_mapping_csv'
+    st.session_state['flow_spine_operation'] = 'universal'
+    st.session_state['flow_spine_final_destination'] = 'download'
 
 
 def _is_universal_csv_context() -> bool:
     contract = active_contract()
-    return contract.key == 'universal_csv' or (contract.mode == 'csv' and contract.operation == 'universal')
+    return contract.key in {'universal_csv', 'universal_mapping_csv', 'universal_mapping'} or (contract.mode == 'csv' and contract.operation == 'universal')
 
 
 def _render_contract_guard() -> bool:
@@ -38,12 +61,7 @@ def _render_contract_guard() -> bool:
     contract = active_contract()
     st.warning('Este fluxo é exclusivo para Mapear planilha por contrato / Universal CSV.')
     st.caption(f'Contrato ativo atual: {contract.key}. Use o fluxo principal para {contract.label}.')
-    add_audit_event(
-        'universal_flow_blocked_outside_universal_csv',
-        area='UNIVERSAL',
-        status='BLOQUEADO',
-        details={'active_contract': contract.key, 'operation': contract.operation, 'mode': contract.mode, 'responsible_file': RESPONSIBLE_FILE},
-    )
+    add_audit_event('universal_flow_blocked_outside_universal_csv', area='UNIVERSAL', status='BLOQUEADO', details={'active_contract': contract.key, 'operation': contract.operation, 'mode': contract.mode, 'responsible_file': RESPONSIBLE_FILE})
     return False
 
 
@@ -80,61 +98,38 @@ def _df_signature(df: pd.DataFrame | None) -> str:
     if not df.empty:
         sample = pd.util.hash_pandas_object(df.head(80).fillna('').astype(str), index=True).sum()
         sample_hash = str(sample)
-    raw = f'{shape}:{columns}:{sample_hash}'
-    return hashlib.sha256(raw.encode('utf-8')).hexdigest()[:16]
+    return hashlib.sha256(f'{shape}:{columns}:{sample_hash}'.encode('utf-8')).hexdigest()[:16]
 
 
-def _flow_signature(model: pd.DataFrame, source: pd.DataFrame) -> str:
-    return f'{_df_signature(model)}:{_df_signature(source)}'
+def _flow_signature(model: pd.DataFrame, source: pd.DataFrame, ai_enabled: bool, rules_enabled: bool) -> str:
+    return f'{_df_signature(model)}:{_df_signature(source)}:ai={int(ai_enabled)}:rules={int(rules_enabled)}'
 
 
-def _reset_universal_state_if_changed(model: pd.DataFrame, source: pd.DataFrame) -> str:
-    signature = _flow_signature(model, source)
+def _reset_universal_state_if_changed(model: pd.DataFrame, source: pd.DataFrame, ai_enabled: bool, rules_enabled: bool) -> str:
+    signature = _flow_signature(model, source, ai_enabled, rules_enabled)
     previous = str(st.session_state.get(UNIVERSAL_SIGNATURE_KEY) or '')
     if previous and previous != signature:
-        st.session_state.pop(UNIVERSAL_MAPPING_KEY, None)
-        st.session_state.pop(UNIVERSAL_OUTPUT_KEY, None)
-        st.session_state.pop(UNIVERSAL_ENGINE_KEY, None)
-        st.session_state.pop('neutral_mapping_state_v1', None)
-        st.session_state.pop('neutral_mapping_report_v1', None)
+        for key in (UNIVERSAL_MAPPING_KEY, UNIVERSAL_OUTPUT_KEY, UNIVERSAL_ENGINE_KEY, 'neutral_mapping_state_v1', 'neutral_mapping_report_v1'):
+            st.session_state.pop(key, None)
         clear_shared_mapping_widgets('mapeiaai_universal')
-        add_audit_event(
-            'universal_flow_state_reset_by_signature_change',
-            area='UNIVERSAL',
-            details={'previous': previous, 'current': signature, 'neutral_mapping_reset': True, 'responsible_file': RESPONSIBLE_FILE},
-        )
+        add_audit_event('universal_flow_state_reset_by_signature_change', area='UNIVERSAL', details={'previous': previous, 'current': signature, 'responsible_file': RESPONSIBLE_FILE})
     st.session_state[UNIVERSAL_SIGNATURE_KEY] = signature
     return signature
 
 
 def _render_model_step() -> pd.DataFrame | None:
-    st.markdown('### 1. Contrato final')
-    model = _current_df(UNIVERSAL_MODEL_KEY)
-    if isinstance(model, pd.DataFrame):
-        st.success('Contrato final carregado pela primeira tela.')
-        st.caption('A planilha final seguirá exatamente essas colunas e essa ordem. Não há detecção de sistema/fornecedor nesta etapa.')
-        st.dataframe(model.head(3).astype(str), use_container_width=True, height=145)
-        st.caption('Colunas finais: ' + ', '.join(map(str, model.columns)))
-        return model
-
-    st.caption('Anexe a planilha exatamente no formato que você quer receber no final.')
-    st.caption(SUPPORTED_UPLOAD_LABEL)
-    uploaded = st.file_uploader(
-        'Contrato final da planilha',
-        type=None,
-        key='mapeiaai_universal_model_upload',
-        help='O filtro de tipo fica aberto para evitar que o Android bloqueie CSV/planilhas válidas no seletor de arquivos.',
-    )
-    df_model = _read_upload(uploaded)
-    if isinstance(df_model, pd.DataFrame):
-        _store_df(UNIVERSAL_MODEL_KEY, df_model)
-
+    st.markdown('### 1. Modelo final / contrato da saída')
     model = _current_df(UNIVERSAL_MODEL_KEY)
     if not isinstance(model, pd.DataFrame):
-        st.info('Envie a planilha/contrato final para começar.')
+        st.caption('Anexe a planilha exatamente no formato que você quer receber no final.')
+        st.caption(SUPPORTED_UPLOAD_LABEL)
+        uploaded = st.file_uploader('Modelo final da planilha', type=None, key='mapeiaai_universal_model_upload')
+        _store_df(UNIVERSAL_MODEL_KEY, _read_upload(uploaded))
+        model = _current_df(UNIVERSAL_MODEL_KEY)
+    if not isinstance(model, pd.DataFrame):
+        st.info('Envie a planilha/modelo final para começar.')
         return None
-    st.success('Contrato final recebido.')
-    st.caption('A planilha final seguirá exatamente essas colunas e essa ordem.')
+    st.success('Modelo final carregado. A saída seguirá exatamente essas colunas e essa ordem.')
     st.dataframe(model.head(3).astype(str), use_container_width=True, height=145)
     st.caption('Colunas finais: ' + ', '.join(map(str, model.columns)))
     return model
@@ -143,57 +138,33 @@ def _render_model_step() -> pd.DataFrame | None:
 def _progress_callback(progress_bar, status_box):
     def _callback(info: dict) -> None:
         progress = float(info.get('progress') or 0.0)
-        stage = str(info.get('stage') or 'Processando')
-        message = str(info.get('message') or '')
-        progress_bar.progress(max(0.0, min(1.0, progress)), text=stage)
-        status_box.caption(message)
+        progress_bar.progress(max(0.0, min(1.0, progress)), text=str(info.get('stage') or 'Processando'))
+        status_box.caption(str(info.get('message') or ''))
     return _callback
 
 
 def _render_source_upload() -> pd.DataFrame | None:
-    st.caption('Anexe a origem dos dados: fornecedor, CSV, planilha, XML, HTML, MHTML ou PDF.')
+    st.caption('Anexe a origem dos dados: fornecedor, marketplace, CSV, planilha, XML, HTML, MHTML ou PDF.')
     st.caption(SUPPORTED_UPLOAD_LABEL)
-    uploaded = st.file_uploader(
-        'Origem dos dados',
-        type=None,
-        key='mapeiaai_universal_source_upload',
-        help='O filtro de tipo fica aberto para evitar que o Android bloqueie CSV/planilhas válidas no seletor de arquivos.',
-    )
-    df_source = _read_upload(uploaded)
-    if isinstance(df_source, pd.DataFrame):
-        _store_df(UNIVERSAL_SOURCE_KEY, df_source)
+    uploaded = st.file_uploader('Planilha fonte de dados', type=None, key='mapeiaai_universal_source_upload')
+    _store_df(UNIVERSAL_SOURCE_KEY, _read_upload(uploaded))
     return _current_df(UNIVERSAL_SOURCE_KEY)
 
 
 def _render_source_site(model: pd.DataFrame) -> pd.DataFrame | None:
     st.caption('Cole links de produtos, categorias ou buscas. O motor de site captura dados e monta a origem para o mapeamento.')
-    raw_urls = st.text_area(
-        'Links para buscar produtos por site',
-        height=130,
-        key='mapeiaai_universal_site_urls',
-        placeholder='https://fornecedor.com/produto-1\nhttps://fornecedor.com/categoria/acessorios',
-    )
+    raw_urls = st.text_area('Links para buscar produtos por site', height=130, key='mapeiaai_universal_site_urls')
     all_products = st.checkbox('Buscar todos os produtos encontrados', value=True, key='mapeiaai_universal_site_all_products')
-    if st.button('🔎 Buscar produtos por site', use_container_width=True, key='mapeiaai_universal_run_site'):
+    if st.button('Buscar produtos por site', use_container_width=True, key='mapeiaai_universal_run_site'):
         if not str(raw_urls or '').strip():
             st.warning('Informe pelo menos um link para buscar por site.')
         else:
             progress_bar = st.progress(0, text='Preparando busca por site...')
             status_box = st.empty()
             try:
-                df_site = run_site_pipeline(
-                    str(raw_urls),
-                    requested_columns=[str(column) for column in model.columns],
-                    all_products=bool(all_products),
-                    operation='universal',
-                    progress_callback=_progress_callback(progress_bar, status_box),
-                )
+                df_site = run_site_pipeline(str(raw_urls), requested_columns=[str(column) for column in model.columns], all_products=bool(all_products), operation='universal', progress_callback=_progress_callback(progress_bar, status_box))
                 _store_df(UNIVERSAL_SOURCE_KEY, df_site)
-                add_audit_event(
-                    'universal_site_source_loaded',
-                    area='UNIVERSAL',
-                    details={'rows': int(len(df_site)), 'columns': int(len(df_site.columns)), 'operation': 'universal', 'responsible_file': RESPONSIBLE_FILE},
-                )
+                add_audit_event('universal_site_source_loaded', area='UNIVERSAL', details={'rows': int(len(df_site)), 'columns': int(len(df_site.columns)), 'responsible_file': RESPONSIBLE_FILE})
                 st.success(f'Busca por site concluída: {len(df_site)} linha(s).')
             except Exception as exc:
                 st.error(f'Falha ao buscar produtos por site: {exc}')
@@ -201,81 +172,90 @@ def _render_source_site(model: pd.DataFrame) -> pd.DataFrame | None:
 
 
 def _render_source_step(model: pd.DataFrame) -> pd.DataFrame | None:
-    st.markdown('### 2. Origem dos dados')
-    source_mode = st.radio(
-        'Como quer trazer os dados da origem?',
-        [SOURCE_MODE_SITE, SOURCE_MODE_UPLOAD],
-        horizontal=False,
-        key='mapeiaai_universal_source_mode',
-    )
+    st.markdown('### 2. Fonte de dados')
+    source_mode = st.radio('Como quer trazer os dados da origem?', [SOURCE_MODE_UPLOAD, SOURCE_MODE_SITE], key='mapeiaai_universal_source_mode')
     source = _render_source_site(model) if source_mode == SOURCE_MODE_SITE else _render_source_upload()
     if not isinstance(source, pd.DataFrame):
-        st.info('Carregue a origem dos dados para liberar IA, cálculo, mapeamento, preview e download.')
+        st.info('Carregue a origem para liberar preço, categorização, mapeamento, recursos inteligentes, IA, preview e download.')
         return None
-
-    st.success(f'Origem carregada: {len(source)} linha(s) × {len(source.columns)} coluna(s).')
+    st.success(f'Origem carregada: {len(source)} linha(s) x {len(source.columns)} coluna(s).')
     with st.expander('Ver origem carregada', expanded=False):
         st.dataframe(source.head(30).astype(str), use_container_width=True, height=280)
     return source
 
 
-def _render_ai_tools(source: pd.DataFrame, model: pd.DataFrame) -> None:
-    st.markdown('### 3. Recursos IA Real')
-    st.caption('A IA real pode sugerir mapeamento, corrigir ortografia e preparar títulos/descrições sem alterar o contrato final.')
+def _render_toggles() -> dict[str, bool]:
+    st.markdown('### 3. Toggles do processamento')
     col1, col2 = st.columns(2)
     with col1:
-        if st.button('🤖 Regerar sugestão de mapeamento com IA', use_container_width=True, key='mapeiaai_universal_regen_ai_mapping'):
-            suggested, engine = suggest_shared_mapping(source, model, operation='universal')
-            st.session_state[UNIVERSAL_MAPPING_KEY] = suggested
-            st.session_state[UNIVERSAL_ENGINE_KEY] = engine
-            clear_shared_mapping_widgets('mapeiaai_universal')
-            st.success('Sugestões de mapeamento atualizadas.')
-            safe_rerun('universal_ai_mapping_regenerated')
+        price = st.toggle('Preço / cálculo marketplace', value=False, key='mapeiaai_universal_toggle_price')
+        category = st.toggle('Categorização inteligente', value=False, key='mapeiaai_universal_toggle_category')
     with col2:
-        st.caption('Regras ativas: título até 59 caracteres, texto fiel aos dados e descrição complementar persuasiva quando houver coluna compatível.')
+        mapping_ai = st.toggle('IA para sugestão de mapeamento', value=True, key='mapeiaai_universal_toggle_mapping_ai')
+        rules = st.toggle('Regras e recursos inteligentes no download', value=True, key='mapeiaai_universal_toggle_rules')
+    return {'price': bool(price), 'category': bool(category), 'mapping_ai': bool(mapping_ai), 'rules': bool(rules)}
+
+
+def _apply_category(source: pd.DataFrame, enabled: bool) -> pd.DataFrame:
+    if not enabled:
+        return source
+    st.markdown('### Categorização inteligente')
+    try:
+        analyzed, stats = classify_dataframe(source)
+        confidence = st.slider('Confiança mínima para aplicar categoria', 0.50, 0.99, 0.80, 0.01, key='mapeiaai_universal_category_confidence_min')
+        output, applied = apply_category_suggestions(analyzed, confidence_min=float(confidence), keep_helper_columns=True)
+    except Exception as exc:
+        st.warning(f'Categorização não aplicada: {exc}')
+        return source
+    st.success(f'Categorização analisada: {stats.get("total", 0)} produto(s), {applied} categoria(s) aplicada(s).')
+    helper = [col for col in ('Categoria', 'categoria_sugerida_ia', 'acao_categoria_ia', 'confianca_categoria_ia', 'motivo_categoria_ia') if col in output.columns]
+    if helper:
+        st.dataframe(output[helper].head(30).astype(str), use_container_width=True, height=260)
+    return output
+
+
+def _render_ai_tools(source: pd.DataFrame, model: pd.DataFrame, enabled: bool) -> None:
+    st.markdown('### 4. Inteligência Artificial')
+    if not enabled:
+        st.caption('IA desligada. O mapeamento começará vazio para escolha manual.')
+        return
+    if st.button('Regerar sugestão de mapeamento com IA', use_container_width=True, key='mapeiaai_universal_regen_ai_mapping'):
+        suggested, engine = suggest_shared_mapping(source, model, operation='universal')
+        st.session_state[UNIVERSAL_MAPPING_KEY] = suggested
+        st.session_state[UNIVERSAL_ENGINE_KEY] = engine
+        clear_shared_mapping_widgets('mapeiaai_universal')
+        st.success('Sugestões de mapeamento atualizadas.')
+        safe_rerun('universal_ai_mapping_regenerated')
 
 
 def render_universal_flow() -> None:
+    _force_plain_context()
     if not _render_contract_guard():
         return
-
-    st.markdown('## Mapear planilha por contrato')
-    st.caption('O anexo define a saída. A origem fornece os dados. A IA real ajuda a correlacionar cabeçalhos e conteúdo.')
-
+    st.markdown('## Mapear planilha sem API')
+    st.caption('Modelo final + planilha fonte + toggles opcionais + mapeamento + preview + download. Não conecta e não envia por API.')
     model = _render_model_step()
     if not isinstance(model, pd.DataFrame):
         return
     source = _render_source_step(model)
     if not isinstance(source, pd.DataFrame):
         return
-    source_with_price = render_shared_calculator(source, key_prefix='mapeiaai_universal')
-    signature = _reset_universal_state_if_changed(model, source_with_price)
-    _render_ai_tools(source_with_price, model)
-    mapping = render_shared_contract_mapping(
-        source_with_price,
-        model,
-        signature=signature,
-        mapping_state_key=UNIVERSAL_MAPPING_KEY,
-        engine_state_key=UNIVERSAL_ENGINE_KEY,
-        key_prefix='mapeiaai_universal',
-    )
-    mapping, _mapping_rows = build_and_sync_mapping(
-        source_with_price,
-        model,
-        mapping,
-        operation='universal',
-        signature=signature,
-        engine=str(st.session_state.get(UNIVERSAL_ENGINE_KEY) or 'local'),
-        mapping_state_key=UNIVERSAL_MAPPING_KEY,
-        engine_state_key=UNIVERSAL_ENGINE_KEY,
-    )
-    output = render_shared_final_csv(
-        source_with_price,
-        model,
-        mapping,
-        key_prefix='mapeiaai_universal',
-        file_name='mapeiaai_planilha_final_mapeada.csv',
-    )
+    toggles = _render_toggles()
+    processed = source.copy().fillna('')
+    if toggles['price']:
+        processed = render_shared_calculator(processed, key_prefix='mapeiaai_universal', force_enabled=True)
+    else:
+        st.caption('Preço desligado: valores mantidos como vieram da fonte.')
+    processed = _apply_category(processed, toggles['category'])
+    signature = _reset_universal_state_if_changed(model, processed, toggles['mapping_ai'], toggles['rules'])
+    if toggles['mapping_ai'] and str(st.session_state.get(UNIVERSAL_ENGINE_KEY) or '') == 'manual_sem_ia':
+        st.session_state.pop(UNIVERSAL_MAPPING_KEY, None)
+        st.session_state.pop(UNIVERSAL_ENGINE_KEY, None)
+        clear_shared_mapping_widgets('mapeiaai_universal')
+    _render_ai_tools(processed, model, toggles['mapping_ai'])
+    mapping = render_shared_contract_mapping(processed, model, signature=signature, mapping_state_key=UNIVERSAL_MAPPING_KEY, engine_state_key=UNIVERSAL_ENGINE_KEY, key_prefix='mapeiaai_universal', ai_enabled=toggles['mapping_ai'])
+    mapping, _mapping_rows = build_and_sync_mapping(processed, model, mapping, operation='universal', signature=signature, engine=str(st.session_state.get(UNIVERSAL_ENGINE_KEY) or 'local'), mapping_state_key=UNIVERSAL_MAPPING_KEY, engine_state_key=UNIVERSAL_ENGINE_KEY)
+    output = render_shared_final_csv(processed, model, mapping, key_prefix='mapeiaai_universal', file_name='mapeiaai_planilha_final_mapeada.csv', run_smart_features=toggles['rules'])
     if isinstance(output, pd.DataFrame):
         st.session_state[UNIVERSAL_OUTPUT_KEY] = output
 
