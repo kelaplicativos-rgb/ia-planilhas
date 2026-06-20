@@ -37,10 +37,31 @@ def _safe_state_set(st, key: str, value) -> None:
             pass
 
 
+def _api_flow_active(st) -> bool:
+    try:
+        from bling_app_zero.ui.flow_context import CONTEXT_BLING_API, entry_context
+        if entry_context() == CONTEXT_BLING_API:
+            return True
+    except Exception:
+        pass
+    try:
+        return bool(
+            st.session_state.get('home_bling_connected_same_flow_api_send')
+            or st.session_state.get('bling_connected_api_flow_active')
+            or st.session_state.get('direct_bling_api_contract_active')
+            or str(st.session_state.get('flow_spine_final_destination') or '').strip().lower() == 'api_bling'
+        )
+    except Exception:
+        return False
+
+
 def _force_universal_state() -> None:
     try:
         import streamlit as st
     except Exception:
+        return
+    if _api_flow_active(st):
+        add_audit_event('download_universal_force_skipped_for_api', area='DOWNLOAD', status='OK', details={'reason': 'api_flow_active', 'responsible_file': RESPONSIBLE_FILE})
         return
     for key in UNIVERSAL_STATE_KEYS:
         _safe_state_set(st, key, UNIVERSAL_OPERATION)
@@ -61,6 +82,14 @@ def _install_retry_result_visual_fix() -> None:
 
 
 def install_download_estoque_runtime_fix() -> bool:
+    try:
+        import streamlit as st
+        if _api_flow_active(st):
+            add_audit_event('download_universal_runtime_fix_not_installed_for_api', area='DOWNLOAD', status='OK', details={'reason': 'api_flow_active', 'responsible_file': RESPONSIBLE_FILE})
+            return False
+    except Exception:
+        pass
+
     _force_universal_state()
     _install_retry_result_visual_fix()
 
