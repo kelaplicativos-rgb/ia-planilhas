@@ -125,6 +125,28 @@ def _operation_contract_mismatch_error(raw_df: pd.DataFrame, download_df: pd.Dat
     op = normalize_operation(operation)
     raw_columns = list(map(str, raw_df.columns)) if isinstance(raw_df, pd.DataFrame) else []
     download_columns = list(map(str, download_df.columns)) if isinstance(download_df, pd.DataFrame) else []
+
+    if _is_api_context() and op in {OP_ESTOQUE, OP_ATUALIZACAO_PRECO}:
+        # No fluxo API, a planilha final pode vir como base completa do site
+        # (nome, preço, imagem, categoria etc.) e ainda assim a operação real é
+        # estoque/preço. O seletor específico adiciona "Bling depósito id" ou
+        # destino de preço antes do envio, e o send_validation_v2 valida isso.
+        # Bloquear aqui fazia o estoque nunca chegar ao painel de depósitos.
+        add_audit_event(
+            'final_download_contract_mismatch_guard_skipped_for_api_target',
+            area='DOWNLOAD',
+            status='OK',
+            details={
+                'operation': op,
+                'raw_columns': raw_columns,
+                'download_columns': download_columns,
+                'flow_spine': output_diagnostics(),
+                'reason': 'api_target_selector_validates_stock_or_price_after_full_source_table',
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+        return ''
+
     if op == OP_CADASTRO and (_looks_like_stock_contract(raw_df) or _looks_like_stock_contract(download_df) or not _looks_like_cadastro_contract(download_df)):
         add_audit_event('final_download_contract_mismatch_blocked', area='DOWNLOAD', status='BLOQUEADO', details={'operation': op, 'raw_columns': raw_columns, 'download_columns': download_columns, 'flow_spine': output_diagnostics(), 'responsible_file': RESPONSIBLE_FILE})
         return 'Operação bloqueada por segurança: você está em Cadastro de produtos, mas a tabela final parece estoque ou não contém campos reais de cadastro como Nome/Descrição e Preço. Volte ao preview final e gere novamente o arquivo de Cadastro.'
