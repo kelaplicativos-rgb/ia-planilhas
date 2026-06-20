@@ -47,6 +47,7 @@ API_OPERATION_OPTIONS = {
     'Atualizar preços multilojas/canais': OP_PRECO,
     'Atualizar estoque por depósito': OP_ESTOQUE,
 }
+API_OPERATION_LABEL_BY_VALUE = {value: label for label, value in API_OPERATION_OPTIONS.items()}
 API_OPERATION_HELP = {
     OP_CADASTRO: 'Cadastro cria ou atualiza produtos. Não exige loja/canal nem depósito.',
     OP_PRECO: 'Preços multilojas exigem escolher Preço geral ou loja/canal de venda antes do envio.',
@@ -119,6 +120,30 @@ def _store_api_operation(operation: object) -> str:
     return op
 
 
+def _operation_label_for(operation: object) -> str:
+    op = _normalize_api_operation(operation)
+    return API_OPERATION_LABEL_BY_VALUE.get(op, str(operation or op or 'Operação API'))
+
+
+def _operation_selected_before_mapping() -> str:
+    # A operação deve nascer na entrada Bling API. A etapa de mapeamento apenas
+    # herda essa escolha para não obrigar o usuário a escolher estoque de novo
+    # quase no final do fluxo.
+    keys = (
+        'direct_bling_operation_choice',
+        'direct_bling_operation_applied',
+        API_OPERATION_CHOICE_KEY,
+        'bling_connected_api_operation',
+        'flow_spine_sender_operation',
+        'flow_spine_operation_resolved_for_api',
+    )
+    for key in keys:
+        op = _normalize_api_operation(st.session_state.get(key))
+        if op in {OP_CADASTRO, OP_ESTOQUE, OP_PRECO}:
+            return op
+    return ''
+
+
 def _current_operation() -> str:
     keys = [
         API_OPERATION_CHOICE_KEY,
@@ -149,6 +174,19 @@ def _current_operation() -> str:
 
 
 def _render_api_operation_selector() -> str:
+    entry_operation = _operation_selected_before_mapping()
+    st.markdown('### Operação da API Bling')
+
+    if entry_operation:
+        operation = _store_api_operation(entry_operation)
+        st.success(f'Operação definida no início do fluxo: {_operation_label_for(operation)}.')
+        if operation == OP_ESTOQUE:
+            st.caption('Próximo passo obrigatório: confirmar o depósito do Bling antes de seguir com a atualização de saldo.')
+        else:
+            st.caption('A etapa atual só herda a operação; não há nova escolha manual aqui.')
+        st.info(API_OPERATION_HELP.get(operation, ''))
+        return operation
+
     current = _current_operation()
     labels = list(API_OPERATION_OPTIONS.keys())
     index = 0
@@ -157,7 +195,6 @@ def _render_api_operation_selector() -> str:
             index = pos
             break
 
-    st.markdown('### Operação da API Bling')
     st.caption('Escolha a função real antes de preparar o envio. API não pode seguir como modelo universal.')
     selected_label = st.radio(
         'O que você quer fazer no Bling?',
