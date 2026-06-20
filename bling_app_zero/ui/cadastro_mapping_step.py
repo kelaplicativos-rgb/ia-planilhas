@@ -30,6 +30,7 @@ from bling_app_zero.ui.cadastro_wizard_state import (
     valid_df,
     valid_model,
 )
+from bling_app_zero.ui.home_bling_api_flow import _render_stock_deposit_field
 from bling_app_zero.ui.home_shared import df_signature
 from bling_app_zero.ui.shared_mapping import render_shared_cadastro_mapping
 
@@ -39,6 +40,8 @@ CONTEXT_BLING_API = 'bling_api'
 MODEL_BYTES_KEY = 'destination_model_upload_bytes'
 MODEL_NAME_KEY = 'destination_model_upload_name'
 API_OPERATION_CHOICE_KEY = 'home_bling_api_operation_choice'
+API_STOCK_DEPOSIT_AUTOLOAD_KEY = 'bling_api_stock_deposit_autoload_attempted'
+API_STOCK_DEPOSIT_OPTIONS_KEY = 'bling_api_stock_deposit_options'
 API_OPERATION_OPTIONS = {
     'Cadastrar produtos no Bling': OP_CADASTRO,
     'Atualizar preços multilojas/canais': OP_PRECO,
@@ -106,6 +109,11 @@ def _normalize_api_operation(value: object) -> str:
 
 def _store_api_operation(operation: object) -> str:
     op = _normalize_api_operation(operation) or OP_CADASTRO
+    previous = _normalize_api_operation(st.session_state.get(API_OPERATION_CHOICE_KEY))
+    if op == OP_ESTOQUE and previous != op:
+        # Ao trocar para estoque, a busca automática precisa rodar de novo.
+        # Isso evita cache antigo/erro anterior impedir a lista real de depósitos.
+        st.session_state.pop(API_STOCK_DEPOSIT_AUTOLOAD_KEY, None)
     for key in API_OPERATION_SESSION_KEYS:
         st.session_state[key] = op
     return op
@@ -234,7 +242,7 @@ def _render_post_mapping_notice() -> None:
         if op == OP_PRECO:
             st.success('Automação preparada. Continue para a prévia; antes do envio será obrigatório escolher Preço geral ou loja/canal.')
         elif op == OP_ESTOQUE:
-            st.success('Automação preparada. Continue para a prévia; antes do envio será obrigatório escolher o depósito do estoque.')
+            st.success('Automação preparada. Depósito do Bling já deve estar carregado/selecionado abaixo para atualizar o saldo.')
         else:
             label = _operation_label() or 'enviar'
             st.success(f'Automação preparada. Continue para a prévia e {label}.')
@@ -294,13 +302,21 @@ def _prepare_bling_api_automation(df_origem: pd.DataFrame) -> pd.DataFrame | Non
     return fixed
 
 
+def _stock_deposit_autoload_needs_retry() -> bool:
+    deposits = st.session_state.get(API_STOCK_DEPOSIT_OPTIONS_KEY)
+    return not isinstance(deposits, list) or not deposits
+
+
 def _render_connected_policy_notice() -> None:
     selector = str(st.session_state.get('bling_api_required_selector') or '').strip()
     final_action = str(st.session_state.get('bling_api_final_action') or '').strip()
     if selector == 'price_channel_or_general':
         st.info('Próxima regra: selecionar preço geral ou loja/canal de venda antes de enviar o preço calculado ao Bling.')
     elif selector == 'stock_deposit':
-        st.info('Próxima regra: selecionar depósito do Bling antes de atualizar estoque.')
+        st.info('Depósito obrigatório: ao selecionar estoque, o sistema busca automaticamente os depósitos reais do Bling e já deixa um selecionado para o envio.')
+        if _stock_deposit_autoload_needs_retry():
+            st.session_state.pop(API_STOCK_DEPOSIT_AUTOLOAD_KEY, None)
+        _render_stock_deposit_field(OP_ESTOQUE)
     else:
         st.info('Próxima regra: comparar, rodar check IA e enviar ao Bling com mínima intervenção humana.')
     if final_action:
