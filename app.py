@@ -22,6 +22,8 @@ RUNTIME_PATCH_KEYS_TO_REFRESH = (
     'blingfix_runtime_patches_installed_v7',
     'blingfix_runtime_patches_installed_v8',
 )
+RUNTIME_PATCH_REFRESH_MARKER_KEY = 'blingfix_runtime_patch_refresh_marker_v1'
+RUNTIME_PATCH_REFRESH_POLICY_VERSION = f'{APP_VERSION}:runtime_v9_flow_stability'
 
 MOBILE_AUTO_ENTRY_KEY = 'mobile_connected_bling_auto_entry_done_v1'
 DEVICE_HINT_KEY = 'app_device_hint_v1'
@@ -34,22 +36,33 @@ DESKTOP_QUERY_VALUES = {'0', 'false', 'nao', 'não', 'no', 'desktop', 'wide'}
 
 
 def _refresh_blingfix_runtime_patch_session() -> None:
+    """Atualiza patches runtime no máximo uma vez por versão/política.
+
+    Antes este bloco removia as chaves de patch em todo rerun do Streamlit.
+    Isso fazia os patches serem reinstalados várias vezes na mesma sessão e
+    gerava instabilidade perceptível na Home, sidebar e fluxos.
+    """
+    if st.session_state.get(RUNTIME_PATCH_REFRESH_MARKER_KEY) == RUNTIME_PATCH_REFRESH_POLICY_VERSION:
+        return
+
     removed: list[str] = []
     for key in RUNTIME_PATCH_KEYS_TO_REFRESH:
         if key in st.session_state:
             st.session_state.pop(key, None)
             removed.append(key)
-    if removed:
-        add_audit_event(
-            'blingfix_runtime_patch_session_keys_refreshed',
-            area='APP',
-            status='OK',
-            details={
-                'removed_keys': removed,
-                'reason': 'Forçar instalação do runtime atualizado de busca única API/site.',
-                'responsible_file': 'app.py',
-            },
-        )
+
+    st.session_state[RUNTIME_PATCH_REFRESH_MARKER_KEY] = RUNTIME_PATCH_REFRESH_POLICY_VERSION
+    add_audit_event(
+        'blingfix_runtime_patch_session_keys_refreshed_once_per_version',
+        area='APP',
+        status='OK' if removed else 'INFO',
+        details={
+            'removed_keys': removed,
+            'policy_version': RUNTIME_PATCH_REFRESH_POLICY_VERSION,
+            'reason': 'Evitar reinstalação destrutiva de patches a cada rerun; refresh permitido apenas quando a política/versão muda.',
+            'responsible_file': 'app.py',
+        },
+    )
 
 
 def _query_param(name: str) -> str:
