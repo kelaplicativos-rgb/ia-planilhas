@@ -26,6 +26,8 @@ class SmartScanQuality:
     missing_description: int
     missing_stock: int
     invalid_brand: int
+    duplicate_identity: int
+    duplicate_url: int
     warnings: list[str]
 
 
@@ -69,6 +71,16 @@ def _find_identity_column(columns: Iterable[str]) -> str | None:
     )
 
 
+def _duplicate_non_empty_count(series: pd.Series | None) -> int:
+    if series is None:
+        return 0
+    cleaned = series.fillna('').astype(str).map(_clean_text)
+    cleaned = cleaned[cleaned.ne('')]
+    if cleaned.empty:
+        return 0
+    return int(cleaned.duplicated(keep=False).sum())
+
+
 def normalize_site_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame() if not isinstance(df, pd.DataFrame) else df.copy()
@@ -104,7 +116,7 @@ def normalize_site_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
 def evaluate_site_dataframe(df: pd.DataFrame, operation: str = 'cadastro') -> SmartScanQuality:
     if not isinstance(df, pd.DataFrame) or df.empty:
-        return SmartScanQuality(0, 0, 0, 0, 0, 0, 0, 0, ['Nenhum produto válido foi capturado.'])
+        return SmartScanQuality(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ['Nenhum produto válido foi capturado.'])
 
     is_stock = _is_stock_operation(operation)
     desc_col = _find_column(df.columns, 'descrição', 'descricao', 'nome', 'produto')
@@ -112,6 +124,7 @@ def evaluate_site_dataframe(df: pd.DataFrame, operation: str = 'cadastro') -> Sm
     stock_col = _find_column(df.columns, 'estoque', 'quantidade', 'saldo', 'balanço', 'balanco')
     brand_col = _find_column(df.columns, 'marca')
     identity_col = _find_identity_column(df.columns)
+    url_col = _find_column(df.columns, 'url', 'link')
 
     rows = len(df)
     # BLINGFIX: estoque não deve ser penalizado por falta de descrição/título.
@@ -120,6 +133,8 @@ def evaluate_site_dataframe(df: pd.DataFrame, operation: str = 'cadastro') -> Sm
     missing_price = int(df[price_col].map(_looks_empty).sum()) if price_col else (0 if is_stock else rows)
     missing_stock = int(df[stock_col].map(_looks_empty).sum()) if stock_col else (rows if is_stock else 0)
     missing_identity = int(df[identity_col].map(_looks_empty).sum()) if identity_col else (rows if is_stock else 0)
+    duplicate_identity = _duplicate_non_empty_count(df[identity_col]) if identity_col else 0
+    duplicate_url = _duplicate_non_empty_count(df[url_col]) if url_col else 0
     invalid_brand = 0
     if brand_col and not is_stock:
         invalid_brand = int(df[brand_col].astype(str).str.lower().str.contains('mega center|stoqui|loja', regex=True, na=False).sum())
@@ -140,6 +155,8 @@ def evaluate_site_dataframe(df: pd.DataFrame, operation: str = 'cadastro') -> Sm
     penalties += int((missing_stock / max(rows, 1)) * 35) if is_stock else 0
     penalties += int((missing_identity / max(rows, 1)) * 35) if is_stock else 0
     penalties += int((invalid_brand / max(rows, 1)) * 10)
+    penalties += int((duplicate_identity / max(rows, 1)) * 10)
+    penalties += int((duplicate_url / max(rows, 1)) * 8)
     score = max(0, min(100, 100 - penalties))
 
     warnings: list[str] = []
@@ -151,6 +168,10 @@ def evaluate_site_dataframe(df: pd.DataFrame, operation: str = 'cadastro') -> Sm
         warnings.append(f'{missing_identity} produto(s) sem código/SKU/GTIN/ID para localizar no Bling.')
     if is_stock and missing_stock:
         warnings.append(f'{missing_stock} produto(s) sem estoque/saldo.')
+    if duplicate_identity:
+        warnings.append(f'{duplicate_identity} linha(s) com identificador repetido na captura; revisar duplicidade antes da API.')
+    if duplicate_url:
+        warnings.append(f'{duplicate_url} linha(s) com URL repetida na captura; possível paginação/varredura duplicada.')
     if invalid_brand:
         warnings.append(f'{invalid_brand} marca(s) pareciam nome da loja e foram sinalizadas.')
     if score >= 85:
@@ -160,7 +181,7 @@ def evaluate_site_dataframe(df: pd.DataFrame, operation: str = 'cadastro') -> Sm
     else:
         warnings.append('Qualidade baixa: recomenda-se nova captura ou links mais específicos.')
 
-    return SmartScanQuality(rows, len(df.columns), score, max(0, good_rows), missing_price, missing_description, missing_stock, invalid_brand, warnings)
+    return SmartScanQuality(rows, len(df.columns), score, max(0, good_rows), missing_price, missing_description, missing_stock, invalid_brand, duplicate_identity, duplicate_url, warnings)
 
 
 __all__ = ['SmartScanQuality', 'evaluate_site_dataframe', 'normalize_site_dataframe']
