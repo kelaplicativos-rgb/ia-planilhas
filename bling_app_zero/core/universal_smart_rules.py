@@ -8,6 +8,7 @@ import pandas as pd
 EMPTY_MARKERS = {'nan', 'none', 'null', '<na>', 'n/a', 'na'}
 IMAGE_COLUMN_TERMS = ('imagem', 'imagens', 'image', 'images', 'foto', 'fotos', 'url imagens')
 GTIN_COLUMN_TERMS = ('gtin', 'ean', 'código de barras', 'codigo de barras')
+URL_PATTERN = re.compile(r'https?://[^\s|;,]+', re.IGNORECASE)
 
 
 def _clean_text(value: Any) -> str:
@@ -30,13 +31,24 @@ def _is_empty_marker(value: Any) -> bool:
 
 
 def _split_images(value: Any) -> list[str]:
-    text = _clean_text(value)
+    raw = '' if value is None else str(value)
+    text = _clean_text(raw)
     if not text:
         return []
-    if '|' in text:
-        parts = text.split('|')
-    elif '\n' in str(value):
-        parts = str(value).splitlines()
+
+    # Prefer URLs when present. This fixes exported Bling/site cells like:
+    # https://a/1.webp,https://a/2.webp,https://a/2.webp
+    # and avoids treating the whole comma-separated blob as a single image.
+    urls = [_clean_text(match.group(0)) for match in URL_PATTERN.finditer(raw)]
+    if urls:
+        return [url for url in urls if url]
+
+    if '|' in raw:
+        parts = raw.split('|')
+    elif '\n' in raw or '\r' in raw:
+        parts = raw.replace('\r', '\n').splitlines()
+    elif ',' in raw or ';' in raw:
+        parts = re.split(r'[,;]+', raw)
     else:
         parts = [text]
     return [_clean_text(part) for part in parts if _clean_text(part)]
@@ -91,7 +103,7 @@ def default_smart_rules_config() -> dict[str, Any]:
         'remove_empty_markers': True,
         'normalize_images': True,
         'dedupe_images': True,
-        'limit_images': False,
+        'limit_images': True,
         'max_images': 6,
         'validate_gtin': False,
     }
