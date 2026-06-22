@@ -19,11 +19,24 @@ def test_shared_mapping_has_pagination_and_scroll_to_top() -> None:
     assert 'st.rerun()' in content
 
 
-def test_shared_mapping_preview_does_not_repeat_campo_do_modelo_text() -> None:
+def test_shared_mapping_preview_is_short_and_clean() -> None:
     content = Path('bling_app_zero/ui/shared_mapping.py').read_text(encoding='utf-8')
 
     assert 'Campo do modelo:' not in content
-    assert 'st.markdown(f\'**Campo:** `{target_name}`\')' in content
+    assert '← origem' not in content
+    assert 'alto **' not in content
+    assert 'revisar **' not in content
+    assert 'Prévia indisponível ou coluna vazia.' in content
+    assert 'st.markdown(f\'**Campo:** `{target_name}`\')' not in content
+
+
+def test_shared_mapping_uses_visual_cards_with_soft_and_strong_bands() -> None:
+    content = Path('bling_app_zero/ui/shared_mapping.py').read_text(encoding='utf-8')
+
+    assert 'with st.container(border=True):' in content
+    assert 'mapeia-map-card-soft' in content
+    assert 'mapeia-map-card-strong' in content
+    assert '_mapping_card_header(target_name, index)' in content
 
 
 def test_universal_flow_does_not_render_disabled_toggle_captions() -> None:
