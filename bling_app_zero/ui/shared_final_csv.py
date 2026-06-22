@@ -32,6 +32,7 @@ MODEL_TEMPLATE_BYTES_KEYS = (
     'mapeiaai_model_template_bytes',
 )
 SUPPORTED_PRESERVE_SUFFIXES = {'.csv', '.xlsx', '.xlsm'}
+EXCEL_LIKE_SUFFIXES = {'.xlsx', '.xlsm', '.xls', '.xlsb'}
 
 
 def _render_smartcore_box(result) -> None:
@@ -95,6 +96,23 @@ def _build_template_preserved_download(output: pd.DataFrame) -> tuple[bytes | No
     return file_bytes, output_name_for_template(template_name), mime_for_template_output(template_name), True, 'preserved'
 
 
+def _render_no_safe_download(template_name: str, template_suffix: str, preserve_status: str) -> None:
+    if not template_name:
+        st.error('Não encontrei o arquivo modelo original nesta sessão.')
+        st.caption('Reanexe o modelo original em XLSX, XLSM ou CSV. O sistema não vai baixar CSV de fallback sem o arquivo original.')
+        return
+    if template_suffix in EXCEL_LIKE_SUFFIXES and template_suffix not in SUPPORTED_PRESERVE_SUFFIXES:
+        st.error(f'O modelo {template_name} está em formato {template_suffix.upper()} e ainda não pode ser preservado com segurança.')
+        st.caption('Use XLSX, XLSM ou CSV para download fiel ao modelo original.')
+        return
+    if template_suffix in EXCEL_LIKE_SUFFIXES:
+        st.error(f'Não consegui gerar o arquivo preservado a partir de {template_name}.')
+        st.caption('Reanexe o modelo em XLSX, XLSM ou CSV. O CSV alternativo foi desativado para não quebrar o formato original.')
+        return
+    st.error(f'O modelo {template_name} não está em formato aceito para preservação fiel.')
+    st.caption(f'Use XLSX, XLSM ou CSV. Status técnico: {preserve_status}.')
+
+
 def apply_shared_text_rules(output: pd.DataFrame) -> pd.DataFrame:
     return apply_text_rules(output)
 
@@ -133,7 +151,6 @@ def render_shared_final_csv(
         return None
 
     output = final_result.output
-    csv_bytes = final_result.csv_bytes
     smartcore_result = final_result.smartcore_result
     if not isinstance(output, pd.DataFrame):
         st.error('Não foi possível montar o preview final.')
@@ -161,7 +178,7 @@ def render_shared_final_csv(
         preserved_bytes, preserved_name, preserved_mime, preserved, preserve_status = _build_template_preserved_download(output)
     except Exception as exc:
         preserve_status = f'error:{str(exc)[:180]}'
-        st.error(f'Download fiel ao modelo original bloqueado: {exc}')
+        st.error(f'Download fiel ao modelo original falhou: {exc}')
 
     template = _current_model_template()
     template_name = template[0] if template else ''
@@ -178,19 +195,8 @@ def render_shared_final_csv(
             key=f'{key_prefix}_download_template_preserved',
             help='Download gerado dentro do arquivo modelo original, preservando formato, abas e estrutura sempre que possível.',
         )
-    elif template is not None and template_suffix in {'.xlsx', '.xlsm', '.xls', '.xlsb'}:
-        st.warning('Não gerei CSV para evitar quebrar o formato original do modelo anexado. Reanexe o modelo em XLSX, XLSM ou CSV e tente novamente.')
     else:
-        st.warning('Não encontrei arquivo de modelo original na sessão; usando CSV apenas como fallback técnico.')
-        st.download_button(
-            'Baixar planilha final em CSV',
-            data=csv_bytes,
-            file_name=file_name,
-            mime='text/csv; charset=utf-8',
-            use_container_width=True,
-            key=f'{key_prefix}_download_csv_fallback',
-            help='Fallback CSV usado apenas quando o arquivo de modelo original não está disponível na sessão.',
-        )
+        _render_no_safe_download(template_name, template_suffix, preserve_status)
     add_audit_event(
         'shared_final_csv_rendered',
         area='FINAL_CSV',
@@ -205,6 +211,7 @@ def render_shared_final_csv(
             'template_preserved_download': bool(preserved),
             'template_preserve_status': preserve_status,
             'template_name': template_name,
+            'csv_fallback_blocked': True,
             'smartcore_score': int(final_result.state.result.smartcore_score),
             'run_smart_features': bool(run_smart_features),
             'neutral_final_output_state': True,
