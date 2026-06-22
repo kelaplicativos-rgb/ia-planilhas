@@ -46,6 +46,37 @@ NO_API_SESSION_KEYS = (
     'bling_api_final_action',
     'bling_api_manual_mapping_required',
     'bling_api_must_run_ai_check',
+    'api_flow_active',
+)
+
+BLING_ONLY_STATE_KEYS = (
+    'cadastro_wizard_df_modelo',
+    'cadastro_wizard_df_modelo_estoque',
+    'df_modelo_cadastro',
+    'df_modelo_estoque',
+    'modelo_cadastro_df',
+    'modelo_estoque_df',
+    'home_modelo_cadastro_df',
+    'home_modelo_estoque_df',
+    'estoque_wizard_df_modelo',
+    'df_final_bling_api',
+    'mapping_bling_api',
+    'mapping_confidence_bling_api',
+    'bling_api_stock_deposit_name',
+    'bling_api_stock_deposit_id',
+)
+
+UNIVERSAL_RUNTIME_KEYS_TO_LEAVE_BLING = (
+    'mapear_planilha_sem_api_active',
+    'mapeiaai_universal_source_df',
+    'mapeiaai_universal_mapping',
+    'mapeiaai_universal_output_df',
+    'mapeiaai_universal_signature',
+    'mapeiaai_universal_mapping_engine',
+    'mapeiaai_universal_source_kind',
+    'df_origem_unificada',
+    'df_origem_site',
+    'df_origem_arquivo',
 )
 
 legacy.render_home_wizard = render_home_wizard
@@ -68,8 +99,13 @@ def _query_param(name: str) -> str:
 def _clear_no_api_session_flags() -> None:
     for key in NO_API_SESSION_KEYS:
         st.session_state.pop(key, None)
+    for key in BLING_ONLY_STATE_KEYS:
+        st.session_state.pop(key, None)
     set_entry_context(CONTEXT_UNIVERSAL)
     activate_csv_finish_mode()
+    st.session_state['mapeiaai_flow_kind'] = 'universal_model_mapping'
+    st.session_state['flow_kind'] = 'universal_model_mapping'
+    st.session_state['api_flow_active'] = False
     st.session_state['active_feature_mode'] = 'csv'
     st.session_state['active_feature_operation'] = 'universal'
     st.session_state['active_feature_contract_key'] = 'universal_mapping_csv'
@@ -78,6 +114,12 @@ def _clear_no_api_session_flags() -> None:
     st.session_state['flow_spine_final_destination'] = 'download'
     st.session_state['flow_spine_final_title'] = 'Download'
     st.session_state['flow_spine_primary_action_label'] = 'Download Modelo Mapeado'
+    legacy.add_audit_event(
+        'home_router_v2_no_api_context_isolated',
+        area='HOME',
+        status='OK',
+        details={'responsible_file': RESPONSIBLE_FILE, 'flow_kind': 'universal_model_mapping', 'api': False},
+    )
 
 
 def _reset_stale_home_flow_if_needed() -> None:
@@ -126,6 +168,15 @@ def start_mapear_planilha_flow() -> None:
     st.session_state['home_single_page_flow_active'] = False
     st.session_state['mapear_planilha_sem_api_active'] = True
     st.session_state['mapeiaai_home_entry_path'] = 'mapear_modelo_sem_api'
+    st.session_state['mapeiaai_flow_kind'] = 'universal_model_mapping'
+    st.session_state['flow_kind'] = 'universal_model_mapping'
+    st.session_state['api_flow_active'] = False
+    st.session_state['bling_wizard_step'] = 'modelo'
+    st.session_state['home_wizard_step'] = 'modelo'
+    st.session_state['home_slim_flow_operation'] = 'universal'
+    st.session_state['operacao_final'] = 'universal'
+    st.session_state['tipo_operacao_final'] = 'universal'
+    st.session_state['home_detected_operation'] = 'universal'
     try:
         st.query_params['operation_v2'] = FLOW_MAPEAR_PLANILHA
         for key in ('step', 'flow', 'origem', 'operacao', 'operation'):
@@ -136,8 +187,14 @@ def start_mapear_planilha_flow() -> None:
 
 def start_bling_api_flow() -> None:
     st.session_state['mapeiaai_home_entry_path'] = 'bling_api'
+    st.session_state['mapeiaai_flow_kind'] = 'bling_api'
+    st.session_state['flow_kind'] = 'bling_api'
+    st.session_state['api_flow_active'] = True
     st.session_state['home_bling_connected_same_flow_api_send'] = True
     st.session_state['bling_connected_api_flow_active'] = True
+    st.session_state.pop('mapear_planilha_sem_api_active', None)
+    for key in UNIVERSAL_RUNTIME_KEYS_TO_LEAVE_BLING:
+        st.session_state.pop(key, None)
     try:
         legacy._start_wizard_context(CONTEXT_BLING_API, step='origem', api_send=True)
     except Exception:
@@ -151,6 +208,12 @@ def start_bling_api_flow() -> None:
         st.query_params['step'] = 'origem'
     except Exception:
         pass
+    legacy.add_audit_event(
+        'home_router_v2_bling_api_context_isolated',
+        area='HOME',
+        status='OK',
+        details={'responsible_file': RESPONSIBLE_FILE, 'flow_kind': 'bling_api', 'api': True, 'first_step': 'origem'},
+    )
 
 
 def _price_multistore_requested() -> bool:
