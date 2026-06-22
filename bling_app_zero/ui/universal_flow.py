@@ -131,10 +131,33 @@ def _progress_callback(progress_bar, status_box):
     return _callback
 
 
+def _render_model_step() -> pd.DataFrame | None:
+    st.markdown('### 1. Anexar Modelo / Mapear')
+    model = _current_df(UNIVERSAL_MODEL_KEY)
+    if not isinstance(model, pd.DataFrame):
+        st.caption('Anexe primeiro a planilha modelo exatamente no formato que você quer receber no final.')
+        st.caption('A saída final preservará as colunas e a ordem desse modelo, preenchendo os dados vindos da origem escolhida depois.')
+        st.caption(SUPPORTED_UPLOAD_LABEL)
+        uploaded = st.file_uploader('Planilha modelo final', type=None, key='mapeiaai_universal_model_upload')
+        df = _read_upload(uploaded)
+        if isinstance(df, pd.DataFrame):
+            _store_df(UNIVERSAL_MODEL_KEY, df)
+            _audit('mapear_planilha_modelo_anexado_primeiro', rows=int(len(df)), columns=int(len(df.columns)))
+        model = _current_df(UNIVERSAL_MODEL_KEY)
+    if not isinstance(model, pd.DataFrame):
+        st.info('Envie a planilha modelo final para liberar a origem de dados, os toggles, o mapeamento, o preview e o download.')
+        return None
+    st.success('Modelo final carregado. A saída seguirá exatamente essas colunas e essa ordem.')
+    _audit('mapear_planilha_modelo_confirmado_primeiro', rows=int(len(model)), columns=int(len(model.columns)))
+    st.dataframe(model.head(3).astype(str), use_container_width=True, height=145)
+    st.caption('Colunas finais: ' + ', '.join(map(str, model.columns)))
+    return model
+
+
 def _render_source_upload() -> pd.DataFrame | None:
-    st.caption('Anexe a planilha fonte de dados: fornecedor, marketplace, CSV, planilha, XML, MHTML ou PDF.')
+    st.caption('Anexe a origem dos dados: fornecedor, marketplace, CSV, planilha, XML, MHTML ou PDF.')
     st.caption(SUPPORTED_UPLOAD_LABEL)
-    uploaded = st.file_uploader('Planilha fonte de dados', type=None, key='mapeiaai_universal_source_upload')
+    uploaded = st.file_uploader('Arquivo de origem dos dados', type=None, key='mapeiaai_universal_source_upload')
     df = _read_upload(uploaded)
     if isinstance(df, pd.DataFrame):
         _store_df(UNIVERSAL_SOURCE_KEY, df)
@@ -143,7 +166,7 @@ def _render_source_upload() -> pd.DataFrame | None:
 
 
 def _render_source_site() -> pd.DataFrame | None:
-    st.caption('Cole links de produtos, categorias ou buscas. A captura por site agora acontece antes do modelo final.')
+    st.caption('Cole links de produtos, categorias ou buscas. A captura por site preencherá o modelo anexado na primeira etapa.')
     raw_urls = st.text_area('Links para buscar produtos por site', height=130, key='mapeiaai_universal_site_urls')
     all_products = st.checkbox('Buscar todos os produtos encontrados', value=True, key='mapeiaai_universal_site_all_products')
     if st.button('Buscar produtos por site', use_container_width=True, key='mapeiaai_universal_run_site'):
@@ -163,55 +186,33 @@ def _render_source_site() -> pd.DataFrame | None:
 
 
 def _render_source_step() -> pd.DataFrame | None:
-    st.markdown('### 1. Fonte de dados')
-    st.caption('Primeiro entra a origem. Isso evita o sistema decidir operação Bling ou prender o usuário em cadastro/estoque.')
+    st.markdown('### 2. Origem de dados')
+    st.caption('Agora escolha de onde virão os dados que serão inseridos no modelo anexado.')
     source_mode = st.radio('Como quer trazer os dados da origem?', [SOURCE_MODE_UPLOAD, SOURCE_MODE_SITE], key='mapeiaai_universal_source_mode')
     source = _render_source_site() if source_mode == SOURCE_MODE_SITE else _render_source_upload()
     if not isinstance(source, pd.DataFrame):
-        st.info('Carregue a planilha fonte de dados para liberar a etapa do modelo final.')
+        st.info('Carregue a origem de dados para liberar os toggles, mapeamento, preview e download.')
         return None
-    st.success(f'Fonte carregada: {len(source)} linha(s) x {len(source.columns)} coluna(s).')
+    st.success(f'Origem carregada: {len(source)} linha(s) x {len(source.columns)} coluna(s).')
     _audit('mapear_planilha_fonte_confirmada', rows=int(len(source)), columns=int(len(source.columns)), source_mode=source_mode)
-    with st.expander('Ver fonte carregada', expanded=False):
+    with st.expander('Ver origem carregada', expanded=False):
         st.dataframe(source.head(30).astype(str), use_container_width=True, height=280)
     return source
 
 
-def _render_model_step() -> pd.DataFrame | None:
-    st.markdown('### 2. Modelo final / contrato da saída')
-    model = _current_df(UNIVERSAL_MODEL_KEY)
-    if not isinstance(model, pd.DataFrame):
-        st.caption('Agora anexe a planilha modelo exatamente no formato que você quer receber no final.')
-        st.caption(SUPPORTED_UPLOAD_LABEL)
-        uploaded = st.file_uploader('Planilha modelo final', type=None, key='mapeiaai_universal_model_upload')
-        df = _read_upload(uploaded)
-        if isinstance(df, pd.DataFrame):
-            _store_df(UNIVERSAL_MODEL_KEY, df)
-            _audit('mapear_planilha_modelo_anexado', rows=int(len(df)), columns=int(len(df.columns)))
-        model = _current_df(UNIVERSAL_MODEL_KEY)
-    if not isinstance(model, pd.DataFrame):
-        st.info('Envie a planilha modelo final para liberar os toggles, mapeamento e download.')
-        return None
-    st.success('Modelo final carregado. A saída seguirá exatamente essas colunas e essa ordem.')
-    _audit('mapear_planilha_modelo_confirmado', rows=int(len(model)), columns=int(len(model.columns)))
-    st.dataframe(model.head(3).astype(str), use_container_width=True, height=145)
-    st.caption('Colunas finais: ' + ', '.join(map(str, model.columns)))
-    return model
-
-
 def _render_toggles() -> dict[str, bool]:
-    st.markdown('### 3. Toggles do processamento')
+    st.markdown('### 3. Toggles e opcionais')
     col1, col2 = st.columns(2)
     with col1:
         price = st.toggle('Preço / cálculo marketplace', value=False, key='mapeiaai_universal_toggle_price')
         category = st.toggle('Categorização inteligente', value=False, key='mapeiaai_universal_toggle_category')
     with col2:
-        st.markdown('##### Mapeamento automático')
+        st.markdown('##### Inteligência Artificial')
         mapping_ai = render_mapping_auto_decision_toggle(
             widget_key='mapeiaai_universal_toggle_mapping_auto',
             source='universal_flow',
             default=False,
-            label='Mapeamento automático',
+            label='Mapeamento automático com IA',
         )
         rules = st.toggle('Regras e recursos inteligentes no download', value=True, key='mapeiaai_universal_toggle_rules')
     st.session_state['mapeiaai_universal_toggle_mapping_ai'] = bool(mapping_ai)
@@ -258,14 +259,14 @@ def render_universal_flow() -> None:
     _force_plain_context()
     if not _render_contract_guard():
         return
-    _audit('mapear_planilha_fluxo_aberto', order='fonte_primeiro_modelo_depois', api=False)
-    st.markdown('## Mapear planilha sem API')
-    st.caption('Planilha fonte primeiro, modelo final depois, toggles opcionais, mapeamento, preview e download. Não conecta e não envia por API.')
-    source = _render_source_step()
-    if not isinstance(source, pd.DataFrame):
-        return
+    _audit('mapear_planilha_fluxo_aberto', order='modelo_primeiro_origem_depois', api=False)
+    st.markdown('## Anexar Modelo / Mapear Planilha')
+    st.caption('Sem API: anexe o modelo final, escolha a origem dos dados, use opcionais, revise o mapeamento, veja o preview e baixe a planilha idêntica.')
     model = _render_model_step()
     if not isinstance(model, pd.DataFrame):
+        return
+    source = _render_source_step()
+    if not isinstance(source, pd.DataFrame):
         return
     toggles = _render_toggles()
     processed = source.copy().fillna('')
@@ -273,7 +274,7 @@ def render_universal_flow() -> None:
         processed = render_shared_calculator(processed, key_prefix='mapeiaai_universal', force_enabled=True)
         _audit('mapear_planilha_preco_processado', rows=int(len(processed)), columns=int(len(processed.columns)))
     else:
-        st.caption('Preço desligado: valores mantidos como vieram da fonte.')
+        st.caption('Preço desligado: valores mantidos como vieram da origem.')
     processed = _apply_category(processed, toggles['category'])
     signature = _reset_universal_state_if_changed(model, processed, toggles['mapping_ai'], toggles['rules'])
     if toggles['mapping_ai'] and str(st.session_state.get(UNIVERSAL_ENGINE_KEY) or '') == 'manual_sem_ia':
@@ -287,7 +288,7 @@ def render_universal_flow() -> None:
     output = render_shared_final_csv(processed, model, mapping, key_prefix='mapeiaai_universal', file_name='mapeiaai_planilha_final_mapeada.csv', run_smart_features=toggles['rules'])
     if isinstance(output, pd.DataFrame):
         st.session_state[UNIVERSAL_OUTPUT_KEY] = output
-        _audit('mapear_planilha_preview_download_pronto', rows=int(len(output)), columns=int(len(output.columns)), csv=True)
+        _audit('mapear_planilha_preview_download_pronto', rows=int(len(output)), columns=int(len(output.columns)), csv=True, final_message='Congratulations Success')
 
 
 __all__ = ['render_universal_flow']
