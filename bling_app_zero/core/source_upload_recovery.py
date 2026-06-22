@@ -17,6 +17,7 @@ SUPPORTED_IN_ZIP = (
     '.csv', '.xlsx', '.xls', '.xlsm', '.xlsb', '.txt', '.tsv', '.html', '.htm',
     '.mht', '.mhtml', '.xml', '.pdf', '.zip',
 )
+SPREADSHEET_BINARY_EXTENSIONS = ('.xlsx', '.xls', '.xlsm', '.xlsb')
 
 
 @dataclass
@@ -82,7 +83,7 @@ def _detect_separator(text: str) -> str:
 def _try_text_table(file_name: str, data: bytes) -> pd.DataFrame:
     text = _decode_text(data)
     if not text.strip():
-        return pd.DataFrame([{'Arquivo': file_name, 'Status': 'Arquivo recebido, mas sem texto extraível.'}])
+        return pd.DataFrame()
 
     sep = _detect_separator(text)
     try:
@@ -107,7 +108,9 @@ def _try_text_table(file_name: str, data: bytes) -> pd.DataFrame:
         columns = _dedupe_columns(normalized[0])
         return _clean_dataframe(pd.DataFrame(normalized[1:], columns=columns).fillna(''))
 
-    return pd.DataFrame([{'Arquivo': file_name, 'Conteúdo extraído': text[:50000]}])
+    # Texto solto não é tabela confiável para o fluxo universal. Retornar vazio
+    # evita que 'Arquivo/Conteúdo extraído' vire contrato final por engano.
+    return pd.DataFrame()
 
 
 def _clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
@@ -126,7 +129,6 @@ def _best_frame(frames: list[pd.DataFrame]) -> pd.DataFrame:
 
 def _recover_zip(data: bytes, file_name: str, depth: int) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
-    manifest_rows: list[dict[str, str]] = []
     try:
         with zipfile.ZipFile(BytesIO(data)) as archive:
             for info in archive.infolist():
@@ -134,7 +136,6 @@ def _recover_zip(data: bytes, file_name: str, depth: int) -> pd.DataFrame:
                     continue
                 inner_name = str(info.filename or '').strip() or 'arquivo_sem_nome'
                 lower = inner_name.casefold()
-                manifest_rows.append({'Arquivo no ZIP': inner_name, 'Tamanho bytes': str(info.file_size)})
                 if not lower.endswith(SUPPORTED_IN_ZIP):
                     continue
                 try:
@@ -143,20 +144,15 @@ def _recover_zip(data: bytes, file_name: str, depth: int) -> pd.DataFrame:
                     frame = pd.DataFrame()
                 if _valid_frame(frame):
                     frames.append(frame)
-    except Exception as exc:
-        return pd.DataFrame([{'Arquivo ZIP': file_name, 'Status': f'Não foi possível abrir o ZIP: {exc}'}])
-
-    if frames:
-        return _best_frame(frames)
-    if manifest_rows:
-        return pd.DataFrame(manifest_rows).fillna('').astype(str)
-    return pd.DataFrame([{'Arquivo ZIP': file_name, 'Status': 'ZIP recebido, mas nenhum arquivo interno compatível foi encontrado.'}])
+    except Exception:
+        return pd.DataFrame()
+    return _best_frame(frames)
 
 
 def _recover_bytes(file_name: str, data: bytes, *, depth: int = 0) -> pd.DataFrame:
     lower = str(file_name or 'arquivo').casefold()
     if depth > MAX_DEPTH:
-        return pd.DataFrame([{'Arquivo': file_name, 'Status': 'Limite de leitura de ZIP aninhado atingido.'}])
+        return pd.DataFrame()
 
     if lower.endswith('.zip'):
         return _recover_zip(data, file_name, depth)
@@ -168,8 +164,12 @@ def _recover_bytes(file_name: str, data: bytes, *, depth: int = 0) -> pd.DataFra
     except Exception:
         pass
 
+    # Planilhas binárias que falharam no leitor principal não podem virar uma
+    # linha técnica Arquivo/Status. Isso contaminava o modelo universal.
+    if lower.endswith(SPREADSHEET_BINARY_EXTENSIONS):
+        return pd.DataFrame()
     if _looks_binary(data):
-        return pd.DataFrame([{'Arquivo': file_name, 'Status': 'Arquivo binário recebido; não foi possível extrair tabela automaticamente.'}])
+        return pd.DataFrame()
     return _try_text_table(file_name, data)
 
 
@@ -180,7 +180,7 @@ def recover_uploaded_source_file(uploaded_file: Any) -> pd.DataFrame:
     try:
         data = bytes(uploaded_file.getvalue() or b'')
     except Exception:
-        return pd.DataFrame([{'Arquivo': name, 'Status': 'Arquivo recebido, mas não foi possível acessar os bytes.'}])
+        return pd.DataFrame()
     return _recover_bytes(name, data, depth=0)
 
 
