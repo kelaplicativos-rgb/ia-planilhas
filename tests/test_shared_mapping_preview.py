@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from bling_app_zero.core.final_output_engine import build_final_output
 from bling_app_zero.ui.shared_mapping import (
     _sample_values,
     confidence_flag,
@@ -105,3 +106,36 @@ def test_model_template_instruction_rows_are_not_exported() -> None:
     assert output['Tipo de lançamento*'].tolist() == ['Entrada', 'Entrada']
     assert 'Linha de exemplo' not in output.to_string()
     assert 'OBRIGATÓRIO' not in output.to_string()
+
+
+def test_generic_template_is_filled_with_source_rows_not_template_rows() -> None:
+    source = pd.DataFrame(
+        {
+            'CodOrigem': ['P001', 'P002', 'P003'],
+            'NomeOrigem': ['Caneca', 'Caderno', 'Mouse'],
+            'ValorOrigem': ['12.90', '18.00', '49.90'],
+        }
+    )
+    model = pd.DataFrame(
+        [
+            {'Ref Final': 'instrução de código', 'Nome Final': 'instrução de nome', 'Preço Final': 'instrução de preço', 'Loja': 'instrução fixa'},
+            {'Ref Final': 'EXEMPLO-1', 'Nome Final': 'Produto Exemplo', 'Preço Final': '999', 'Loja': 'Exemplo'},
+        ]
+    )
+    mapping = {
+        'Ref Final': 'CodOrigem',
+        'Nome Final': 'NomeOrigem',
+        'Preço Final': 'ValorOrigem',
+        'Loja': encode_fixed_value('Mega Center'),
+    }
+
+    result = build_final_output(source, model, mapping, run_smart_features=True)
+
+    assert result.errors == ()
+    assert result.output is not None
+    assert result.output.shape == (3, 4)
+    assert result.output.columns.tolist() == ['Ref Final', 'Nome Final', 'Preço Final', 'Loja']
+    assert result.output['Ref Final'].tolist() == ['P001', 'P002', 'P003']
+    assert result.output['Loja'].tolist() == ['Mega Center', 'Mega Center', 'Mega Center']
+    assert 'EXEMPLO-1' not in result.output.to_string()
+    assert 'instrução' not in result.output.to_string()
