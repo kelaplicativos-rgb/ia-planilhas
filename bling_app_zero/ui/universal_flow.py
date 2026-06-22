@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from typing import Any, Mapping
 
 import pandas as pd
 import streamlit as st
@@ -18,6 +19,7 @@ from bling_app_zero.ui.mapping_auto_decision import render_mapping_auto_decision
 from bling_app_zero.ui.shared_calculator import render_shared_calculator
 from bling_app_zero.ui.shared_final_csv import render_shared_final_csv
 from bling_app_zero.ui.shared_mapping import clear_shared_mapping_widgets, render_shared_contract_mapping, suggest_shared_mapping
+from bling_app_zero.ui.shared_rules_resources import render_rules_resources_panel
 from bling_app_zero.ui.success_banner import render_congratulations_success
 
 UNIVERSAL_MODEL_KEY = 'mapeiaai_universal_model_df'
@@ -190,12 +192,19 @@ def _df_signature(df: pd.DataFrame | None) -> str:
     return hashlib.sha256(f'{shape}:{columns}:{sample_hash}'.encode('utf-8')).hexdigest()[:16]
 
 
-def _flow_signature(model: pd.DataFrame, source: pd.DataFrame, ai_enabled: bool, rules_enabled: bool) -> str:
-    return f'{_df_signature(source)}:{_df_signature(model)}:ai={int(ai_enabled)}:rules={int(rules_enabled)}'
+def _rules_signature(config: Mapping[str, Any] | None) -> str:
+    if not isinstance(config, Mapping):
+        return 'none'
+    items = sorted((str(key), str(value)) for key, value in config.items())
+    return hashlib.sha256(repr(items).encode('utf-8')).hexdigest()[:16]
 
 
-def _reset_universal_state_if_changed(model: pd.DataFrame, source: pd.DataFrame, ai_enabled: bool, rules_enabled: bool) -> str:
-    signature = _flow_signature(model, source, ai_enabled, rules_enabled)
+def _flow_signature(model: pd.DataFrame, source: pd.DataFrame, ai_enabled: bool, rules_enabled: bool, rules_config: Mapping[str, Any] | None = None) -> str:
+    return f'{_df_signature(source)}:{_df_signature(model)}:ai={int(ai_enabled)}:rules={int(rules_enabled)}:rules_cfg={_rules_signature(rules_config)}'
+
+
+def _reset_universal_state_if_changed(model: pd.DataFrame, source: pd.DataFrame, ai_enabled: bool, rules_enabled: bool, rules_config: Mapping[str, Any] | None = None) -> str:
+    signature = _flow_signature(model, source, ai_enabled, rules_enabled, rules_config)
     previous = str(st.session_state.get(UNIVERSAL_SIGNATURE_KEY) or '')
     if previous and previous != signature:
         for key in (UNIVERSAL_MAPPING_KEY, UNIVERSAL_OUTPUT_KEY, UNIVERSAL_ENGINE_KEY, 'neutral_mapping_state_v1', 'neutral_mapping_report_v1'):
@@ -357,7 +366,8 @@ def render_universal_flow() -> None:
     else:
         st.caption('Preço desligado: valores mantidos como vieram da origem.')
     processed = _apply_category(processed, toggles['category'])
-    signature = _reset_universal_state_if_changed(model, processed, toggles['mapping_ai'], toggles['rules'])
+    rules_config = render_rules_resources_panel(processed, model, enabled=toggles['rules'], key_prefix='mapeiaai_universal')
+    signature = _reset_universal_state_if_changed(model, processed, toggles['mapping_ai'], toggles['rules'], rules_config)
     if toggles['mapping_ai'] and str(st.session_state.get(UNIVERSAL_ENGINE_KEY) or '') == 'manual_sem_ia':
         st.session_state.pop(UNIVERSAL_MAPPING_KEY, None)
         st.session_state.pop(UNIVERSAL_ENGINE_KEY, None)
@@ -366,7 +376,7 @@ def render_universal_flow() -> None:
     mapping = render_shared_contract_mapping(processed, model, signature=signature, mapping_state_key=UNIVERSAL_MAPPING_KEY, engine_state_key=UNIVERSAL_ENGINE_KEY, key_prefix='mapeiaai_universal', ai_enabled=toggles['mapping_ai'])
     mapping, _mapping_rows = build_and_sync_mapping(processed, model, mapping, operation='universal', signature=signature, engine=str(st.session_state.get(UNIVERSAL_ENGINE_KEY) or 'local'), mapping_state_key=UNIVERSAL_MAPPING_KEY, engine_state_key=UNIVERSAL_ENGINE_KEY)
     _audit('mapear_planilha_mapeamento_renderizado', mapped_fields=int(sum(1 for value in mapping.values() if str(value or '').strip())), total_fields=int(len(mapping)), engine=str(st.session_state.get(UNIVERSAL_ENGINE_KEY) or 'local'))
-    output = render_shared_final_csv(processed, model, mapping, key_prefix='mapeiaai_universal', file_name='mapeiaai_planilha_final_mapeada.csv', run_smart_features=toggles['rules'])
+    output = render_shared_final_csv(processed, model, mapping, key_prefix='mapeiaai_universal', file_name='mapeiaai_planilha_final_mapeada.csv', run_smart_features=toggles['rules'], smart_rules_config=rules_config)
     if isinstance(output, pd.DataFrame):
         st.session_state[UNIVERSAL_OUTPUT_KEY] = output
         render_congratulations_success(area='UNIVERSAL', context='download_final_planilha_mapeada')
