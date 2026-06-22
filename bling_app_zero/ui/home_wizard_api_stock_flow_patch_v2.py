@@ -92,17 +92,21 @@ def _insert_after(steps: list[str], anchor: str, value: str) -> list[str]:
 def _stock_api_steps_from_base(base_steps: list[str]) -> list[str]:
     """Preserva o contrato atual do wizard e só acrescenta Regras/IA.
 
-    O fluxo API precisa começar por Operação/Depósito. Forçar
-    Origem -> Entrada -> Operação faz a tela Home e a navegação entrarem em
-    estado inconsistente, porque o depósito ainda não foi definido.
+    A Home agora define o núcleo Bling como: Conectar -> Origem -> Dados ->
+    Operação -> recursos -> Preview -> Enviar Bling. Este patch não pode mais
+    mover Operação para o início, senão quebra o objetivo final do MapeiaAI.
     """
     steps = [str(step).strip().lower() for step in list(base_steps or []) if str(step or '').strip()]
     if not steps:
-        steps = [STEP_OPERACAO]
+        steps = [STEP_ORIGEM, STEP_ENTRADA, STEP_OPERACAO]
 
-    if STEP_OPERACAO in steps and steps.index(STEP_OPERACAO) != 0:
-        steps.remove(STEP_OPERACAO)
-        steps.insert(0, STEP_OPERACAO)
+    # Mantém a ordem recebida do wizard principal. Se Operação não existir por
+    # algum estado antigo, insere depois de Dados importados.
+    if STEP_OPERACAO not in steps:
+        if STEP_ENTRADA in steps:
+            steps.insert(steps.index(STEP_ENTRADA) + 1, STEP_OPERACAO)
+        else:
+            steps.append(STEP_OPERACAO)
 
     regras_anchor = STEP_MAPEAMENTO if STEP_MAPEAMENTO in steps else STEP_ENTRADA
     steps = _insert_after(steps, regras_anchor, STEP_REGRAS)
