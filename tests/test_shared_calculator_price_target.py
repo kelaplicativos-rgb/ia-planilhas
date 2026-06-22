@@ -6,6 +6,7 @@ import pandas as pd
 
 from bling_app_zero.ui.shared_calculator import (
     apply_marketplace_calculation,
+    build_marketplace_preview,
     default_base_price_column,
     default_price_target_column,
     manual_target_columns,
@@ -60,3 +61,29 @@ def test_marketplace_calculation_can_write_directly_to_model_price_column() -> N
 
     assert output.loc[0, 'Preço de venda'] == '100,00'
     assert output.columns.tolist() == ['Custo fornecedor', 'Preço de venda']
+
+
+def test_marketplace_preview_shows_before_after_and_difference() -> None:
+    source = pd.DataFrame(
+        {
+            'Código': ['P001'],
+            'Nome': ['Fone Bluetooth'],
+            'Preço de custo': ['50,00'],
+        }
+    )
+
+    preview = build_marketplace_preview(
+        source,
+        base_column='Preço de custo',
+        output_column='Preço',
+        margin_percent=Decimal('50'),
+        fee_percent=Decimal('0'),
+        fixed_value=Decimal('0'),
+    )
+
+    assert preview.columns.tolist() == ['Código/SKU', 'Produto', 'Antes (Preço de custo)', 'Depois (Preço)', 'Diferença']
+    assert preview.loc[0, 'Código/SKU'] == 'P001'
+    assert preview.loc[0, 'Produto'] == 'Fone Bluetooth'
+    assert preview.loc[0, 'Antes (Preço de custo)'] == '50,00'
+    assert preview.loc[0, 'Depois (Preço)'] == '100,00'
+    assert preview.loc[0, 'Diferença'] == '50,00'
