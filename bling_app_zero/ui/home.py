@@ -8,7 +8,7 @@ from bling_app_zero.core import APP_VERSION
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.alerts import enforce_attention_alert_policy
 from bling_app_zero.ui.bottom_nav import render_bottom_nav, render_persistent_operation_controls
-from bling_app_zero.ui.home_router_v2 import render_home as render_home_router
+from bling_app_zero.ui.home_official import render_home as render_home_router
 from bling_app_zero.ui.layout import inject_app_layout
 from bling_app_zero.ui.scroll_position import inject_scroll_position_keeper
 from bling_app_zero.ui.wizard_state_guard import run_wizard_state_guard
@@ -34,9 +34,24 @@ def _render_blingfix_runtime_stamp() -> None:
                 'version': APP_VERSION,
                 'responsible_file': RESPONSIBLE_FILE,
                 'rendered_at_utc': rendered_at,
-                'purpose': 'silent_route_proof_after_category_and_multistore_route_update',
+                'purpose': 'official_dual_card_home_entry_active',
             },
         )
+
+
+def _query_param(name: str) -> str:
+    try:
+        value = st.query_params.get(name)
+    except Exception:
+        return ''
+    if isinstance(value, list):
+        return str(value[0] if value else '').strip()
+    return str(value or '').strip()
+
+
+def _is_official_landing_screen() -> bool:
+    """A Home sem rota explícita deve mostrar somente os dois cards oficiais."""
+    return not bool(_query_param('operation_v2'))
 
 
 def render_home() -> None:
@@ -49,11 +64,16 @@ def render_home() -> None:
     inject_scroll_position_keeper()
     _render_blingfix_runtime_stamp()
 
-    # A Home mantém um único cabeçalho: o router renderiza a entrada principal.
-    # Evita duplicidade visual e mantém o fluxo leve em aparelhos modestos.
-    render_persistent_operation_controls()
+    # BLINGFIX 2026-06-22:
+    # A tela inicial oficial é limpa e contém somente os dois cards principais:
+    # Anexar Modelo / Mapear e Conectar ao Bling. Controles persistentes ficam
+    # reservados para rotas/fluxos já iniciados, evitando poluição da HOME.
+    official_landing = _is_official_landing_screen()
+    if not official_landing:
+        render_persistent_operation_controls()
     render_home_router()
-    render_bottom_nav()
+    if not official_landing:
+        render_bottom_nav()
 
 
 __all__ = ['render_home']
