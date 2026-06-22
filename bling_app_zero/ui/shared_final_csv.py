@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, Mapping
 
 import pandas as pd
 import streamlit as st
@@ -42,6 +43,23 @@ def _render_smartcore_box(result) -> None:
         st.metric('Qualidade da saída', f'{quality.score}/100')
         for item in quality.warnings[:8]:
             st.warning(item)
+
+
+def _render_smart_rules_report(report: Mapping[str, Any] | None) -> None:
+    if not report:
+        return
+    with st.expander('Resumo das regras aplicadas', expanded=False):
+        st.metric('Células ajustadas', int(report.get('applied_cells') or 0))
+        image_cols = list(report.get('image_columns') or [])
+        gtin_cols = list(report.get('gtin_columns') or [])
+        if image_cols:
+            st.caption('Imagens tratadas em: ' + ', '.join(map(str, image_cols)))
+        if gtin_cols:
+            st.caption('GTIN/EAN tratado em: ' + ', '.join(map(str, gtin_cols)))
+        if report.get('limit_images'):
+            st.caption(f'Limite de imagens por produto: {int(report.get("max_images") or 0)}')
+        if report.get('validate_gtin'):
+            st.caption('Validação de GTIN/EAN ligada.')
 
 
 def _template_from_uploaded_widget() -> tuple[str, bytes] | None:
@@ -129,6 +147,7 @@ def render_shared_final_csv(
     key_prefix: str = 'mapeiaai_shared_final',
     file_name: str = 'mapeiaai_planilha_final_mapeada.csv',
     run_smart_features: bool = True,
+    smart_rules_config: Mapping[str, Any] | None = None,
 ) -> pd.DataFrame | None:
     st.markdown('### Preview final')
     st.caption('O download final usa o modelo anexado como estrutura de colunas e preenche as linhas com os dados da origem mapeada.')
@@ -141,6 +160,7 @@ def render_shared_final_csv(
         operation='universal',
         file_name=file_name,
         run_smart_features=run_smart_features,
+        smart_rules_config=smart_rules_config,
     )
     st.session_state[FINAL_OUTPUT_STATE_KEY] = final_result.state.to_dict()
     st.session_state[FINAL_OUTPUT_REPORT_KEY] = build_final_output_report(final_result)
@@ -159,7 +179,9 @@ def render_shared_final_csv(
     st.success('Modelo anexado preenchido: mesmas colunas e mesma ordem do modelo, com linhas vindas da origem.')
     if smartcore_result is not None:
         _render_smartcore_box(smartcore_result)
-    elif not run_smart_features:
+    elif run_smart_features:
+        _render_smart_rules_report(final_result.smart_rules_report)
+    else:
         st.caption('Recursos inteligentes desligados: o download respeita apenas o mapeamento manual/selecionado, os valores fixos e o contrato do modelo.')
     st.dataframe(output.head(80).astype(str), use_container_width=True, height=360)
     st.caption(f'Preview: {len(output)} linha(s) da origem x {len(output.columns)} coluna(s) do modelo.')
@@ -214,6 +236,8 @@ def render_shared_final_csv(
             'csv_fallback_blocked': True,
             'smartcore_score': int(final_result.state.result.smartcore_score),
             'run_smart_features': bool(run_smart_features),
+            'smart_rules_config': dict(smart_rules_config or {}),
+            'smart_rules_report': dict(final_result.smart_rules_report or {}),
             'neutral_final_output_state': True,
             'csv_size_bytes': int(final_result.state.result.csv_size_bytes),
             'responsible_file': RESPONSIBLE_FILE,
