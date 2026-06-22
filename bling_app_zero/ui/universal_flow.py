@@ -29,6 +29,11 @@ RESPONSIBLE_FILE = 'bling_app_zero/ui/universal_flow.py'
 SOURCE_MODE_UPLOAD = 'Anexar arquivo de origem'
 SOURCE_MODE_SITE = 'Buscar produtos por site'
 SUPPORTED_UPLOAD_LABEL = 'Formatos aceitos: XLSX, XLS, CSV, XLSM, XLSB, XML, HTML, MHTML e PDF. No celular, o seletor fica livre para evitar bloqueio falso do Android.'
+LEGACY_UNIVERSAL_MODEL_KEYS = (
+    'home_modelo_universal_df',
+    'df_modelo_universal',
+    'modelo_universal_df',
+)
 NO_API_KEYS = (
     'home_bling_connected_same_flow_api_send', 'bling_connected_api_flow_active', 'direct_bling_api_contract_active',
     'direct_bling_operation_applied', 'direct_bling_api_contract_df', 'bling_api_operation', 'api_operation',
@@ -49,12 +54,19 @@ def _force_plain_context() -> None:
         st.session_state.pop(key, None)
     set_entry_context(CONTEXT_UNIVERSAL)
     activate_csv_finish_mode()
+    st.session_state['mapeiaai_flow_kind'] = 'universal_model_mapping'
+    st.session_state['flow_kind'] = 'universal_model_mapping'
+    st.session_state['api_flow_active'] = False
+    st.session_state['mapear_planilha_sem_api_active'] = True
+    st.session_state['mapeiaai_home_entry_path'] = 'mapear_modelo_sem_api'
     st.session_state['active_feature_mode'] = 'csv'
     st.session_state['active_feature_operation'] = 'universal'
     st.session_state['active_feature_contract_key'] = 'universal_mapping_csv'
     st.session_state['flow_spine_contract_key'] = 'universal_mapping_csv'
     st.session_state['flow_spine_operation'] = 'universal'
     st.session_state['flow_spine_final_destination'] = 'download'
+    st.session_state['flow_spine_final_title'] = 'Download'
+    st.session_state['flow_spine_primary_action_label'] = 'Download Modelo Mapeado'
 
 
 def _is_universal_csv_context() -> bool:
@@ -89,6 +101,35 @@ def _read_upload(uploaded_file) -> pd.DataFrame | None:
 def _store_df(key: str, df: pd.DataFrame | None) -> None:
     if isinstance(df, pd.DataFrame) and len(df.columns):
         st.session_state[key] = df.copy().fillna('')
+
+
+def _sync_legacy_universal_model_aliases(model: pd.DataFrame | None) -> None:
+    """Mantém diagnósticos/guardas antigos alinhados ao modelo universal real.
+
+    O fluxo independente usa `mapeiaai_universal_model_df` como fonte única.
+    As chaves antigas abaixo existem apenas para compatibilidade e não podem
+    nascer de modelo de estoque/cadastro/API.
+    """
+    if not isinstance(model, pd.DataFrame) or not len(model.columns):
+        return
+    clean = model.copy().fillna('')
+    for key in LEGACY_UNIVERSAL_MODEL_KEYS:
+        st.session_state[key] = clean
+    st.session_state['home_model_operation_detected'] = 'universal'
+    st.session_state['home_detected_operation'] = 'universal'
+
+
+def _store_universal_source(df: pd.DataFrame | None, *, source_mode: str) -> None:
+    if not isinstance(df, pd.DataFrame) or not len(df.columns):
+        return
+    clean = df.copy().fillna('')
+    st.session_state[UNIVERSAL_SOURCE_KEY] = clean
+    st.session_state['df_origem_unificada'] = clean
+    st.session_state['mapeiaai_universal_source_kind'] = source_mode
+    if source_mode == 'site':
+        st.session_state['df_origem_site'] = clean
+    elif source_mode == 'upload':
+        st.session_state['df_origem_arquivo'] = clean
 
 
 def _current_df(key: str) -> pd.DataFrame | None:
@@ -143,11 +184,13 @@ def _render_model_step() -> pd.DataFrame | None:
         df = _read_upload(uploaded)
         if isinstance(df, pd.DataFrame):
             _store_df(UNIVERSAL_MODEL_KEY, df)
+            _sync_legacy_universal_model_aliases(df)
             _audit('mapear_planilha_modelo_anexado_primeiro', rows=int(len(df)), columns=int(len(df.columns)))
         model = _current_df(UNIVERSAL_MODEL_KEY)
     if not isinstance(model, pd.DataFrame):
         st.info('Envie a planilha modelo final para liberar a origem de dados, os toggles, o mapeamento, o preview e o download.')
         return None
+    _sync_legacy_universal_model_aliases(model)
     st.success('Modelo final carregado. A saída seguirá exatamente essas colunas e essa ordem.')
     _audit('mapear_planilha_modelo_confirmado_primeiro', rows=int(len(model)), columns=int(len(model.columns)))
     st.dataframe(model.head(3).astype(str), use_container_width=True, height=145)
@@ -161,7 +204,7 @@ def _render_source_upload() -> pd.DataFrame | None:
     uploaded = st.file_uploader('Arquivo de origem dos dados', type=None, key='mapeiaai_universal_source_upload')
     df = _read_upload(uploaded)
     if isinstance(df, pd.DataFrame):
-        _store_df(UNIVERSAL_SOURCE_KEY, df)
+        _store_universal_source(df, source_mode='upload')
         _audit('mapear_planilha_fonte_anexada', rows=int(len(df)), columns=int(len(df.columns)), source_mode='upload')
     return _current_df(UNIVERSAL_SOURCE_KEY)
 
@@ -178,7 +221,7 @@ def _render_source_site() -> pd.DataFrame | None:
             status_box = st.empty()
             try:
                 df_site = run_site_pipeline(str(raw_urls), requested_columns=None, all_products=bool(all_products), operation='universal', progress_callback=_progress_callback(progress_bar, status_box))
-                _store_df(UNIVERSAL_SOURCE_KEY, df_site)
+                _store_universal_source(df_site, source_mode='site')
                 _audit('mapear_planilha_fonte_site_carregada', rows=int(len(df_site)), columns=int(len(df_site.columns)), source_mode='site')
                 st.success(f'Busca por site concluída: {len(df_site)} linha(s).')
             except Exception as exc:
