@@ -9,6 +9,7 @@ import streamlit as st
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.final_csv_exporter import contract_columns_from_model
 from bling_app_zero.core.final_output_engine import apply_text_rules, build_final_dataframe, build_final_output, build_final_output_report
+from bling_app_zero.core.modelo_compactado_universal import resolver_modelo
 from bling_app_zero.core.template_download_exporter import (
     build_template_download_bytes,
     can_export_from_template,
@@ -34,6 +35,7 @@ MODEL_TEMPLATE_BYTES_KEYS = (
 )
 SUPPORTED_PRESERVE_SUFFIXES = {'.csv', '.xlsx', '.xlsm'}
 EXCEL_LIKE_SUFFIXES = {'.xlsx', '.xlsm', '.xls', '.xlsb'}
+DOWNLOAD_READY_KEY = 'mapeiaai_final_download_ready'
 
 
 def _render_smartcore_box(result) -> None:
@@ -102,22 +104,35 @@ def _build_template_preserved_download(output: pd.DataFrame) -> tuple[bytes | No
     if template is None:
         return None, '', '', False, 'template_not_found'
 
-    template_name, template_bytes = template
+    original_name, original_bytes = template
+    try:
+        resolved = resolver_modelo(original_name, original_bytes)
+    except Exception as exc:
+        return None, original_name, '', False, f'modelo_nao_resolvido:{str(exc)[:160]}'
+
+    template_name = resolved.nome_planilha
+    template_bytes = resolved.conteudo
     suffix = _suffix(template_name)
     if suffix not in SUPPORTED_PRESERVE_SUFFIXES:
-        return None, template_name, '', False, f'unsupported:{suffix or "sem_extensao"}'
+        return None, template_name, '', False, f'formato_nao_compativel:{suffix or "sem_extensao"}'
 
     if not can_export_from_template(template_name, template_bytes):
-        return None, template_name, '', False, 'cannot_export_from_template'
+        return None, template_name, '', False, 'exportador_indisponivel_para_modelo'
 
     file_bytes = build_template_download_bytes(template_bytes=template_bytes, template_name=template_name, df=output)
-    return file_bytes, output_name_for_template(template_name), mime_for_template_output(template_name), True, 'preserved'
+    status = f'compactado:{resolved.caminho_interno}' if resolved.origem_compactada else 'preserved'
+    return file_bytes, output_name_for_template(template_name), mime_for_template_output(template_name), True, status
 
 
 def _render_no_safe_download(template_name: str, template_suffix: str, preserve_status: str) -> None:
+    st.session_state[DOWNLOAD_READY_KEY] = False
     if not template_name:
         st.error('Não encontrei o arquivo modelo original nesta sessão.')
-        st.caption('Reanexe o modelo original em XLSX, XLSM ou CSV. O sistema não vai baixar CSV de fallback sem o arquivo original.')
+        st.caption('Reanexe o modelo original em XLSX, XLSM, CSV ou um arquivo compactado contendo uma planilha aceita.')
+        return
+    if template_suffix == '.zip':
+        st.error(f'O modelo compactado {template_name} não contém uma planilha interna compatível para download fiel.')
+        st.caption(f'Use um arquivo compactado contendo CSV, XLSX ou XLSM. Status técnico: {preserve_status}.')
         return
     if template_suffix in EXCEL_LIKE_SUFFIXES and template_suffix not in SUPPORTED_PRESERVE_SUFFIXES:
         st.error(f'O modelo {template_name} está em formato {template_suffix.upper()} e ainda não pode ser preservado com segurança.')
@@ -128,7 +143,7 @@ def _render_no_safe_download(template_name: str, template_suffix: str, preserve_
         st.caption('Reanexe o modelo em XLSX, XLSM ou CSV. O CSV alternativo foi desativado para não quebrar o formato original.')
         return
     st.error(f'O modelo {template_name} não está em formato aceito para preservação fiel.')
-    st.caption(f'Use XLSX, XLSM ou CSV. Status técnico: {preserve_status}.')
+    st.caption(f'Use XLSX, XLSM, CSV ou um arquivo compactado contendo uma planilha aceita. Status técnico: {preserve_status}.')
 
 
 def apply_shared_text_rules(output: pd.DataFrame) -> pd.DataFrame:
@@ -164,6 +179,7 @@ def render_shared_final_csv(
     )
     st.session_state[FINAL_OUTPUT_STATE_KEY] = final_result.state.to_dict()
     st.session_state[FINAL_OUTPUT_REPORT_KEY] = build_final_output_report(final_result)
+    st.session_state[DOWNLOAD_READY_KEY] = False
 
     if final_result.errors:
         for error in final_result.errors:
@@ -199,7 +215,7 @@ def render_shared_final_csv(
     try:
         preserved_bytes, preserved_name, preserved_mime, preserved, preserve_status = _build_template_preserved_download(output)
     except Exception as exc:
-        preserve_status = f'error:{str(exc)[:180]}'
+        preserve_status = f'erro_ao_gerar:{str(exc)[:180]}'
         st.error(f'Download fiel ao modelo original falhou: {exc}')
 
     template = _current_model_template()
@@ -207,6 +223,7 @@ def render_shared_final_csv(
     template_suffix = _suffix(template_name)
 
     if preserved and preserved_bytes is not None:
+        st.session_state[DOWNLOAD_READY_KEY] = True
         st.success(f'Arquivo final preservado no formato original do modelo: {preserved_name}')
         st.download_button(
             'Baixar modelo original preenchido',
@@ -219,13 +236,16 @@ def render_shared_final_csv(
         )
     else:
         _render_no_safe_download(template_name, template_suffix, preserve_status)
+        output = None
+
+    audit_output = final_result.output if isinstance(final_result.output, pd.DataFrame) else pd.DataFrame()
     add_audit_event(
         'shared_final_csv_rendered',
         area='FINAL_CSV',
-        status='OK',
+        status='OK' if preserved else 'AVISO',
         details={
-            'rows': int(len(output)),
-            'columns': int(len(output.columns)),
+            'rows': int(len(audit_output)),
+            'columns': int(len(audit_output.columns)),
             'contract_columns': contract_columns,
             'contract_identity': True,
             'model_as_column_contract_only': True,
