@@ -6,7 +6,6 @@ from typing import Any, Mapping
 
 import pandas as pd
 
-from bling_app_zero.agents.blingsmartcore import apply_blingsmartcore
 from bling_app_zero.ai.ai_text_rules import clean_title_to_limit, is_description_column, is_title_column
 from bling_app_zero.core.final_csv_exporter import (
     contract_columns_from_model,
@@ -14,7 +13,6 @@ from bling_app_zero.core.final_csv_exporter import (
     sanitize_final_dataframe,
     validate_contract_identity,
 )
-from bling_app_zero.core.final_output_rule_engine import apply_final_title_guard
 from bling_app_zero.core.final_output_state import STATUS_DONE, STATUS_ERROR, FinalOutputRequest, FinalOutputResult, FinalOutputState
 from bling_app_zero.universal.output_builder import build_universal_output, empty_universal_output
 from bling_app_zero.universal.universal_contract import build_universal_contract, validate_universal_output
@@ -41,14 +39,19 @@ def apply_text_rules(output: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def build_final_dataframe(source: pd.DataFrame, contract: pd.DataFrame, mapping: Mapping[str, str], *, apply_rules: bool = True) -> pd.DataFrame:
+def build_final_dataframe(source: pd.DataFrame, contract: pd.DataFrame, mapping: Mapping[str, str], *, apply_rules: bool = False) -> pd.DataFrame:
+    """Monta o modelo anexado preenchido por linhas da origem.
+
+    A regra deste fluxo é universal: o modelo anexado define somente colunas e
+    ordem; os valores finais vêm da origem mapeada ou de valores fixos/manuais.
+    Nenhuma linha de exemplo/instrução do modelo é copiada para o resultado.
+    """
     if not isinstance(source, pd.DataFrame) or source.empty:
         output = empty_universal_output(contract, rows=0)
     else:
         output = build_universal_output(source, contract, dict(mapping or {}))
     if apply_rules:
         output = apply_text_rules(output)
-        output, _title_filled, _title_empty_rows = apply_final_title_guard(output, context='preview_final')
     return output
 
 
@@ -64,7 +67,10 @@ def build_final_output(
     contract_columns = tuple(contract_columns_from_model(contract))
     request = FinalOutputRequest(operation=operation, file_name=file_name, contract_columns=contract_columns)
     contract_obj = build_universal_contract(contract)
-    output = build_final_dataframe(source, contract, mapping, apply_rules=run_smart_features)
+
+    # Saída universal fiel: por padrão, não reescreve dados mapeados com IA/regras.
+    # O objetivo é devolver o modelo anexado preenchido com os dados da origem.
+    output = build_final_dataframe(source, contract, mapping, apply_rules=False)
 
     errors = tuple(str(item) for item in validate_universal_output(output, contract_obj) or ())
     if errors:
@@ -72,54 +78,29 @@ def build_final_output(
         return FinalOutputCommandResult(FinalOutputState(request=request, result=result), output=None, csv_bytes=b'', errors=errors)
 
     smartcore_result = None
-    if run_smart_features:
-        output = sanitize_final_dataframe(output, operation=operation, contract_columns=list(contract_columns), run_download_features=True)
-        output, smartcore_result = apply_blingsmartcore(output, origin='preview_final', operation=operation)
-        # BLINGFIX contrato final: o SmartCore pode ajustar valores, mas não pode
-        # criar/remover/reordenar colunas. O contrato do modelo anexado é reaplicado
-        # depois da IA e antes da validação/download.
-        output = sanitize_final_dataframe(output, operation=operation, contract_columns=list(contract_columns), run_download_features=False)
-        output, _title_filled, title_empty_rows = apply_final_title_guard(output, context='preview_final_after_smartcore')
-    else:
-        output = sanitize_final_dataframe(output, operation=operation, contract_columns=list(contract_columns), run_download_features=False)
-        title_empty_rows = []
+    output = sanitize_final_dataframe(output, operation=operation, contract_columns=list(contract_columns), run_download_features=False)
 
     identity_errors = tuple(str(item) for item in validate_contract_identity(output, list(contract_columns)) or ())
     if identity_errors:
         result = FinalOutputResult(status=STATUS_ERROR, file_name=file_name, errors=identity_errors, message='Saída final bloqueada por divergência de colunas.')
         return FinalOutputCommandResult(FinalOutputState(request=request, result=result), output=None, csv_bytes=b'', smartcore_result=smartcore_result, errors=identity_errors)
 
-    if title_empty_rows:
-        sample = ', '.join(map(str, list(title_empty_rows)[:12]))
-        suffix = '...' if len(title_empty_rows) > 12 else ''
-        title_errors = (f'Saída final bloqueada: {len(title_empty_rows)} produto(s) ainda estão sem título/nome. Linhas: {sample}{suffix}.',)
-        result = FinalOutputResult(status=STATUS_ERROR, file_name=file_name, errors=title_errors, message='Saída final bloqueada por produto sem título.')
-        return FinalOutputCommandResult(FinalOutputState(request=request, result=result), output=None, csv_bytes=b'', smartcore_result=smartcore_result, errors=title_errors)
-
     try:
-        csv_data = final_csv_bytes(output, operation=operation, contract_columns=list(contract_columns), run_download_features=run_smart_features)
+        csv_data = final_csv_bytes(output, operation=operation, contract_columns=list(contract_columns), run_download_features=False)
     except Exception as exc:
         csv_error = (str(exc),)
         result = FinalOutputResult(status=STATUS_ERROR, file_name=file_name, errors=csv_error, message='Saída final bloqueada por erro físico de CSV.')
         return FinalOutputCommandResult(FinalOutputState(request=request, result=result), output=None, csv_bytes=b'', smartcore_result=smartcore_result, errors=csv_error)
 
-    warnings: tuple[str, ...] = tuple()
-    score = 0
-    try:
-        warnings = tuple(str(item) for item in list(smartcore_result.quality.warnings or [])[:20])
-        score = int(smartcore_result.quality.score)
-    except Exception:
-        warnings = tuple()
-        score = 0
     result = FinalOutputResult(
         status=STATUS_DONE,
         rows=int(len(output)),
         columns=tuple(str(column) for column in output.columns),
         file_name=file_name,
         csv_size_bytes=len(csv_data),
-        smartcore_score=score,
-        message='Planilha final fiel ao modelo anexado.',
-        warnings=warnings,
+        smartcore_score=0,
+        message='Modelo anexado preenchido com dados da origem.',
+        warnings=tuple(),
     )
     return FinalOutputCommandResult(FinalOutputState(request=request, result=result), output=output, csv_bytes=csv_data, smartcore_result=smartcore_result)
 
