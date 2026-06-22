@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
@@ -85,11 +86,9 @@ def _is_api_context() -> bool:
 def _steps() -> list[str]:
     op = selected_operation()
 
-    # MapeiaAI 2026-06-22:
-    # O núcleo Bling começa na Home pelo botão Conectar ao Bling e, depois da
-    # conexão, cai primeiro em Origem de dados. A operação vem só depois que os
-    # dados já foram carregados. O mapeamento livre de modelo não entra nesse
-    # fluxo: o contrato da saída é o padrão Bling da operação escolhida.
+    # MapeiaAI 2026-06-22: Bling conectado cai em Origem -> Dados -> Operação.
+    # O contrato da saída vem do padrão Bling da operação escolhida; não usa
+    # modelo livre anexado pelo usuário.
     if _is_api_context():
         steps = [STEP_ORIGEM, STEP_ENTRADA, STEP_OPERACAO]
         if op == OP_ESTOQUE:
@@ -239,6 +238,113 @@ def _render_entrada(n: int) -> None:
         render_universal_entrada_step()
 
 
+def _first_loaded_dataframe() -> pd.DataFrame | None:
+    for key in (
+        'cadastro_wizard_df_para_mapear',
+        'cadastro_wizard_df_origem',
+        'df_origem_planilha',
+        'df_produtos_origem',
+        'df_origem_site_como_planilha',
+        'df_site_bruto',
+        'df_origem',
+    ):
+        value = st.session_state.get(key)
+        if isinstance(value, pd.DataFrame) and not value.empty:
+            return value.copy().fillna('')
+    return None
+
+
+def _render_locked_bling_contract() -> None:
+    from bling_app_zero.adapters.streamlit_mapping_bridge import build_and_sync_mapping
+    from bling_app_zero.ui.cadastro_wizard_state import (
+        CADASTRO_MAPPING_CONFIRMED_KEY,
+        CADASTRO_MAPPING_SIGNATURE_KEY,
+        LEGACY_CADASTRO_FINAL_KEY,
+        UNIVERSAL_FINAL_KEY,
+        set_context_final_df,
+    )
+    from bling_app_zero.ui.home_bling_api_flow import apply_direct_api_contract
+    from bling_app_zero.ui.home_shared import df_signature
+    from bling_app_zero.ui.shared_final_csv import build_shared_final_dataframe
+    from bling_app_zero.ui.shared_mapping import suggest_shared_mapping
+
+    operation = selected_operation() or OP_CADASTRO
+    source = _first_loaded_dataframe()
+    if not isinstance(source, pd.DataFrame) or source.empty:
+        render_pending_notice('Carregue a origem dos dados antes de preparar o contrato fixo do Bling.')
+        return
+
+    model = apply_direct_api_contract(operation).copy().fillna('')
+    if not isinstance(model, pd.DataFrame) or len(model.columns) <= 0:
+        st.warning('Contrato fixo da operação Bling não carregou. Volte para Operação e confirme novamente.')
+        return
+
+    signature = f'bling_locked:{operation}:{df_signature(source)}:{df_signature(model)}'
+    current_signature = str(st.session_state.get('bling_api_locked_contract_signature') or '')
+    current_mapping = st.session_state.get('mapping_bling_api')
+    if current_signature == signature and isinstance(current_mapping, dict) and current_mapping:
+        mapping = {str(k): str(v) for k, v in current_mapping.items()}
+        engine = str(st.session_state.get('bling_api_locked_contract_engine') or 'locked_cached')
+    else:
+        try:
+            suggested, engine = suggest_shared_mapping(source, model, operation=operation)
+        except Exception as exc:
+            suggested, engine = {}, f'locked_fallback:{exc}'[:100]
+        identity = {str(column): str(column) for column in model.columns if str(column) in source.columns}
+        mapping = {str(column): str(suggested.get(str(column)) or identity.get(str(column)) or '') for column in model.columns}
+        st.session_state['mapping_bling_api'] = mapping
+        st.session_state['bling_api_locked_contract_signature'] = signature
+        st.session_state['bling_api_locked_contract_engine'] = engine
+
+    mapping, rows = build_and_sync_mapping(
+        source,
+        model,
+        mapping,
+        operation=operation,
+        signature=signature,
+        engine=str(st.session_state.get('bling_api_locked_contract_engine') or 'locked_contract'),
+        mapping_state_key='mapping_bling_api',
+        engine_state_key='bling_api_locked_contract_engine',
+    )
+    try:
+        final_df = build_shared_final_dataframe(source, model, mapping).fillna('')
+    except Exception as exc:
+        st.error(f'Não consegui montar a base fixa do Bling: {exc}')
+        return
+
+    st.session_state['df_final_bling_api'] = final_df
+    st.session_state[UNIVERSAL_FINAL_KEY] = final_df
+    st.session_state[LEGACY_CADASTRO_FINAL_KEY] = final_df
+    st.session_state['mapping_bling_api'] = mapping
+    st.session_state['mapping_cadastro'] = mapping
+    st.session_state['mapping_confidence_bling_api'] = {str(row.get('target') or row.get('Contrato final') or ''): str(row.get('confidence') or row.get('Farol') or '') for row in rows}
+    st.session_state['mapping_confidence_cadastro'] = st.session_state['mapping_confidence_bling_api']
+    st.session_state[CADASTRO_MAPPING_CONFIRMED_KEY] = True
+    st.session_state[CADASTRO_MAPPING_SIGNATURE_KEY] = signature
+    st.session_state['bling_api_manual_mapping_required'] = False
+    st.session_state['bling_api_locked_contract_ready'] = True
+    set_context_final_df(final_df)
+
+    st.info('Fluxo Bling: contrato fixo automático da operação. Não há alteração livre de modelo neste caminho.')
+    st.success(f'Contrato Bling preparado: {len(final_df)} linha(s) x {len(final_df.columns)} coluna(s).')
+    with st.expander('Ver vínculo automático do contrato Bling', expanded=False):
+        table = pd.DataFrame(rows) if rows else pd.DataFrame({'Contrato Bling': list(model.columns), 'Origem usada': [mapping.get(str(col), '') for col in model.columns]})
+        st.dataframe(table, use_container_width=True, hide_index=True, height=260)
+    st.dataframe(final_df.head(40).astype(str), use_container_width=True, height=260)
+    add_audit_event(
+        'wizard_bling_locked_contract_rendered',
+        area='MAPEAMENTO',
+        status='OK',
+        details={
+            'operation': operation,
+            'rows': int(len(final_df)),
+            'columns': int(len(final_df.columns)),
+            'manual_mapping_allowed': False,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+
+
 def _render_map(n: int) -> None:
     render_step_anchor(STEP_MAPEAMENTO)
     _section_title(n, _label(STEP_MAPEAMENTO))
@@ -246,7 +352,8 @@ def _render_map(n: int) -> None:
         render_pending_notice('Escolha a operação e confirme os obrigatórios primeiro.')
         return
     if _is_api_context():
-        st.caption('Fluxo Bling: o contrato da saída é fixo pela operação escolhida. Não há anexar modelo livre neste caminho.')
+        _render_locked_bling_contract()
+        return
     render_universal_mapeamento_step()
 
 
