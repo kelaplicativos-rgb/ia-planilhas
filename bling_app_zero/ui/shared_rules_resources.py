@@ -55,6 +55,7 @@ def render_rules_resources_panel(
         dedupe_images = st.checkbox('Remover imagens repetidas no mesmo produto', value=bool(current.get('dedupe_images')), key=f'{key_prefix}_rules_dedupe_images')
         limit_images = st.checkbox('Limitar quantidade de imagens por produto', value=bool(current.get('limit_images')), key=f'{key_prefix}_rules_limit_images')
         max_images = st.number_input('Quantidade máxima de imagens', min_value=0, max_value=50, value=int(current.get('max_images') or 6), step=1, key=f'{key_prefix}_rules_max_images')
+        st.caption('Por segurança, o padrão é 6 imagens por produto. O usuário ainda pode ajustar esse número no campo acima.')
 
         st.markdown('#### GTIN / EAN')
         st.caption('Colunas detectadas: ' + (', '.join(gtin_cols) if gtin_cols else 'nenhuma coluna GTIN/EAN detectada agora.'))
