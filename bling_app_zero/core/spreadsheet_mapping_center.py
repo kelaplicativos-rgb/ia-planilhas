@@ -535,9 +535,32 @@ def mapping_options(source_columns: tuple[str, ...] | list[str]) -> list[str]:
     return [EMPTY_OPTION] + [str(column) for column in list(source_columns or [])]
 
 
+def _safe_frame_columns(frame: Any) -> tuple[str, ...]:
+    """Extrai colunas sem avaliar pandas.Index como booleano.
+
+    O fluxo universal recebe DataFrames e também pode receber estruturas vazias
+    em recuperação de estado. Nunca use ``frame.columns or []`` aqui, porque
+    ``pandas.Index`` não tem valor booleano definido e quebra com:
+    ``ValueError: The truth value of a Index is ambiguous``.
+    """
+    columns = getattr(frame, 'columns', None)
+    if columns is None:
+        if isinstance(frame, dict):
+            columns = frame.keys()
+        elif isinstance(frame, (list, tuple, set)):
+            columns = frame
+        else:
+            return tuple()
+
+    try:
+        return tuple(str(col) for col in list(columns))
+    except Exception:
+        return tuple()
+
+
 def build_request_from_frames(source: Any, target: Any, *, operation: str = 'universal', signature: str = '') -> MappingRequest:
-    source_columns = tuple(str(col) for col in list(getattr(source, 'columns', []) or []))
-    target_columns = tuple(str(col) for col in list(getattr(target, 'columns', []) or []))
+    source_columns = _safe_frame_columns(source)
+    target_columns = _safe_frame_columns(target)
     return MappingRequest(operation=operation, signature=signature, source_columns=source_columns, target_columns=target_columns)
 
 
