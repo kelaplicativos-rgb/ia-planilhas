@@ -102,3 +102,18 @@ def test_final_output_applies_rules_only_when_toggle_enabled() -> None:
     assert with_rules.output.loc[0, 'URL Imagens Externas'] == 'url1|url2'
     assert without_rules.output.loc[0, 'URL Imagens Externas'] == 'url1|url1|url2|url3'
     assert with_rules.output.columns.tolist() == model.columns.tolist()
+
+
+def test_final_output_fills_categoria_do_produto_from_safe_category_alias_when_rules_are_enabled() -> None:
+    source = pd.DataFrame({'SKU': ['P001'], 'Nome': ['Fone Bluetooth'], 'Categoria': ['Fones de ouvido']})
+    model = pd.DataFrame(columns=['Código', 'Descrição', 'Categoria do produto'])
+    mapping = {'Código': 'SKU', 'Descrição': 'Nome', 'Categoria do produto': ''}
+
+    with_rules = build_final_output(source, model, mapping, run_smart_features=True, smart_rules_config={'enabled': True})
+    without_rules = build_final_output(source, model, mapping, run_smart_features=False, smart_rules_config={'enabled': False})
+
+    assert with_rules.output is not None
+    assert without_rules.output is not None
+    assert with_rules.output.loc[0, 'Categoria do produto'] == 'Fones de ouvido'
+    assert without_rules.output.loc[0, 'Categoria do produto'] == ''
+    assert with_rules.output.columns.tolist() == model.columns.tolist()
