@@ -27,6 +27,10 @@ COST_SOURCE_TERMS = (
 SALE_SOURCE_TERMS = (
     'preco', 'preço', 'valor', 'venda', 'price', 'unitario', 'unitário',
 )
+TECHNICAL_NON_TARGET_TERMS = (
+    'arquivo', 'arquivo zip', 'arquivo no zip', 'status', 'conteudo extraido',
+    'conteúdo extraído', 'texto extraido', 'texto extraído', 'tamanho bytes',
+)
 
 
 def parse_decimal(value: object) -> Decimal | None:
@@ -59,6 +63,11 @@ def _norm(value: Any) -> str:
 def _has_any(value: Any, terms: tuple[str, ...]) -> bool:
     normalized = _norm(value)
     return any(_norm(term) in normalized for term in terms)
+
+
+def _is_technical_non_target_column(column: Any) -> bool:
+    normalized = _norm(column)
+    return normalized in {_norm(term) for term in TECHNICAL_NON_TARGET_TERMS}
 
 
 def numeric_columns(df: pd.DataFrame) -> list[str]:
@@ -105,8 +114,13 @@ def _model_from_session() -> pd.DataFrame | None:
 def price_target_columns(model: pd.DataFrame | None) -> list[str]:
     if not isinstance(model, pd.DataFrame) or not len(model.columns):
         return []
-    targets = [str(column) for column in model.columns if _has_any(column, PRICE_TARGET_TERMS)]
-    return targets or [str(column) for column in model.columns]
+    return [str(column) for column in model.columns if _has_any(column, PRICE_TARGET_TERMS) and not _is_technical_non_target_column(column)]
+
+
+def manual_target_columns(model: pd.DataFrame | None) -> list[str]:
+    if not isinstance(model, pd.DataFrame) or not len(model.columns):
+        return []
+    return [str(column) for column in model.columns if not _is_technical_non_target_column(column)]
 
 
 def default_price_target_column(model: pd.DataFrame | None) -> str:
@@ -187,12 +201,16 @@ def render_shared_calculator(
             target_index = target_options.index(default_target) if default_target in target_options else 0
             selected_target = st.selectbox('Coluna do modelo que receberá o preço calculado', target_options, index=target_index, key=f'{key_prefix}_price_target_column')
             output_column = selected_target
-            if not any(_has_any(column, PRICE_TARGET_TERMS) for column in target_options):
-                st.warning('Não encontrei uma coluna claramente parecida com preço no modelo. Escolha manualmente a coluna que deve receber o valor calculado.')
         else:
-            selected_target = ''
-            output_column = st.text_input('Nome da coluna calculada', value='Preço calculado marketplace', key=f'{key_prefix}_price_output_name')
-            st.caption('Modelo ainda não disponível para escolher a coluna final. A coluna calculada aparecerá no mapeamento.')
+            manual_options = manual_target_columns(model_df)
+            if manual_options:
+                selected_target = st.selectbox('Escolha manualmente a coluna do modelo que receberá o preço calculado', manual_options, key=f'{key_prefix}_price_target_column_manual')
+                output_column = selected_target
+                st.warning('Não encontrei uma coluna claramente parecida com preço no modelo. Escolha manualmente a coluna correta.')
+            else:
+                selected_target = ''
+                output_column = st.text_input('Nome da coluna calculada', value='Preço calculado marketplace', key=f'{key_prefix}_price_output_name')
+                st.error('Não encontrei uma coluna válida do modelo para receber preço. Reconfirme se o modelo final foi anexado antes da origem.')
 
         with st.expander('Avançado: coluna auxiliar diferente', expanded=False):
             use_custom_output = st.checkbox('Usar nome técnico diferente da coluna do modelo', value=False, key=f'{key_prefix}_price_use_custom_output_name')
@@ -243,6 +261,7 @@ __all__ = [
     'default_base_price_column',
     'default_price_target_column',
     'format_money',
+    'manual_target_columns',
     'numeric_columns',
     'parse_decimal',
     'price_target_columns',
