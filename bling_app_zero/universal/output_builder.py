@@ -19,6 +19,23 @@ CALCULATED_PROMO_PRICE_COLUMNS = ('Preço promocional', 'Preco Promocional', 'Pr
 NAME_TERMS = ('nome', 'descricao', 'descrição', 'produto', 'titulo', 'título')
 TITLE_TARGET_TERMS = ('nome', 'titulo', 'título', 'title', 'name')
 EMPTY_MARKERS = {'', 'nan', 'none', 'null', '<na>'}
+FIXED_VALUE_PREFIX = '__mapeiaai_fixed_value__:'
+
+
+def _is_fixed_mapping_value(value: Any) -> bool:
+    return str(value or '').startswith(FIXED_VALUE_PREFIX)
+
+
+def _decode_fixed_mapping_value(value: Any) -> str:
+    text = str(value or '')
+    if text.startswith(FIXED_VALUE_PREFIX):
+        return text[len(FIXED_VALUE_PREFIX):].strip()
+    return text.strip()
+
+
+def _fixed_series(value: Any, length: int) -> pd.Series:
+    fixed_value = _decode_fixed_mapping_value(value)
+    return pd.Series([fixed_value] * max(0, int(length or 0)), dtype='object')
 
 
 def _clean_value(value: Any) -> str:
@@ -57,13 +74,7 @@ def _is_title_target(column: Any) -> bool:
 
 
 def _title_from_text(value: Any) -> str:
-    """Extrai um título seguro quando a origem trouxe o nome dentro da descrição.
-
-    Caso real: alguns produtos do site vieram sem a coluna de título, mas a
-    descrição começava como "Nome do produto — texto complementar". O modelo
-    vazio usava somente a coluna mapeada e deixava Nome do item em branco. Este
-    fallback recupera o nome sem copiar a descrição inteira para o campo título.
-    """
+    """Extrai um título seguro quando a origem trouxe o nome dentro da descrição."""
     text = _clean_value(value)
     if _is_empty(text):
         return ''
@@ -114,6 +125,8 @@ def _append_columns(out: list[str], columns: list[str], terms: tuple[str, ...], 
 
 
 def _candidate_source_columns(df_source: pd.DataFrame, mapped_column: str, target_column: str) -> list[str]:
+    if _is_fixed_mapping_value(mapped_column):
+        return []
     columns = [str(column) for column in df_source.columns]
     out: list[str] = []
 
@@ -184,13 +197,7 @@ def _prepare_candidate_value(value: Any, target_column: str) -> str:
 
 
 def _merged_candidate_series(df_source: pd.DataFrame, candidates: list[str], length: int, target_column: str) -> pd.Series:
-    """Preenche linha a linha usando fallback entre colunas candidatas.
-
-    Antes, modelo vazio pegava só a coluna mapeada. Se o título vinha vazio em
-    parte do lote capturado, a saída ficava vazia mesmo havendo título/descrição
-    em outras colunas da origem. Agora cada linha tenta: mapeada -> mesma coluna
-    -> aliases de nome/produto/título/descrição.
-    """
+    """Preenche linha a linha usando fallback entre colunas candidatas."""
     values = [''] * max(0, int(length or 0))
     for source_column in candidates:
         series = _safe_series(df_source, source_column, length)
@@ -209,6 +216,9 @@ def _build_from_empty_model(df_source: pd.DataFrame, contract_columns: list[str]
     data: dict[str, pd.Series] = {}
     for target_column in contract_columns:
         source_column = str(mapping.get(target_column, '') or '')
+        if _is_fixed_mapping_value(source_column):
+            data[target_column] = _fixed_series(source_column, length)
+            continue
         candidates = _candidate_source_columns(source, source_column, target_column)
         if not candidates and source_column:
             candidates = [source_column]
@@ -227,6 +237,9 @@ def _build_from_filled_model(df_source: pd.DataFrame, df_model: pd.DataFrame, co
 
     for target_column in contract_columns:
         mapped_column = str(mapping.get(target_column, '') or '')
+        if _is_fixed_mapping_value(mapped_column):
+            model[target_column] = _decode_fixed_mapping_value(mapped_column)
+            continue
         candidates = _candidate_source_columns(source, mapped_column, target_column)
         if not candidates:
             continue
@@ -256,16 +269,7 @@ def build_universal_output(
     df_model: pd.DataFrame,
     mapping: dict[str, str] | None = None,
 ) -> pd.DataFrame:
-    """Gera saída exatamente com o contrato do modelo anexado.
-
-    Lema do sistema:
-    - modelo anexado manda na saída;
-    - mesmas colunas;
-    - mesma ordem;
-    - nenhuma coluna extra;
-    - nenhuma coluna removida;
-    - dados da origem apenas preenchem valores do contrato.
-    """
+    """Gera saída exatamente com o contrato do modelo anexado."""
     contract = build_universal_contract(df_model)
     source = df_source if isinstance(df_source, pd.DataFrame) else pd.DataFrame()
     model = df_model if isinstance(df_model, pd.DataFrame) else pd.DataFrame(columns=contract.columns)
