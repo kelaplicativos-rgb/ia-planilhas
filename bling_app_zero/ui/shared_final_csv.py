@@ -14,7 +14,7 @@ FINAL_OUTPUT_REPORT_KEY = 'neutral_final_output_report_v1'
 
 def _render_smartcore_box(result) -> None:
     quality = result.quality
-    with st.expander('BLINGSMARTCORE · validação inteligente da saída final', expanded=False):
+    with st.expander('Validação inteligente opcional da saída final', expanded=False):
         st.caption(f'Origem: {result.origin} · Operação: {result.operation}')
         st.metric('Qualidade da saída', f'{quality.score}/100')
         for item in quality.warnings[:8]:
@@ -39,6 +39,7 @@ def render_shared_final_csv(
     run_smart_features: bool = True,
 ) -> pd.DataFrame | None:
     st.markdown('### Preview final')
+    st.caption('O download final usa o modelo anexado como estrutura de colunas e preenche as linhas com os dados da origem mapeada.')
 
     contract_columns = contract_columns_from_model(contract)
     final_result = build_final_output(
@@ -64,27 +65,27 @@ def render_shared_final_csv(
         st.error('Não foi possível montar o preview final.')
         return None
 
-    st.success('Planilha final fiel ao modelo anexado: mesmas colunas, mesma ordem e sem extras.')
+    st.success('Modelo anexado preenchido: mesmas colunas e mesma ordem do modelo, com linhas vindas da origem.')
     if smartcore_result is not None:
         _render_smartcore_box(smartcore_result)
     elif not run_smart_features:
-        st.caption('Recursos inteligentes desligados: o download respeita apenas o mapeamento manual/selecionado e o contrato do modelo.')
+        st.caption('Recursos inteligentes desligados: o download respeita apenas o mapeamento manual/selecionado, os valores fixos e o contrato do modelo.')
     st.dataframe(output.head(80).astype(str), use_container_width=True, height=360)
-    st.caption(f'Preview: {len(output)} linha(s) x {len(output.columns)} coluna(s).')
+    st.caption(f'Preview: {len(output)} linha(s) da origem x {len(output.columns)} coluna(s) do modelo.')
 
-    with st.expander('Contrato do download final', expanded=False):
-        st.caption('Estas são as colunas que serão usadas no CSV final, na mesma ordem do modelo anexado.')
+    with st.expander('Contrato do modelo anexado', expanded=False):
+        st.caption('Estas são as colunas finais, na mesma ordem do modelo anexado. As linhas do modelo não são copiadas; elas servem apenas como referência de estrutura.')
         st.dataframe(pd.DataFrame({'Colunas do modelo': contract_columns}), use_container_width=True, hide_index=True)
 
-    st.markdown('### Planilha final')
+    st.markdown('### Planilha final preenchida')
     st.download_button(
-        'Baixar planilha final mapeada',
+        'Baixar modelo preenchido com dados da origem',
         data=csv_bytes,
         file_name=file_name,
         mime='text/csv; charset=utf-8',
         use_container_width=True,
         key=f'{key_prefix}_download',
-        help='Download gerado pelo contrato do modelo anexado: mesmas colunas e mesma ordem.',
+        help='Download gerado com as colunas do modelo anexado e as linhas da origem mapeada.',
     )
     add_audit_event(
         'shared_final_csv_rendered',
@@ -95,7 +96,9 @@ def render_shared_final_csv(
             'columns': int(len(output.columns)),
             'contract_columns': contract_columns,
             'contract_identity': True,
-            'blingsmartcore_score': int(final_result.state.result.smartcore_score),
+            'model_as_column_contract_only': True,
+            'source_rows_as_output_rows': True,
+            'smartcore_score': int(final_result.state.result.smartcore_score),
             'run_smart_features': bool(run_smart_features),
             'neutral_final_output_state': True,
             'csv_size_bytes': int(final_result.state.result.csv_size_bytes),
