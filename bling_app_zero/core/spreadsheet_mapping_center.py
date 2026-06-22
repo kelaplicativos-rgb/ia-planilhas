@@ -558,6 +558,47 @@ def _safe_frame_columns(frame: Any) -> tuple[str, ...]:
         return tuple()
 
 
+def simulate_universal_mapping_request() -> dict[str, object]:
+    """Simulação leve do fluxo universal para diagnóstico BLINGSCAN/BLINGFIX.
+
+    A simulação cria DataFrames de origem/modelo com ``pandas.Index`` real,
+    passa pelo mesmo construtor de request usado no mapeamento e confirma que
+    nenhuma etapa depende de ``columns or []``.
+    """
+    source = pd.DataFrame(
+        {
+            'SKU': ['ABC-1'],
+            'Produto': ['Produto teste'],
+            'Preço': ['R$ 10,00'],
+            'Estoque': ['5'],
+        }
+    )
+    model = pd.DataFrame(columns=['Código', 'Descrição', 'Preço unitário', 'Estoque'])
+    request = build_request_from_frames(source, model, operation='universal', signature='simulation')
+    result = build_mapping_state(
+        request,
+        {
+            'Código': 'SKU',
+            'Descrição': 'Produto',
+            'Preço unitário': 'Preço',
+            'Estoque': 'Estoque',
+        },
+        source=source,
+        engine='local_simulation',
+        message='Simulação do fluxo universal corrigido.',
+    )
+    output = apply_mapping(source, model, result.state.mapping)
+    return {
+        'operation': request.operation,
+        'source_columns': list(request.source_columns),
+        'target_columns': list(request.target_columns),
+        'mapped_fields': sum(1 for value in result.state.mapping.values() if str(value or '').strip()),
+        'rows': int(len(output)),
+        'columns': int(len(output.columns)),
+        'ok': bool(request.source_columns and request.target_columns and len(output) == len(source)),
+    }
+
+
 def build_request_from_frames(source: Any, target: Any, *, operation: str = 'universal', signature: str = '') -> MappingRequest:
     source_columns = _safe_frame_columns(source)
     target_columns = _safe_frame_columns(target)
@@ -597,6 +638,7 @@ __all__ = [
     'normalize_selected_source',
     'pending_confidence',
     'resolved_empty_confidence',
+    'simulate_universal_mapping_request',
     'sort_targets_by_confidence',
     'source_has_values',
 ]
