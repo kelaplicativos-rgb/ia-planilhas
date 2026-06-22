@@ -35,7 +35,6 @@ def render_rules_resources_panel(
     if not enabled:
         current['enabled'] = False
         st.session_state[state_key] = current
-        st.caption('Regras e recursos inteligentes desligados: o download seguirá somente o mapeamento escolhido e os valores fixos.')
         return current
 
     st.markdown('### Regras e recursos inteligentes')
