@@ -18,44 +18,20 @@ LABELS = {
     OP_ATUALIZACAO_PRECO: 'Atualizar preços',
 }
 SOURCE_KEYS = (
-    'cadastro_wizard_df_origem',
-    'df_origem',
-    'df_origem_planilha',
-    'df_produtos_origem',
-    'df_origem_site_como_planilha',
-    'df_site_bruto',
+    'cadastro_wizard_df_origem', 'df_origem', 'df_origem_planilha', 'df_produtos_origem',
+    'df_origem_site_como_planilha', 'df_site_bruto',
 )
 OPERATION_KEYS = (
-    'api_operation',
-    'bling_api_operation',
-    'home_bling_api_operation_choice',
-    'bling_connected_api_operation',
-    'direct_bling_operation_choice',
-    'direct_bling_operation_applied',
-    'flow_spine_sender_operation',
-    'flow_spine_operation_resolved_for_api',
-    'flow_spine_api_batch_operation',
-    'final_download_operation',
-    'df_final_download_operation',
-    'df_final_preview_operation',
-    'home_slim_flow_operation',
-    'home_detected_operation',
-    'operacao_final',
-    'tipo_operacao_final',
-    'site_capture_operation',
+    'api_operation', 'bling_api_operation', 'home_bling_api_operation_choice', 'bling_connected_api_operation',
+    'direct_bling_operation_choice', 'direct_bling_operation_applied', 'flow_spine_sender_operation',
+    'flow_spine_operation_resolved_for_api', 'flow_spine_api_batch_operation', 'final_download_operation',
+    'df_final_download_operation', 'df_final_preview_operation', 'home_slim_flow_operation', 'home_detected_operation',
+    'operacao_final', 'tipo_operacao_final', 'site_capture_operation',
 )
 DOWNSTREAM_KEYS = (
-    'df_final_bling_api',
-    'df_final_download_operation',
-    'df_final_preview_operation',
-    'final_download_operation',
-    'final_download_df_snapshot',
-    'cadastro_mapping_confirmed',
-    'cadastro_mapping_confirmed_signature',
-    'mapping_bling_api',
-    'mapping_confidence_bling_api',
-    'mapping_cadastro',
-    'mapping_confidence_cadastro',
+    'df_final_bling_api', 'df_final_download_operation', 'df_final_preview_operation', 'final_download_operation',
+    'final_download_df_snapshot', 'cadastro_mapping_confirmed', 'cadastro_mapping_confirmed_signature',
+    'mapping_bling_api', 'mapping_confidence_bling_api', 'mapping_cadastro', 'mapping_confidence_cadastro',
 )
 
 
@@ -79,10 +55,9 @@ def _api_flow_active() -> bool:
 
 
 def _mark_api_operation_flow_active() -> None:
-    if not _api_flow_active():
-        return
-    st.session_state['home_bling_connected_same_flow_api_send'] = True
-    st.session_state['bling_connected_api_flow_active'] = True
+    if _api_flow_active():
+        st.session_state['home_bling_connected_same_flow_api_send'] = True
+        st.session_state['bling_connected_api_flow_active'] = True
 
 
 def _has_dataframe(value: object) -> bool:
@@ -141,8 +116,6 @@ def _clear_operation_keys(reason: str) -> None:
 
 
 def clear_inferred_operation_until_user_chooses() -> None:
-    # No Bling API a operação vem antes da origem. Portanto não limpe a escolha
-    # só porque ainda não existe dataframe de origem carregado.
     if _api_flow_active():
         if _user_confirmed() and _normalize(st.session_state.get(SELECTED_OPERATION_KEY)) in CONCRETE_OPERATIONS:
             _mark_api_operation_flow_active()
@@ -206,9 +179,10 @@ def render_operation_gate(section_title, section_number: int) -> None:
         st.info('Carregue a origem dos dados primeiro. A operação só será escolhida depois da origem.')
         return
     if api_flow:
-        st.caption('Escolha a operação antes da origem. Para estoque via API, o depósito é obrigatório e aparece logo após confirmar.')
+        st.caption('Escolha a operação depois da origem carregada. Para estoque via API, o depósito aparece logo após confirmar.')
     else:
         st.caption('A origem não define o fluxo. Escolha e confirme se estes dados serão cadastro, estoque por depósito ou atualização de preços.')
+
     options = [PENDING_CHOICE, OP_CADASTRO, OP_ESTOQUE, OP_ATUALIZACAO_PRECO]
     option_labels = {
         PENDING_CHOICE: 'Escolha a operação...',
@@ -217,24 +191,19 @@ def render_operation_gate(section_title, section_number: int) -> None:
         OP_ATUALIZACAO_PRECO: LABELS[OP_ATUALIZACAO_PRECO],
     }
     current = selected_operation() or PENDING_CHOICE
-    chosen = st.selectbox(
-        'Qual operação deseja executar?',
-        options,
-        index=options.index(current) if current in options else 0,
-        format_func=lambda value: option_labels.get(value, str(value)),
-        key='source_first_operation_selectbox',
-    )
+    chosen = st.selectbox('Qual operação deseja executar?', options, index=options.index(current) if current in options else 0, format_func=lambda value: option_labels.get(value, str(value)), key='source_first_operation_selectbox')
     if chosen == PENDING_CHOICE:
         st.info('Selecione uma operação real para liberar as próximas etapas.')
         return
     if st.button('Confirmar operação', use_container_width=True, key='source_first_confirm_operation'):
         write_selected_operation(chosen)
+
     op = selected_operation()
     if not op:
         st.warning('A operação ainda não foi confirmada. Nada será tratado como cadastro, estoque ou preço automaticamente.')
         return
     if op == OP_ESTOQUE:
-        st.warning('Depósito obrigatório antes de origem, calculadora, IA, regras, prévia e envio.')
+        st.warning('Depósito obrigatório para continuar com a atualização de estoque no Bling.')
         _render_stock_deposit_field(OP_ESTOQUE)
         if deposit_selected():
             st.success('Depósito confirmado. O fluxo de estoque está liberado para seguir.')
@@ -249,8 +218,10 @@ def render_operation_gate(section_title, section_number: int) -> None:
 __all__ = [
     'OPERATION_STEP',
     'clear_inferred_operation_until_user_chooses',
+    'deposit_selected',
     'operation_ready',
     'render_operation_gate',
     'selected_operation',
     'source_data_ready',
+    'write_selected_operation',
 ]
