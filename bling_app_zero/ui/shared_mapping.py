@@ -128,15 +128,19 @@ def _render_mapping_preview(target_name: str, selected_value: str, source: pd.Da
 
 def _initial_select_value(current_value: str, source_options: list[str]) -> str:
     if is_fixed_value(current_value):
-        return EMPTY_OPTION
+        return WRITE_OPTION
     if current_value in source_options:
         return current_value
+    if current_value:
+        return WRITE_OPTION
     return EMPTY_OPTION
 
 
 def _fixed_initial_value(current_value: str) -> str:
     if is_fixed_value(current_value):
         return decode_fixed_value(current_value)
+    if current_value and current_value not in {EMPTY_OPTION, WRITE_OPTION}:
+        return str(current_value or '').strip()
     return ''
 
 
@@ -177,11 +181,11 @@ def render_shared_contract_mapping(
         st.caption('Motor de sugestão: local seguro')
 
     current = dict(st.session_state.get(mapping_state_key) or {})
-    source_options = [EMPTY_OPTION] + [str(column) for column in source.columns]
+    source_options = [EMPTY_OPTION, WRITE_OPTION] + [str(column) for column in source.columns]
     edited: dict[str, str] = {}
     rows: list[dict[str, str]] = []
 
-    st.caption('Escolha uma coluna da origem OU escreva um valor fixo/manual. Se escrever um valor manual, ele preenche a coluna inteira no preview e no download final.')
+    st.caption('Escolha uma coluna da origem, deixe vazio ou selecione “escrever valor fixo/manual”. O valor escrito preenche a coluna inteira no preview e no download final.')
 
     for index, target_column in enumerate(target.columns):
         target_name = str(target_column)
@@ -191,20 +195,22 @@ def render_shared_contract_mapping(
 
         st.markdown(f'**Campo do modelo:** `{target_name}`')
         selected = st.selectbox(
-            f'Coluna da origem para “{target_name}”',
+            f'Como preencher “{target_name}”',
             source_options,
             index=default_index,
             key=mapping_widget_key(key_prefix, signature, index, target_name),
         )
 
-        fixed_value = st.text_input(
-            f'Ou escreva valor fixo/manual para “{target_name}”',
-            value=_fixed_initial_value(current_value),
-            key=fixed_widget_key(key_prefix, signature, index, target_name),
-            placeholder='Se preencher aqui, este valor será repetido na coluna inteira.',
-        ).strip()
+        fixed_value = ''
+        if selected == WRITE_OPTION:
+            fixed_value = st.text_input(
+                f'Escrever valor para refletir na coluna inteira de “{target_name}”',
+                value=_fixed_initial_value(current_value),
+                key=fixed_widget_key(key_prefix, signature, index, target_name),
+                placeholder='Digite aqui o valor que será repetido nesta coluna.',
+            ).strip()
 
-        selected_value = encode_fixed_value(fixed_value) if fixed_value else ('' if selected == EMPTY_OPTION else selected)
+        selected_value = encode_fixed_value(fixed_value) if selected == WRITE_OPTION else ('' if selected == EMPTY_OPTION else selected)
         edited[target_name] = selected_value
         _render_mapping_preview(target_name, selected_value, source)
         display_value = f'FIXO: {decode_fixed_value(selected_value)}' if is_fixed_value(selected_value) else (selected_value or '(vazio)')
