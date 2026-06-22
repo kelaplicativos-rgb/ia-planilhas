@@ -15,6 +15,7 @@ FLOW_HOME = 'home'
 FLOW_WIZARD = 'wizard_cadastro_estoque'
 FLOW_PRICE_UPDATE = 'price_multistore_v2'
 FLOW_MAPEAR_PLANILHA = 'mapear_planilha'
+KNOWN_FLOWS = {FLOW_HOME, FLOW_WIZARD, FLOW_PRICE_UPDATE, FLOW_MAPEAR_PLANILHA}
 
 MAPEAR_PLANILHA_ALIASES = {
     FLOW_MAPEAR_PLANILHA,
@@ -47,8 +48,6 @@ NO_API_SESSION_KEYS = (
     'bling_api_must_run_ai_check',
 )
 
-# O router legado importa render_home_wizard uma vez. Este patch troca a rota por uma
-# versão que contém a etapa independente de Conferência e Correção de Categorias.
 legacy.render_home_wizard = render_home_wizard
 try:
     legacy.VALID_SINGLE_PAGE_STEPS.add(STEP_CATEGORIZACAO)
@@ -81,6 +80,34 @@ def _clear_no_api_session_flags() -> None:
     st.session_state['flow_spine_primary_action_label'] = 'Download Modelo Mapeado'
 
 
+def _reset_stale_home_flow_if_needed() -> None:
+    requested = _query_param('operation_v2').strip().lower()
+    active = str(st.session_state.get(ACTIVE_FLOW_KEY) or FLOW_HOME).strip().lower()
+    if requested:
+        return
+    stale_wizard = active == FLOW_WIZARD and not (
+        bool(st.session_state.get(HOME_ALLOW_FLOW_KEY))
+        and bool(st.session_state.get('home_single_page_flow_active'))
+    )
+    unknown_flow = active not in KNOWN_FLOWS
+    if not stale_wizard and not unknown_flow:
+        return
+    st.session_state[ACTIVE_FLOW_KEY] = FLOW_HOME
+    st.session_state[HOME_ALLOW_FLOW_KEY] = False
+    st.session_state['home_single_page_flow_active'] = False
+    st.session_state.pop('mapeiaai_home_entry_path', None)
+    legacy.add_audit_event(
+        'home_router_v2_stale_flow_reset_to_dual_home',
+        area='HOME',
+        status='OK',
+        details={
+            'previous_active_flow': active,
+            'reason': 'Sessao antiga ou fluxo legado sem rota valida; Home dual deve ser o ponto de decisao.',
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+
+
 def start_price_multistore_flow() -> None:
     st.session_state[ACTIVE_FLOW_KEY] = FLOW_PRICE_UPDATE
     st.session_state[HOME_ALLOW_FLOW_KEY] = True
@@ -108,7 +135,6 @@ def start_mapear_planilha_flow() -> None:
 
 
 def start_bling_api_flow() -> None:
-    """Entra no núcleo Bling a partir da Home: conexão -> origem -> operação."""
     st.session_state['mapeiaai_home_entry_path'] = 'bling_api'
     st.session_state['home_bling_connected_same_flow_api_send'] = True
     st.session_state['bling_connected_api_flow_active'] = True
@@ -139,8 +165,12 @@ def _mapear_planilha_requested() -> bool:
 
 def _wizard_requested() -> bool:
     requested = _query_param('operation_v2').strip().lower()
+    if requested == FLOW_WIZARD:
+        return True
     active = str(st.session_state.get(ACTIVE_FLOW_KEY) or '').strip().lower()
-    return requested == FLOW_WIZARD or active == FLOW_WIZARD
+    if active != FLOW_WIZARD:
+        return False
+    return bool(st.session_state.get(HOME_ALLOW_FLOW_KEY)) and bool(st.session_state.get('home_single_page_flow_active'))
 
 
 def _go_home_from_independent_flow() -> None:
@@ -198,15 +228,12 @@ def _render_bling_connection_panel() -> None:
 def _render_mapeiaai_home_entry() -> None:
     if not _active_flow_is_home():
         return
-
     try:
         legacy._reset_stale_flow_session_if_needed()
     except Exception:
         pass
-
     effective_status = legacy._effective_bling_status(try_sync=True)
     connected = bool(effective_status.get('connected'))
-
     st.markdown(
         '''
 <style>
@@ -221,23 +248,15 @@ def _render_mapeiaai_home_entry() -> None:
 ''',
         unsafe_allow_html=True,
     )
-
     col_mapear, col_bling = st.columns(2)
     with col_mapear:
-        st.markdown(
-            '<div class="mapeiaai-home-card"><strong>Anexar Modelo / Mapear</strong><br><span class="mapeiaai-home-muted">Sem API. Primeiro anexe o modelo final, depois busque origem por site ou arquivo, use toggles opcionais, veja o preview e baixe a planilha idêntica.</span></div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown('<div class="mapeiaai-home-card"><strong>Anexar Modelo / Mapear</strong><br><span class="mapeiaai-home-muted">Sem API. Primeiro anexe o modelo final, depois busque origem por site ou arquivo, use toggles opcionais, veja o preview e baixe a planilha idêntica.</span></div>', unsafe_allow_html=True)
         if st.button('📄 Anexar Modelo / Mapear Planilha', use_container_width=True, key='home_core_mapear_modelo_v2'):
             start_mapear_planilha_flow()
             st.rerun()
-
     with col_bling:
         status = 'Bling conectado' if connected else 'Conectar ao Bling'
-        st.markdown(
-            f'<div class="mapeiaai-home-card"><strong>{status}</strong><br><span class="mapeiaai-home-muted">Com API. Conecta ao Bling, cai em origem de dados, escolhe Atualizar Estoque, Cadastro ou Atualizar Produtos, revisa e envia.</span></div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(f'<div class="mapeiaai-home-card"><strong>{status}</strong><br><span class="mapeiaai-home-muted">Com API. Conecta ao Bling, cai em origem de dados, escolhe Atualizar Estoque, Cadastro ou Atualizar Produtos, revisa e envia.</span></div>', unsafe_allow_html=True)
         button_label = '🔗 Usar Bling conectado' if connected else '🔗 Conectar ao Bling'
         if st.button(button_label, use_container_width=True, key='home_core_connect_bling_v2'):
             if connected:
@@ -246,26 +265,13 @@ def _render_mapeiaai_home_entry() -> None:
             else:
                 st.session_state['home_show_bling_connection_panel_v2'] = True
                 st.rerun()
-
     if connected:
         st.success('Bling conectado. Ao tocar em “Usar Bling conectado”, o fluxo começa em Origem de dados e o envio aparece somente no final.')
     elif bool(st.session_state.get('home_show_bling_connection_panel_v2')):
         st.markdown('---')
         st.markdown('### Conectar ao Bling')
         _render_bling_connection_panel()
-
-    legacy.add_audit_event(
-        'home_router_v2_render_mapeiaai_dual_core_home',
-        area='HOME',
-        status='OK',
-        details={
-            'responsible_file': RESPONSIBLE_FILE,
-            'home_paths': ['mapear_modelo_sem_api', 'bling_api'],
-            'connected': connected,
-            'bling_first_step_after_connection': 'origem',
-            'universal_first_step': 'modelo',
-        },
-    )
+    legacy.add_audit_event('home_router_v2_render_mapeiaai_dual_core_home', area='HOME', status='OK', details={'responsible_file': RESPONSIBLE_FILE, 'home_paths': ['mapear_modelo_sem_api', 'bling_api'], 'connected': connected, 'bling_first_step_after_connection': 'origem', 'universal_first_step': 'modelo'})
 
 
 def _render_price_multistore_home_entry() -> None:
@@ -280,6 +286,7 @@ def _render_price_multistore_home_entry() -> None:
 
 
 def render_home() -> None:
+    _reset_stale_home_flow_if_needed()
     if _mapear_planilha_requested():
         _render_mapear_planilha_route()
         return
