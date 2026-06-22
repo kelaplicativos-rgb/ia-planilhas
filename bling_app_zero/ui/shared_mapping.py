@@ -64,6 +64,37 @@ def blank_shared_mapping(target: pd.DataFrame) -> dict[str, str]:
     return {str(column): '' for column in getattr(target, 'columns', [])}
 
 
+def _sample_values(source: pd.DataFrame, source_column: str, limit: int = 3) -> list[str]:
+    if not isinstance(source, pd.DataFrame) or not source_column or source_column not in source.columns:
+        return []
+    values: list[str] = []
+    try:
+        for value in source[source_column].dropna().astype(str).head(limit * 4):
+            text = str(value or '').strip()
+            if text and text.lower() not in {'nan', 'none', 'null'} and text not in values:
+                values.append(text)
+            if len(values) >= limit:
+                break
+    except Exception:
+        return []
+    return values
+
+
+def _render_mapping_preview(target_name: str, selected_value: str, source: pd.DataFrame) -> None:
+    """Mostra o contrato final e a prévia do dado que entrará naquele campo."""
+    flag = confidence_flag(target_name, selected_value, source)
+    if not selected_value:
+        st.caption(f'{flag} Campo do modelo: **{target_name}** → ficará vazio no download final.')
+        return
+
+    samples = _sample_values(source, selected_value)
+    if samples:
+        sample_text = ' | '.join(samples)
+        st.caption(f'{flag} Campo do modelo: **{target_name}** ← origem **{selected_value}**. Prévia: {sample_text}')
+    else:
+        st.caption(f'{flag} Campo do modelo: **{target_name}** ← origem **{selected_value}**. Prévia indisponível ou coluna vazia.')
+
+
 def render_shared_contract_mapping(
     source: pd.DataFrame,
     target: pd.DataFrame,
@@ -105,18 +136,23 @@ def render_shared_contract_mapping(
     edited: dict[str, str] = {}
     rows: list[dict[str, str]] = []
 
+    st.caption('Para cada campo do modelo abaixo, escolha qual coluna da origem vai preencher esse campo. A prévia aparece logo abaixo de cada seleção.')
+
     for index, target_column in enumerate(target.columns):
         target_name = str(target_column)
         current_value = current.get(target_name, '')
         default_index = source_options.index(current_value) if current_value in source_options else 0
+
+        st.markdown(f'**Campo do modelo:** `{target_name}`')
         selected = st.selectbox(
-            target_name,
+            f'Origem que vai preencher “{target_name}”',
             source_options,
             index=default_index,
             key=mapping_widget_key(key_prefix, signature, index, target_name),
         )
         selected_value = '' if selected == EMPTY_OPTION else selected
         edited[target_name] = selected_value
+        _render_mapping_preview(target_name, selected_value, source)
         rows.append(
             {
                 'Farol': confidence_flag(target_name, selected_value, source),
