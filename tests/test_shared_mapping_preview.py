@@ -101,11 +101,34 @@ def test_model_template_instruction_rows_are_not_exported() -> None:
     output = build_universal_output(source, model, mapping)
 
     assert output.shape == (2, 6)
+    assert output['ID Produto'].tolist() == ['', '']
     assert output['Código SKU*'].tolist() == ['A1', 'A2']
     assert output['Depósito*'].tolist() == ['Geral', 'Geral']
     assert output['Tipo de lançamento*'].tolist() == ['Entrada', 'Entrada']
     assert 'Linha de exemplo' not in output.to_string()
     assert 'OBRIGATÓRIO' not in output.to_string()
+
+
+def test_blank_model_field_does_not_auto_fill_by_name_similarity() -> None:
+    source = pd.DataFrame(
+        {
+            'Descrição': ['Produto A', 'Produto B'],
+            'Código': ['A1', 'A2'],
+            'GTIN/EAN': ['789', '790'],
+        }
+    )
+    model = pd.DataFrame(columns=['ID Produto', 'Código SKU*', 'GTIN/EAN**', 'Nome do Produto'])
+    mapping = {
+        'Código SKU*': 'Código',
+        'GTIN/EAN**': 'GTIN/EAN',
+        'Nome do Produto': 'Descrição',
+    }
+
+    output = build_universal_output(source, model, mapping)
+
+    assert output['ID Produto'].tolist() == ['', '']
+    assert output['Código SKU*'].tolist() == ['A1', 'A2']
+    assert output['Nome do Produto'].tolist() == ['Produto A', 'Produto B']
 
 
 def test_generic_template_is_filled_with_source_rows_not_template_rows() -> None:
