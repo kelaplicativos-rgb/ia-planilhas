@@ -23,13 +23,12 @@ API_OPERATIONS = {OP_API_PENDING, OP_API_CADASTRO, OP_API_ESTOQUE, OP_API_ATUALI
 
 API_STEPS = (STEP_ORIGEM, STEP_ENTRADA, STEP_OPERACAO, STEP_DOWNLOAD)
 
-# Ordem oficial source-first:
-# origem/dados alimentam a base; só depois o usuário escolhe a operação real.
+# Fluxo universal real do MapeiaAI: modelo livre -> origem -> dados -> recursos -> download.
+# A etapa Operação pertence ao caminho Bling/API.
 UNIVERSAL_STEPS = (
     STEP_MODELO,
     STEP_ORIGEM,
     STEP_ENTRADA,
-    STEP_OPERACAO,
     STEP_PRECIFICACAO,
     STEP_CATEGORIZACAO,
     STEP_MAPEAMENTO,
