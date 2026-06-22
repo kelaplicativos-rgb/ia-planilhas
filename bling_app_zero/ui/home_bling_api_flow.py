@@ -140,9 +140,12 @@ def apply_direct_api_contract(operation: str | None = None) -> pd.DataFrame:
     st.session_state[DIRECT_API_CONTRACT_KEY] = model.copy()
     st.session_state[CADASTRO_MODELO_KEY] = model.copy()
     st.session_state['cadastro_wizard_df_modelo'] = model.copy()
-    st.session_state['home_modelo_universal_df'] = model.copy()
-    st.session_state['df_modelo_universal'] = model.copy()
-    st.session_state['modelo_universal_df'] = model.copy()
+
+    # BLINGFIX: contrato direto da API não é modelo universal.
+    # Antes estas chaves eram preenchidas com modelo de cadastro/estoque/preço e
+    # o diagnóstico passava a enxergar um falso `df_modelo_universal`.
+    for key in ('home_modelo_universal_df', 'df_modelo_universal', 'modelo_universal_df'):
+        st.session_state.pop(key, None)
 
     if op == 'cadastro':
         st.session_state['home_modelo_cadastro_df'] = model.copy()
@@ -183,7 +186,8 @@ def reset_stock_deposit_cache(*, clear_selection: bool = False, reason: str = ''
 def _deposit_paths() -> list[str]:
     configured = _secret('stock_deposits_path', '')
     paths = [configured] if configured else []
-    paths.extend(['/estoques/depositos', '/depositos', '/estoque/depositos'])
+    # BLINGFIX: o diagnóstico confirmou /depositos OK e /estoques/depositos 404.
+    paths.extend(['/depositos', '/estoques/depositos', '/estoque/depositos'])
     out: list[str] = []
     for path in paths:
         value = str(path or '').strip()
