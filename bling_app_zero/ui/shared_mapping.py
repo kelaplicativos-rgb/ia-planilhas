@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from bling_app_zero.ai.ai_openai_mapping_suggester import suggest_mapping_with_openai
 from bling_app_zero.ui.mapping_cadastro_flow import render_manual_mapping
@@ -18,6 +20,7 @@ from bling_app_zero.ui.shared_calculator import (
 EMPTY_OPTION = '(deixar vazio)'
 WRITE_OPTION = '✍️ escrever valor fixo/manual'
 FIXED_VALUE_PREFIX = '__mapeiaai_fixed_value__:'
+MAPPING_FIELDS_PER_PAGE = 10
 
 
 def render_shared_cadastro_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | None) -> None:
@@ -68,6 +71,38 @@ def decode_fixed_value(value: object) -> str:
 
 def _norm(value: object) -> str:
     return re.sub(r'[^a-z0-9]+', '', str(value or '').lower())
+
+
+def _scroll_to_mapping_top(marker_key: str) -> None:
+    if not st.session_state.pop(marker_key, False):
+        return
+    components.html(
+        """
+<script>
+const scrollNow = () => {
+  try {
+    const doc = window.parent.document;
+    const anchors = Array.from(doc.querySelectorAll('[data-mapeia-anchor="mapping-top"]'));
+    const anchor = anchors.length ? anchors[anchors.length - 1] : null;
+    if (anchor) { anchor.scrollIntoView({behavior: 'smooth', block: 'start'}); return; }
+  } catch (e) {}
+  try { window.parent.scrollTo({top: 0, behavior: 'smooth'}); } catch (e) {}
+  try { window.scrollTo({top: 0, behavior: 'smooth'}); } catch (e) {}
+};
+setTimeout(scrollNow, 80);
+</script>
+""",
+        height=0,
+    )
+
+
+def _change_mapping_page(page_key: str, scroll_key: str, page: int) -> None:
+    st.session_state[page_key] = max(1, int(page))
+    st.session_state[scroll_key] = True
+    try:
+        st.rerun()
+    except Exception:
+        pass
 
 
 def _apply_price_calculator_mapping_hint(current: dict[str, str], source: pd.DataFrame, target: pd.DataFrame) -> dict[str, str]:
@@ -178,6 +213,35 @@ def _fixed_initial_value(current_value: str) -> str:
     return ''
 
 
+def _mapping_page_keys(key_prefix: str, signature: str) -> tuple[str, str]:
+    suffix = short_hash(signature, size=10)
+    return f'{key_prefix}_mapping_page_{suffix}', f'{key_prefix}_mapping_scroll_{suffix}'
+
+
+def _render_mapping_page_controls(page_key: str, scroll_key: str, current_page: int, total_pages: int, *, where: str) -> None:
+    if total_pages <= 1:
+        return
+    previous_disabled = current_page <= 1
+    next_disabled = current_page >= total_pages
+    col_prev, col_page, col_next = st.columns([1, 1.2, 1])
+    with col_prev:
+        if st.button('← Anterior', key=f'{page_key}_{where}_prev', use_container_width=True, disabled=previous_disabled):
+            _change_mapping_page(page_key, scroll_key, current_page - 1)
+    with col_page:
+        selected = st.selectbox(
+            'Página',
+            list(range(1, total_pages + 1)),
+            index=max(0, min(total_pages - 1, current_page - 1)),
+            key=f'{page_key}_{where}_select',
+            label_visibility='collapsed',
+        )
+        if int(selected) != int(current_page):
+            _change_mapping_page(page_key, scroll_key, int(selected))
+    with col_next:
+        if st.button('Próxima →', key=f'{page_key}_{where}_next', use_container_width=True, disabled=next_disabled):
+            _change_mapping_page(page_key, scroll_key, current_page + 1)
+
+
 def render_shared_contract_mapping(
     source: pd.DataFrame,
     target: pd.DataFrame,
@@ -188,11 +252,13 @@ def render_shared_contract_mapping(
     key_prefix: str = 'mapeiaai_shared',
     ai_enabled: bool = True,
 ) -> dict[str, str]:
+    st.markdown('<span data-mapeia-anchor="mapping-top"></span>', unsafe_allow_html=True)
     st.markdown('### Mapeamento')
+    page_key, scroll_key = _mapping_page_keys(key_prefix, signature)
+    _scroll_to_mapping_top(scroll_key)
+
     if ai_enabled:
         st.caption('IA opcional ligada: o sistema sugere os campos, mas você revisa e pode alterar tudo antes do preview final.')
-    else:
-        st.caption('IA desligada: os campos começam vazios e somente escolhas manuais serão usadas no download.')
 
     if mapping_state_key not in st.session_state:
         if ai_enabled:
@@ -209,22 +275,32 @@ def render_shared_contract_mapping(
     engine = str(st.session_state.get(engine_state_key) or 'local')
     if engine == 'openai_validated':
         st.caption('Motor de sugestão: OpenAI validada')
-    elif engine == 'manual_sem_ia':
-        st.caption('Motor de sugestão: manual sem IA')
-    else:
+    elif engine != 'manual_sem_ia':
         st.caption('Motor de sugestão: local seguro')
 
     current = dict(st.session_state.get(mapping_state_key) or {})
     current = _apply_price_calculator_mapping_hint(current, source, target)
     st.session_state[mapping_state_key] = current
     source_options = [EMPTY_OPTION, WRITE_OPTION] + [str(column) for column in source.columns]
-    edited: dict[str, str] = {}
+    edited: dict[str, str] = dict(current)
     rows: list[dict[str, str]] = []
 
-    st.caption('Escolha uma coluna da origem, deixe vazio ou selecione “escrever valor fixo/manual”. O valor escrito preenche a coluna inteira no preview e no download final.')
+    target_columns = [str(column) for column in getattr(target, 'columns', [])]
+    total_fields = len(target_columns)
+    total_pages = max(1, math.ceil(total_fields / MAPPING_FIELDS_PER_PAGE))
+    current_page = int(st.session_state.get(page_key) or 1)
+    current_page = max(1, min(total_pages, current_page))
+    st.session_state[page_key] = current_page
+    start = (current_page - 1) * MAPPING_FIELDS_PER_PAGE
+    end = min(total_fields, start + MAPPING_FIELDS_PER_PAGE)
+    page_columns = target_columns[start:end]
 
-    for index, target_column in enumerate(target.columns):
-        target_name = str(target_column)
+    st.caption(f'Mostrando campos {start + 1}–{end} de {total_fields}. Limite: {MAPPING_FIELDS_PER_PAGE} campos por página para não pesar a tela.')
+    st.caption('Escolha uma coluna da origem, deixe vazio ou selecione “escrever valor fixo/manual”.')
+    _render_mapping_page_controls(page_key, scroll_key, current_page, total_pages, where='top')
+
+    for offset, target_name in enumerate(page_columns):
+        index = start + offset
         current_value = str(current.get(target_name, '') or '')
         selected_initial = _initial_select_value(current_value, source_options)
         default_index = source_options.index(selected_initial) if selected_initial in source_options else 0
@@ -249,6 +325,11 @@ def render_shared_contract_mapping(
         selected_value = encode_fixed_value(fixed_value) if selected == WRITE_OPTION else ('' if selected == EMPTY_OPTION else selected)
         edited[target_name] = selected_value
         _render_mapping_preview(target_name, selected_value, source)
+
+    st.session_state[mapping_state_key] = edited
+
+    for target_name in target_columns:
+        selected_value = str(edited.get(target_name, '') or '')
         display_value = f'FIXO: {decode_fixed_value(selected_value)}' if is_fixed_value(selected_value) else (selected_value or '(vazio)')
         rows.append(
             {
@@ -258,7 +339,7 @@ def render_shared_contract_mapping(
             }
         )
 
-    st.session_state[mapping_state_key] = edited
+    _render_mapping_page_controls(page_key, scroll_key, current_page, total_pages, where='bottom')
     with st.expander('Resumo dos faróis do mapeamento', expanded=False):
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=260)
     return edited
@@ -266,13 +347,14 @@ def render_shared_contract_mapping(
 
 def clear_shared_mapping_widgets(key_prefix: str = 'mapeiaai_shared') -> None:
     for key in list(st.session_state.keys()):
-        if str(key).startswith(f'{key_prefix}_map_'):
+        if str(key).startswith(f'{key_prefix}_map_') or str(key).startswith(f'{key_prefix}_mapping_page_') or str(key).startswith(f'{key_prefix}_mapping_scroll_'):
             st.session_state.pop(key, None)
 
 
 __all__ = [
     'EMPTY_OPTION',
     'FIXED_VALUE_PREFIX',
+    'MAPPING_FIELDS_PER_PAGE',
     'WRITE_OPTION',
     'blank_shared_mapping',
     'clear_shared_mapping_widgets',
