@@ -8,7 +8,7 @@ from bling_app_zero.core import APP_VERSION
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.ui.alerts import enforce_attention_alert_policy
 from bling_app_zero.ui.bottom_nav import render_bottom_nav, render_persistent_operation_controls
-from bling_app_zero.ui.home_official import render_home as render_home_router
+from bling_app_zero.ui.home_official import render_home as render_home_router, should_render_official_landing
 from bling_app_zero.ui.layout import inject_app_layout
 from bling_app_zero.ui.scroll_position import inject_scroll_position_keeper
 from bling_app_zero.ui.wizard_state_guard import run_wizard_state_guard
@@ -39,21 +39,6 @@ def _render_blingfix_runtime_stamp() -> None:
         )
 
 
-def _query_param(name: str) -> str:
-    try:
-        value = st.query_params.get(name)
-    except Exception:
-        return ''
-    if isinstance(value, list):
-        return str(value[0] if value else '').strip()
-    return str(value or '').strip()
-
-
-def _is_official_landing_screen() -> bool:
-    """A Home sem rota explícita deve mostrar somente os dois cards oficiais."""
-    return not bool(_query_param('operation_v2'))
-
-
 def render_home() -> None:
     from bling_app_zero.ui.home_autofluxo import run_home_autofluxo
 
@@ -65,10 +50,10 @@ def render_home() -> None:
     _render_blingfix_runtime_stamp()
 
     # BLINGFIX 2026-06-22:
-    # A tela inicial oficial é limpa e contém somente os dois cards principais:
-    # Anexar Modelo / Mapear e Conectar ao Bling. Controles persistentes ficam
-    # reservados para rotas/fluxos já iniciados, evitando poluição da HOME.
-    official_landing = _is_official_landing_screen()
+    # A landing oficial precisa nascer limpa na HOME, mesmo quando o navegador
+    # mantém querystring antiga (?operation_v2=...). Só mostramos controles de
+    # fluxo quando a rota foi autorizada por clique real nos cards oficiais.
+    official_landing = should_render_official_landing()
     if not official_landing:
         render_persistent_operation_controls()
     render_home_router()
