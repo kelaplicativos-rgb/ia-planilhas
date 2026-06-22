@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from bling_app_zero.ui.shared_mapping import MAPPING_FIELDS_PER_PAGE
+from bling_app_zero.ui.shared_mapping import MAPPING_FIELDS_PER_PAGE, _filter_target_columns
 
 
 def test_mapping_limit_is_ten_fields_per_page() -> None:
@@ -17,6 +17,24 @@ def test_shared_mapping_has_pagination_and_scroll_to_top() -> None:
     assert '_render_mapping_page_controls(page_key, scroll_key, current_page, total_pages' in content
     assert 'scrollIntoView' in content
     assert 'st.rerun()' in content
+
+
+def test_shared_mapping_has_column_search_filter() -> None:
+    content = Path('bling_app_zero/ui/shared_mapping.py').read_text(encoding='utf-8')
+
+    assert 'Buscar campo/coluna do modelo' in content
+    assert '_filter_target_columns(all_target_columns, search_query)' in content
+    assert 'Filtro ativo:' in content
+    assert 'Nenhum campo encontrado para essa busca.' in content
+
+
+def test_filter_target_columns_matches_accents_and_multiple_terms() -> None:
+    columns = ['Data Validade', 'Preço de venda', 'URL do Vídeo', 'Descrição Curta']
+
+    assert _filter_target_columns(columns, 'validade') == ['Data Validade']
+    assert _filter_target_columns(columns, 'preco') == ['Preço de venda']
+    assert _filter_target_columns(columns, 'video') == ['URL do Vídeo']
+    assert _filter_target_columns(columns, 'descricao curta') == ['Descrição Curta']
 
 
 def test_shared_mapping_preview_is_short_and_clean() -> None:
