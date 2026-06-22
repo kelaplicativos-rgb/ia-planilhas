@@ -402,10 +402,9 @@ def _apply_category(source: pd.DataFrame, enabled: bool) -> pd.DataFrame:
 
 
 def _render_ai_tools(source: pd.DataFrame, model: pd.DataFrame, enabled: bool) -> None:
-    st.markdown('### 4. Inteligência Artificial')
     if not enabled:
-        st.caption('Mapeamento automático desligado. O mapeamento começará vazio para escolha manual.')
         return
+    st.markdown('### Inteligência Artificial')
     if st.button('Regerar sugestão de mapeamento com IA', use_container_width=True, key='mapeiaai_universal_regen_ai_mapping'):
         suggested, engine = suggest_shared_mapping(source, model, operation='universal')
         st.session_state[UNIVERSAL_MAPPING_KEY] = suggested
@@ -434,8 +433,6 @@ def render_universal_flow() -> None:
     if toggles['price']:
         processed = render_shared_calculator(processed, model=model, key_prefix='mapeiaai_universal', force_enabled=True)
         _audit('mapear_planilha_preco_processado', rows=int(len(processed)), columns=int(len(processed.columns)))
-    else:
-        st.caption('Preço desligado: valores mantidos como vieram da origem.')
     processed = _apply_category(processed, toggles['category'])
     rules_config = render_rules_resources_panel(processed, model, enabled=toggles['rules'], key_prefix='mapeiaai_universal')
     signature = _reset_universal_state_if_changed(model, processed, toggles['mapping_ai'], toggles['rules'], rules_config)
