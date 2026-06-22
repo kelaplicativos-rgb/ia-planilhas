@@ -12,6 +12,7 @@ from bling_app_zero.ui.home_wizard_constants import (
     STEP_DOWNLOAD,
     STEP_ENTRADA,
     STEP_GERAR_ESTOQUE,
+    STEP_IA,
     STEP_LABELS,
     STEP_MAPEAMENTO,
     STEP_MODELO,
@@ -37,6 +38,7 @@ from bling_app_zero.ui.home_wizard_state import (
     wizard_steps_for_operation,
 )
 from bling_app_zero.ui.home_wizard_ui import render_pending_notice
+from bling_app_zero.ui.rules_center_state import rules_center_ready
 from bling_app_zero.ui.rules_center_step import render_rules_center_step
 from bling_app_zero.ui.scroll_guard import inject_scroll_guard
 from bling_app_zero.ui.source_first_operation_gate import (
@@ -81,19 +83,19 @@ def _is_api_context() -> bool:
 def _steps() -> list[str]:
     op = selected_operation()
 
-    # BLINGFIX 2026-06-20:
-    # No fluxo Bling API, a operação precisa vir antes da origem/entrada.
-    # Atualização de estoque depende do depósito, e o depósito só é renderizado
-    # na etapa Operação. Mantendo Origem -> Entrada -> Operação, o wizard fica
-    # preso em api_pending e o usuário nunca consegue escolher o depósito.
+    # MapeiaAI 2026-06-22:
+    # O núcleo Bling começa na Home pelo botão Conectar ao Bling e, depois da
+    # conexão, cai primeiro em Origem de dados. A operação vem só depois que os
+    # dados já foram carregados. O mapeamento livre de modelo não entra nesse
+    # fluxo: o contrato da saída é o padrão Bling da operação escolhida.
     if _is_api_context():
-        steps = [STEP_OPERACAO]
+        steps = [STEP_ORIGEM, STEP_ENTRADA, STEP_OPERACAO]
         if op == OP_ESTOQUE:
-            steps += [STEP_ORIGEM, STEP_ENTRADA, STEP_MAPEAMENTO, STEP_PREVIEW, STEP_DOWNLOAD]
+            steps += [STEP_MAPEAMENTO, STEP_REGRAS, STEP_IA, STEP_PREVIEW, STEP_DOWNLOAD]
         elif op == OP_PRECO:
-            steps += [STEP_ORIGEM, STEP_ENTRADA, STEP_PRECIFICACAO, STEP_MAPEAMENTO, STEP_PREVIEW, STEP_DOWNLOAD]
+            steps += [STEP_PRECIFICACAO, STEP_MAPEAMENTO, STEP_REGRAS, STEP_IA, STEP_PREVIEW, STEP_DOWNLOAD]
         elif op == OP_CADASTRO:
-            steps += [STEP_ORIGEM, STEP_ENTRADA, STEP_PRECIFICACAO, STEP_MAPEAMENTO, STEP_REGRAS, STEP_PREVIEW, STEP_DOWNLOAD]
+            steps += [STEP_PRECIFICACAO, STEP_MAPEAMENTO, STEP_REGRAS, STEP_IA, STEP_PREVIEW, STEP_DOWNLOAD]
         return steps
 
     steps = [STEP_ORIGEM, STEP_ENTRADA, STEP_OPERACAO]
@@ -120,19 +122,25 @@ def _done(step: str) -> bool:
         return source_data_ready()
     if step == STEP_PRECIFICACAO:
         return True
-    if step in {STEP_MAPEAMENTO, STEP_REGRAS, STEP_PREVIEW, STEP_DOWNLOAD}:
+    if step == STEP_REGRAS:
+        if _is_api_context():
+            return bool(universal_mapping_ready() and rules_center_ready())
+        return universal_mapping_ready()
+    if step == STEP_IA:
+        return bool(universal_mapping_ready() and rules_center_ready())
+    if step in {STEP_MAPEAMENTO, STEP_PREVIEW, STEP_DOWNLOAD}:
         return universal_mapping_ready()
     return False
 
 
 def _fallback_active_step_for_invalid_current(current: str, steps: list[str]) -> str:
     if _is_api_context():
-        if not operation_ready():
-            return STEP_OPERACAO
-        if current_origin_choice() not in {'arquivo', 'site'} and STEP_ORIGEM in steps:
+        if current_origin_choice() not in {'arquivo', 'site'}:
             return STEP_ORIGEM
-        if current_origin_choice() in {'arquivo', 'site'} and not source_data_ready() and STEP_ENTRADA in steps:
+        if not source_data_ready() and STEP_ENTRADA in steps:
             return STEP_ENTRADA
+        if not operation_ready() and STEP_OPERACAO in steps:
+            return STEP_OPERACAO
         return steps[0]
     if source_data_ready() and not operation_ready():
         return STEP_OPERACAO
@@ -147,13 +155,17 @@ def _active_step() -> str:
     current = str(st.session_state.get(WIZARD_STEP_KEY) or STEP_ORIGEM).strip().lower()
     steps = _steps()
     if _is_api_context():
-        if not operation_ready():
+        if current_origin_choice() not in {'arquivo', 'site'}:
+            return STEP_ORIGEM
+        if not source_data_ready() and current not in {STEP_ORIGEM, STEP_ENTRADA}:
+            return STEP_ENTRADA
+        if source_data_ready() and not operation_ready() and current not in {STEP_ORIGEM, STEP_ENTRADA, STEP_OPERACAO}:
             return STEP_OPERACAO
         if current in steps:
             return current
         fallback = _fallback_active_step_for_invalid_current(current, steps)
         add_audit_event(
-            'wizard_api_operation_first_redirected',
+            'wizard_api_origin_first_redirected',
             area='WIZARD',
             step=fallback,
             status='OK',
@@ -198,7 +210,7 @@ def _render_origin(n: int) -> None:
     _section_title(n, _label(STEP_ORIGEM))
     ensure_universal_operation_state()
     if _is_api_context():
-        st.caption('Operação e depósito já confirmados. Agora escolha de onde virão os produtos para continuar o envio pela API.')
+        st.caption('Bling conectado. Primeiro escolha a origem dos dados: buscar produtos por site ou anexar arquivo.')
     else:
         st.caption('Primeiro escolha e carregue a origem. Esta etapa não define cadastro, estoque ou preço.')
     col1, col2 = st.columns(2)
@@ -231,16 +243,34 @@ def _render_map(n: int) -> None:
     if not operation_ready():
         render_pending_notice('Escolha a operação e confirme os obrigatórios primeiro.')
         return
+    if _is_api_context():
+        st.caption('Fluxo Bling: o contrato da saída é fixo pela operação escolhida. Não há anexar modelo livre neste caminho.')
     render_universal_mapeamento_step()
 
 
 def _render_rules(n: int) -> None:
     render_step_anchor(STEP_REGRAS)
     _section_title(n, _label(STEP_REGRAS))
-    if selected_operation() != OP_CADASTRO:
+    if selected_operation() != OP_CADASTRO and not _is_api_context():
         st.info('Esta etapa é exclusiva do cadastro.')
         return
     render_rules_center_step()
+
+
+def _render_ai(n: int) -> None:
+    render_step_anchor(STEP_IA)
+    _section_title(n, _label(STEP_IA))
+    if not universal_mapping_ready():
+        render_pending_notice('Confirme a revisão dos campos antes da Inteligência Artificial.')
+        return
+    if not rules_center_ready():
+        render_pending_notice('Revise e salve as Regras e Recursos Inteligentes antes de usar ou pular a IA.')
+        return
+    try:
+        from bling_app_zero.ui.ai_real_advanced_panel import render_ai_real_advanced_panel
+        render_ai_real_advanced_panel()
+    except Exception as exc:
+        st.caption(f'IA opcional indisponível neste ambiente: {exc}')
 
 
 def _render_preview(n: int) -> None:
@@ -271,6 +301,8 @@ def _render_step(step: str, n: int) -> None:
         _render_map(n)
     elif step == STEP_REGRAS:
         _render_rules(n)
+    elif step == STEP_IA:
+        _render_ai(n)
     elif step == STEP_PREVIEW:
         _render_preview(n)
     elif step == STEP_DOWNLOAD:
@@ -316,7 +348,7 @@ def render_home_wizard() -> None:
     step = _active_step()
     _go(step)
     _nav(step)
-    add_audit_event('wizard_source_first_step_rendered', area='WIZARD', step=step, details={'selected_operation': selected_operation() or 'pending', 'steps': _steps(), 'api_no_universal_operation': True, 'operation_first_for_api': _is_api_context(), 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('wizard_source_first_step_rendered', area='WIZARD', step=step, details={'selected_operation': selected_operation() or 'pending', 'steps': _steps(), 'api_no_universal_operation': True, 'operation_first_for_api': False, 'responsible_file': RESPONSIBLE_FILE})
     _render_step(step, (2 if context == CONTEXT_BLING_API else 1) + _steps().index(step))
     inject_scroll_to_target()
 
