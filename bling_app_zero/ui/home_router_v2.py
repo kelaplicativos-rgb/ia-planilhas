@@ -3,7 +3,7 @@ from __future__ import annotations
 import streamlit as st
 
 import bling_app_zero.ui.home_router as legacy
-from bling_app_zero.ui.flow_context import CONTEXT_UNIVERSAL, activate_csv_finish_mode, set_entry_context
+from bling_app_zero.ui.flow_context import CONTEXT_BLING_API, CONTEXT_UNIVERSAL, activate_csv_finish_mode, set_entry_context
 from bling_app_zero.ui.home_wizard_v2 import STEP_CATEGORIZACAO, render_home_wizard
 from bling_app_zero.ui.universal_flow import render_universal_flow
 from bling_app_zero.v2.price_multistore.ui_plus import render_price_multistore_v2
@@ -12,6 +12,7 @@ RESPONSIBLE_FILE = 'bling_app_zero/ui/home_router_v2.py'
 ACTIVE_FLOW_KEY = 'home_active_operation_v2'
 HOME_ALLOW_FLOW_KEY = 'home_allow_operation_v2_session'
 FLOW_HOME = 'home'
+FLOW_WIZARD = 'wizard_cadastro_estoque'
 FLOW_PRICE_UPDATE = 'price_multistore_v2'
 FLOW_MAPEAR_PLANILHA = 'mapear_planilha'
 
@@ -97,10 +98,31 @@ def start_mapear_planilha_flow() -> None:
     st.session_state[HOME_ALLOW_FLOW_KEY] = True
     st.session_state['home_single_page_flow_active'] = False
     st.session_state['mapear_planilha_sem_api_active'] = True
+    st.session_state['mapeiaai_home_entry_path'] = 'mapear_modelo_sem_api'
     try:
         st.query_params['operation_v2'] = FLOW_MAPEAR_PLANILHA
         for key in ('step', 'flow', 'origem', 'operacao', 'operation'):
             st.query_params.pop(key, None)
+    except Exception:
+        pass
+
+
+def start_bling_api_flow() -> None:
+    """Entra no núcleo Bling a partir da Home: conexão -> origem -> operação."""
+    st.session_state['mapeiaai_home_entry_path'] = 'bling_api'
+    st.session_state['home_bling_connected_same_flow_api_send'] = True
+    st.session_state['bling_connected_api_flow_active'] = True
+    try:
+        legacy._start_wizard_context(CONTEXT_BLING_API, step='origem', api_send=True)
+    except Exception:
+        st.session_state[ACTIVE_FLOW_KEY] = FLOW_WIZARD
+        st.session_state[HOME_ALLOW_FLOW_KEY] = True
+        st.session_state['home_single_page_flow_active'] = True
+        st.session_state['bling_wizard_step'] = 'origem'
+        st.session_state['home_wizard_step'] = 'origem'
+    try:
+        st.query_params['operation_v2'] = FLOW_WIZARD
+        st.query_params['step'] = 'origem'
     except Exception:
         pass
 
@@ -115,12 +137,19 @@ def _mapear_planilha_requested() -> bool:
     return requested in MAPEAR_PLANILHA_ALIASES or active == FLOW_MAPEAR_PLANILHA
 
 
+def _wizard_requested() -> bool:
+    requested = _query_param('operation_v2').strip().lower()
+    active = str(st.session_state.get(ACTIVE_FLOW_KEY) or '').strip().lower()
+    return requested == FLOW_WIZARD or active == FLOW_WIZARD
+
+
 def _go_home_from_independent_flow() -> None:
     st.session_state[ACTIVE_FLOW_KEY] = FLOW_HOME
     st.session_state[HOME_ALLOW_FLOW_KEY] = False
     st.session_state['home_single_page_flow_active'] = False
     st.session_state.pop('price_multistore_independent_route_active', None)
     st.session_state.pop('mapear_planilha_sem_api_active', None)
+    st.session_state.pop('mapeiaai_home_entry_path', None)
     try:
         st.query_params.pop('operation_v2', None)
         st.query_params.pop('step', None)
@@ -148,7 +177,7 @@ def _render_mapear_planilha_route() -> None:
         if st.button('Voltar ao início', use_container_width=True, key='mapear_planilha_back_home_v2'):
             _go_home_from_independent_flow()
     with col_title:
-        st.caption('Fluxo independente sem API: anexe a planilha fonte, anexe o modelo final, revise o mapeamento e baixe o arquivo.')
+        st.caption('Fluxo independente sem API: anexe o modelo final, escolha origem dos dados, revise o mapeamento e baixe a planilha idêntica.')
     render_universal_flow()
 
 
@@ -157,15 +186,86 @@ def _active_flow_is_home() -> bool:
     return active_flow in {'', FLOW_HOME}
 
 
-def _render_mapear_planilha_home_entry() -> None:
+def _render_bling_connection_panel() -> None:
+    try:
+        auth_url = legacy.build_authorization_url({'return_to': 'mapeiaai_home_bling', 'open_mode': 'android_safe'})
+    except Exception as exc:
+        auth_url = ''
+        st.warning(f'Não consegui preparar o link do Bling agora: {exc}')
+    legacy._render_bling_connection(auth_url)
+
+
+def _render_mapeiaai_home_entry() -> None:
     if not _active_flow_is_home():
         return
-    st.markdown('---')
-    st.markdown('### Mapear planilha sem API')
-    st.caption('Use este caminho para qualquer marketplace, fornecedor ou modelo próprio. Não conecta, não envia e não depende do Bling.')
-    if st.button('Mapear planilha', use_container_width=True, key='home_start_mapear_planilha_sem_api_v2'):
-        start_mapear_planilha_flow()
-        st.rerun()
+
+    try:
+        legacy._reset_stale_flow_session_if_needed()
+    except Exception:
+        pass
+
+    effective_status = legacy._effective_bling_status(try_sync=True)
+    connected = bool(effective_status.get('connected'))
+
+    st.markdown(
+        '''
+<style>
+.mapeiaai-home-hero{border:1px solid rgba(15,23,42,.10);background:linear-gradient(135deg,#ffffff 0%,#f8fafc 100%);border-radius:22px;padding:1.05rem 1rem;margin:.35rem 0 1rem 0;box-shadow:0 14px 34px rgba(15,23,42,.06)}
+.mapeiaai-home-eyebrow{font-size:.78rem;font-weight:800;color:#2563eb;text-transform:uppercase;letter-spacing:.08em;margin-bottom:.35em}.mapeiaai-home-title{font-size:1.55rem;line-height:1.08;font-weight:950;color:#0f172a;margin:0}.mapeiaai-home-subtitle{font-size:.95rem;line-height:1.38;color:#475569;margin:.65rem 0 0 0}.mapeiaai-home-card{border:1px solid rgba(15,23,42,.09);background:#fff;border-radius:18px;padding:.95rem;margin:.65rem 0}.mapeiaai-home-card strong{color:#0f172a}.mapeiaai-home-muted{font-size:.84rem;color:#64748b;line-height:1.35}
+</style>
+<div class="mapeiaai-home-hero">
+  <div class="mapeiaai-home-eyebrow">MapeiaAI</div>
+  <h1 class="mapeiaai-home-title">Escolha o caminho da operação</h1>
+  <p class="mapeiaai-home-subtitle">O núcleo universal mapeia qualquer modelo de planilha. O núcleo Bling conecta a API e envia cadastro, atualização de produtos ou estoque.</p>
+</div>
+''',
+        unsafe_allow_html=True,
+    )
+
+    col_mapear, col_bling = st.columns(2)
+    with col_mapear:
+        st.markdown(
+            '<div class="mapeiaai-home-card"><strong>Anexar Modelo / Mapear</strong><br><span class="mapeiaai-home-muted">Sem API. Primeiro anexe o modelo final, depois busque origem por site ou arquivo, use toggles opcionais, veja o preview e baixe a planilha idêntica.</span></div>',
+            unsafe_allow_html=True,
+        )
+        if st.button('📄 Anexar Modelo / Mapear Planilha', use_container_width=True, key='home_core_mapear_modelo_v2'):
+            start_mapear_planilha_flow()
+            st.rerun()
+
+    with col_bling:
+        status = 'Bling conectado' if connected else 'Conectar ao Bling'
+        st.markdown(
+            f'<div class="mapeiaai-home-card"><strong>{status}</strong><br><span class="mapeiaai-home-muted">Com API. Conecta ao Bling, cai em origem de dados, escolhe Atualizar Estoque, Cadastro ou Atualizar Produtos, revisa e envia.</span></div>',
+            unsafe_allow_html=True,
+        )
+        button_label = '🔗 Usar Bling conectado' if connected else '🔗 Conectar ao Bling'
+        if st.button(button_label, use_container_width=True, key='home_core_connect_bling_v2'):
+            if connected:
+                start_bling_api_flow()
+                st.rerun()
+            else:
+                st.session_state['home_show_bling_connection_panel_v2'] = True
+                st.rerun()
+
+    if connected:
+        st.success('Bling conectado. Ao tocar em “Usar Bling conectado”, o fluxo começa em Origem de dados e o envio aparece somente no final.')
+    elif bool(st.session_state.get('home_show_bling_connection_panel_v2')):
+        st.markdown('---')
+        st.markdown('### Conectar ao Bling')
+        _render_bling_connection_panel()
+
+    legacy.add_audit_event(
+        'home_router_v2_render_mapeiaai_dual_core_home',
+        area='HOME',
+        status='OK',
+        details={
+            'responsible_file': RESPONSIBLE_FILE,
+            'home_paths': ['mapear_modelo_sem_api', 'bling_api'],
+            'connected': connected,
+            'bling_first_step_after_connection': 'origem',
+            'universal_first_step': 'modelo',
+        },
+    )
 
 
 def _render_price_multistore_home_entry() -> None:
@@ -186,8 +286,10 @@ def render_home() -> None:
     if _price_multistore_requested():
         _render_price_multistore_route()
         return
-    legacy.render_home()
-    _render_mapear_planilha_home_entry()
+    if _wizard_requested():
+        legacy.render_home()
+        return
+    _render_mapeiaai_home_entry()
     _render_price_multistore_home_entry()
 
 
@@ -195,6 +297,7 @@ __all__ = [
     'FLOW_MAPEAR_PLANILHA',
     'FLOW_PRICE_UPDATE',
     'render_home',
+    'start_bling_api_flow',
     'start_mapear_planilha_flow',
     'start_price_multistore_flow',
 ]
