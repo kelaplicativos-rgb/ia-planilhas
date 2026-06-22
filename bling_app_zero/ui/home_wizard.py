@@ -71,13 +71,15 @@ def _label(step: str) -> str:
 
 def _is_api_context() -> bool:
     try:
-        return _entry_context() == CONTEXT_BLING_API
+        context_is_api = _entry_context() == CONTEXT_BLING_API
     except Exception:
-        return bool(
-            st.session_state.get('home_bling_connected_same_flow_api_send')
-            or st.session_state.get('bling_connected_api_flow_active')
-            or st.session_state.get('direct_bling_api_contract_active')
-        )
+        context_is_api = False
+    return bool(
+        context_is_api
+        or st.session_state.get('home_bling_connected_same_flow_api_send')
+        or st.session_state.get('bling_connected_api_flow_active')
+        or st.session_state.get('direct_bling_api_contract_active')
+    )
 
 
 def _steps() -> list[str]:
