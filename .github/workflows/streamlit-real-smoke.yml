@@ -1,5 +1,6 @@
 name: Streamlit Real Smoke
 
+# Trigger manual de validação real do MapeiaAI/Streamlit.
 on:
   push:
     branches:
