@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+import unicodedata
 
 import pandas as pd
 import streamlit as st
@@ -70,7 +71,9 @@ def decode_fixed_value(value: object) -> str:
 
 
 def _norm(value: object) -> str:
-    return re.sub(r'[^a-z0-9]+', '', str(value or '').lower())
+    text = str(value or '').lower()
+    text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
+    return re.sub(r'[^a-z0-9]+', '', text)
 
 
 def _inject_mapping_card_css() -> None:
@@ -241,6 +244,26 @@ def _mapping_page_keys(key_prefix: str, signature: str) -> tuple[str, str]:
     return f'{key_prefix}_mapping_page_{suffix}', f'{key_prefix}_mapping_scroll_{suffix}'
 
 
+def _mapping_search_key(key_prefix: str, signature: str) -> str:
+    return f'{key_prefix}_mapping_search_{short_hash(signature, size=10)}'
+
+
+def _filter_target_columns(target_columns: list[str], query: str) -> list[str]:
+    terms = [_norm(part) for part in str(query or '').split() if _norm(part)]
+    if not terms:
+        return list(target_columns)
+    return [column for column in target_columns if all(term in _norm(column) for term in terms)]
+
+
+def _reset_page_when_search_changes(page_key: str, search_key: str, query: str) -> None:
+    previous_key = f'{search_key}_previous_value'
+    previous = str(st.session_state.get(previous_key) or '')
+    current = str(query or '')
+    if previous != current:
+        st.session_state[page_key] = 1
+        st.session_state[previous_key] = current
+
+
 def _render_mapping_page_controls(page_key: str, scroll_key: str, current_page: int, total_pages: int, *, where: str) -> None:
     if total_pages <= 1:
         return
@@ -287,6 +310,7 @@ def render_shared_contract_mapping(
     st.markdown('<span data-mapeia-anchor="mapping-top"></span>', unsafe_allow_html=True)
     st.markdown('### Mapeamento')
     page_key, scroll_key = _mapping_page_keys(key_prefix, signature)
+    search_key = _mapping_search_key(key_prefix, signature)
     _scroll_to_mapping_top(scroll_key)
 
     if ai_enabled:
@@ -317,7 +341,17 @@ def render_shared_contract_mapping(
     edited: dict[str, str] = dict(current)
     rows: list[dict[str, str]] = []
 
-    target_columns = [str(column) for column in getattr(target, 'columns', [])]
+    all_target_columns = [str(column) for column in getattr(target, 'columns', [])]
+    search_query = st.text_input(
+        'Buscar campo/coluna do modelo',
+        value=str(st.session_state.get(search_key) or ''),
+        key=search_key,
+        placeholder='Ex.: validade, preço, vídeo, estoque',
+        help='Filtra somente os campos do modelo. Limpe a busca para voltar à paginação normal.',
+    ).strip()
+    _reset_page_when_search_changes(page_key, search_key, search_query)
+    target_columns = _filter_target_columns(all_target_columns, search_query)
+
     total_fields = len(target_columns)
     total_pages = max(1, math.ceil(total_fields / MAPPING_FIELDS_PER_PAGE))
     current_page = int(st.session_state.get(page_key) or 1)
@@ -326,13 +360,19 @@ def render_shared_contract_mapping(
     start = (current_page - 1) * MAPPING_FIELDS_PER_PAGE
     end = min(total_fields, start + MAPPING_FIELDS_PER_PAGE)
     page_columns = target_columns[start:end]
+    start_display = start + 1 if total_fields else 0
 
-    st.caption(f'Mostrando campos {start + 1}–{end} de {total_fields}. Limite: {MAPPING_FIELDS_PER_PAGE} campos por página para não pesar a tela.')
+    if search_query:
+        st.caption(f'Filtro ativo: {len(target_columns)} de {len(all_target_columns)} campo(s) encontrado(s).')
+    if search_query and not target_columns:
+        st.warning('Nenhum campo encontrado para essa busca. Limpe ou altere o texto para voltar aos campos do modelo.')
+
+    st.caption(f'Mostrando campos {start_display}–{end} de {total_fields}. Limite: {MAPPING_FIELDS_PER_PAGE} campos por página para não pesar a tela.')
     st.caption('Escolha uma coluna da origem, deixe vazio ou selecione “escrever valor fixo/manual”.')
     _render_mapping_page_controls(page_key, scroll_key, current_page, total_pages, where='top')
 
     for offset, target_name in enumerate(page_columns):
-        index = start + offset
+        index = all_target_columns.index(target_name) if target_name in all_target_columns else start + offset
         current_value = str(current.get(target_name, '') or '')
         selected_initial = _initial_select_value(current_value, source_options)
         default_index = source_options.index(selected_initial) if selected_initial in source_options else 0
@@ -361,7 +401,7 @@ def render_shared_contract_mapping(
 
     st.session_state[mapping_state_key] = edited
 
-    for target_name in target_columns:
+    for target_name in all_target_columns:
         selected_value = str(edited.get(target_name, '') or '')
         display_value = f'FIXO: {decode_fixed_value(selected_value)}' if is_fixed_value(selected_value) else (selected_value or '(vazio)')
         rows.append(
@@ -380,7 +420,13 @@ def render_shared_contract_mapping(
 
 def clear_shared_mapping_widgets(key_prefix: str = 'mapeiaai_shared') -> None:
     for key in list(st.session_state.keys()):
-        if str(key).startswith(f'{key_prefix}_map_') or str(key).startswith(f'{key_prefix}_mapping_page_') or str(key).startswith(f'{key_prefix}_mapping_scroll_'):
+        text = str(key)
+        if (
+            text.startswith(f'{key_prefix}_map_')
+            or text.startswith(f'{key_prefix}_mapping_page_')
+            or text.startswith(f'{key_prefix}_mapping_scroll_')
+            or text.startswith(f'{key_prefix}_mapping_search_')
+        ):
             st.session_state.pop(key, None)
 
 
