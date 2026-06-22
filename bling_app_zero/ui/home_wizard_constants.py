@@ -32,11 +32,12 @@ STEP_PREVIEW = 'preview'
 STEP_DOWNLOAD = 'download'
 STEP_PROCESSAR = 'processar'
 
+# Fluxo universal real do MapeiaAI: modelo livre -> origem -> dados -> recursos -> download.
+# A etapa Operação pertence ao caminho Bling/API, não ao mapeamento universal.
 UNIVERSAL_STEPS = [
     STEP_MODELO,
     STEP_ORIGEM,
     STEP_ENTRADA,
-    STEP_OPERACAO,
     STEP_PRECIFICACAO,
     STEP_CATEGORIZACAO,
     STEP_MAPEAMENTO,
@@ -48,7 +49,7 @@ UNIVERSAL_STEPS = [
 
 CADASTRO_STEPS = list(UNIVERSAL_STEPS)
 ESTOQUE_STEPS = list(UNIVERSAL_STEPS)
-ALL_STEPS = list(dict.fromkeys(UNIVERSAL_STEPS + [STEP_GERAR_ESTOQUE, STEP_PROCESSAR]))
+ALL_STEPS = list(dict.fromkeys(UNIVERSAL_STEPS + [STEP_OPERACAO, STEP_GERAR_ESTOQUE, STEP_PROCESSAR]))
 
 STEP_LABELS = {
     STEP_MODELO: 'Modelo para mapear',
@@ -220,6 +221,7 @@ __all__ = [
     'STEP_ENTRADA',
     'STEP_GERAR_ESTOQUE',
     'STEP_IA',
+    'STEP_LABELS',
     'STEP_MAPEAMENTO',
     'STEP_MODELO',
     'STEP_OPERACAO',
@@ -228,7 +230,6 @@ __all__ = [
     'STEP_PREVIEW',
     'STEP_PROCESSAR',
     'STEP_REGRAS',
-    'STEP_LABELS',
     'UNIVERSAL_OPERATION_VALUE',
     'UNIVERSAL_STEPS',
     'WIZARD_STEP_KEY',
