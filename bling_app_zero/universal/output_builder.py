@@ -53,14 +53,6 @@ def _norm_column(value: Any) -> str:
     return normalize_key(_clean_value(value)).replace(' ', '_')
 
 
-def _norm_match_value(value: Any) -> str:
-    text = _clean_value(value).lower()
-    text = text.replace('\t', ' ')
-    text = re.sub(r'\s+', '', text)
-    text = re.sub(r'[^a-z0-9_-]+', '', text)
-    return text.strip()
-
-
 def _has_term(column: Any, terms: tuple[str, ...]) -> bool:
     key = _norm_column(column)
     normalized_terms = tuple(normalize_key(term).replace(' ', '_') for term in terms)
@@ -90,20 +82,6 @@ def _title_from_text(value: Any) -> str:
     if len(candidate) <= 120:
         return candidate
     return _clean_value(candidate[:120].rsplit(' ', 1)[0])
-
-
-def _key_columns(df: pd.DataFrame) -> list[str]:
-    if not isinstance(df, pd.DataFrame):
-        return []
-    preferred: list[str] = []
-    secondary: list[str] = []
-    for column in df.columns:
-        key = _norm_column(column)
-        if key in {'codigo', 'código', 'sku', 'referencia', 'referência', 'id_na_loja'}:
-            preferred.append(str(column))
-        elif _has_term(column, KEY_TERMS):
-            secondary.append(str(column))
-    return preferred + [column for column in secondary if column not in preferred]
 
 
 def _append_named_columns(out: list[str], columns: list[str], preferred: tuple[str, ...]) -> None:
@@ -160,30 +138,6 @@ def _candidate_source_columns(df_source: pd.DataFrame, mapped_column: str, targe
     return out
 
 
-def _build_lookup(df_source: pd.DataFrame, source_value_column: str) -> dict[str, str]:
-    lookup: dict[str, str] = {}
-    source_keys = _key_columns(df_source)
-    if not source_keys or source_value_column not in df_source.columns:
-        return lookup
-    for _, row in df_source.fillna('').astype(str).iterrows():
-        value = _clean_value(row.get(source_value_column, ''))
-        if _is_empty(value):
-            continue
-        for key_column in source_keys:
-            key_value = _norm_match_value(row.get(key_column, ''))
-            if key_value and key_value not in lookup:
-                lookup[key_value] = value
-    return lookup
-
-
-def _match_model_row(row: pd.Series, lookup: dict[str, str], model_key_columns: list[str]) -> str:
-    for key_column in model_key_columns:
-        key_value = _norm_match_value(row.get(key_column, ''))
-        if key_value and key_value in lookup:
-            return lookup[key_value]
-    return ''
-
-
 def _safe_series(df_source: pd.DataFrame, source_column: str, length: int) -> pd.Series:
     if isinstance(df_source, pd.DataFrame) and source_column in df_source.columns:
         return df_source[source_column].fillna('').astype(str).reset_index(drop=True)
@@ -210,7 +164,7 @@ def _merged_candidate_series(df_source: pd.DataFrame, candidates: list[str], len
     return pd.Series(values, dtype='object')
 
 
-def _build_from_empty_model(df_source: pd.DataFrame, contract_columns: list[str], mapping: dict[str, str]) -> pd.DataFrame:
+def _build_from_source_rows(df_source: pd.DataFrame, contract_columns: list[str], mapping: dict[str, str]) -> pd.DataFrame:
     source = df_source if isinstance(df_source, pd.DataFrame) else pd.DataFrame()
     length = int(len(source)) if not source.empty else 0
     data: dict[str, pd.Series] = {}
@@ -226,60 +180,24 @@ def _build_from_empty_model(df_source: pd.DataFrame, contract_columns: list[str]
     return pd.DataFrame(data, columns=contract_columns)
 
 
-def _build_from_filled_model(df_source: pd.DataFrame, df_model: pd.DataFrame, contract_columns: list[str], mapping: dict[str, str]) -> pd.DataFrame:
-    model = reindex_exact_model_columns(df_model, contract_columns).copy().fillna('').astype(str).reset_index(drop=True)
-    source = df_source if isinstance(df_source, pd.DataFrame) else pd.DataFrame()
-    if source.empty:
-        return reindex_exact_model_columns(model, contract_columns)
-
-    model_key_columns = _key_columns(model)
-    same_length = len(source) == len(model)
-
-    for target_column in contract_columns:
-        mapped_column = str(mapping.get(target_column, '') or '')
-        if _is_fixed_mapping_value(mapped_column):
-            model[target_column] = _decode_fixed_mapping_value(mapped_column)
-            continue
-        candidates = _candidate_source_columns(source, mapped_column, target_column)
-        if not candidates:
-            continue
-
-        if model_key_columns:
-            for source_column in candidates:
-                lookup = _build_lookup(source, source_column)
-                if not lookup:
-                    continue
-                values = model.apply(lambda row: _match_model_row(row, lookup, model_key_columns), axis=1)
-                values = values.map(lambda value: _prepare_candidate_value(value, target_column))
-                mask = values.map(lambda value: not _is_empty(value)) & model[target_column].map(_is_empty)
-                if bool(mask.any()):
-                    model.loc[mask, target_column] = values[mask]
-
-        if same_length:
-            values = _merged_candidate_series(source, candidates, len(model), target_column)
-            mask = values.map(lambda value: not _is_empty(value)) & model[target_column].map(_is_empty)
-            if bool(mask.any()):
-                model.loc[mask, target_column] = values[mask]
-
-    return reindex_exact_model_columns(model, contract_columns)
-
-
 def build_universal_output(
     df_source: pd.DataFrame,
     df_model: pd.DataFrame,
     mapping: dict[str, str] | None = None,
 ) -> pd.DataFrame:
-    """Gera saída exatamente com o contrato do modelo anexado."""
+    """Gera saída com as colunas do modelo anexado e linhas da origem.
+
+    Regra do fluxo universal:
+    - o modelo anexado é contrato de colunas, ordem e nomes;
+    - linhas de instrução/exemplo do modelo não entram no download;
+    - cada linha da origem gera uma linha final;
+    - valores fixos/manuais são repetidos na coluna inteira.
+    """
     contract = build_universal_contract(df_model)
     source = df_source if isinstance(df_source, pd.DataFrame) else pd.DataFrame()
-    model = df_model if isinstance(df_model, pd.DataFrame) else pd.DataFrame(columns=contract.columns)
     safe_mapping = mapping or {}
 
-    if isinstance(model, pd.DataFrame) and not model.empty:
-        df_output = _build_from_filled_model(source, model, contract.columns, safe_mapping)
-    else:
-        df_output = _build_from_empty_model(source, contract.columns, safe_mapping)
-
+    df_output = _build_from_source_rows(source, contract.columns, safe_mapping)
     df_output = reindex_exact_model_columns(df_output, contract.columns)
     errors = validate_universal_output(df_output, contract)
     if errors:
