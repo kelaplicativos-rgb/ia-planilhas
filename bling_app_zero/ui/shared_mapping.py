@@ -73,6 +73,21 @@ def _norm(value: object) -> str:
     return re.sub(r'[^a-z0-9]+', '', str(value or '').lower())
 
 
+def _inject_mapping_card_css() -> None:
+    st.markdown(
+        '''
+<style>
+.mapeia-map-card-head{border-radius:12px;padding:.48rem .62rem;margin:.1rem 0 .55rem 0;font-size:.86rem;line-height:1.2;border:1px solid rgba(15,23,42,.08)}
+.mapeia-map-card-head strong{font-weight:850;color:#0f172a}
+.mapeia-map-card-head span{font-size:.76rem;font-weight:800;letter-spacing:.02em;color:#64748b;margin-right:.35rem;text-transform:uppercase}
+.mapeia-map-card-soft{background:linear-gradient(90deg,#f8fafc 0%,#ffffff 100%);border-left:5px solid rgba(37,99,235,.22)}
+.mapeia-map-card-strong{background:linear-gradient(90deg,#eef6ff 0%,#ffffff 100%);border-left:5px solid rgba(37,99,235,.55)}
+</style>
+''',
+        unsafe_allow_html=True,
+    )
+
+
 def _scroll_to_mapping_top(marker_key: str) -> None:
     if not st.session_state.pop(marker_key, False):
         return
@@ -144,6 +159,10 @@ def confidence_flag(target: str, source_column: str, source: pd.DataFrame) -> st
     return '🔴 vazio'
 
 
+def _confidence_icon(target: str, source_column: str, source: pd.DataFrame) -> str:
+    return confidence_flag(target, source_column, source).split()[0]
+
+
 def suggest_shared_mapping(source: pd.DataFrame, target: pd.DataFrame, *, operation: str = 'universal') -> tuple[dict[str, str], str]:
     result = suggest_mapping_with_openai(source, target, operation=operation)
     data = result.data if isinstance(result.data, dict) else {}
@@ -173,26 +192,30 @@ def _sample_values(source: pd.DataFrame, source_column: str, limit: int = 3) -> 
     return values
 
 
+def _short_preview(values: list[str], max_chars: int = 150) -> str:
+    text = ' | '.join(values)
+    return text if len(text) <= max_chars else text[: max_chars - 1].rstrip() + '…'
+
+
 def _render_mapping_preview(target_name: str, selected_value: str, source: pd.DataFrame) -> None:
-    """Mostra a prévia do dado que entrará naquele campo."""
-    flag = confidence_flag(target_name, selected_value, source)
+    """Mostra somente farol, campo e prévia, sem frase técnica longa."""
+    icon = _confidence_icon(target_name, selected_value, source)
     if is_fixed_value(selected_value):
         fixed_value = decode_fixed_value(selected_value)
         if fixed_value:
-            st.caption(f'{flag} **{target_name}** ← valor escrito **{fixed_value}**. Esse valor será repetido em todas as linhas do download final.')
+            st.caption(f'{icon} **{target_name}**. Valor fixo: {fixed_value}')
         else:
-            st.caption(f'🔴 **{target_name}** → valor fixo/manual ainda vazio.')
+            st.caption(f'🔴 **{target_name}**. Valor fixo vazio.')
         return
     if not selected_value:
-        st.caption(f'{flag} **{target_name}** → ficará vazio no download final.')
+        st.caption(f'{icon} **{target_name}**. Ficará vazio no download final.')
         return
 
     samples = _sample_values(source, selected_value)
     if samples:
-        sample_text = ' | '.join(samples)
-        st.caption(f'{flag} **{target_name}** ← origem **{selected_value}**. Prévia: {sample_text}')
+        st.caption(f'{icon} **{target_name}**. Prévia: {_short_preview(samples)}')
     else:
-        st.caption(f'{flag} **{target_name}** ← origem **{selected_value}**. Prévia indisponível ou coluna vazia.')
+        st.caption(f'{icon} **{target_name}**. Prévia indisponível ou coluna vazia.')
 
 
 def _initial_select_value(current_value: str, source_options: list[str]) -> str:
@@ -242,6 +265,14 @@ def _render_mapping_page_controls(page_key: str, scroll_key: str, current_page: 
             _change_mapping_page(page_key, scroll_key, current_page + 1)
 
 
+def _mapping_card_header(target_name: str, index: int) -> None:
+    variant = 'mapeia-map-card-strong' if index % 2 else 'mapeia-map-card-soft'
+    st.markdown(
+        f'<div class="mapeia-map-card-head {variant}"><span>Campo</span><strong>{target_name}</strong></div>',
+        unsafe_allow_html=True,
+    )
+
+
 def render_shared_contract_mapping(
     source: pd.DataFrame,
     target: pd.DataFrame,
@@ -252,6 +283,7 @@ def render_shared_contract_mapping(
     key_prefix: str = 'mapeiaai_shared',
     ai_enabled: bool = True,
 ) -> dict[str, str]:
+    _inject_mapping_card_css()
     st.markdown('<span data-mapeia-anchor="mapping-top"></span>', unsafe_allow_html=True)
     st.markdown('### Mapeamento')
     page_key, scroll_key = _mapping_page_keys(key_prefix, signature)
@@ -305,26 +337,27 @@ def render_shared_contract_mapping(
         selected_initial = _initial_select_value(current_value, source_options)
         default_index = source_options.index(selected_initial) if selected_initial in source_options else 0
 
-        st.markdown(f'**Campo:** `{target_name}`')
-        selected = st.selectbox(
-            f'Como preencher “{target_name}”',
-            source_options,
-            index=default_index,
-            key=mapping_widget_key(key_prefix, signature, index, target_name),
-        )
+        with st.container(border=True):
+            _mapping_card_header(target_name, index)
+            selected = st.selectbox(
+                f'Como preencher “{target_name}”',
+                source_options,
+                index=default_index,
+                key=mapping_widget_key(key_prefix, signature, index, target_name),
+            )
 
-        fixed_value = ''
-        if selected == WRITE_OPTION:
-            fixed_value = st.text_input(
-                f'Escrever valor para refletir na coluna inteira de “{target_name}”',
-                value=_fixed_initial_value(current_value),
-                key=fixed_widget_key(key_prefix, signature, index, target_name),
-                placeholder='Digite aqui o valor que será repetido nesta coluna.',
-            ).strip()
+            fixed_value = ''
+            if selected == WRITE_OPTION:
+                fixed_value = st.text_input(
+                    f'Escrever valor para refletir na coluna inteira de “{target_name}”',
+                    value=_fixed_initial_value(current_value),
+                    key=fixed_widget_key(key_prefix, signature, index, target_name),
+                    placeholder='Digite aqui o valor que será repetido nesta coluna.',
+                ).strip()
 
-        selected_value = encode_fixed_value(fixed_value) if selected == WRITE_OPTION else ('' if selected == EMPTY_OPTION else selected)
-        edited[target_name] = selected_value
-        _render_mapping_preview(target_name, selected_value, source)
+            selected_value = encode_fixed_value(fixed_value) if selected == WRITE_OPTION else ('' if selected == EMPTY_OPTION else selected)
+            edited[target_name] = selected_value
+            _render_mapping_preview(target_name, selected_value, source)
 
     st.session_state[mapping_state_key] = edited
 
