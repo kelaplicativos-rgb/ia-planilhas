@@ -9,6 +9,11 @@ import streamlit as st
 from bling_app_zero.ai.ai_openai_mapping_suggester import suggest_mapping_with_openai
 from bling_app_zero.ui.mapping_cadastro_flow import render_manual_mapping
 from bling_app_zero.ui.mapping_estoque_flow import render_manual_stock_mapping
+from bling_app_zero.ui.shared_calculator import (
+    UNIVERSAL_PRICE_AUTOMAP_KEY,
+    UNIVERSAL_PRICE_COLUMN_KEY,
+    UNIVERSAL_PRICE_TARGET_COLUMN_KEY,
+)
 
 EMPTY_OPTION = '(deixar vazio)'
 WRITE_OPTION = '✍️ escrever valor fixo/manual'
@@ -59,6 +64,35 @@ def decode_fixed_value(value: object) -> str:
     if text.startswith(FIXED_VALUE_PREFIX):
         return text[len(FIXED_VALUE_PREFIX):].strip()
     return text.strip()
+
+
+def _norm(value: object) -> str:
+    return re.sub(r'[^a-z0-9]+', '', str(value or '').lower())
+
+
+def _apply_price_calculator_mapping_hint(current: dict[str, str], source: pd.DataFrame, target: pd.DataFrame) -> dict[str, str]:
+    """Pré-mapeia o preço calculado para a coluna de preço escolhida na calculadora.
+
+    Isso resolve o problema de UX em que a calculadora criava uma coluna auxiliar,
+    mas o usuário ainda precisava descobrir manualmente onde ela deveria entrar no
+    modelo final.
+    """
+    if not bool(st.session_state.get(UNIVERSAL_PRICE_AUTOMAP_KEY)):
+        return current
+    calculated_source = str(st.session_state.get(UNIVERSAL_PRICE_COLUMN_KEY) or '').strip()
+    target_column = str(st.session_state.get(UNIVERSAL_PRICE_TARGET_COLUMN_KEY) or '').strip()
+    if not calculated_source or not isinstance(source, pd.DataFrame) or calculated_source not in source.columns:
+        return current
+    target_columns = [str(column) for column in getattr(target, 'columns', [])]
+    if not target_column or target_column not in target_columns:
+        calculated_key = _norm(calculated_source)
+        target_column = next((column for column in target_columns if _norm(column) == calculated_key), '')
+    if not target_column:
+        return current
+    updated = dict(current or {})
+    updated[target_column] = calculated_source
+    st.caption(f'🟢 Calculadora marketplace: **{target_column}** receberá automaticamente **{calculated_source}**.')
+    return updated
 
 
 def confidence_flag(target: str, source_column: str, source: pd.DataFrame) -> str:
@@ -181,6 +215,8 @@ def render_shared_contract_mapping(
         st.caption('Motor de sugestão: local seguro')
 
     current = dict(st.session_state.get(mapping_state_key) or {})
+    current = _apply_price_calculator_mapping_hint(current, source, target)
+    st.session_state[mapping_state_key] = current
     source_options = [EMPTY_OPTION, WRITE_OPTION] + [str(column) for column in source.columns]
     edited: dict[str, str] = {}
     rows: list[dict[str, str]] = []
