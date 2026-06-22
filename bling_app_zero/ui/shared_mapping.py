@@ -11,6 +11,8 @@ from bling_app_zero.ui.mapping_cadastro_flow import render_manual_mapping
 from bling_app_zero.ui.mapping_estoque_flow import render_manual_stock_mapping
 
 EMPTY_OPTION = '(deixar vazio)'
+WRITE_OPTION = '✍️ escrever valor fixo/manual'
+FIXED_VALUE_PREFIX = '__mapeiaai_fixed_value__:'
 
 
 def render_shared_cadastro_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | None) -> None:
@@ -39,7 +41,29 @@ def mapping_widget_key(key_prefix: str, signature: str, index: int, target_name:
     return f'{key_prefix}_map_{index}_{short_hash(signature + target_name)}'
 
 
+def fixed_widget_key(key_prefix: str, signature: str, index: int, target_name: str) -> str:
+    return f'{mapping_widget_key(key_prefix, signature, index, target_name)}_fixed_value'
+
+
+def encode_fixed_value(value: object) -> str:
+    text = str(value or '').strip()
+    return f'{FIXED_VALUE_PREFIX}{text}' if text else ''
+
+
+def is_fixed_value(value: object) -> bool:
+    return str(value or '').startswith(FIXED_VALUE_PREFIX)
+
+
+def decode_fixed_value(value: object) -> str:
+    text = str(value or '')
+    if text.startswith(FIXED_VALUE_PREFIX):
+        return text[len(FIXED_VALUE_PREFIX):].strip()
+    return text.strip()
+
+
 def confidence_flag(target: str, source_column: str, source: pd.DataFrame) -> str:
+    if is_fixed_value(source_column):
+        return '🟢 fixo'
     if not source_column:
         return '🔴 vazio'
     target_key = re.sub(r'[^a-z0-9]+', '', str(target or '').lower())
@@ -83,6 +107,13 @@ def _sample_values(source: pd.DataFrame, source_column: str, limit: int = 3) -> 
 def _render_mapping_preview(target_name: str, selected_value: str, source: pd.DataFrame) -> None:
     """Mostra o contrato final e a prévia do dado que entrará naquele campo."""
     flag = confidence_flag(target_name, selected_value, source)
+    if is_fixed_value(selected_value):
+        fixed_value = decode_fixed_value(selected_value)
+        if fixed_value:
+            st.caption(f'{flag} Campo do modelo: **{target_name}** ← valor escrito **{fixed_value}**. Esse valor será repetido em todas as linhas do download final.')
+        else:
+            st.caption(f'🔴 Campo do modelo: **{target_name}** → opção escrever ligada, mas o valor ainda está vazio.')
+        return
     if not selected_value:
         st.caption(f'{flag} Campo do modelo: **{target_name}** → ficará vazio no download final.')
         return
@@ -93,6 +124,24 @@ def _render_mapping_preview(target_name: str, selected_value: str, source: pd.Da
         st.caption(f'{flag} Campo do modelo: **{target_name}** ← origem **{selected_value}**. Prévia: {sample_text}')
     else:
         st.caption(f'{flag} Campo do modelo: **{target_name}** ← origem **{selected_value}**. Prévia indisponível ou coluna vazia.')
+
+
+def _initial_select_value(current_value: str, source_options: list[str]) -> str:
+    if is_fixed_value(current_value):
+        return WRITE_OPTION
+    if current_value in source_options:
+        return current_value
+    if current_value:
+        return WRITE_OPTION
+    return EMPTY_OPTION
+
+
+def _fixed_initial_value(current_value: str) -> str:
+    if is_fixed_value(current_value):
+        return decode_fixed_value(current_value)
+    if current_value and current_value not in {EMPTY_OPTION, WRITE_OPTION}:
+        return str(current_value or '').strip()
+    return ''
 
 
 def render_shared_contract_mapping(
@@ -132,32 +181,45 @@ def render_shared_contract_mapping(
         st.caption('Motor de sugestão: local seguro')
 
     current = dict(st.session_state.get(mapping_state_key) or {})
-    source_options = [EMPTY_OPTION] + [str(column) for column in source.columns]
+    source_options = [EMPTY_OPTION, WRITE_OPTION] + [str(column) for column in source.columns]
     edited: dict[str, str] = {}
     rows: list[dict[str, str]] = []
 
-    st.caption('Para cada campo do modelo abaixo, escolha qual coluna da origem vai preencher esse campo. A prévia aparece logo abaixo de cada seleção.')
+    st.caption('Para cada campo do modelo abaixo, escolha uma coluna da origem ou use “escrever valor fixo/manual”. A prévia aparece logo abaixo de cada seleção.')
 
     for index, target_column in enumerate(target.columns):
         target_name = str(target_column)
-        current_value = current.get(target_name, '')
-        default_index = source_options.index(current_value) if current_value in source_options else 0
+        current_value = str(current.get(target_name, '') or '')
+        selected_initial = _initial_select_value(current_value, source_options)
+        default_index = source_options.index(selected_initial) if selected_initial in source_options else 0
 
         st.markdown(f'**Campo do modelo:** `{target_name}`')
         selected = st.selectbox(
-            f'Origem que vai preencher “{target_name}”',
+            f'Origem ou valor que vai preencher “{target_name}”',
             source_options,
             index=default_index,
             key=mapping_widget_key(key_prefix, signature, index, target_name),
         )
-        selected_value = '' if selected == EMPTY_OPTION else selected
+
+        if selected == WRITE_OPTION:
+            fixed_value = st.text_input(
+                f'Escrever valor fixo para “{target_name}”',
+                value=_fixed_initial_value(current_value),
+                key=fixed_widget_key(key_prefix, signature, index, target_name),
+                placeholder='Ex.: Padrão, unidade, NCM, origem, depósito, tipo de lançamento...',
+            ).strip()
+            selected_value = encode_fixed_value(fixed_value)
+        else:
+            selected_value = '' if selected == EMPTY_OPTION else selected
+
         edited[target_name] = selected_value
         _render_mapping_preview(target_name, selected_value, source)
+        display_value = f'FIXO: {decode_fixed_value(selected_value)}' if is_fixed_value(selected_value) else (selected_value or '(vazio)')
         rows.append(
             {
                 'Farol': confidence_flag(target_name, selected_value, source),
                 'Contrato final': target_name,
-                'Origem usada': selected_value or '(vazio)',
+                'Origem usada': display_value,
             }
         )
 
@@ -175,9 +237,15 @@ def clear_shared_mapping_widgets(key_prefix: str = 'mapeiaai_shared') -> None:
 
 __all__ = [
     'EMPTY_OPTION',
+    'FIXED_VALUE_PREFIX',
+    'WRITE_OPTION',
     'blank_shared_mapping',
     'clear_shared_mapping_widgets',
     'confidence_flag',
+    'decode_fixed_value',
+    'encode_fixed_value',
+    'fixed_widget_key',
+    'is_fixed_value',
     'mapping_widget_key',
     'render_shared_cadastro_mapping',
     'render_shared_contract_mapping',
