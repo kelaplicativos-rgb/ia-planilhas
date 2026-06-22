@@ -31,6 +31,8 @@ TECHNICAL_NON_TARGET_TERMS = (
     'arquivo', 'arquivo zip', 'arquivo no zip', 'status', 'conteudo extraido',
     'conteúdo extraído', 'texto extraido', 'texto extraído', 'tamanho bytes',
 )
+IDENTIFIER_TERMS = ('codigo', 'código', 'sku', 'referencia', 'referência', 'id produto', 'produto')
+DESCRIPTION_TERMS = ('descricao', 'descrição', 'nome', 'titulo', 'título', 'produto')
 
 
 def parse_decimal(value: object) -> Decimal | None:
@@ -147,6 +149,55 @@ def default_price_target_column(model: pd.DataFrame | None) -> str:
     return ranked[0]
 
 
+def _best_context_column(source: pd.DataFrame, terms: tuple[str, ...], *, exclude: set[str]) -> str:
+    if not isinstance(source, pd.DataFrame):
+        return ''
+    candidates = [str(column) for column in source.columns if str(column) not in exclude and _has_any(column, terms)]
+    if not candidates:
+        return ''
+    return candidates[0]
+
+
+def calculate_marketplace_value(value: object, *, margin_percent: Decimal, fee_percent: Decimal, fixed_value: Decimal) -> str:
+    divisor = Decimal('1') - ((margin_percent + fee_percent) / Decimal('100'))
+    if divisor <= 0:
+        raise ValueError('Margem + taxas não pode chegar a 100% ou mais.')
+    base = parse_decimal(value)
+    return format_money(((base or Decimal('0')) + fixed_value) / divisor)
+
+
+def build_marketplace_preview(
+    source: pd.DataFrame,
+    *,
+    base_column: str,
+    output_column: str,
+    margin_percent: Decimal,
+    fee_percent: Decimal,
+    fixed_value: Decimal,
+    limit: int = 8,
+) -> pd.DataFrame:
+    if not isinstance(source, pd.DataFrame) or source.empty or base_column not in source.columns:
+        return pd.DataFrame()
+    rows = source.head(max(1, int(limit))).copy().fillna('')
+    preview = pd.DataFrame()
+    code_column = _best_context_column(rows, IDENTIFIER_TERMS, exclude={base_column, output_column})
+    description_column = _best_context_column(rows, DESCRIPTION_TERMS, exclude={base_column, output_column, code_column})
+    if code_column:
+        preview['Código/SKU'] = rows[code_column].astype(str).values
+    if description_column:
+        preview['Produto'] = rows[description_column].astype(str).map(lambda value: value[:90]).values
+    preview[f'Antes ({base_column})'] = rows[base_column].astype(str).values
+    calculated = [calculate_marketplace_value(value, margin_percent=margin_percent, fee_percent=fee_percent, fixed_value=fixed_value) for value in rows[base_column]]
+    preview[f'Depois ({output_column})'] = calculated
+    differences: list[str] = []
+    for before, after in zip(rows[base_column], calculated):
+        before_decimal = parse_decimal(before) or Decimal('0')
+        after_decimal = parse_decimal(after) or Decimal('0')
+        differences.append(format_money(after_decimal - before_decimal))
+    preview['Diferença'] = differences
+    return preview.fillna('').astype(str)
+
+
 def apply_marketplace_calculation(
     source: pd.DataFrame,
     *,
@@ -157,13 +208,9 @@ def apply_marketplace_calculation(
     fixed_value: Decimal,
 ) -> pd.DataFrame:
     out = source.copy().fillna('')
-    divisor = Decimal('1') - ((margin_percent + fee_percent) / Decimal('100'))
-    if divisor <= 0:
-        raise ValueError('Margem + taxas não pode chegar a 100% ou mais.')
     calculated: list[str] = []
     for value in out[base_column]:
-        base = parse_decimal(value)
-        calculated.append(format_money(((base or Decimal('0')) + fixed_value) / divisor))
+        calculated.append(calculate_marketplace_value(value, margin_percent=margin_percent, fee_percent=fee_percent, fixed_value=fixed_value))
     out[output_column] = calculated
     return out
 
@@ -231,6 +278,15 @@ def render_shared_calculator(
             st.session_state[UNIVERSAL_PRICE_AUTOMAP_KEY] = False
             return source
         try:
+            preview = build_marketplace_preview(
+                source,
+                base_column=base_column,
+                output_column=output_column,
+                margin_percent=margin,
+                fee_percent=fee,
+                fixed_value=fixed,
+                limit=8,
+            )
             out = apply_marketplace_calculation(
                 source,
                 base_column=base_column,
@@ -242,6 +298,10 @@ def render_shared_calculator(
         except ValueError as exc:
             st.error(str(exc))
             return source
+        if not preview.empty:
+            st.markdown('#### Preview antes e depois do cálculo')
+            st.caption('Amostra das primeiras linhas antes de aplicar no mapeamento final.')
+            st.dataframe(preview, use_container_width=True, hide_index=True, height=260)
         st.session_state[UNIVERSAL_PRICE_BASE_COLUMN_KEY] = base_column
         st.session_state[UNIVERSAL_PRICE_COLUMN_KEY] = output_column
         st.session_state[UNIVERSAL_PRICE_TARGET_COLUMN_KEY] = selected_target or output_column
@@ -259,6 +319,8 @@ __all__ = [
     'UNIVERSAL_PRICE_COLUMN_KEY',
     'UNIVERSAL_PRICE_TARGET_COLUMN_KEY',
     'apply_marketplace_calculation',
+    'build_marketplace_preview',
+    'calculate_marketplace_value',
     'default_base_price_column',
     'default_price_target_column',
     'format_money',
