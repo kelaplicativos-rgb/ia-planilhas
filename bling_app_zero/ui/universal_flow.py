@@ -9,6 +9,7 @@ from bling_app_zero.adapters.streamlit_mapping_bridge import build_and_sync_mapp
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.category_intelligence import apply_category_suggestions, classify_dataframe
 from bling_app_zero.core.files import read_uploaded_file
+from bling_app_zero.core.final_template_exporter import template_contract_columns
 from bling_app_zero.features_runtime.router import active_contract
 from bling_app_zero.pipelines.site_pipeline import run_pipeline as run_site_pipeline
 from bling_app_zero.ui.flow_context import CONTEXT_UNIVERSAL, activate_csv_finish_mode, set_entry_context
@@ -87,14 +88,42 @@ def _render_contract_guard() -> bool:
     return False
 
 
+def _uploaded_name_and_bytes(uploaded_file) -> tuple[str, bytes]:
+    name = str(getattr(uploaded_file, 'name', '') or '').strip()
+    try:
+        data = uploaded_file.getvalue()
+    except Exception:
+        data = b''
+    return name, bytes(data or b'')
+
+
+def _model_contract_fallback(uploaded_file) -> pd.DataFrame:
+    name, data = _uploaded_name_and_bytes(uploaded_file)
+    if not name or not data:
+        return pd.DataFrame()
+    columns = template_contract_columns(name, data)
+    columns = [str(column).strip() for column in columns if str(column).strip()]
+    if not columns:
+        return pd.DataFrame()
+    _audit('mapear_planilha_modelo_contrato_lido_por_fallback', original_file_name=name, columns=int(len(columns)))
+    return pd.DataFrame(columns=columns)
+
+
 def _read_upload(uploaded_file, *, allow_empty_rows: bool, file_role: str) -> pd.DataFrame | None:
     if uploaded_file is None:
         return None
     try:
         df = read_uploaded_file(uploaded_file).fillna('')
     except Exception as exc:
-        st.error(f'Não consegui ler o arquivo: {exc}')
-        return None
+        if allow_empty_rows and file_role == 'modelo':
+            df = _model_contract_fallback(uploaded_file)
+        else:
+            st.error(f'Não consegui ler o arquivo: {exc}')
+            return None
+
+    if allow_empty_rows and file_role == 'modelo' and (not isinstance(df, pd.DataFrame) or not len(df.columns)):
+        df = _model_contract_fallback(uploaded_file)
+
     if not isinstance(df, pd.DataFrame) or not len(df.columns):
         st.warning('Arquivo recebido, mas não encontrei colunas válidas. Confira o cabeçalho da planilha ou do arquivo enviado.')
         return None
@@ -115,23 +144,13 @@ def _store_df(key: str, df: pd.DataFrame | None) -> None:
 def _store_model_file(uploaded_file) -> None:
     if uploaded_file is None:
         return
-    name = str(getattr(uploaded_file, 'name', '') or '').strip()
-    try:
-        data = uploaded_file.getvalue()
-    except Exception:
-        data = b''
+    name, data = _uploaded_name_and_bytes(uploaded_file)
     if name and data:
         st.session_state[UNIVERSAL_MODEL_FILE_NAME_KEY] = name
-        st.session_state[UNIVERSAL_MODEL_FILE_BYTES_KEY] = bytes(data)
+        st.session_state[UNIVERSAL_MODEL_FILE_BYTES_KEY] = data
 
 
 def _sync_legacy_universal_model_aliases(model: pd.DataFrame | None) -> None:
-    """Mantém diagnósticos/guardas antigos alinhados ao modelo universal real.
-
-    O fluxo independente usa `mapeiaai_universal_model_df` como fonte única.
-    As chaves antigas abaixo existem apenas para compatibilidade e não podem
-    nascer de modelo de estoque/cadastro/API.
-    """
     if not isinstance(model, pd.DataFrame) or not len(model.columns):
         return
     clean = model.copy().fillna('')
