@@ -174,25 +174,25 @@ def _sample_values(source: pd.DataFrame, source_column: str, limit: int = 3) -> 
 
 
 def _render_mapping_preview(target_name: str, selected_value: str, source: pd.DataFrame) -> None:
-    """Mostra o contrato final e a prévia do dado que entrará naquele campo."""
+    """Mostra a prévia do dado que entrará naquele campo."""
     flag = confidence_flag(target_name, selected_value, source)
     if is_fixed_value(selected_value):
         fixed_value = decode_fixed_value(selected_value)
         if fixed_value:
-            st.caption(f'{flag} Campo do modelo: **{target_name}** ← valor escrito **{fixed_value}**. Esse valor será repetido em todas as linhas do download final.')
+            st.caption(f'{flag} **{target_name}** ← valor escrito **{fixed_value}**. Esse valor será repetido em todas as linhas do download final.')
         else:
-            st.caption(f'🔴 Campo do modelo: **{target_name}** → valor fixo/manual ainda vazio.')
+            st.caption(f'🔴 **{target_name}** → valor fixo/manual ainda vazio.')
         return
     if not selected_value:
-        st.caption(f'{flag} Campo do modelo: **{target_name}** → ficará vazio no download final.')
+        st.caption(f'{flag} **{target_name}** → ficará vazio no download final.')
         return
 
     samples = _sample_values(source, selected_value)
     if samples:
         sample_text = ' | '.join(samples)
-        st.caption(f'{flag} Campo do modelo: **{target_name}** ← origem **{selected_value}**. Prévia: {sample_text}')
+        st.caption(f'{flag} **{target_name}** ← origem **{selected_value}**. Prévia: {sample_text}')
     else:
-        st.caption(f'{flag} Campo do modelo: **{target_name}** ← origem **{selected_value}**. Prévia indisponível ou coluna vazia.')
+        st.caption(f'{flag} **{target_name}** ← origem **{selected_value}**. Prévia indisponível ou coluna vazia.')
 
 
 def _initial_select_value(current_value: str, source_options: list[str]) -> str:
@@ -305,7 +305,7 @@ def render_shared_contract_mapping(
         selected_initial = _initial_select_value(current_value, source_options)
         default_index = source_options.index(selected_initial) if selected_initial in source_options else 0
 
-        st.markdown(f'**Campo do modelo:** `{target_name}`')
+        st.markdown(f'**Campo:** `{target_name}`')
         selected = st.selectbox(
             f'Como preencher “{target_name}”',
             source_options,
