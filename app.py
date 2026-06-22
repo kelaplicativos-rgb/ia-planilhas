@@ -7,6 +7,7 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core import bling_oauth
 from bling_app_zero.core.cache_control import clear_cache_once_per_version
 from bling_app_zero.core.mapping_widget_state import restore_mapping_widget_state_from_snapshot
+from bling_app_zero.core.official_bling_oauth_patch import install_official_bling_oauth_patch
 from bling_app_zero.ui.alerts import enforce_attention_alert_policy
 from bling_app_zero.ui.blingfix_runtime_patches import install_blingfix_runtime_patches
 from bling_app_zero.ui.home import render_home
@@ -201,6 +202,7 @@ def main() -> None:
     install_mapping_pagination_runtime()
     install_oauth_link_guard()
     _install_bling_api_verified_media_checkpoint('after_runtime_patches')
+    install_official_bling_oauth_patch()
     bling_oauth.process_oauth_callback()
     _auto_enter_wizard_when_bling_connected_on_mobile()
     add_audit_event('app_started', area='APP', details={'version': APP_VERSION, 'mode': 'session_guarded_start', 'device_hint': _device_hint()})
