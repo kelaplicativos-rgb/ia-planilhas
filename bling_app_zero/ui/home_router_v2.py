@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 
 import bling_app_zero.ui.home_router as legacy
@@ -79,6 +80,40 @@ UNIVERSAL_RUNTIME_KEYS_TO_LEAVE_BLING = (
     'df_origem_arquivo',
 )
 
+UNIVERSAL_MODEL_KEYS = (
+    'mapeiaai_universal_model_df',
+    'home_modelo_universal_df',
+    'df_modelo_universal',
+    'modelo_universal_df',
+)
+
+UNIVERSAL_OPERATION_KEYS = (
+    'mapeiaai_universal_model_df',
+    'mapeiaai_universal_source_df',
+    'mapeiaai_universal_mapping',
+    'mapeiaai_universal_output_df',
+    'mapeiaai_universal_signature',
+    'mapeiaai_universal_mapping_engine',
+    'mapeiaai_universal_source_kind',
+    'df_origem_unificada',
+    'df_origem_site',
+    'df_origem_arquivo',
+    'neutral_mapping_state_v1',
+    'neutral_mapping_report_v1',
+    'neutral_final_output_state_v1',
+    'neutral_final_output_report_v1',
+    'mapeiaai_universal_model_upload',
+    'mapeiaai_universal_source_upload',
+    'mapeiaai_universal_source_mode',
+    'mapeiaai_universal_site_urls',
+    'mapeiaai_universal_site_all_products',
+    'mapeiaai_universal_toggle_price',
+    'mapeiaai_universal_toggle_category',
+    'mapeiaai_universal_toggle_mapping_auto',
+    'mapeiaai_universal_toggle_mapping_ai',
+    'mapeiaai_universal_toggle_rules',
+)
+
 legacy.render_home_wizard = render_home_wizard
 try:
     legacy.VALID_SINGLE_PAGE_STEPS.add(STEP_CATEGORIZACAO)
@@ -119,6 +154,30 @@ def _clear_no_api_session_flags() -> None:
         area='HOME',
         status='OK',
         details={'responsible_file': RESPONSIBLE_FILE, 'flow_kind': 'universal_model_mapping', 'api': False},
+    )
+
+
+def _clear_universal_operation_state(*, keep_model: bool = False) -> None:
+    preserved_model = st.session_state.get('mapeiaai_universal_model_df') if keep_model else None
+    for key in UNIVERSAL_OPERATION_KEYS:
+        st.session_state.pop(key, None)
+    for key in list(st.session_state.keys()):
+        text_key = str(key)
+        if text_key.startswith('mapeiaai_universal_map_') or text_key.startswith('mapeiaai_shared_map_'):
+            st.session_state.pop(key, None)
+    if not keep_model:
+        for key in UNIVERSAL_MODEL_KEYS:
+            st.session_state.pop(key, None)
+    elif isinstance(preserved_model, pd.DataFrame):
+        clean = preserved_model.copy().fillna('')
+        st.session_state['mapeiaai_universal_model_df'] = clean
+        for key in ('home_modelo_universal_df', 'df_modelo_universal', 'modelo_universal_df'):
+            st.session_state[key] = clean
+    legacy.add_audit_event(
+        'home_router_v2_universal_operation_state_cleared',
+        area='HOME',
+        status='OK',
+        details={'responsible_file': RESPONSIBLE_FILE, 'keep_model': bool(keep_model)},
     )
 
 
@@ -271,6 +330,22 @@ def _render_mapear_planilha_route() -> None:
             _go_home_from_independent_flow()
     with col_title:
         st.caption('Fluxo independente sem API: anexe o modelo final, escolha origem dos dados, revise o mapeamento e baixe a planilha idêntica.')
+
+    has_model = isinstance(st.session_state.get('mapeiaai_universal_model_df'), pd.DataFrame)
+    has_source = isinstance(st.session_state.get('mapeiaai_universal_source_df'), pd.DataFrame)
+    if has_model or has_source:
+        st.info('Operação anterior detectada. Para criar uma nova planilha, limpe o estado antigo antes de anexar o novo modelo.')
+        col_new, col_source = st.columns(2)
+        with col_new:
+            if st.button('🧹 Nova planilha / anexar novo modelo', use_container_width=True, key='mapear_planilha_nova_planilha_v2'):
+                _clear_universal_operation_state(keep_model=False)
+                start_mapear_planilha_flow()
+                st.rerun()
+        with col_source:
+            if has_model and st.button('↻ Trocar somente a origem', use_container_width=True, key='mapear_planilha_trocar_origem_v2'):
+                _clear_universal_operation_state(keep_model=True)
+                start_mapear_planilha_flow()
+                st.rerun()
     render_universal_flow()
 
 
@@ -315,6 +390,7 @@ def _render_mapeiaai_home_entry() -> None:
     with col_mapear:
         st.markdown('<div class="mapeiaai-home-card"><strong>Anexar Modelo / Mapear</strong><br><span class="mapeiaai-home-muted">Sem API. Primeiro anexe o modelo final, depois busque origem por site ou arquivo, use toggles opcionais, veja o preview e baixe a planilha idêntica.</span></div>', unsafe_allow_html=True)
         if st.button('📄 Anexar Modelo / Mapear Planilha', use_container_width=True, key='home_core_mapear_modelo_v2'):
+            _clear_universal_operation_state(keep_model=False)
             start_mapear_planilha_flow()
             st.rerun()
     with col_bling:
