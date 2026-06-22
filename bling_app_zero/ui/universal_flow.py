@@ -40,6 +40,17 @@ LEGACY_UNIVERSAL_MODEL_KEYS = (
     'df_modelo_universal',
     'modelo_universal_df',
 )
+TECHNICAL_ERROR_COLUMNS = {'arquivo', 'status'}
+TECHNICAL_ERROR_TEXTS = (
+    'arquivo binario recebido',
+    'arquivo binário recebido',
+    'nao foi possivel extrair tabela',
+    'não foi possível extrair tabela',
+    'leitor de pdf indisponivel',
+    'leitor de pdf indisponível',
+    'pdf sem texto extraivel',
+    'pdf sem texto extraível',
+)
 NO_API_KEYS = (
     'home_bling_connected_same_flow_api_send', 'bling_connected_api_flow_active', 'direct_bling_api_contract_active',
     'direct_bling_operation_applied', 'direct_bling_api_contract_df', 'bling_api_operation', 'api_operation',
@@ -111,6 +122,49 @@ def _model_contract_fallback(uploaded_file) -> pd.DataFrame:
     return pd.DataFrame(columns=columns)
 
 
+def _norm_text(value: object) -> str:
+    text = str(value or '').casefold()
+    text = text.replace('ã', 'a').replace('á', 'a').replace('à', 'a').replace('â', 'a')
+    text = text.replace('é', 'e').replace('ê', 'e').replace('í', 'i').replace('ó', 'o').replace('ô', 'o').replace('õ', 'o').replace('ú', 'u').replace('ç', 'c')
+    return ' '.join(text.split())
+
+
+def _is_technical_error_frame(df: pd.DataFrame | None) -> bool:
+    if not isinstance(df, pd.DataFrame) or not len(df.columns):
+        return False
+    normalized_columns = {_norm_text(column) for column in df.columns}
+    if not TECHNICAL_ERROR_COLUMNS.issubset(normalized_columns):
+        return False
+    joined = ' '.join(df.fillna('').astype(str).head(5).to_numpy().ravel().tolist())
+    normalized = _norm_text(joined)
+    return any(_norm_text(marker) in normalized for marker in TECHNICAL_ERROR_TEXTS)
+
+
+def _block_technical_error(file_role: str, uploaded_file, df: pd.DataFrame) -> pd.DataFrame | None:
+    name = str(getattr(uploaded_file, 'name', '') or '')
+    status = ''
+    try:
+        if 'Status' in df.columns and not df.empty:
+            status = str(df['Status'].iloc[0] or '')
+    except Exception:
+        status = ''
+
+    if file_role == 'modelo':
+        fallback = _model_contract_fallback(uploaded_file)
+        if isinstance(fallback, pd.DataFrame) and len(fallback.columns):
+            _audit('mapear_planilha_modelo_recuperado_apos_status_tecnico', original_file_name=name, columns=int(len(fallback.columns)), status=status[:180])
+            return fallback
+        st.error('O arquivo anexado como modelo não foi lido como planilha válida. Não vou aceitar colunas técnicas como Arquivo/Status como modelo final.')
+        st.caption('Reexporte o modelo em CSV/XLSX válido ou anexe o arquivo correto do modelo. O fluxo foi bloqueado para não gerar download errado.')
+        add_audit_event('mapear_planilha_modelo_status_tecnico_bloqueado', area='UNIVERSAL', status='BLOQUEADO', details={'responsible_file': RESPONSIBLE_FILE, 'original_file_name': name, 'status_text': status[:300]})
+        return None
+
+    st.error('A origem foi recebida, mas o conteúdo não virou tabela de produtos. Não vou usar Arquivo/Status como origem.')
+    st.caption('Anexe uma planilha/CSV/XML/MHTML/PDF com dados tabulares ou exporte novamente o arquivo de origem.')
+    add_audit_event('mapear_planilha_origem_status_tecnico_bloqueado', area='UNIVERSAL', status='BLOQUEADO', details={'responsible_file': RESPONSIBLE_FILE, 'original_file_name': name, 'status_text': status[:300]})
+    return None
+
+
 def _read_upload(uploaded_file, *, allow_empty_rows: bool, file_role: str) -> pd.DataFrame | None:
     if uploaded_file is None:
         return None
@@ -122,6 +176,9 @@ def _read_upload(uploaded_file, *, allow_empty_rows: bool, file_role: str) -> pd
         else:
             st.error(f'Não consegui ler o arquivo: {exc}')
             return None
+
+    if _is_technical_error_frame(df):
+        return _block_technical_error(file_role, uploaded_file, df)
 
     if allow_empty_rows and file_role == 'modelo' and (not isinstance(df, pd.DataFrame) or not len(df.columns)):
         df = _model_contract_fallback(uploaded_file)
@@ -226,6 +283,12 @@ def _progress_callback(progress_bar, status_box):
 def _render_model_step() -> pd.DataFrame | None:
     st.markdown('### 1. Anexar Modelo / Mapear')
     model = _current_df(UNIVERSAL_MODEL_KEY)
+    if isinstance(model, pd.DataFrame) and _is_technical_error_frame(model):
+        st.session_state.pop(UNIVERSAL_MODEL_KEY, None)
+        for key in LEGACY_UNIVERSAL_MODEL_KEYS:
+            st.session_state.pop(key, None)
+        model = None
+        st.error('Removi um modelo inválido que tinha sido salvo como Arquivo/Status. Anexe novamente o modelo correto.')
     if not isinstance(model, pd.DataFrame):
         st.caption('Anexe primeiro a planilha modelo exatamente no formato que você quer receber no final.')
         st.caption('A saída final preservará as colunas e a ordem desse modelo, preenchendo os dados vindos da origem escolhida depois.')
@@ -240,6 +303,10 @@ def _render_model_step() -> pd.DataFrame | None:
         model = _current_df(UNIVERSAL_MODEL_KEY)
     if not isinstance(model, pd.DataFrame):
         st.info('Envie a planilha modelo final para liberar a origem de dados, os toggles, o mapeamento, o preview e o download.')
+        return None
+    if _is_technical_error_frame(model):
+        st.session_state.pop(UNIVERSAL_MODEL_KEY, None)
+        st.error('Modelo inválido bloqueado: o contrato final não pode ser Arquivo/Status.')
         return None
     _sync_legacy_universal_model_aliases(model)
     st.success('Modelo final carregado. A saída seguirá exatamente essas colunas e essa ordem.')
@@ -287,6 +354,10 @@ def _render_source_step() -> pd.DataFrame | None:
     source = _render_source_site() if source_mode == SOURCE_MODE_SITE else _render_source_upload()
     if not isinstance(source, pd.DataFrame):
         st.info('Carregue a origem de dados para liberar os toggles, mapeamento, preview e download.')
+        return None
+    if _is_technical_error_frame(source):
+        st.session_state.pop(UNIVERSAL_SOURCE_KEY, None)
+        st.error('Origem inválida bloqueada: o sistema recebeu apenas Arquivo/Status, não uma tabela de produtos.')
         return None
     st.success(f'Origem carregada: {len(source)} linha(s) x {len(source.columns)} coluna(s).')
     _audit('mapear_planilha_fonte_confirmada', rows=int(len(source)), columns=int(len(source.columns)), source_mode=source_mode)
@@ -361,7 +432,7 @@ def render_universal_flow() -> None:
     toggles = _render_toggles()
     processed = source.copy().fillna('')
     if toggles['price']:
-        processed = render_shared_calculator(processed, key_prefix='mapeiaai_universal', force_enabled=True)
+        processed = render_shared_calculator(processed, model=model, key_prefix='mapeiaai_universal', force_enabled=True)
         _audit('mapear_planilha_preco_processado', rows=int(len(processed)), columns=int(len(processed.columns)))
     else:
         st.caption('Preço desligado: valores mantidos como vieram da origem.')
