@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from bling_app_zero.core.final_output_engine import build_final_output
-from bling_app_zero.core.universal_smart_rules import apply_universal_smart_rules
+from bling_app_zero.core.universal_smart_rules import apply_universal_smart_rules, default_smart_rules_config
 
 
 def test_smart_rules_clean_text_images_and_gtin_without_changing_columns() -> None:
@@ -36,6 +36,44 @@ def test_smart_rules_clean_text_images_and_gtin_without_changing_columns() -> No
     assert report['applied_cells'] >= 4
     assert report['image_columns'] == ['URL Imagens Externas']
     assert report['gtin_columns'] == ['GTIN/EAN']
+
+
+def test_smart_rules_comma_separated_bling_images_are_split_deduped_and_limited() -> None:
+    df = pd.DataFrame(
+        {
+            'URL Imagens Externas': [
+                'https://app.sistemab2drop.com.br/uploads/1.webp,'
+                'https://app.sistemab2drop.com.br/uploads/2.webp,'
+                'https://app.sistemab2drop.com.br/uploads/2.webp,'
+                'https://app.sistemab2drop.com.br/uploads/3.webp,'
+                'https://app.sistemab2drop.com.br/uploads/4.webp,'
+                'https://app.sistemab2drop.com.br/uploads/5.webp,'
+                'https://app.sistemab2drop.com.br/uploads/6.webp,'
+                'https://app.sistemab2drop.com.br/uploads/7.webp'
+            ]
+        }
+    )
+
+    output, report = apply_universal_smart_rules(df, {'enabled': True})
+
+    assert output.loc[0, 'URL Imagens Externas'] == (
+        'https://app.sistemab2drop.com.br/uploads/1.webp|'
+        'https://app.sistemab2drop.com.br/uploads/2.webp|'
+        'https://app.sistemab2drop.com.br/uploads/3.webp|'
+        'https://app.sistemab2drop.com.br/uploads/4.webp|'
+        'https://app.sistemab2drop.com.br/uploads/5.webp|'
+        'https://app.sistemab2drop.com.br/uploads/6.webp'
+    )
+    assert report['image_columns'] == ['URL Imagens Externas']
+    assert report['limit_images'] is True
+    assert report['max_images'] == 6
+
+
+def test_smart_rules_default_limits_images_to_six() -> None:
+    defaults = default_smart_rules_config()
+
+    assert defaults['limit_images'] is True
+    assert defaults['max_images'] == 6
 
 
 def test_smart_rules_disabled_keeps_values_unchanged() -> None:
