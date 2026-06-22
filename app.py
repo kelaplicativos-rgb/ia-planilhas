@@ -123,68 +123,29 @@ def _should_skip_connected_landing_for_current_device() -> bool:
     if hint == 'desktop':
         return False
     if hint == 'mobile':
-        return True
+        return False
     open_mode = _query_param('open_mode')
     if open_mode in {'android_safe', 'mobile'}:
         st.session_state[DEVICE_HINT_KEY] = 'mobile'
-        return True
-    if bool(st.session_state.get('home_single_page_flow_active')):
-        return True
+        return False
     return False
 
 
 def _auto_enter_wizard_when_bling_connected_on_mobile() -> None:
+    # BLINGFIX 2026-06-22:
+    # A Home é o núcleo de decisão do MapeiaAI. Mesmo no celular e mesmo com
+    # Bling já conectado, o usuário precisa ver os dois botões principais:
+    # Anexar Modelo / Mapear e Conectar/Usar Bling. Não entrar no wizard sozinho.
     if st.session_state.get(MOBILE_AUTO_ENTRY_KEY):
         return
-    if str(st.session_state.get('home_active_operation_v2') or '') == FLOW_WIZARD:
-        return
-    if not _should_skip_connected_landing_for_current_device():
-        add_audit_event(
-            'app_connected_bling_landing_kept_for_device',
-            area='HOME',
-            status='INFO',
-            details={'device_hint': _device_hint(), 'responsible_file': 'app.py'},
-        )
-        return
-    try:
-        connected = bool(bling_oauth.connection_status().get('connected'))
-    except Exception:
-        connected = False
-    if not connected:
-        return
-
     st.session_state[MOBILE_AUTO_ENTRY_KEY] = True
-    st.session_state['home_active_operation_v2'] = FLOW_WIZARD
-    st.session_state['home_allow_operation_v2_session'] = True
-    st.session_state['home_single_page_flow_active'] = True
-    st.session_state['home_boot_landing_rendered_once'] = True
-    st.session_state['home_entry_context'] = 'universal'
-    st.session_state['home_slim_entry_context'] = 'universal'
-    st.session_state['bling_finish_mode'] = 'csv_download'
-    st.session_state['finish_mode'] = 'csv_download'
-    st.session_state['home_bling_connected_same_flow_api_send'] = True
-    st.session_state['bling_wizard_step'] = STEP_ORIGEM
-    st.session_state['home_wizard_step'] = STEP_ORIGEM
-    st.session_state[HOME_SCHEMA_KEY] = HOME_SCHEMA_VERSION
-    st.session_state.pop('home_bling_auth_ready_url', None)
-    try:
-        st.query_params['operation_v2'] = FLOW_WIZARD
-        st.query_params['step'] = STEP_ORIGEM
-        for key in ('flow', 'origem', 'operacao', 'operation'):
-            st.query_params.pop(key, None)
-    except Exception:
-        pass
-
     add_audit_event(
-        'app_mobile_connected_bling_auto_entered_wizard',
+        'app_mobile_connected_bling_auto_entry_disabled_for_dual_home',
         area='HOME',
         status='OK',
         details={
-            'reason': 'Bling conectado em contexto mobile; abrir fluxo responsivo normal em vez da landing.',
+            'reason': 'Home deve permanecer visível para o usuário escolher Mapear Planilha ou Bling.',
             'device_hint': _device_hint(),
-            'target_flow': FLOW_WIZARD,
-            'target_step': STEP_ORIGEM,
-            'api_send_flag': True,
             'responsible_file': 'app.py',
         },
     )
