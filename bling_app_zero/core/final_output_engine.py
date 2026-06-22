@@ -19,6 +19,8 @@ from bling_app_zero.universal.output_builder import build_universal_output, empt
 from bling_app_zero.universal.universal_contract import UniversalContract, build_universal_contract, validate_universal_output
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/final_output_engine.py'
+CATEGORY_SOURCE_PRIORITY = ('Categoria do produto', 'Categoria', 'categoria', 'category', 'categoria_sugerida_ia')
+EMPTY_CATEGORY_MARKERS = {'', 'nan', 'none', 'null', '<na>', 'revisar manualmente'}
 
 
 @dataclass(frozen=True)
@@ -29,6 +31,69 @@ class FinalOutputCommandResult:
     smartcore_result: Any = None
     errors: tuple[str, ...] = ()
     smart_rules_report: dict[str, Any] | None = None
+
+
+def _clean_cell(value: Any) -> str:
+    return '' if value is None else str(value).strip()
+
+
+def _norm_column(value: Any) -> str:
+    text = _clean_cell(value).casefold()
+    text = text.replace('ç', 'c').replace('ã', 'a').replace('á', 'a').replace('à', 'a').replace('â', 'a')
+    text = re.sub(r'[^a-z0-9]+', ' ', text)
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def _is_category_column(column: Any) -> bool:
+    normalized = _norm_column(column)
+    return normalized in {'categoria', 'category', 'categoria produto', 'categoria do produto'} or normalized.startswith('categoria ')
+
+
+def _first_source_category_column(source: pd.DataFrame) -> str | None:
+    if not isinstance(source, pd.DataFrame) or source.empty:
+        return None
+    exact = {_norm_column(column): str(column) for column in source.columns}
+    for candidate in CATEGORY_SOURCE_PRIORITY:
+        found = exact.get(_norm_column(candidate))
+        if found and source[found].astype(str).str.strip().ne('').any():
+            return found
+    for column in source.columns:
+        if _is_category_column(column) and source[column].astype(str).str.strip().ne('').any():
+            return str(column)
+    return None
+
+
+def _clean_category_value(value: Any) -> str:
+    text = _clean_cell(value)
+    return '' if text.casefold() in EMPTY_CATEGORY_MARKERS else text
+
+
+def _apply_safe_category_aliases(output: pd.DataFrame, source: pd.DataFrame, mapping: Mapping[str, str], *, enabled: bool) -> pd.DataFrame:
+    if not enabled or not isinstance(output, pd.DataFrame) or output.empty:
+        return output
+    source_col = _first_source_category_column(source)
+    if not source_col:
+        return output
+
+    out = output.copy().fillna('')
+    source_values = source[source_col].reset_index(drop=True).map(_clean_category_value)
+    if source_values.empty:
+        return out
+
+    for target_col in [str(column) for column in out.columns if _is_category_column(column)]:
+        mapped_source = _clean_cell((mapping or {}).get(target_col))
+        if mapped_source and mapped_source in source.columns and mapped_source != source_col:
+            continue
+        current = out[target_col].reset_index(drop=True).map(_clean_category_value)
+        limit = min(len(current), len(source_values))
+        if limit <= 0:
+            continue
+        merged = current.copy()
+        for idx in range(limit):
+            if not _clean_category_value(merged.iloc[idx]):
+                merged.iloc[idx] = _clean_category_value(source_values.iloc[idx])
+        out[target_col] = merged.reindex(range(len(out)), fill_value='').astype(str).values
+    return out
 
 
 def apply_text_rules(output: pd.DataFrame) -> pd.DataFrame:
@@ -75,6 +140,9 @@ def build_final_output(
     # apenas tratamentos seguros e configurados pelo usuário nos valores finais.
     output = build_final_dataframe(source, contract, mapping, apply_rules=False)
 
+    rules_config = normalize_smart_rules_config(smart_rules_config, enabled=bool(run_smart_features))
+    output = _apply_safe_category_aliases(output, source, mapping, enabled=bool(rules_config.get('enabled')))
+
     errors = tuple(str(item) for item in validate_universal_output(output, contract_obj) or ())
     if errors:
         result = FinalOutputResult(status=STATUS_ERROR, file_name=file_name, errors=errors, message='Saída final bloqueada por erro de contrato.')
@@ -82,8 +150,7 @@ def build_final_output(
 
     smartcore_result = None
     smart_rules_report: dict[str, Any] | None = None
-    rules_config = normalize_smart_rules_config(smart_rules_config, enabled=bool(run_smart_features))
-    if bool(run_smart_features):
+    if bool(rules_config.get('enabled')):
         output, smart_rules_report = apply_universal_smart_rules(output, rules_config)
 
     output = sanitize_final_dataframe(output, operation=operation, contract_columns=list(contract_columns), run_download_features=False)
