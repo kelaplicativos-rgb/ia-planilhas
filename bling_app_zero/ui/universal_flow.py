@@ -30,7 +30,8 @@ UNIVERSAL_MODEL_FILE_BYTES_KEY = 'mapeiaai_universal_model_file_bytes'
 RESPONSIBLE_FILE = 'bling_app_zero/ui/universal_flow.py'
 SOURCE_MODE_UPLOAD = 'Anexar arquivo de origem'
 SOURCE_MODE_SITE = 'Buscar produtos por site'
-SUPPORTED_UPLOAD_LABEL = 'Formatos aceitos: XLSX, XLS, CSV, XLSM, XLSB, XML, HTML, MHTML e PDF. No celular, o seletor fica livre para evitar bloqueio falso do Android.'
+MODEL_UPLOAD_LABEL = 'Modelo para download fiel: use XLSX, XLSM ou CSV. Modelos sem linhas, só com cabeçalho/layout, também são aceitos.'
+SOURCE_UPLOAD_LABEL = 'Origem de dados: XLSX, XLS, CSV, XLSM, XLSB, XML, HTML, MHTML e PDF. A origem precisa ter linhas de dados.'
 LEGACY_UNIVERSAL_MODEL_KEYS = (
     'home_modelo_universal_df',
     'df_modelo_universal',
@@ -86,7 +87,7 @@ def _render_contract_guard() -> bool:
     return False
 
 
-def _read_upload(uploaded_file) -> pd.DataFrame | None:
+def _read_upload(uploaded_file, *, allow_empty_rows: bool, file_role: str) -> pd.DataFrame | None:
     if uploaded_file is None:
         return None
     try:
@@ -94,9 +95,15 @@ def _read_upload(uploaded_file) -> pd.DataFrame | None:
     except Exception as exc:
         st.error(f'Não consegui ler o arquivo: {exc}')
         return None
-    if not isinstance(df, pd.DataFrame) or df.empty or not len(df.columns):
-        st.warning('Arquivo recebido, mas não encontrei uma tabela válida. Confira se o arquivo está em XLSX, XLS, CSV, XML, HTML, MHTML ou PDF.')
+    if not isinstance(df, pd.DataFrame) or not len(df.columns):
+        st.warning('Arquivo recebido, mas não encontrei colunas válidas. Confira o cabeçalho da planilha ou do arquivo enviado.')
         return None
+    if df.empty and not allow_empty_rows:
+        st.warning('Arquivo de origem recebido, mas não encontrei linhas de dados. A origem precisa ter produtos/linhas para preencher o modelo.')
+        return None
+    if df.empty and allow_empty_rows:
+        st.info('Modelo aceito sem linhas de dados. Vou usar as colunas/layout como estrutura final e preencher com a origem na próxima etapa.')
+        _audit('mapear_planilha_modelo_sem_linhas_aceito', file_role=file_role, columns=int(len(df.columns)), original_file_name=str(getattr(uploaded_file, 'name', '') or ''))
     return df
 
 
@@ -194,14 +201,14 @@ def _render_model_step() -> pd.DataFrame | None:
     if not isinstance(model, pd.DataFrame):
         st.caption('Anexe primeiro a planilha modelo exatamente no formato que você quer receber no final.')
         st.caption('A saída final preservará as colunas e a ordem desse modelo, preenchendo os dados vindos da origem escolhida depois.')
-        st.caption(SUPPORTED_UPLOAD_LABEL)
+        st.caption(MODEL_UPLOAD_LABEL)
         uploaded = st.file_uploader('Planilha modelo final', type=None, key='mapeiaai_universal_model_upload')
-        df = _read_upload(uploaded)
+        df = _read_upload(uploaded, allow_empty_rows=True, file_role='modelo')
         if isinstance(df, pd.DataFrame):
             _store_model_file(uploaded)
             _store_df(UNIVERSAL_MODEL_KEY, df)
             _sync_legacy_universal_model_aliases(df)
-            _audit('mapear_planilha_modelo_anexado_primeiro', rows=int(len(df)), columns=int(len(df.columns)), original_file_name=str(getattr(uploaded, 'name', '') or ''))
+            _audit('mapear_planilha_modelo_anexado_primeiro', rows=int(len(df)), columns=int(len(df.columns)), original_file_name=str(getattr(uploaded, 'name', '') or ''), allow_empty_rows=True)
         model = _current_df(UNIVERSAL_MODEL_KEY)
     if not isinstance(model, pd.DataFrame):
         st.info('Envie a planilha modelo final para liberar a origem de dados, os toggles, o mapeamento, o preview e o download.')
@@ -216,9 +223,9 @@ def _render_model_step() -> pd.DataFrame | None:
 
 def _render_source_upload() -> pd.DataFrame | None:
     st.caption('Anexe a origem dos dados: fornecedor, marketplace, CSV, planilha, XML, MHTML ou PDF.')
-    st.caption(SUPPORTED_UPLOAD_LABEL)
+    st.caption(SOURCE_UPLOAD_LABEL)
     uploaded = st.file_uploader('Arquivo de origem dos dados', type=None, key='mapeiaai_universal_source_upload')
-    df = _read_upload(uploaded)
+    df = _read_upload(uploaded, allow_empty_rows=False, file_role='origem')
     if isinstance(df, pd.DataFrame):
         _store_universal_source(df, source_mode='upload')
         _audit('mapear_planilha_fonte_anexada', rows=int(len(df)), columns=int(len(df.columns)), source_mode='upload')
