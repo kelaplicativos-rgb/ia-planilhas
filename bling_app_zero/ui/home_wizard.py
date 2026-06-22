@@ -85,10 +85,6 @@ def _is_api_context() -> bool:
 
 def _steps() -> list[str]:
     op = selected_operation()
-
-    # MapeiaAI 2026-06-22: Bling conectado cai em Origem -> Dados -> Operação.
-    # O contrato da saída vem do padrão Bling da operação escolhida; não usa
-    # modelo livre anexado pelo usuário.
     if _is_api_context():
         steps = [STEP_ORIGEM, STEP_ENTRADA, STEP_OPERACAO]
         if op == OP_ESTOQUE:
@@ -98,7 +94,6 @@ def _steps() -> list[str]:
         elif op == OP_CADASTRO:
             steps += [STEP_PRECIFICACAO, STEP_MAPEAMENTO, STEP_REGRAS, STEP_IA, STEP_PREVIEW, STEP_DOWNLOAD]
         return steps
-
     steps = [STEP_ORIGEM, STEP_ENTRADA, STEP_OPERACAO]
     if op == OP_ESTOQUE:
         steps += [STEP_MAPEAMENTO, STEP_PREVIEW, STEP_DOWNLOAD]
@@ -165,21 +160,7 @@ def _active_step() -> str:
         if current in steps:
             return current
         fallback = _fallback_active_step_for_invalid_current(current, steps)
-        add_audit_event(
-            'wizard_api_origin_first_redirected',
-            area='WIZARD',
-            step=fallback,
-            status='OK',
-            details={
-                'invalid_current_step': current,
-                'fallback_step': fallback,
-                'selected_operation': selected_operation() or 'pending',
-                'source_data_ready': source_data_ready(),
-                'operation_ready': operation_ready(),
-                'steps': steps,
-                'responsible_file': RESPONSIBLE_FILE,
-            },
-        )
+        add_audit_event('wizard_api_origin_first_redirected', area='WIZARD', step=fallback, status='OK', details={'invalid_current_step': current, 'fallback_step': fallback, 'selected_operation': selected_operation() or 'pending', 'source_data_ready': source_data_ready(), 'operation_ready': operation_ready(), 'steps': steps, 'responsible_file': RESPONSIBLE_FILE})
         return fallback
     if source_data_ready() and not operation_ready() and current not in {STEP_ORIGEM, STEP_ENTRADA, STEP_OPERACAO}:
         return STEP_OPERACAO
@@ -188,21 +169,7 @@ def _active_step() -> str:
     if current in steps:
         return current
     fallback = _fallback_active_step_for_invalid_current(current, steps)
-    add_audit_event(
-        'wizard_invalid_step_redirected_without_returning_origin',
-        area='WIZARD',
-        step=fallback,
-        status='OK',
-        details={
-            'invalid_current_step': current,
-            'fallback_step': fallback,
-            'selected_operation': selected_operation() or 'pending',
-            'source_data_ready': source_data_ready(),
-            'operation_ready': operation_ready(),
-            'steps': steps,
-            'responsible_file': RESPONSIBLE_FILE,
-        },
-    )
+    add_audit_event('wizard_invalid_step_redirected_without_returning_origin', area='WIZARD', step=fallback, status='OK', details={'invalid_current_step': current, 'fallback_step': fallback, 'selected_operation': selected_operation() or 'pending', 'source_data_ready': source_data_ready(), 'operation_ready': operation_ready(), 'steps': steps, 'responsible_file': RESPONSIBLE_FILE})
     return fallback
 
 
@@ -239,15 +206,7 @@ def _render_entrada(n: int) -> None:
 
 
 def _first_loaded_dataframe() -> pd.DataFrame | None:
-    for key in (
-        'cadastro_wizard_df_para_mapear',
-        'cadastro_wizard_df_origem',
-        'df_origem_planilha',
-        'df_produtos_origem',
-        'df_origem_site_como_planilha',
-        'df_site_bruto',
-        'df_origem',
-    ):
+    for key in ('cadastro_wizard_df_para_mapear', 'cadastro_wizard_df_origem', 'df_origem_planilha', 'df_produtos_origem', 'df_origem_site_como_planilha', 'df_site_bruto', 'df_origem'):
         value = st.session_state.get(key)
         if isinstance(value, pd.DataFrame) and not value.empty:
             return value.copy().fillna('')
@@ -256,13 +215,7 @@ def _first_loaded_dataframe() -> pd.DataFrame | None:
 
 def _render_locked_bling_contract() -> None:
     from bling_app_zero.adapters.streamlit_mapping_bridge import build_and_sync_mapping
-    from bling_app_zero.ui.cadastro_wizard_state import (
-        CADASTRO_MAPPING_CONFIRMED_KEY,
-        CADASTRO_MAPPING_SIGNATURE_KEY,
-        LEGACY_CADASTRO_FINAL_KEY,
-        UNIVERSAL_FINAL_KEY,
-        set_context_final_df,
-    )
+    from bling_app_zero.ui.cadastro_wizard_state import CADASTRO_MAPPING_CONFIRMED_KEY, CADASTRO_MAPPING_SIGNATURE_KEY, LEGACY_CADASTRO_FINAL_KEY, UNIVERSAL_FINAL_KEY, set_context_final_df
     from bling_app_zero.ui.home_bling_api_flow import apply_direct_api_contract
     from bling_app_zero.ui.home_shared import df_signature
     from bling_app_zero.ui.shared_final_csv import build_shared_final_dataframe
@@ -273,18 +226,15 @@ def _render_locked_bling_contract() -> None:
     if not isinstance(source, pd.DataFrame) or source.empty:
         render_pending_notice('Carregue a origem dos dados antes de preparar o contrato fixo do Bling.')
         return
-
     model = apply_direct_api_contract(operation).copy().fillna('')
     if not isinstance(model, pd.DataFrame) or len(model.columns) <= 0:
         st.warning('Contrato fixo da operação Bling não carregou. Volte para Operação e confirme novamente.')
         return
-
     signature = f'bling_locked:{operation}:{df_signature(source)}:{df_signature(model)}'
     current_signature = str(st.session_state.get('bling_api_locked_contract_signature') or '')
     current_mapping = st.session_state.get('mapping_bling_api')
     if current_signature == signature and isinstance(current_mapping, dict) and current_mapping:
         mapping = {str(k): str(v) for k, v in current_mapping.items()}
-        engine = str(st.session_state.get('bling_api_locked_contract_engine') or 'locked_cached')
     else:
         try:
             suggested, engine = suggest_shared_mapping(source, model, operation=operation)
@@ -295,23 +245,12 @@ def _render_locked_bling_contract() -> None:
         st.session_state['mapping_bling_api'] = mapping
         st.session_state['bling_api_locked_contract_signature'] = signature
         st.session_state['bling_api_locked_contract_engine'] = engine
-
-    mapping, rows = build_and_sync_mapping(
-        source,
-        model,
-        mapping,
-        operation=operation,
-        signature=signature,
-        engine=str(st.session_state.get('bling_api_locked_contract_engine') or 'locked_contract'),
-        mapping_state_key='mapping_bling_api',
-        engine_state_key='bling_api_locked_contract_engine',
-    )
+    mapping, rows = build_and_sync_mapping(source, model, mapping, operation=operation, signature=signature, engine=str(st.session_state.get('bling_api_locked_contract_engine') or 'locked_contract'), mapping_state_key='mapping_bling_api', engine_state_key='bling_api_locked_contract_engine')
     try:
         final_df = build_shared_final_dataframe(source, model, mapping).fillna('')
     except Exception as exc:
         st.error(f'Não consegui montar a base fixa do Bling: {exc}')
         return
-
     st.session_state['df_final_bling_api'] = final_df
     st.session_state[UNIVERSAL_FINAL_KEY] = final_df
     st.session_state[LEGACY_CADASTRO_FINAL_KEY] = final_df
@@ -324,25 +263,13 @@ def _render_locked_bling_contract() -> None:
     st.session_state['bling_api_manual_mapping_required'] = False
     st.session_state['bling_api_locked_contract_ready'] = True
     set_context_final_df(final_df)
-
     st.info('Fluxo Bling: contrato fixo automático da operação. Não há alteração livre de modelo neste caminho.')
     st.success(f'Contrato Bling preparado: {len(final_df)} linha(s) x {len(final_df.columns)} coluna(s).')
     with st.expander('Ver vínculo automático do contrato Bling', expanded=False):
         table = pd.DataFrame(rows) if rows else pd.DataFrame({'Contrato Bling': list(model.columns), 'Origem usada': [mapping.get(str(col), '') for col in model.columns]})
         st.dataframe(table, use_container_width=True, hide_index=True, height=260)
     st.dataframe(final_df.head(40).astype(str), use_container_width=True, height=260)
-    add_audit_event(
-        'wizard_bling_locked_contract_rendered',
-        area='MAPEAMENTO',
-        status='OK',
-        details={
-            'operation': operation,
-            'rows': int(len(final_df)),
-            'columns': int(len(final_df.columns)),
-            'manual_mapping_allowed': False,
-            'responsible_file': RESPONSIBLE_FILE,
-        },
-    )
+    add_audit_event('wizard_bling_locked_contract_rendered', area='MAPEAMENTO', status='OK', details={'operation': operation, 'rows': int(len(final_df)), 'columns': int(len(final_df.columns)), 'manual_mapping_allowed': False, 'responsible_file': RESPONSIBLE_FILE})
 
 
 def _render_map(n: int) -> None:
@@ -389,10 +316,13 @@ def _render_preview(n: int) -> None:
 
 
 def _render_download(n: int) -> None:
+    from bling_app_zero.ui.success_banner import render_congratulations_success
+
     render_step_anchor(STEP_DOWNLOAD)
     _section_title(n, _label(STEP_DOWNLOAD))
     clear_stale_cadastro_operation_state()
     render_universal_download_step()
+    render_congratulations_success(area='BLING_API' if _is_api_context() else 'WIZARD', context='download_ou_envio_final')
     if st.button('Recomeçar fluxo', use_container_width=True, key='wizard_download_reset_single_page'):
         reset_wizard()
 
