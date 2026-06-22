@@ -19,6 +19,13 @@ def test_shared_mapping_has_pagination_and_scroll_to_top() -> None:
     assert 'st.rerun()' in content
 
 
+def test_shared_mapping_preview_does_not_repeat_campo_do_modelo_text() -> None:
+    content = Path('bling_app_zero/ui/shared_mapping.py').read_text(encoding='utf-8')
+
+    assert 'Campo do modelo:' not in content
+    assert 'st.markdown(f\'**Campo:** `{target_name}`\')' in content
+
+
 def test_universal_flow_does_not_render_disabled_toggle_captions() -> None:
     content = Path('bling_app_zero/ui/universal_flow.py').read_text(encoding='utf-8')
 
