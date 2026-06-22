@@ -26,15 +26,24 @@ def _zip_bytes(entries: dict[str, bytes]) -> bytes:
     return buffer.getvalue()
 
 
-def test_recover_uploaded_source_file_reads_pdf_inside_zip_as_non_empty_frame() -> None:
+def test_recover_uploaded_source_file_does_not_turn_invalid_binary_pdf_in_zip_into_manifest_table() -> None:
     uploaded = UploadBytes('origem.zip', _zip_bytes({'pedido.pdf': b'not a real pdf'}))
 
     df = recover_uploaded_source_file(uploaded)
 
     assert isinstance(df, pd.DataFrame)
-    assert len(df.columns) > 0
-    assert len(df) > 0
-    assert 'Arquivo PDF' in df.columns or 'Arquivo no ZIP' in df.columns or 'Arquivo' in df.columns
+    assert df.empty
+    assert len(df.columns) == 0
+
+
+def test_recover_uploaded_source_file_does_not_turn_broken_xlsx_into_status_table() -> None:
+    uploaded = UploadBytes('produtos.xlsx', b'not a real xlsx binary \x00\x00\x00')
+
+    df = recover_uploaded_source_file(uploaded)
+
+    assert isinstance(df, pd.DataFrame)
+    assert df.empty
+    assert len(df.columns) == 0
 
 
 def test_recover_uploaded_source_file_reads_nested_zip_csv() -> None:
