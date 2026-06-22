@@ -212,15 +212,16 @@ def render_shared_calculator(
                 output_column = st.text_input('Nome da coluna calculada', value='Preço calculado marketplace', key=f'{key_prefix}_price_output_name')
                 st.error('Não encontrei uma coluna válida do modelo para receber preço. Reconfirme se o modelo final foi anexado antes da origem.')
 
-        with st.expander('Avançado: coluna auxiliar diferente', expanded=False):
-            use_custom_output = st.checkbox('Usar nome técnico diferente da coluna do modelo', value=False, key=f'{key_prefix}_price_use_custom_output_name')
-            if use_custom_output:
+        use_custom_output = st.checkbox('Avançado: usar nome técnico diferente da coluna do modelo', value=False, key=f'{key_prefix}_price_use_custom_output_name')
+        if use_custom_output:
+            with st.container(border=True):
+                st.caption('Use somente se quiser criar uma coluna auxiliar diferente e depois mapear essa coluna para o modelo.')
                 custom_output = st.text_input('Nome técnico usado no mapeamento', value=str(output_column or 'Preço calculado marketplace'), key=f'{key_prefix}_price_output_name_advanced')
                 custom_output = custom_output.strip()
                 if custom_output:
                     output_column = custom_output
-            else:
-                st.caption('Padrão recomendado: calcular direto com o mesmo nome da coluna de preço do modelo.')
+        else:
+            st.caption('Padrão recomendado: calcular direto com o mesmo nome da coluna de preço do modelo.')
 
         margin = Decimal(str(st.number_input('Margem (%)', min_value=0.0, max_value=1000.0, value=30.0, step=1.0, key=f'{key_prefix}_margin') or 0))
         fee = Decimal(str(st.number_input('Taxas/marketplace (%)', min_value=0.0, max_value=1000.0, value=18.0, step=1.0, key=f'{key_prefix}_fee') or 0))
