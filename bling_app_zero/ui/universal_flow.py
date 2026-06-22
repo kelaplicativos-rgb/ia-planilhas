@@ -25,6 +25,8 @@ UNIVERSAL_MAPPING_KEY = 'mapeiaai_universal_mapping'
 UNIVERSAL_OUTPUT_KEY = 'mapeiaai_universal_output_df'
 UNIVERSAL_SIGNATURE_KEY = 'mapeiaai_universal_signature'
 UNIVERSAL_ENGINE_KEY = 'mapeiaai_universal_mapping_engine'
+UNIVERSAL_MODEL_FILE_NAME_KEY = 'mapeiaai_universal_model_file_name'
+UNIVERSAL_MODEL_FILE_BYTES_KEY = 'mapeiaai_universal_model_file_bytes'
 RESPONSIBLE_FILE = 'bling_app_zero/ui/universal_flow.py'
 SOURCE_MODE_UPLOAD = 'Anexar arquivo de origem'
 SOURCE_MODE_SITE = 'Buscar produtos por site'
@@ -101,6 +103,19 @@ def _read_upload(uploaded_file) -> pd.DataFrame | None:
 def _store_df(key: str, df: pd.DataFrame | None) -> None:
     if isinstance(df, pd.DataFrame) and len(df.columns):
         st.session_state[key] = df.copy().fillna('')
+
+
+def _store_model_file(uploaded_file) -> None:
+    if uploaded_file is None:
+        return
+    name = str(getattr(uploaded_file, 'name', '') or '').strip()
+    try:
+        data = uploaded_file.getvalue()
+    except Exception:
+        data = b''
+    if name and data:
+        st.session_state[UNIVERSAL_MODEL_FILE_NAME_KEY] = name
+        st.session_state[UNIVERSAL_MODEL_FILE_BYTES_KEY] = bytes(data)
 
 
 def _sync_legacy_universal_model_aliases(model: pd.DataFrame | None) -> None:
@@ -183,9 +198,10 @@ def _render_model_step() -> pd.DataFrame | None:
         uploaded = st.file_uploader('Planilha modelo final', type=None, key='mapeiaai_universal_model_upload')
         df = _read_upload(uploaded)
         if isinstance(df, pd.DataFrame):
+            _store_model_file(uploaded)
             _store_df(UNIVERSAL_MODEL_KEY, df)
             _sync_legacy_universal_model_aliases(df)
-            _audit('mapear_planilha_modelo_anexado_primeiro', rows=int(len(df)), columns=int(len(df.columns)))
+            _audit('mapear_planilha_modelo_anexado_primeiro', rows=int(len(df)), columns=int(len(df.columns)), original_file_name=str(getattr(uploaded, 'name', '') or ''))
         model = _current_df(UNIVERSAL_MODEL_KEY)
     if not isinstance(model, pd.DataFrame):
         st.info('Envie a planilha modelo final para liberar a origem de dados, os toggles, o mapeamento, o preview e o download.')
