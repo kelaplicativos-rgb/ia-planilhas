@@ -8,6 +8,7 @@ from bling_app_zero.ui.shared_calculator import (
     apply_marketplace_calculation,
     default_base_price_column,
     default_price_target_column,
+    manual_target_columns,
     price_target_columns,
 )
 
@@ -23,6 +24,20 @@ def test_default_price_target_avoids_cost_column_when_sale_column_exists() -> No
     model = pd.DataFrame(columns=['Preço de custo', 'Valor venda', 'Preço promocional'])
 
     assert default_price_target_column(model) == 'Valor venda'
+
+
+def test_price_target_columns_blocks_technical_recovery_columns() -> None:
+    model = pd.DataFrame(columns=['Arquivo', 'Status', 'Conteúdo extraído'])
+
+    assert price_target_columns(model) == []
+    assert manual_target_columns(model) == []
+    assert default_price_target_column(model) == ''
+
+
+def test_manual_target_columns_keeps_real_model_columns_when_price_name_is_unusual() -> None:
+    model = pd.DataFrame(columns=['Código', 'Descrição', 'Venda Final'])
+
+    assert manual_target_columns(model) == ['Código', 'Descrição', 'Venda Final']
 
 
 def test_default_base_price_column_prefers_cost_over_stock() -> None:
