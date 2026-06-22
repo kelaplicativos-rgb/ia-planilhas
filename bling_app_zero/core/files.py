@@ -4,6 +4,7 @@ import csv
 import re
 import xml.etree.ElementTree as ET
 import zipfile
+from dataclasses import dataclass
 from io import BytesIO, StringIO
 from typing import Any
 
@@ -22,6 +23,11 @@ try:
 except Exception:  # pragma: no cover
     PdfReader = None
 
+try:
+    from openpyxl import load_workbook
+except Exception:  # pragma: no cover
+    load_workbook = None
+
 SPREADSHEET_EXTENSIONS = ('.xlsx', '.xls', '.xlsm', '.xlsb')
 TEXT_EXTENSIONS = ('.txt', '.tsv')
 HTML_EXTENSIONS = ('.html', '.htm')
@@ -32,6 +38,29 @@ SUPPORTED_SUPPLIER_EXTENSIONS = SPREADSHEET_EXTENSIONS + ('.csv', '.xml', '.pdf'
 NFE_ITEM_TAGS = {'det'}
 NFE_PRODUCT_TAGS = {'prod'}
 COMMON_ITEM_TAGS = {'item', 'produto', 'product', 'det', 'row', 'linha'}
+EXCEL_HEADER_SCAN_ROWS = 80
+EXCEL_DATA_SCAN_ROWS = 25
+HEADER_KEYWORDS = {
+    'id', 'codigo', 'código', 'cod', 'sku', 'ref', 'referencia', 'referência', 'ean', 'gtin',
+    'produto', 'produtos', 'nome', 'titulo', 'título', 'descricao', 'descrição', 'categoria',
+    'marca', 'modelo', 'ncm', 'origem', 'preco', 'preço', 'valor', 'custo', 'estoque',
+    'quantidade', 'qtde', 'deposito', 'depósito', 'unidade', 'peso', 'altura', 'largura',
+    'comprimento', 'imagem', 'imagens', 'url', 'link', 'atributo', 'variacao', 'variação',
+    'status', 'situacao', 'situação', 'canal', 'venda', 'loja', 'observacao', 'observação',
+}
+INSTRUCTION_SHEET_HINTS = ('instr', 'instru', 'leia', 'ajuda', 'help', 'readme', 'manual')
+
+
+@dataclass(frozen=True)
+class ExcelHeaderCandidate:
+    sheet_name: str
+    sheet_index: int
+    header_row: int
+    max_column: int
+    columns: tuple[str, ...]
+    positions: tuple[int, ...]
+    score: float
+    data_rows_below: int
 
 
 def _decode_bytes(data: bytes) -> str:
@@ -52,18 +81,18 @@ def _clean(value: object) -> str:
     return _html_clean(value)
 
 
+def _norm(value: object) -> str:
+    text = _clean(value).casefold()
+    text = re.sub(r'[^0-9a-záàâãéêíóôõúçñ]+', ' ', text)
+    return ' '.join(text.split()).strip()
+
+
 def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
     return _clean_html_columns(df)
 
 
 def _best_frame(frames: list[pd.DataFrame]) -> pd.DataFrame:
-    """Escolhe a melhor aba preservando planilhas modelo sem linhas.
-
-    Modelos de importação do Bling normalmente vêm apenas com cabeçalho.
-    O pandas lê esses arquivos como DataFrame vazio, mas com colunas válidas.
-    Antes essa função descartava DataFrames vazios e fazia o upload do modelo
-    parecer sem cabeçalho, bloqueando a próxima fase do wizard.
-    """
+    """Escolhe a melhor tabela preservando planilhas modelo sem linhas."""
     structured: list[pd.DataFrame] = []
     header_only: list[pd.DataFrame] = []
 
@@ -107,7 +136,158 @@ def _read_text_bytes(data: bytes) -> pd.DataFrame:
     return _clean_columns(pd.DataFrame(normalized[1:], columns=columns))
 
 
+def _cell_value(cell: Any) -> str:
+    return _clean(getattr(cell, 'value', cell))
+
+
+def _row_values(sheet: Any, row_index: int, max_col: int) -> list[str]:
+    return [_cell_value(sheet.cell(row=row_index, column=col_index)) for col_index in range(1, max_col + 1)]
+
+
+def _dedupe_columns(columns: list[str]) -> list[str]:
+    seen: dict[str, int] = {}
+    out: list[str] = []
+    for idx, column in enumerate(columns, start=1):
+        base = _clean(column) or f'Coluna {idx}'
+        key = base
+        counter = seen.get(base, 0)
+        if counter:
+            key = f'{base}_{counter + 1}'
+        seen[base] = counter + 1
+        out.append(key)
+    return out
+
+
+def _keyword_hits(values: list[str]) -> int:
+    hits = 0
+    for value in values:
+        norm = _norm(value)
+        words = set(norm.split())
+        if words & HEADER_KEYWORDS:
+            hits += 1
+        elif any(keyword in norm for keyword in HEADER_KEYWORDS if len(keyword) >= 4):
+            hits += 1
+    return hits
+
+
+def _looks_like_instruction_row(values: list[str]) -> bool:
+    non_empty = [value for value in values if _clean(value)]
+    if not non_empty:
+        return True
+    if len(non_empty) <= 1 and len(non_empty[0]) > 40:
+        return True
+    long_cells = sum(1 for value in non_empty if len(value) > 80)
+    return long_cells >= max(2, len(non_empty) // 2)
+
+
+def _data_rows_below(sheet: Any, header_row: int, positions: list[int]) -> int:
+    if not positions:
+        return 0
+    max_row = int(sheet.max_row or header_row)
+    limit = min(max_row, header_row + EXCEL_DATA_SCAN_ROWS)
+    count = 0
+    for row_index in range(header_row + 1, limit + 1):
+        row_values = [_cell_value(sheet.cell(row=row_index, column=col_index)) for col_index in positions]
+        filled = sum(1 for value in row_values if value)
+        if filled >= 1:
+            count += 1
+    return count
+
+
+def _score_header_candidate(sheet: Any, sheet_index: int, row_index: int, max_col: int) -> ExcelHeaderCandidate | None:
+    values = _row_values(sheet, row_index, max_col)
+    positions = [idx + 1 for idx, value in enumerate(values) if _clean(value)]
+    raw_columns = [_clean(values[idx - 1]) for idx in positions]
+    if len(raw_columns) < 2:
+        return None
+    if _looks_like_instruction_row(raw_columns):
+        return None
+
+    columns = tuple(_dedupe_columns(raw_columns))
+    normalized = [_norm(value) for value in raw_columns]
+    unique_count = len(set(value for value in normalized if value))
+    keyword_hits = _keyword_hits(raw_columns)
+    data_rows = _data_rows_below(sheet, row_index, positions)
+    avg_len = sum(len(value) for value in raw_columns) / max(1, len(raw_columns))
+    sheet_name = str(getattr(sheet, 'title', '') or '')
+    sheet_hint_penalty = 18 if any(hint in _norm(sheet_name) for hint in INSTRUCTION_SHEET_HINTS) else 0
+    long_penalty = 12 if avg_len > 45 else 0
+    score = (
+        len(raw_columns) * 10
+        + unique_count * 4
+        + keyword_hits * 16
+        + min(data_rows, 8) * 5
+        - sheet_hint_penalty
+        - long_penalty
+        - row_index * 0.15
+    )
+    return ExcelHeaderCandidate(
+        sheet_name=sheet_name,
+        sheet_index=sheet_index,
+        header_row=row_index,
+        max_column=max_col,
+        columns=columns,
+        positions=tuple(positions),
+        score=score,
+        data_rows_below=data_rows,
+    )
+
+
+def _find_best_excel_header(workbook: Any) -> ExcelHeaderCandidate | None:
+    candidates: list[ExcelHeaderCandidate] = []
+    for sheet_index, sheet in enumerate(workbook.worksheets):
+        max_row = int(sheet.max_row or 0)
+        max_col = int(sheet.max_column or 0)
+        if max_row <= 0 or max_col <= 0:
+            continue
+        scan_rows = min(max_row, EXCEL_HEADER_SCAN_ROWS)
+        for row_index in range(1, scan_rows + 1):
+            candidate = _score_header_candidate(sheet, sheet_index, row_index, max_col)
+            if candidate is not None:
+                candidates.append(candidate)
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item.score, item.data_rows_below, len(item.columns), -item.header_row), reverse=True)
+    return candidates[0]
+
+
+def _frame_from_excel_candidate(workbook: Any, candidate: ExcelHeaderCandidate) -> pd.DataFrame:
+    sheet = workbook.worksheets[candidate.sheet_index]
+    rows: list[list[str]] = []
+    max_row = int(sheet.max_row or candidate.header_row)
+    for row_index in range(candidate.header_row + 1, max_row + 1):
+        row = [_cell_value(sheet.cell(row=row_index, column=col_index)) for col_index in candidate.positions]
+        if any(_clean(value) for value in row):
+            rows.append(row)
+    return _clean_columns(pd.DataFrame(rows, columns=list(candidate.columns)).fillna(''))
+
+
+def _read_excel_with_header_detection(data: bytes, file_name: str) -> pd.DataFrame:
+    if load_workbook is None:
+        return pd.DataFrame()
+    workbook = None
+    try:
+        keep_vba = str(file_name or '').lower().endswith('.xlsm')
+        workbook = load_workbook(BytesIO(data), read_only=True, data_only=False, keep_vba=keep_vba)
+        candidate = _find_best_excel_header(workbook)
+        if candidate is None:
+            return pd.DataFrame()
+        return _frame_from_excel_candidate(workbook, candidate)
+    except Exception:
+        return pd.DataFrame()
+    finally:
+        try:
+            if workbook is not None:
+                workbook.close()
+        except Exception:
+            pass
+
+
 def _read_excel_bytes(data: bytes, file_name: str) -> pd.DataFrame:
+    detected = _read_excel_with_header_detection(data, file_name)
+    if isinstance(detected, pd.DataFrame) and len(detected.columns) > 0:
+        return detected
+
     buffer = BytesIO(data)
     try:
         sheets = pd.read_excel(buffer, sheet_name=None, dtype=str).values()
@@ -271,12 +451,7 @@ def _read_inner_file_bytes(data: bytes, file_name: str) -> pd.DataFrame:
 
 
 def _read_zip_bytes(data: bytes, file_name: str = 'arquivo.zip') -> pd.DataFrame:
-    """Lê ZIP exportado pelo Bling quando ele contém CSV/XLSX interno.
-
-    O importador/modelo do Bling pode baixar arquivos compactados, como o
-    modelo de preços multiloja. O sistema precisa abrir o ZIP e usar a planilha
-    interna como contrato final, em vez de descartar o arquivo pelo `.zip`.
-    """
+    """Lê ZIP quando ele contém CSV/XLSX interno."""
     frames: list[pd.DataFrame] = []
     try:
         with zipfile.ZipFile(BytesIO(data)) as archive:
