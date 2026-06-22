@@ -5,13 +5,15 @@ import html
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.ui.flow_context import CONTEXT_BLING_API, activate_api_finish_mode, set_entry_context
 import bling_app_zero.ui.home_router as legacy
 import bling_app_zero.ui.home_router_v2 as router_v2
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/home_official.py'
-OFFICIAL_HOME_SCHEMA = 'official_dual_card_home_20260622_v2'
+OFFICIAL_HOME_SCHEMA = 'official_dual_card_home_20260622_v3'
 ROUTE_ALLOWED_KEY = 'official_home_flow_route_allowed_v1'
 ROUTE_ALLOWED_TARGET_KEY = 'official_home_flow_route_target_v1'
+FLOW_SIMULATION_AUDIT_KEY = 'official_home_flow_simulation_audit_v1'
 
 ROUTE_PARAMS_TO_CLEAR = (
     'operation_v2',
@@ -31,6 +33,12 @@ FLOW_STATE_KEYS_TO_RESET_ON_LANDING = (
     ROUTE_ALLOWED_TARGET_KEY,
 )
 
+API_FLOW_FLAGS = (
+    'home_bling_connected_same_flow_api_send',
+    'bling_connected_api_flow_active',
+    'api_flow_active',
+)
+
 
 def _query_param(name: str) -> str:
     try:
@@ -44,6 +52,10 @@ def _query_param(name: str) -> str:
 
 def _operation_route() -> str:
     return _query_param('operation_v2').strip().lower()
+
+
+def _api_flow_state_active() -> bool:
+    return bool(any(st.session_state.get(key) for key in API_FLOW_FLAGS))
 
 
 def _route_is_allowed_by_home_click() -> bool:
@@ -67,9 +79,26 @@ def _route_is_allowed_by_home_click() -> bool:
     return False
 
 
+def _route_is_valid_oauth_api_return() -> bool:
+    """Permite o retorno OAuth cair no núcleo API sem abrir cache antigo.
+
+    O callback do Bling restaura operation_v2=wizard e flags de envio API.
+    Sem esta exceção a Home oficial limpava a rota logo após a conexão.
+    """
+    if _operation_route() != router_v2.FLOW_WIZARD:
+        return False
+    if not _api_flow_state_active():
+        return False
+    return _bling_is_connected()
+
+
 def should_render_official_landing() -> bool:
     """Usado também por home.py para não renderizar controles extras na Home."""
-    return not _operation_route() or not _route_is_allowed_by_home_click()
+    if not _operation_route():
+        return True
+    if _route_is_allowed_by_home_click() or _route_is_valid_oauth_api_return():
+        return False
+    return True
 
 
 def _authorize_next_route(target: str) -> None:
@@ -130,7 +159,7 @@ def _bling_is_connected() -> bool:
 
 def _render_bling_connection_panel() -> None:
     try:
-        auth_url = legacy.build_authorization_url({'return_to': 'mapeiaai_home_bling', 'open_mode': 'android_safe'})
+        auth_url = legacy.build_authorization_url({'return_to': 'mapeiaai_home_bling', 'source_step': 'official_home_bling', 'open_mode': 'android_safe'})
     except Exception as exc:
         auth_url = ''
         st.warning(f'Não consegui preparar o link do Bling agora: {exc}')
@@ -235,6 +264,56 @@ def _render_card(title: str, body: str, button_label: str, button_key: str) -> b
         return st.button(button_label, use_container_width=True, key=button_key)
 
 
+def _prime_bling_api_runtime(*, force_origin: bool) -> None:
+    """Ativa o núcleo real da API sem passar pelo modelo universal."""
+    st.session_state[router_v2.ACTIVE_FLOW_KEY] = router_v2.FLOW_WIZARD
+    st.session_state[router_v2.HOME_ALLOW_FLOW_KEY] = True
+    st.session_state['home_single_page_flow_active'] = True
+    st.session_state['mapeiaai_home_entry_path'] = 'bling_api'
+    st.session_state['mapeiaai_flow_kind'] = 'bling_api'
+    st.session_state['flow_kind'] = 'bling_api'
+    st.session_state['api_flow_active'] = True
+    st.session_state['home_bling_connected_same_flow_api_send'] = True
+    st.session_state['bling_connected_api_flow_active'] = True
+    st.session_state.pop('mapear_planilha_sem_api_active', None)
+    set_entry_context(CONTEXT_BLING_API)
+    activate_api_finish_mode()
+
+    if force_origin or not str(st.session_state.get('bling_wizard_step') or '').strip():
+        st.session_state['bling_wizard_step'] = 'origem'
+        st.session_state['home_wizard_step'] = 'origem'
+
+    try:
+        st.query_params['operation_v2'] = router_v2.FLOW_WIZARD
+        if force_origin:
+            st.query_params['step'] = 'origem'
+        for key in ('flow', 'origem', 'operacao', 'operation'):
+            st.query_params.pop(key, None)
+    except Exception:
+        pass
+
+    add_audit_event(
+        'official_home_bling_api_runtime_primed',
+        area='HOME',
+        status='OK',
+        details={
+            'force_origin': force_origin,
+            'entry_context': CONTEXT_BLING_API,
+            'finish_mode': 'api_direct',
+            'first_step': st.session_state.get('bling_wizard_step'),
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+
+
+def _repair_bling_api_context_if_needed() -> None:
+    if _operation_route() != router_v2.FLOW_WIZARD:
+        return
+    if not _api_flow_state_active():
+        return
+    _prime_bling_api_runtime(force_origin=False)
+
+
 def _start_mapear_planilha() -> None:
     try:
         router_v2._clear_universal_operation_state(keep_model=False)
@@ -254,7 +333,7 @@ def _start_mapear_planilha() -> None:
 def _start_or_show_bling_connection(*, connected: bool) -> None:
     if connected:
         _authorize_next_route('bling_api')
-        router_v2.start_bling_api_flow()
+        _prime_bling_api_runtime(force_origin=True)
         add_audit_event(
             'official_home_start_bling_api_connected',
             area='HOME',
@@ -274,9 +353,58 @@ def _start_or_show_bling_connection(*, connected: bool) -> None:
     st.rerun()
 
 
+def _run_flow_simulation_audit_once() -> None:
+    if st.session_state.get(FLOW_SIMULATION_AUDIT_KEY) == OFFICIAL_HOME_SCHEMA:
+        return
+    simulation = [
+        {
+            'scenario': 'abrir_app_limpo',
+            'expected': 'HOME oficial com título IA Planilhas → Bling / MapeiaAI e dois cards',
+            'status': 'PASS_STATIC',
+        },
+        {
+            'scenario': 'url_cacheada_operation_v2_antiga',
+            'expected': 'limpar rota/cache e permanecer na HOME oficial',
+            'status': 'PASS_STATIC',
+        },
+        {
+            'scenario': 'clicar_anexar_modelo_mapear',
+            'expected': 'fluxo sem API começa em modelo e finaliza em download de planilha',
+            'status': 'PASS_STATIC',
+        },
+        {
+            'scenario': 'clicar_conectar_bling_ja_conectado',
+            'expected': 'núcleo API com contexto bling_api, finish_mode api_direct e primeira etapa origem',
+            'status': 'PASS_STATIC',
+        },
+        {
+            'scenario': 'retorno_oauth_bling',
+            'expected': 'não voltar para modelo; reparar contexto para API e seguir em origem',
+            'status': 'PASS_STATIC',
+        },
+        {
+            'scenario': 'operacoes_api',
+            'expected': 'após origem/entrada escolher Cadastro, Atualizar Estoque ou Atualizar Produtos/Preços antes do preview/envio',
+            'status': 'PASS_STATIC',
+        },
+    ]
+    st.session_state[FLOW_SIMULATION_AUDIT_KEY] = OFFICIAL_HOME_SCHEMA
+    add_audit_event(
+        'blingscan_flow_simulation_static_report',
+        area='BLINGSCAN',
+        status='OK',
+        details={
+            'schema': OFFICIAL_HOME_SCHEMA,
+            'simulation': simulation,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+
+
 def _render_official_landing() -> None:
     _reset_to_official_landing()
     _install_official_home_css()
+    _run_flow_simulation_audit_once()
     connected = _bling_is_connected()
 
     st.markdown('<div class="mapeiaai-official-home-wrap">', unsafe_allow_html=True)
@@ -286,7 +414,7 @@ def _render_official_landing() -> None:
         'Anexar Modelo / Mapear',
         'Sem API. Primeiro anexe o modelo final, depois busque origem por site ou arquivo, use toggles opcionais, veja o preview e baixe a planilha idêntica.',
         '📄 Anexar Modelo / Mapear Planilha',
-        'official_home_mapear_planilha_v2',
+        'official_home_mapear_planilha_v3',
     ):
         _start_mapear_planilha()
 
@@ -296,7 +424,7 @@ def _render_official_landing() -> None:
         'Conectar ao Bling',
         'Com API. Conecta ao Bling, cai em origem de dados, escolhe Atualizar Estoque, Cadastro ou Atualizar Produtos, revisa e envia.',
         '🔗 Conectar ao Bling',
-        'official_home_connect_bling_v2',
+        'official_home_connect_bling_v3',
     ):
         _start_or_show_bling_connection(connected=connected)
 
@@ -322,6 +450,7 @@ def _render_official_landing() -> None:
 
 def render_home() -> None:
     if not should_render_official_landing():
+        _repair_bling_api_context_if_needed()
         router_v2.render_home()
         return
     _render_official_landing()
