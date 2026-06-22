@@ -17,6 +17,7 @@ from bling_app_zero.ui.mapping_auto_decision import render_mapping_auto_decision
 from bling_app_zero.ui.shared_calculator import render_shared_calculator
 from bling_app_zero.ui.shared_final_csv import render_shared_final_csv
 from bling_app_zero.ui.shared_mapping import clear_shared_mapping_widgets, render_shared_contract_mapping, suggest_shared_mapping
+from bling_app_zero.ui.success_banner import render_congratulations_success
 
 UNIVERSAL_MODEL_KEY = 'mapeiaai_universal_model_df'
 UNIVERSAL_SOURCE_KEY = 'mapeiaai_universal_source_df'
@@ -208,12 +209,7 @@ def _render_toggles() -> dict[str, bool]:
         category = st.toggle('Categorização inteligente', value=False, key='mapeiaai_universal_toggle_category')
     with col2:
         st.markdown('##### Inteligência Artificial')
-        mapping_ai = render_mapping_auto_decision_toggle(
-            widget_key='mapeiaai_universal_toggle_mapping_auto',
-            source='universal_flow',
-            default=False,
-            label='Mapeamento automático com IA',
-        )
+        mapping_ai = render_mapping_auto_decision_toggle(widget_key='mapeiaai_universal_toggle_mapping_auto', source='universal_flow', default=False, label='Mapeamento automático com IA')
         rules = st.toggle('Regras e recursos inteligentes no download', value=True, key='mapeiaai_universal_toggle_rules')
     st.session_state['mapeiaai_universal_toggle_mapping_ai'] = bool(mapping_ai)
     toggles = {'price': bool(price), 'category': bool(category), 'mapping_ai': bool(mapping_ai), 'rules': bool(rules)}
@@ -288,6 +284,7 @@ def render_universal_flow() -> None:
     output = render_shared_final_csv(processed, model, mapping, key_prefix='mapeiaai_universal', file_name='mapeiaai_planilha_final_mapeada.csv', run_smart_features=toggles['rules'])
     if isinstance(output, pd.DataFrame):
         st.session_state[UNIVERSAL_OUTPUT_KEY] = output
+        render_congratulations_success(area='UNIVERSAL', context='download_final_planilha_mapeada')
         _audit('mapear_planilha_preview_download_pronto', rows=int(len(output)), columns=int(len(output.columns)), csv=True, final_message='Congratulations Success')
 
 
