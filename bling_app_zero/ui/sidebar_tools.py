@@ -35,6 +35,12 @@ def _render_flow_simulator_panel_lazy() -> None:
     render_flow_simulator_panel()
 
 
+def _render_openai_diagnostics_panel_lazy() -> None:
+    from bling_app_zero.ui.openai_diagnostics_panel import render_openai_diagnostics_panel
+
+    render_openai_diagnostics_panel()
+
+
 def _render_credits_sidebar_lazy() -> None:
     from bling_app_zero.ui.credits_sidebar import render_credits_sidebar
 
@@ -44,6 +50,7 @@ def _render_credits_sidebar_lazy() -> None:
 SIDEBAR_TOOLS: tuple[SidebarTool, ...] = (
     SidebarTool('Produção MapeiaAI', _render_production_sidebar_lazy, admin_only=False),
     SidebarTool('Verificar sistema', _render_flow_simulator_panel_lazy, admin_only=False),
+    SidebarTool('Diagnóstico IA', _render_openai_diagnostics_panel_lazy, admin_only=False),
     SidebarTool('Créditos MapeiaAI', _render_credits_sidebar_lazy, admin_only=True),
 )
 
