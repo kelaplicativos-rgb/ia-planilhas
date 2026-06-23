@@ -7,6 +7,7 @@ from bling_app_zero.core import bling_oauth
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.brand_runtime_patch import install_brand_runtime_patch
 from bling_app_zero.core.cache_control import clear_cache_once_per_version
+from bling_app_zero.core.cache_schema_guard import enforce_cache_schema_guard, render_cache_schema_notice
 from bling_app_zero.core.mapping_widget_state import restore_mapping_widget_state_from_snapshot
 from bling_app_zero.core.official_bling_oauth_patch import install_official_bling_oauth_patch
 from bling_app_zero.core.xml_nfe_runtime_patch import install_xml_nfe_runtime_patch
@@ -116,6 +117,7 @@ def main() -> None:
     enforce_attention_alert_policy()
     inject_streamlit_toolbar_fix()
     clear_cache_once_per_version(APP_VERSION)
+    enforce_cache_schema_guard(APP_VERSION)
 
     if not ensure_app_ready():
         return
@@ -136,6 +138,7 @@ def main() -> None:
     install_official_bling_oauth_patch()
     bling_oauth.process_oauth_callback()
     _auto_enter_wizard_when_bling_connected_on_mobile()
+    render_cache_schema_notice()
     add_audit_event('app_started', area='APP', details={'version': APP_VERSION, 'mode': 'session_guarded_start', 'device_hint': _device_hint()})
 
     try:
