@@ -7,6 +7,10 @@ import pandas as pd
 
 from bling_app_zero.core.column_contract import build_contract
 from bling_app_zero.core.exporter import sanitize_for_bling
+from bling_app_zero.core.final_csv_exporter import normalize_image_columns
+from bling_app_zero.core.provisional_category import DEFAULT_PROVISIONAL_CATEGORY, apply_category_guard_to_payload
+from bling_app_zero.core.xml_nfe_runtime_patch import NFE_COST_COLUMN, _apply_nfe_unit_cost
+from bling_app_zero.engines.estoque_engine import _status_to_quantity
 from bling_app_zero.flows.engine_registry import get_engine, registry_dataframe
 from bling_app_zero.flows.estoque_contract import default_model as estoque_default_model
 from bling_app_zero.v2.price_multistore.flow import run_multistore_price_flow
@@ -168,6 +172,70 @@ def simulate_multistore_pricing() -> SimulationResult:
     )
 
 
+def simulate_estoque_status_site() -> SimulationResult:
+    available = _status_to_quantity('Produto disponível em estoque')
+    out = _status_to_quantity('Produto esgotado')
+    ok = available == '10' and out == '0'
+    return SimulationResult('Estoque status do site', ok, 2, 2, f'disponível={available}; esgotado={out}')
+
+
+def simulate_images_csv_export() -> SimulationResult:
+    raw = '|'.join(
+        [
+            'https://example.com/produto-1.jpg',
+            'https://example.com/logo.png',
+            'https://example.com/produto-2.webp',
+            'https://example.com/produto-3.jpg',
+            'https://example.com/produto-4.jpg',
+            'https://example.com/produto-5.jpg',
+            'https://example.com/produto-6.jpg',
+            'https://example.com/produto-7.jpg',
+        ]
+    )
+    df = normalize_image_columns(pd.DataFrame([{'URL Imagens': raw}]))
+    images = str(df.at[0, 'URL Imagens']).split('|') if not df.empty else []
+    ok = len(images) == 6 and all('logo' not in image.lower() for image in images)
+    return SimulationResult('Imagens CSV final', ok, len(df), len(df.columns), f'{len(images)} imagem(ns) válidas após limpeza/limite')
+
+
+def simulate_xml_nfe_unit_cost() -> SimulationResult:
+    row = _apply_nfe_unit_cost(
+        {
+            'qCom': '2,0000',
+            'vProd': '100,00',
+            'vFrete': '10,00',
+            'vSeg': '4,00',
+            'vOutro': '6,00',
+            'vDesc': '0,00',
+            'imposto.ICMS.ICMS00.vICMS': '18,00',
+            'imposto.IPI.IPITrib.vIPI': '2,00',
+        }
+    )
+    ok = row.get(NFE_COST_COLUMN) == '70,00'
+    return SimulationResult('XML NFe custo unitário', ok, 1, len(row), f"{NFE_COST_COLUMN}={row.get(NFE_COST_COLUMN, '')}")
+
+
+def simulate_category_guard() -> SimulationResult:
+    result = apply_category_guard_to_payload({}, row={'Descrição': 'Produto sem pista segura XYZ'}, meta={}, category_id_resolver=None)
+    category = result.payload.get('categoria') if isinstance(result.payload, dict) else {}
+    category_text = str(category.get('descricao') if isinstance(category, dict) else category or '')
+    ok = bool(category_text) and (category_text == DEFAULT_PROVISIONAL_CATEGORY or not result.provisional)
+    return SimulationResult('Categoria obrigatória/fallback', ok, 1, 1, f'categoria={category_text}; provisoria={result.provisional}')
+
+
+def simulate_brand_imenso_runtime() -> SimulationResult:
+    try:
+        from bling_app_zero.core.brand_runtime_patch import install_brand_runtime_patch
+        from bling_app_zero.core import bling_direct_sender_smart as smart
+
+        install_brand_runtime_patch()
+        brand = smart._resolve_brand('Caixa de Som Imenso Bluetooth Portátil', '')
+    except Exception as exc:
+        return SimulationResult('Marca inteligente Imenso', False, 0, 0, str(exc))
+    ok = brand == 'Imenso'
+    return SimulationResult('Marca inteligente Imenso', ok, 1, 1, f'marca={brand}')
+
+
 SIMULATION_REGISTRY: dict[str, tuple[str, Callable[[], SimulationResult]]] = {
     'cadastro_arquivo': ('Cadastro por arquivo', simulate_cadastro_planilha),
     'estoque_arquivo': ('Estoque por arquivo', simulate_estoque_planilha),
@@ -175,6 +243,11 @@ SIMULATION_REGISTRY: dict[str, tuple[str, Callable[[], SimulationResult]]] = {
     'site_estoque': ('Site para estoque', simulate_site_estoque_contract),
     'precificacao': ('Precificação', simulate_pricing),
     'precos_multiloja': ('Preços multiloja', simulate_multistore_pricing),
+    'estoque_status_site': ('Estoque status do site', simulate_estoque_status_site),
+    'imagens_csv_final': ('Imagens CSV final', simulate_images_csv_export),
+    'xml_nfe_custo_unitario': ('XML NFe custo unitário', simulate_xml_nfe_unit_cost),
+    'categoria_obrigatoria_fallback': ('Categoria obrigatória/fallback', simulate_category_guard),
+    'marca_imenso': ('Marca inteligente Imenso', simulate_brand_imenso_runtime),
 }
 
 
