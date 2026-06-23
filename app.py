@@ -12,6 +12,7 @@ from bling_app_zero.core.official_bling_oauth_patch import install_official_blin
 from bling_app_zero.core.xml_nfe_runtime_patch import install_xml_nfe_runtime_patch
 from bling_app_zero.ui.alerts import enforce_attention_alert_policy
 from bling_app_zero.ui.bling_api_source_first_policy import install_bling_api_source_first_policy
+from bling_app_zero.ui.bling_connected_entry_runtime import install_bling_connected_entry_runtime
 from bling_app_zero.ui.blingfix_runtime_patches import install_blingfix_runtime_patches
 from bling_app_zero.ui.home import render_home
 from bling_app_zero.ui.layout import inject_streamlit_toolbar_fix
@@ -127,6 +128,7 @@ def main() -> None:
     install_brand_runtime_patch()
     install_xml_nfe_runtime_patch()
     install_bling_api_source_first_policy()
+    install_bling_connected_entry_runtime()
     install_source_upload_recovery_runtime()
     install_mapping_pagination_runtime()
     install_oauth_link_guard()
