@@ -3,8 +3,10 @@ from __future__ import annotations
 import streamlit as st
 
 from bling_app_zero.core.diagnostico_boot import boot_event, install_streamlit_boot_diagnostics
+from bling_app_zero.core.universal_model_upload_fast_patch import install_universal_model_upload_fast_patch
 
 install_streamlit_boot_diagnostics(st)
+install_universal_model_upload_fast_patch()
 boot_event(
     'app_boot_diagnostic_initialized_before_runtime_imports',
     area='BOOT',
