@@ -11,7 +11,7 @@ from bling_app_zero.core.text import clean_cell
 RESPONSIBLE_FILE = 'bling_app_zero/pipelines/stock_api_origin_guard.py'
 URL_COLUMNS = ('url', 'link', 'produto_url', 'url_produto', 'origem url', 'link produto', 'link externo')
 IMAGE_URL_COLUMN_HINTS = ('imagem', 'imagens', 'foto', 'fotos', 'media', 'midia', 'mídia', 'cdn', 'thumb', 'thumbnail')
-PRODUCT_URL_POSITIVE_HINTS = ('produto', 'product', 'link externo', 'url produto', 'url_produto', 'produto_url', 'origem url', 'pagina', 'página')
+DIMENSION_COLUMN_HINTS = ('largura', 'altura', 'profundidade', 'comprimento', 'peso', 'volume', 'volumes', 'dimensao', 'dimensão')
 STOCK_ID_COLUMNS = ('codigo', 'código', 'sku', 'gtin', 'ean', 'id produto', 'id_produto', 'id bling', 'id_bling')
 STOCK_QTY_COLUMNS = ('quantidade', 'qtd', 'saldo', 'estoque', 'balanco', 'balanço', 'stock', 'movimentacao de estoque', 'movimentação de estoque')
 CADASTRO_CORE_COLUMNS = ('nome', 'descricao', 'descrição', 'codigo', 'código', 'sku', 'preco', 'preço', 'imagens', 'imagem', 'gtin', 'marca', 'categoria')
@@ -39,20 +39,25 @@ def _is_image_url_column(column: object) -> bool:
     key = _key(column)
     if not key:
         return False
-    if any(hint in key for hint in IMAGE_URL_COLUMN_HINTS):
-        return True
-    return False
+    return any(hint in key for hint in IMAGE_URL_COLUMN_HINTS)
+
+
+def _is_dimension_column(column: object) -> bool:
+    key = _key(column)
+    if not key:
+        return False
+    return any(hint in key for hint in DIMENSION_COLUMN_HINTS)
 
 
 def _is_product_url_column(column: object) -> bool:
     key = _key(column)
-    if not key:
-        return False
-    if _is_image_url_column(column):
+    if not key or _is_image_url_column(column) or _is_dimension_column(column):
         return False
     if key in {'url', 'link'}:
         return True
-    return any(hint in key for hint in PRODUCT_URL_POSITIVE_HINTS)
+    has_url_or_link = bool(re.search(r'\b(url|link|pagina|page)\b', key))
+    has_product_context = bool(re.search(r'\b(produto|product|externo|externa|origem)\b', key))
+    return bool(has_url_or_link and has_product_context)
 
 
 def _find_product_url_col(df: pd.DataFrame) -> str:
@@ -111,6 +116,10 @@ def _has_cadastro_payload_columns(df: pd.DataFrame) -> bool:
     return bool(useful_cols >= 2 and has_name and has_price_or_code)
 
 
+def _has_any_payload_columns(df: pd.DataFrame) -> bool:
+    return _has_stock_payload_columns(df) or _has_cadastro_payload_columns(df)
+
+
 def _is_universal_op(op: str) -> bool:
     return str(op or '').strip().lower() in UNIVERSAL_OPS
 
@@ -159,11 +168,11 @@ def filter_origin_rows_for_operation(df: pd.DataFrame, raw_urls: str, *, operati
     out = df.copy().fillna('')
     product_url_col = _find_product_url_col(out)
     legacy_url_col = _find_col(out, URL_COLUMNS)
-    ignored_image_url_col = legacy_url_col if legacy_url_col and not product_url_col and _is_image_url_column(legacy_url_col) else ''
+    ignored_bad_url_col = legacy_url_col if legacy_url_col and not product_url_col and (_is_image_url_column(legacy_url_col) or _is_dimension_column(legacy_url_col)) else ''
     op = str(operation or '').strip().lower()
 
     if not product_url_col:
-        suffix = f' Coluna ignorada como URL de imagem: {ignored_image_url_col}.' if ignored_image_url_col else ''
+        suffix = f' Coluna ignorada como falsa URL de produto: {ignored_bad_url_col}.' if ignored_bad_url_col else ''
         kept = _keep_api_rows_without_url(out, op=op, reason_suffix=suffix)
         if kept is not None:
             return kept
@@ -189,24 +198,40 @@ def filter_origin_rows_for_operation(df: pd.DataFrame, raw_urls: str, *, operati
             details={
                 'rows_before': len(out),
                 'operation': op,
-                'ignored_image_url_column': ignored_image_url_col,
-                'reason': 'Não há URL de produto confiável; URL de imagem/CDN não pode ser usada para filtrar domínio.',
+                'ignored_bad_url_column': ignored_bad_url_col,
+                'reason': 'Não há URL de produto confiável; URL de imagem/dimensão/CDN não pode ser usada para filtrar domínio.',
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
         return out.iloc[0:0].copy()
 
     before = len(out)
-    out = out[out[product_url_col].map(lambda value: _same_public_domain(clean_cell(value), allowed_domains))].copy()
-    removed = before - len(out)
+    filtered = out[out[product_url_col].map(lambda value: _same_public_domain(clean_cell(value), allowed_domains))].copy()
+    removed = before - len(filtered)
     if removed:
         add_audit_event(
             'site_pipeline_live_origin_rows_removed',
             area='SITE',
             status='AVISO',
-            details={'rows_before': before, 'rows_after': len(out), 'removed': removed, 'url_column': product_url_col, 'responsible_file': RESPONSIBLE_FILE},
+            details={'rows_before': before, 'rows_after': len(filtered), 'removed': removed, 'url_column': product_url_col, 'responsible_file': RESPONSIBLE_FILE},
         )
-    return out.fillna('')
+
+    if filtered.empty and _is_universal_op(op) and _has_any_payload_columns(out):
+        add_audit_event(
+            'site_pipeline_live_origin_domain_filter_empty_preserved_for_universal',
+            area='SITE',
+            status='CORRIGIDO',
+            details={
+                'rows_before': before,
+                'url_column': product_url_col,
+                'operation': op or 'universal',
+                'reason': 'Filtro de domínio removeria todas as linhas, mas a origem universal possui payload válido. Mantendo linhas para revisão/mapeamento.',
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+        return out.fillna('')
+
+    return filtered.fillna('')
 
 
 __all__ = ['filter_origin_rows_for_operation']
