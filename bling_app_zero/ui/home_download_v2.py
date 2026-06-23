@@ -8,6 +8,7 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_api_send_guard import validate_before_bling_send
+from bling_app_zero.core.bling_oauth import connection_status
 from bling_app_zero.core.exporter import enforce_export_contract, filename_for_operation, to_bling_csv_bytes
 from bling_app_zero.core.files import read_uploaded_file
 from bling_app_zero.core.final_output_rule_engine import FinalOutputRuleReport, apply_final_output_rules
@@ -127,11 +128,6 @@ def _operation_contract_mismatch_error(raw_df: pd.DataFrame, download_df: pd.Dat
     download_columns = list(map(str, download_df.columns)) if isinstance(download_df, pd.DataFrame) else []
 
     if _is_api_context() and op in {OP_ESTOQUE, OP_ATUALIZACAO_PRECO}:
-        # No fluxo API, a planilha final pode vir como base completa do site
-        # (nome, preço, imagem, categoria etc.) e ainda assim a operação real é
-        # estoque/preço. O seletor específico adiciona "Bling depósito id" ou
-        # destino de preço antes do envio, e o send_validation_v2 valida isso.
-        # Bloquear aqui fazia o estoque nunca chegar ao painel de depósitos.
         add_audit_event(
             'final_download_contract_mismatch_guard_skipped_for_api_target',
             area='DOWNLOAD',
@@ -179,7 +175,7 @@ def after_final_download(operation: str, signature: str, rules_sig: str) -> None
     st.session_state['final_download_cache_cleaned'] = False
     st.session_state['final_download_done'] = True
     st.session_state[FINAL_DOWNLOAD_OPERATION_KEY] = normalize_operation(operation)
-    add_audit_event('final_model_download_completed_navigation_preserved', area='DOWNLOAD', details={'operation': operation, 'signature': signature, 'rules_signature': rules_sig, 'download_state_preserved': True, 'home_entry_context': _entry_context(), 'flow_spine': output_diagnostics()})
+    add_audit_event('final_model_download_completed_navigation_preserved', area='DOWNLOAD', details={'operation': operation, 'signature': signature, 'rules_signature': rules_sig, 'download_state_preserved': True, 'home_entry_context': _entry_context(), 'flow_spine': output_diagnostics(), 'responsible_file': RESPONSIBLE_FILE})
 
 
 def get_template_upload() -> tuple[str, bytes] | None:
@@ -266,6 +262,30 @@ def _apply_required_api_target(download_df: pd.DataFrame, operation: str) -> pd.
     return download_df
 
 
+def _api_connection_ready_before_final_send(operation: str) -> bool:
+    try:
+        status = connection_status()
+    except Exception as exc:
+        status = {'connected': False, 'error': str(exc)}
+    if bool(status.get('connected')):
+        return True
+    st.warning('Para enviar via API, conecte o Bling na Home antes de iniciar este fluxo.')
+    st.info('Sem conexão inicial, este final libera apenas o backup/download do modelo mapeado. O botão de envio por API só aparece quando a conexão do Bling já existe.')
+    add_audit_event(
+        'final_api_send_blocked_connection_required_from_home',
+        area='DOWNLOAD',
+        status='BLOQUEADO',
+        details={
+            'operation': normalize_operation(operation),
+            'connected': False,
+            'message': 'api_send_requires_home_connection_before_flow',
+            'flow_spine': output_diagnostics(),
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+    return False
+
+
 def _guard_before_api_send(download_df: pd.DataFrame, operation: str) -> bool:
     result = validate_before_bling_send(download_df, operation)
     st.session_state['final_bling_api_send_guard'] = result.to_dict()
@@ -282,6 +302,8 @@ def _render_direct_bling_send(download_df: pd.DataFrame, operation: str, key: st
     operation = _spine_operation_or(operation)
     if not _is_api_context():
         add_audit_event('final_api_send_skipped_by_flow_spine', area='DOWNLOAD', status='PULADO', details={'operation': operation, 'flow_spine': output_diagnostics(), 'responsible_file': RESPONSIBLE_FILE})
+        return
+    if not _api_connection_ready_before_final_send(operation):
         return
     targeted_df = _apply_required_api_target(download_df, operation)
     if not isinstance(targeted_df, pd.DataFrame) or targeted_df.empty:
