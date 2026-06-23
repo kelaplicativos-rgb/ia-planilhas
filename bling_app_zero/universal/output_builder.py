@@ -103,8 +103,6 @@ def _safe_series(df_source: pd.DataFrame, source_column: str, length: int) -> pd
 
 
 def _prepare_candidate_value(value: Any, target_column: str) -> str:
-    if _is_title_target(target_column):
-        return _title_from_text(value)
     return _clean_value(value)
 
 
