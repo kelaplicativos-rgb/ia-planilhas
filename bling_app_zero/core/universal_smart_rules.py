@@ -230,7 +230,32 @@ def normalize_smart_rules_config(config: Mapping[str, Any] | None, *, enabled: b
         base['gross_weight_value'] = DEFAULT_WEIGHT_VALUE
     if not _clean_text(base.get('net_weight_value')):
         base['net_weight_value'] = DEFAULT_WEIGHT_VALUE
+    base['overwrite_existing_fixed_values'] = False
     return base
+
+
+def _rule_kind_for_column(column: Any, rules: Mapping[str, Any]) -> str:
+    if not bool(rules.get('enabled')):
+        return ''
+    if bool(rules.get('apply_measure_unit_default')) and _clean_text(rules.get('measure_unit_value')) and _is_measure_unit_column(column):
+        return 'measure_unit'
+    if bool(rules.get('apply_unit_default')) and _clean_text(rules.get('unit_value')) and _is_unit_abbreviation_column(column):
+        return 'unit'
+    if bool(rules.get('apply_status_default')) and _clean_text(rules.get('status_value')) and _is_status_column(column):
+        return 'status'
+    if bool(rules.get('apply_condition_default')) and _clean_text(rules.get('condition_value')) and _is_condition_column(column):
+        return 'condition'
+    if bool(rules.get('apply_dimensions_default')) and _clean_text(rules.get('height_value')) and _is_height_column(column):
+        return 'height'
+    if bool(rules.get('apply_dimensions_default')) and _clean_text(rules.get('width_value')) and _is_width_column(column):
+        return 'width'
+    if bool(rules.get('apply_dimensions_default')) and _clean_text(rules.get('depth_value')) and _is_depth_column(column):
+        return 'depth'
+    if bool(rules.get('apply_weight_default')) and _clean_text(rules.get('gross_weight_value')) and _is_gross_weight_column(column):
+        return 'gross_weight'
+    if bool(rules.get('apply_weight_default')) and _clean_text(rules.get('net_weight_value')) and _is_net_weight_column(column):
+        return 'net_weight'
+    return ''
 
 
 def rule_managed_target_columns(columns: Iterable[Any], config: Mapping[str, Any] | None = None) -> list[str]:
@@ -240,40 +265,38 @@ def rule_managed_target_columns(columns: Iterable[Any], config: Mapping[str, Any
     final será aplicado pelo painel de regras no preview/download.
     """
     rules = normalize_smart_rules_config(config)
-    if not bool(rules.get('enabled')):
-        return []
+    return [str(column) for column in columns or [] if _rule_kind_for_column(column, rules)]
 
-    managed: list[str] = []
-    for column in columns or []:
-        name = str(column)
-        if bool(rules.get('apply_measure_unit_default')) and _clean_text(rules.get('measure_unit_value')) and _is_measure_unit_column(name):
-            managed.append(name)
+
+def rule_managed_source_mapping(source_columns: Iterable[Any], target_columns: Iterable[Any], config: Mapping[str, Any] | None = None) -> dict[str, str]:
+    """Liga campos de regra à origem equivalente sem expor ao usuário.
+
+    A regra continua sendo fallback por célula: valores que já vieram preenchidos
+    na origem são preservados; somente células vazias recebem o padrão definido.
+    """
+    rules = normalize_smart_rules_config(config)
+    if not bool(rules.get('enabled')):
+        return {}
+
+    source_names = [str(column) for column in source_columns or []]
+    source_by_exact_key: dict[str, str] = {}
+    source_by_rule_kind: dict[str, str] = {}
+    for source in source_names:
+        source_by_exact_key.setdefault(_column_key(source), source)
+        source_kind = _rule_kind_for_column(source, rules)
+        if source_kind:
+            source_by_rule_kind.setdefault(source_kind, source)
+
+    mapping: dict[str, str] = {}
+    for target in target_columns or []:
+        target_name = str(target)
+        target_kind = _rule_kind_for_column(target_name, rules)
+        if not target_kind:
             continue
-        if bool(rules.get('apply_unit_default')) and _clean_text(rules.get('unit_value')) and _is_unit_abbreviation_column(name):
-            managed.append(name)
-            continue
-        if bool(rules.get('apply_status_default')) and _clean_text(rules.get('status_value')) and _is_status_column(name):
-            managed.append(name)
-            continue
-        if bool(rules.get('apply_condition_default')) and _clean_text(rules.get('condition_value')) and _is_condition_column(name):
-            managed.append(name)
-            continue
-        if bool(rules.get('apply_dimensions_default')) and _clean_text(rules.get('height_value')) and _is_height_column(name):
-            managed.append(name)
-            continue
-        if bool(rules.get('apply_dimensions_default')) and _clean_text(rules.get('width_value')) and _is_width_column(name):
-            managed.append(name)
-            continue
-        if bool(rules.get('apply_dimensions_default')) and _clean_text(rules.get('depth_value')) and _is_depth_column(name):
-            managed.append(name)
-            continue
-        if bool(rules.get('apply_weight_default')) and _clean_text(rules.get('gross_weight_value')) and _is_gross_weight_column(name):
-            managed.append(name)
-            continue
-        if bool(rules.get('apply_weight_default')) and _clean_text(rules.get('net_weight_value')) and _is_net_weight_column(name):
-            managed.append(name)
-            continue
-    return managed
+        selected = source_by_exact_key.get(_column_key(target_name)) or source_by_rule_kind.get(target_kind, '')
+        if selected:
+            mapping[target_name] = selected
+    return mapping
 
 
 def apply_universal_smart_rules(df: pd.DataFrame, config: Mapping[str, Any] | None = None) -> tuple[pd.DataFrame, dict[str, Any]]:
@@ -342,5 +365,6 @@ __all__ = [
     'apply_universal_smart_rules',
     'default_smart_rules_config',
     'normalize_smart_rules_config',
+    'rule_managed_source_mapping',
     'rule_managed_target_columns',
 ]
