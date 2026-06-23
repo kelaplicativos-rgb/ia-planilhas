@@ -160,7 +160,7 @@ def _store_failed_retry_rows(identity: str, batch_start: int, batch_len: int, re
     local_indices.update(index for index in _line_indices_from_errors(list(getattr(result, 'errors', []) or [])) if 0 <= index < batch_len)
 
     failed_count = int(getattr(result, 'failed', 0) or 0) + int(getattr(result, 'skipped', 0) or 0)
-    sent_count = int(getattr(result, 'sent', 0) or 0)
+    sent_count = int(getattr(result, 'sent') or 0)
     attempted = int(getattr(result, 'attempted', 0) or 0)
     if failed_count > 0 and not local_indices and sent_count == 0:
         local_indices.update(range(min(batch_len, attempted or batch_len)))
@@ -301,6 +301,41 @@ def _apply_api_final_rules(download_df: pd.DataFrame, operation: str) -> pd.Data
         )
         return pd.DataFrame(columns=list(download_df.columns))
     return fixed_df.copy().fillna('')
+
+
+def _has_stock_deposit_id(download_df: pd.DataFrame) -> bool:
+    if not isinstance(download_df, pd.DataFrame) or download_df.empty or 'Bling depósito id' not in download_df.columns:
+        return False
+    return bool(download_df['Bling depósito id'].fillna('').astype(str).str.strip().ne('').any())
+
+
+def _apply_stock_deposit_target_if_needed(download_df: pd.DataFrame, operation: str) -> pd.DataFrame:
+    if normalize_operation(operation) != OP_ESTOQUE:
+        return download_df
+    if _has_stock_deposit_id(download_df):
+        return download_df
+    add_audit_event(
+        'bling_api_batch_stock_deposit_target_required',
+        area='BLING_ENVIO',
+        status='BLOQUEADO',
+        details={
+            'operation': normalize_operation(operation),
+            'rows': len(download_df) if isinstance(download_df, pd.DataFrame) else 0,
+            'reason': 'batch_estoque_sem_bling_deposito_id',
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+    try:
+        from bling_app_zero.ui.bling_stock_target_panel import render_stock_target_panel
+    except Exception as exc:
+        st.error('Envio de estoque bloqueado: painel de depósito indisponível.')
+        st.warning(str(exc))
+        return pd.DataFrame(columns=list(download_df.columns))
+    targeted_df = render_stock_target_panel(download_df)
+    if not isinstance(targeted_df, pd.DataFrame) or targeted_df.empty or not _has_stock_deposit_id(targeted_df):
+        st.info('Envio de estoque bloqueado até confirmar o depósito real do Bling.')
+        return pd.DataFrame(columns=list(download_df.columns))
+    return targeted_df.copy().fillna('')
 
 
 def _render_preflight(download_df: pd.DataFrame, operation: str, identity: str) -> dict[str, Any]:
@@ -488,7 +523,6 @@ def _render_background_job_launcher(send_df: pd.DataFrame, operation: str, ident
     if isinstance(created, dict) and created.get('identity') == identity:
         st.info(f'Tarefa criada: {created.get("job_id")}. Volte depois em “Minhas tarefas em segundo plano” para conferir.')
         return
-
     plan = _current_plan(operation, state)
     if st.button('Iniciar em segundo plano e poder fechar o navegador', use_container_width=True, key=f'background_job_create_{identity}'):
         try:
@@ -659,6 +693,9 @@ def render_bling_api_batch_panel(download_df: pd.DataFrame, operation: str, key:
         return
 
     download_df = _apply_api_final_rules(download_df, operation)
+    if not isinstance(download_df, pd.DataFrame) or download_df.empty:
+        return
+    download_df = _apply_stock_deposit_target_if_needed(download_df, operation)
     if not isinstance(download_df, pd.DataFrame) or download_df.empty:
         return
     signature = _df_signature(download_df)
