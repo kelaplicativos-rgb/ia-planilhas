@@ -15,6 +15,11 @@ from bling_app_zero.core.bling_send_state import (
 )
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_send_engine.py'
+NO_PROGRESS_GUARD_MESSAGE = (
+    'Envio pausado por segurança: o último lote não teve avanço '
+    '(0 enviados, 0 falhas e todas as linhas ignoradas). '
+    'Revise mapeamento/identificador/quantidade ou clique em Reiniciar envio.'
+)
 
 
 @dataclass(frozen=True)
@@ -63,11 +68,24 @@ def mark_manual_batch_mode(state: BlingSendState) -> BlingSendCommandResult:
     return BlingSendCommandResult(next_state, 'Envio de um lote preparado.', True)
 
 
+def _batch_has_no_progress(result: Any) -> bool:
+    attempted = int(getattr(result, 'attempted', 0) or 0)
+    sent = int(getattr(result, 'sent', 0) or 0)
+    failed = int(getattr(result, 'failed', 0) or 0)
+    skipped = int(getattr(result, 'skipped', 0) or 0)
+    return attempted > 0 and sent == 0 and failed == 0 and skipped >= attempted
+
+
 def append_batch_result(state: BlingSendState, result: Any, *, batch_start: int, batch_end: int) -> BlingSendCommandResult:
-    attempted = state.attempted + int(getattr(result, 'attempted', 0) or 0)
-    sent = state.sent + int(getattr(result, 'sent', 0) or 0)
-    failed = state.failed + int(getattr(result, 'failed', 0) or 0)
-    skipped = state.skipped + int(getattr(result, 'skipped', 0) or 0)
+    result_attempted = int(getattr(result, 'attempted', 0) or 0)
+    result_sent = int(getattr(result, 'sent', 0) or 0)
+    result_failed = int(getattr(result, 'failed', 0) or 0)
+    result_skipped = int(getattr(result, 'skipped', 0) or 0)
+
+    attempted = state.attempted + result_attempted
+    sent = state.sent + result_sent
+    failed = state.failed + result_failed
+    skipped = state.skipped + result_skipped
     errors = list(state.errors) + [str(item) for item in list(getattr(result, 'errors', ()) or ())]
     not_found = list(state.not_found_indices)
     for item in list(getattr(result, 'not_found_indices', ()) or ()):
@@ -75,6 +93,31 @@ def append_batch_result(state: BlingSendState, result: Any, *, batch_start: int,
             not_found.append(int(batch_start) + int(item))
         except Exception:
             pass
+
+    if _batch_has_no_progress(result):
+        guard_message = (
+            f'{NO_PROGRESS_GUARD_MESSAGE} '
+            f'Lote bloqueado: linhas {int(batch_start) + 1}-{int(batch_end)}.'
+        )
+        next_state = BlingSendState.from_mapping(
+            {
+                **state.to_dict(),
+                # Não avança offset: mantém o lote problemático visível para correção/reenvio.
+                'offset': int(batch_start),
+                'attempted': attempted,
+                'sent': sent,
+                'failed': failed,
+                'skipped': skipped,
+                'errors': (errors + [guard_message])[:80],
+                'not_found_indices': sorted(set(not_found)),
+                'done': False,
+                'auto_running': False,
+                'paused': True,
+                'status': STATUS_PAUSED,
+            }
+        )
+        return BlingSendCommandResult(next_state, guard_message, True)
+
     done = int(batch_end) >= int(state.request.total)
     status = STATUS_DONE if done else (STATUS_RUNNING if state.auto_running else STATUS_PAUSED)
     next_state = BlingSendState.from_mapping(
