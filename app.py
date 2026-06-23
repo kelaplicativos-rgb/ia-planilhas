@@ -27,6 +27,7 @@ from bling_app_zero.ui.alerts import enforce_attention_alert_policy
 from bling_app_zero.ui.bling_api_source_first_policy import install_bling_api_source_first_policy
 from bling_app_zero.ui.bling_connected_entry_runtime import install_bling_connected_entry_runtime
 from bling_app_zero.ui.blingfix_runtime_patches import install_blingfix_runtime_patches
+from bling_app_zero.ui.final_bling_operation_selector_runtime import install_final_bling_operation_selector_runtime
 from bling_app_zero.ui.home import render_home
 from bling_app_zero.ui.layout import inject_streamlit_toolbar_fix
 from bling_app_zero.ui.mapping_pagination_runtime import install_mapping_pagination_runtime
@@ -37,9 +38,9 @@ from bling_app_zero.ui.site_checkpoint_finalizer_runtime import install_site_che
 from bling_app_zero.ui.source_upload_recovery_runtime import install_source_upload_recovery_runtime
 from bling_app_zero.ui.startup_guard import ensure_app_ready
 
-RUNTIME_PATCH_KEYS_TO_REFRESH = ('blingfix_runtime_patches_installed_v7', 'blingfix_runtime_patches_installed_v8')
+RUNTIME_PATCH_KEYS_TO_REFRESH = ('blingfix_runtime_patches_installed_v7', 'blingfix_runtime_patches_installed_v8', 'final_bling_operation_selector_runtime_installed_v1')
 RUNTIME_PATCH_REFRESH_MARKER_KEY = 'blingfix_runtime_patch_refresh_marker_v1'
-RUNTIME_PATCH_REFRESH_POLICY_VERSION = f'{APP_VERSION}:runtime_v10_api_source_first'
+RUNTIME_PATCH_REFRESH_POLICY_VERSION = f'{APP_VERSION}:runtime_v11_final_bling_operation_selector'
 MOBILE_AUTO_ENTRY_KEY = 'mobile_connected_bling_auto_entry_done_v1'
 DEVICE_HINT_KEY = 'app_device_hint_v1'
 MOBILE_QUERY_VALUES = {'1', 'true', 'sim', 'yes', 'mobile', 'android', 'ios', 'phone', 'celular'}
@@ -62,7 +63,7 @@ def _refresh_blingfix_runtime_patch_session() -> None:
         details={
             'removed_keys': removed,
             'policy_version': RUNTIME_PATCH_REFRESH_POLICY_VERSION,
-            'reason': 'Atualizar runtime para fluxo API source-first sem reinstalar patches em todo rerun.',
+            'reason': 'Atualizar runtime para seletor de operação no envio final ao Bling.',
             'responsible_file': 'app.py',
         },
     )
@@ -140,6 +141,7 @@ def main() -> None:
     _install_bling_api_verified_media_checkpoint('before_runtime_patches')
     _refresh_blingfix_runtime_patch_session()
     install_blingfix_runtime_patches()
+    install_final_bling_operation_selector_runtime()
     install_site_checkpoint_finalizer_runtime()
     install_brand_runtime_patch()
     install_xml_nfe_runtime_patch()
