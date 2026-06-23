@@ -7,15 +7,20 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.core.bling_oauth import build_authorization_url, connection_status
 from bling_app_zero.core.final_csv_exporter import contract_columns_from_model
 from bling_app_zero.core.final_output_engine import apply_text_rules, build_final_dataframe, build_final_output, build_final_output_report
 from bling_app_zero.core.modelo_compactado_universal import resolver_modelo
+from bling_app_zero.core.oauth_return_snapshot import prepare_download_oauth_return
+from bling_app_zero.core.operation_contract import OP_ATUALIZACAO_PRECO, OP_CADASTRO, OP_ESTOQUE, OP_UNIVERSAL, operation_label
 from bling_app_zero.core.template_download_exporter import (
     build_template_download_bytes,
     can_export_from_template,
     mime_for_template_output,
     output_name_for_template,
 )
+from bling_app_zero.ui.bling_api_batch_panel import render_bling_api_batch_panel
+from bling_app_zero.ui.home_bling_api_flow import render_new_tab_connect_button
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/shared_final_csv.py'
 FINAL_OUTPUT_STATE_KEY = 'neutral_final_output_state_v1'
@@ -36,6 +41,7 @@ MODEL_TEMPLATE_BYTES_KEYS = (
 SUPPORTED_PRESERVE_SUFFIXES = {'.csv', '.xlsx', '.xlsm'}
 EXCEL_LIKE_SUFFIXES = {'.xlsx', '.xlsm', '.xls', '.xlsb'}
 DOWNLOAD_READY_KEY = 'mapeiaai_final_download_ready'
+FINAL_API_PANEL_KEY = 'mapeiaai_final_bling_api_panel_v1'
 
 
 def _render_smartcore_box(result) -> None:
@@ -146,6 +152,77 @@ def _render_no_safe_download(template_name: str, template_suffix: str, preserve_
     st.caption(f'Use XLSX, XLSM, CSV ou um arquivo compactado contendo uma planilha aceita. Status técnico: {preserve_status}.')
 
 
+def _norm_column(value: object) -> str:
+    text = str(value or '').strip().lower()
+    for old, new in {'ã': 'a', 'á': 'a', 'à': 'a', 'â': 'a', 'é': 'e', 'ê': 'e', 'í': 'i', 'ó': 'o', 'ô': 'o', 'õ': 'o', 'ú': 'u', 'ç': 'c'}.items():
+        text = text.replace(old, new)
+    return ' '.join(''.join(ch if ch.isalnum() else ' ' for ch in text).split())
+
+
+def _infer_bling_operation(output: pd.DataFrame) -> str:
+    columns = {_norm_column(column) for column in output.columns} if isinstance(output, pd.DataFrame) else set()
+    has_name = bool(columns & {'nome', 'produto', 'titulo', 'descricao', 'descricao produto', 'nome produto', 'nome do produto'})
+    has_price = any('preco' in column or 'valor' in column for column in columns)
+    has_qty = bool(columns & {'quantidade', 'qtd', 'qtde', 'saldo', 'estoque', 'balanco'})
+    has_deposit = any('deposito' in column for column in columns)
+    has_code = bool(columns & {'id', 'id produto', 'id bling', 'codigo', 'sku', 'referencia', 'gtin', 'ean'})
+    if has_name and has_price:
+        return OP_CADASTRO
+    if has_qty and (has_deposit or has_code):
+        return OP_ESTOQUE
+    if has_price and has_code:
+        return OP_ATUALIZACAO_PRECO
+    return OP_UNIVERSAL
+
+
+def _prepare_final_bling_snapshot(output: pd.DataFrame, operation: str, signature: str) -> pd.DataFrame:
+    clean = output.copy().fillna('')
+    st.session_state['final_download_df_snapshot'] = clean.copy()
+    st.session_state['final_download_operation'] = operation
+    st.session_state['df_final_download_operation'] = operation
+    st.session_state['flow_spine_sender_operation'] = operation
+    st.session_state['flow_spine_sender_destination'] = 'api_bling'
+    st.session_state['flow_spine_final_destination'] = 'api_bling'
+    st.session_state['home_bling_connected_same_flow_api_send'] = True
+    st.session_state[FINAL_API_PANEL_KEY] = {'operation': operation, 'rows': int(len(clean)), 'signature': signature}
+    return clean
+
+
+def _render_final_bling_api_panel(output: pd.DataFrame, *, key_prefix: str) -> None:
+    if not isinstance(output, pd.DataFrame) or output.empty:
+        return
+    operation = _infer_bling_operation(output)
+    signature = f'{len(output)}x{len(output.columns)}:{pd.util.hash_pandas_object(output.head(80).fillna("").astype(str), index=True).sum()}'
+    with st.container(border=True):
+        st.markdown('### Enviar esta planilha tratada ao Bling')
+        st.caption('Este botão usa exatamente a planilha final preenchida acima. Não precisa iniciar nova operação.')
+        cols = st.columns(3)
+        cols[0].metric('Linhas', int(len(output)))
+        cols[1].metric('Colunas', int(len(output.columns)))
+        cols[2].metric('Operação', operation_label(operation) if operation != OP_UNIVERSAL else 'A confirmar')
+
+        if operation == OP_UNIVERSAL:
+            st.warning('Envio bloqueado: não consegui identificar se a planilha é Cadastro, Estoque ou Atualização de preços.')
+            add_audit_event('shared_final_bling_api_operation_not_detected', area='BLING_API', status='BLOQUEADO', details={'rows': int(len(output)), 'columns': list(map(str, output.columns)), 'responsible_file': RESPONSIBLE_FILE})
+            return
+
+        clean = _prepare_final_bling_snapshot(output, operation, signature)
+        status = connection_status()
+        if not status.get('connected'):
+            st.warning('Bling ainda não conectado. Conecte para liberar o envio direto desta planilha final.')
+            context = prepare_download_oauth_return(clean, operation, signature=signature)
+            context.update({'return_to': 'download_panel', 'source_step': 'shared_final_csv', 'operation': operation, 'signature': signature})
+            st.session_state['bling_oauth_return_context'] = dict(context)
+            auth_url = build_authorization_url(context)
+            render_new_tab_connect_button(auth_url)
+            add_audit_event('shared_final_bling_api_waiting_connection', area='BLING_API', status='AGUARDANDO_CONEXAO', details={'operation': operation, 'rows': int(len(clean)), 'signature': signature, 'responsible_file': RESPONSIBLE_FILE})
+            return
+
+        st.success('Bling conectado. Envio direto liberado para esta planilha final tratada.')
+        render_bling_api_batch_panel(clean, operation, f'{key_prefix}_final_bling_api', signature, 'shared_final_csv')
+        add_audit_event('shared_final_bling_api_panel_rendered', area='BLING_API', status='OK', details={'operation': operation, 'rows': int(len(clean)), 'signature': signature, 'responsible_file': RESPONSIBLE_FILE})
+
+
 def apply_shared_text_rules(output: pd.DataFrame) -> pd.DataFrame:
     return apply_text_rules(output)
 
@@ -234,6 +311,7 @@ def render_shared_final_csv(
             key=f'{key_prefix}_download_template_preserved',
             help='Download gerado dentro do arquivo modelo original, preservando formato, abas e estrutura sempre que possível.',
         )
+        _render_final_bling_api_panel(output, key_prefix=key_prefix)
     else:
         _render_no_safe_download(template_name, template_suffix, preserve_status)
         output = None
