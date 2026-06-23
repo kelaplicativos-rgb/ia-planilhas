@@ -13,7 +13,6 @@ from bling_app_zero.core.files import read_uploaded_file
 from bling_app_zero.core.final_template_exporter import template_contract_columns
 from bling_app_zero.core.modelo_compactado_universal import resolver_modelo
 from bling_app_zero.features_runtime.router import active_contract
-from bling_app_zero.pipelines.site_pipeline import run_pipeline as run_site_pipeline
 from bling_app_zero.ui.flow_context import CONTEXT_UNIVERSAL, activate_csv_finish_mode, set_entry_context
 from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 from bling_app_zero.ui.mapping_auto_decision import render_mapping_auto_decision_toggle
@@ -185,14 +184,6 @@ def _reset_if_changed(model: pd.DataFrame, source: pd.DataFrame, ai_enabled: boo
     return signature
 
 
-def _progress_callback(progress_bar, status_box):
-    def _callback(info: dict) -> None:
-        progress = float(info.get('progress') or 0.0)
-        progress_bar.progress(max(0.0, min(1.0, progress)), text=str(info.get('stage') or 'Processando'))
-        status_box.caption(str(info.get('message') or ''))
-    return _callback
-
-
 def _render_model_step() -> pd.DataFrame | None:
     st.markdown('### 1. Anexar Modelo / Mapear')
     model = _current_df(UNIVERSAL_MODEL_KEY)
@@ -216,34 +207,76 @@ def _render_model_step() -> pd.DataFrame | None:
     return model
 
 
-def _render_source_site() -> pd.DataFrame | None:
-    st.caption('Cole links de produtos, categorias ou buscas. A captura por site preencherá o modelo anexado na primeira etapa.')
-    raw_urls = st.text_area('Links para buscar produtos por site', height=130, key='mapeiaai_universal_site_urls')
-    all_products = st.checkbox('Buscar todos os produtos encontrados', value=True, key='mapeiaai_universal_site_all_products')
-    if st.button('Buscar produtos por site', use_container_width=True, key='mapeiaai_universal_run_site'):
-        if not str(raw_urls or '').strip():
-            st.warning('Informe pelo menos um link para buscar por site.')
-        else:
-            progress_bar = st.progress(0, text='Preparando busca por site...')
-            status_box = st.empty()
-            try:
-                df_site = run_site_pipeline(str(raw_urls), requested_columns=None, all_products=bool(all_products), operation='universal', progress_callback=_progress_callback(progress_bar, status_box))
-                _store_df(UNIVERSAL_SOURCE_KEY, df_site)
-                st.session_state['df_origem_unificada'] = df_site.copy().fillna('')
-                st.session_state['df_origem_site'] = df_site.copy().fillna('')
-                _audit('mapear_planilha_fonte_site_carregada', rows=int(len(df_site)), columns=int(len(df_site.columns)), source_mode='site')
-                st.success(f'Busca por site concluída: {len(df_site)} linha(s).')
-            except Exception as exc:
-                st.error(f'Não consegui buscar produtos por site: {exc}')
+def _sync_universal_model_for_site_engine(model: pd.DataFrame | None) -> None:
+    if isinstance(model, pd.DataFrame) and len(model.columns):
+        clean = model.copy().fillna('')
+        st.session_state['home_modelo_universal_df'] = clean
+        st.session_state['df_modelo_universal'] = clean
+        st.session_state['modelo_universal_df'] = clean
+    st.session_state['operation_site'] = 'universal'
+    st.session_state['tipo_operacao_site'] = 'universal'
+    st.session_state['site_capture_operation'] = 'universal'
+    st.session_state['home_slim_flow_operation'] = 'universal'
+    st.session_state['operacao_final'] = 'universal'
+    st.session_state['tipo_operacao_final'] = 'universal'
+    st.session_state['origem_final'] = 'site'
+
+
+def _first_site_df_for_universal() -> pd.DataFrame | None:
+    try:
+        from bling_app_zero.ui.site_panel_state import get_site_df
+        df = get_site_df('universal')
+        if isinstance(df, pd.DataFrame) and not df.empty:
+            return df.copy().fillna('')
+    except Exception:
+        pass
+    for key in (
+        'df_origem_site_como_planilha_universal',
+        'df_origem_site_como_planilha',
+        'df_site_bruto_universal',
+        'df_site_bruto',
+        'df_origem_site',
+    ):
+        value = st.session_state.get(key)
+        if isinstance(value, pd.DataFrame) and not value.empty:
+            return value.copy().fillna('')
+    return None
+
+
+def _store_universal_site_source(df_site: pd.DataFrame) -> pd.DataFrame:
+    clean = df_site.copy().fillna('')
+    _store_df(UNIVERSAL_SOURCE_KEY, clean)
+    st.session_state['df_origem_unificada'] = clean.copy().fillna('')
+    st.session_state['df_origem_site'] = clean.copy().fillna('')
+    st.session_state['df_origem_site_como_planilha'] = clean.copy().fillna('')
+    st.session_state['df_origem_site_como_planilha_universal'] = clean.copy().fillna('')
+    st.session_state['mapeiaai_universal_source_kind'] = 'site'
+    _audit('mapear_planilha_fonte_site_carregada_motor_unico', rows=int(len(clean)), columns=int(len(clean.columns)), source_mode='site', unified_site_engine=True)
+    return clean
+
+
+def _render_source_site(model: pd.DataFrame | None = None) -> pd.DataFrame | None:
+    st.caption('A busca por site usa a mesma origem nova do Bling conectado. O que muda é só o destino final: download ou envio ao Bling.')
+    _sync_universal_model_for_site_engine(model)
+    try:
+        from bling_app_zero.ui.site_panel import render_site_panel
+        render_site_panel()
+    except Exception as exc:
+        st.error(f'Não consegui abrir a origem nova por site: {exc}')
+        return _current_df(UNIVERSAL_SOURCE_KEY)
+
+    df_site = _first_site_df_for_universal()
+    if isinstance(df_site, pd.DataFrame) and not df_site.empty:
+        return _store_universal_site_source(df_site)
     return _current_df(UNIVERSAL_SOURCE_KEY)
 
 
-def _render_source_step() -> pd.DataFrame | None:
+def _render_source_step(model: pd.DataFrame | None = None) -> pd.DataFrame | None:
     st.markdown('### 2. Origem de dados')
     st.caption('Agora escolha de onde virão os dados que serão inseridos no modelo anexado.')
     source_mode = st.radio('Como quer trazer os dados da origem?', [SOURCE_MODE_UPLOAD, SOURCE_MODE_SITE], key='mapeiaai_universal_source_mode')
     if source_mode == SOURCE_MODE_SITE:
-        source = _render_source_site()
+        source = _render_source_site(model)
     else:
         uploaded = st.file_uploader('Arquivo de origem dos dados', type=None, key='mapeiaai_universal_source_upload')
         source = _read_source_upload(uploaded)
@@ -251,6 +284,7 @@ def _render_source_step() -> pd.DataFrame | None:
             _store_df(UNIVERSAL_SOURCE_KEY, source)
             st.session_state['df_origem_unificada'] = source.copy().fillna('')
             st.session_state['df_origem_arquivo'] = source.copy().fillna('')
+            st.session_state['mapeiaai_universal_source_kind'] = 'arquivo'
             _audit('mapear_planilha_fonte_anexada', rows=int(len(source)), columns=int(len(source.columns)), source_mode='upload')
         source = _current_df(UNIVERSAL_SOURCE_KEY)
     if not isinstance(source, pd.DataFrame):
@@ -315,6 +349,13 @@ def _render_mapping_ai_toggle() -> bool:
     return bool(mapping_ai)
 
 
+def _render_bling_destination_notice() -> None:
+    st.markdown('### Destino final')
+    st.info('Este caminho finaliza em download. Para enviar ao Bling, inicie uma nova operação pelo botão “Bling conectado” e use a mesma Origem dos dados nova.')
+    st.warning('Se não houver conexão com o Bling, será necessário voltar ao início, conectar ao Bling e refazer/retomar a operação em modo API para liberar o envio final.')
+    _audit('mapear_planilha_bling_destination_notice_rendered', requires_restart_for_api=True, final_destination='download')
+
+
 def render_universal_flow() -> None:
     _force_plain_context()
     if not _contract_ok():
@@ -325,7 +366,7 @@ def render_universal_flow() -> None:
     model = _render_model_step()
     if not isinstance(model, pd.DataFrame):
         return
-    source = _render_source_step()
+    source = _render_source_step(model)
     if not isinstance(source, pd.DataFrame):
         return
     toggles = _render_toggles()
@@ -347,7 +388,8 @@ def render_universal_flow() -> None:
     if isinstance(output, pd.DataFrame):
         st.session_state[UNIVERSAL_OUTPUT_KEY] = output
         render_congratulations_success(area='UNIVERSAL', context='download_final_planilha_mapeada')
-        _audit('mapear_planilha_preview_download_pronto', rows=int(len(output)), columns=int(len(output.columns)), csv=True)
+        _render_bling_destination_notice()
+        _audit('mapear_planilha_preview_download_pronto', rows=int(len(output)), columns=int(len(output.columns)), csv=True, unified_origin=True)
 
 
 __all__ = ['render_universal_flow']
