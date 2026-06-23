@@ -6,17 +6,25 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from bling_app_zero.ui.home_models import get_home_cadastro_model, get_home_estoque_model
+from bling_app_zero.ui.home_models import (
+    get_home_cadastro_model,
+    get_home_estoque_model,
+    get_home_preco_model,
+    get_home_universal_model,
+)
 
 
 @dataclass
 class EmptyModelUpload:
     cadastro_model_df: pd.DataFrame | None = None
     estoque_model_df: pd.DataFrame | None = None
+    preco_model_df: pd.DataFrame | None = None
+    universal_model_df: pd.DataFrame | None = None
     model_df: pd.DataFrame | None = None
 
 
 UNIVERSAL_ALIASES = {'universal', 'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}
+PRICE_ALIASES = {'atualizacao_preco', 'preco', 'price', 'prices', 'atualizar_preco', 'atualizar_precos'}
 NEUTRAL_SITE_COLUMNS = ['Codigo', 'SKU', 'GTIN', 'Nome', 'Descricao', 'Preco', 'Estoque', 'Quantidade', 'Categoria', 'Marca', 'URL', 'Imagem']
 NEUTRAL_STOCK_COLUMNS = ['Codigo', 'SKU', 'GTIN', 'Nome', 'Estoque', 'Quantidade', 'Deposito', 'URL']
 NEUTRAL_PRICE_COLUMNS = ['Codigo', 'SKU', 'GTIN', 'Nome', 'Preco', 'URL']
@@ -64,6 +72,18 @@ def _uploaded_estoque_model(upload: Any) -> pd.DataFrame | None:
     return _upload_attr(upload, 'estoque_model_df')
 
 
+def _uploaded_preco_model(upload: Any) -> pd.DataFrame | None:
+    return _upload_attr(upload, 'preco_model_df')
+
+
+def _uploaded_universal_model(upload: Any) -> pd.DataFrame | None:
+    universal = _upload_attr(upload, 'universal_model_df')
+    if isinstance(universal, pd.DataFrame):
+        return universal
+    generic = _upload_attr(upload, 'model_df')
+    return generic if isinstance(generic, pd.DataFrame) else None
+
+
 def _combine_model_columns(*models: pd.DataFrame | None) -> pd.DataFrame | None:
     columns: list[str] = []
     for model in models:
@@ -74,6 +94,10 @@ def _combine_model_columns(*models: pd.DataFrame | None) -> pd.DataFrame | None:
 
 def _is_universal(operation: str | None) -> bool:
     return str(operation or '').strip().lower() in UNIVERSAL_ALIASES
+
+
+def _is_price(operation: str | None) -> bool:
+    return str(operation or '').strip().lower() in PRICE_ALIASES
 
 
 def choose_site_cadastro_model_df(upload) -> pd.DataFrame | None:
@@ -92,14 +116,36 @@ def choose_site_estoque_model_df(upload) -> pd.DataFrame | None:
     return home_model if isinstance(home_model, pd.DataFrame) else None
 
 
+def choose_site_preco_model_df(upload) -> pd.DataFrame | None:
+    uploaded = _uploaded_preco_model(upload)
+    if isinstance(uploaded, pd.DataFrame):
+        return uploaded
+    home_model = get_home_preco_model()
+    return home_model if isinstance(home_model, pd.DataFrame) else None
+
+
+def choose_site_universal_model_df(upload) -> pd.DataFrame | None:
+    uploaded = _uploaded_universal_model(upload)
+    if isinstance(uploaded, pd.DataFrame):
+        return uploaded
+    home_model = get_home_universal_model()
+    return home_model if isinstance(home_model, pd.DataFrame) else None
+
+
 def choose_site_model_df(upload, operation: str = 'cadastro') -> pd.DataFrame | None:
     if _is_universal(operation):
+        universal = choose_site_universal_model_df(upload)
+        if isinstance(universal, pd.DataFrame):
+            return universal
         return _combine_model_columns(
             choose_site_cadastro_model_df(upload),
             choose_site_estoque_model_df(upload),
+            choose_site_preco_model_df(upload),
         )
     if str(operation or '').strip().lower() == 'estoque':
         return choose_site_estoque_model_df(upload)
+    if _is_price(operation):
+        return choose_site_preco_model_df(upload)
     return choose_site_cadastro_model_df(upload)
 
 
@@ -107,7 +153,7 @@ def neutral_columns_for_site_capture(operation: str) -> list[str]:
     normalized = str(operation or '').strip().lower()
     if normalized == 'estoque':
         return list(NEUTRAL_STOCK_COLUMNS)
-    if normalized in {'atualizacao_preco', 'preco', 'price'}:
+    if _is_price(normalized):
         return list(NEUTRAL_PRICE_COLUMNS)
     return list(NEUTRAL_SITE_COLUMNS)
 
@@ -116,12 +162,20 @@ def requested_columns_for_site_capture(
     operation: str,
     df_modelo_cadastro: pd.DataFrame | None,
     df_modelo_estoque: pd.DataFrame | None,
+    df_modelo_preco: pd.DataFrame | None = None,
+    df_modelo_universal: pd.DataFrame | None = None,
 ) -> list[str] | None:
     normalized = str(operation or '').strip().lower()
     if normalized == 'estoque':
         columns = unique_columns(columns_from_df(df_modelo_estoque))
+    elif _is_price(normalized):
+        columns = unique_columns(columns_from_df(df_modelo_preco) or columns_from_df(get_home_preco_model()))
     elif normalized in UNIVERSAL_ALIASES:
-        columns = unique_columns(columns_from_df(df_modelo_cadastro) + columns_from_df(df_modelo_estoque))
+        columns = unique_columns(
+            columns_from_df(df_modelo_universal)
+            or columns_from_df(get_home_universal_model())
+            or (columns_from_df(df_modelo_cadastro) + columns_from_df(df_modelo_estoque) + columns_from_df(df_modelo_preco))
+        )
     else:
         columns = unique_columns(columns_from_df(df_modelo_cadastro))
     return columns or neutral_columns_for_site_capture(operation)
@@ -131,16 +185,26 @@ def has_home_site_model_for_operation(operation: str) -> bool:
     normalized = str(operation or '').strip().lower()
     if normalized == 'estoque':
         return isinstance(get_home_estoque_model(), pd.DataFrame)
+    if _is_price(normalized):
+        return isinstance(get_home_preco_model(), pd.DataFrame)
     if normalized in UNIVERSAL_ALIASES:
-        return isinstance(get_home_cadastro_model(), pd.DataFrame) or isinstance(get_home_estoque_model(), pd.DataFrame)
+        return any(isinstance(df, pd.DataFrame) for df in (get_home_universal_model(), get_home_cadastro_model(), get_home_estoque_model(), get_home_preco_model()))
     return isinstance(get_home_cadastro_model(), pd.DataFrame)
 
 
 def _home_model_summary(operation_key: str) -> str:
     if operation_key in UNIVERSAL_ALIASES:
-        total = len(unique_columns(columns_from_df(get_home_cadastro_model()) + columns_from_df(get_home_estoque_model())))
+        universal = get_home_universal_model()
+        if isinstance(universal, pd.DataFrame):
+            return f'Modelo universal ja definido: {len(universal.columns)} coluna(s).'
+        total = len(unique_columns(columns_from_df(get_home_cadastro_model()) + columns_from_df(get_home_estoque_model()) + columns_from_df(get_home_preco_model())))
         return f'Modelo de destino ja definido: {total} coluna(s) na origem unica.' if total else 'Nenhum modelo foi encontrado ainda.'
-    df = get_home_estoque_model() if operation_key == 'estoque' else get_home_cadastro_model()
+    if operation_key == 'estoque':
+        df = get_home_estoque_model()
+    elif operation_key in PRICE_ALIASES:
+        df = get_home_preco_model()
+    else:
+        df = get_home_cadastro_model()
     if isinstance(df, pd.DataFrame):
         return f'Modelo ja definido: {len(df.columns)} coluna(s).'
     return 'Nenhum modelo desta operacao foi encontrado ainda.'
@@ -148,7 +212,14 @@ def _home_model_summary(operation_key: str) -> str:
 
 def render_optional_site_model_upload(operation: str = 'cadastro') -> object:
     normalized = str(operation or '').strip().lower()
-    operation_key = 'estoque' if normalized == 'estoque' else 'universal' if normalized in UNIVERSAL_ALIASES else 'cadastro'
+    if normalized == 'estoque':
+        operation_key = 'estoque'
+    elif normalized in PRICE_ALIASES:
+        operation_key = 'atualizacao_preco'
+    elif normalized in UNIVERSAL_ALIASES:
+        operation_key = 'universal'
+    else:
+        operation_key = 'cadastro'
 
     if has_home_site_model_for_operation(operation_key):
         st.success(_home_model_summary(operation_key))
@@ -163,6 +234,8 @@ __all__ = [
     'EmptyModelUpload',
     'choose_site_cadastro_model_df',
     'choose_site_estoque_model_df',
+    'choose_site_preco_model_df',
+    'choose_site_universal_model_df',
     'choose_site_model_df',
     'columns_from_df',
     'has_home_site_model_for_operation',
