@@ -2,6 +2,16 @@ from __future__ import annotations
 
 import streamlit as st
 
+from bling_app_zero.core.diagnostico_boot import boot_event, install_streamlit_boot_diagnostics
+
+install_streamlit_boot_diagnostics(st)
+boot_event(
+    'app_boot_diagnostic_initialized_before_runtime_imports',
+    area='BOOT',
+    status='OK',
+    details={'responsible_file': 'app.py', 'purpose': 'diagnostico nasce antes da Home, sidebar, wizard e fluxo Bling'},
+)
+
 from bling_app_zero.core import APP_VERSION, PAGE_CONFIG, register_critical_error
 from bling_app_zero.core import bling_oauth
 from bling_app_zero.core.audit import add_audit_event
