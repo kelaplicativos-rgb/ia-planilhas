@@ -103,6 +103,11 @@ def _patch_compact_connected_banner() -> None:
 
     api_flow._bling_connected_compact_banner_original = original
     api_flow.render_bling_connection_step = wrapped_render_bling_connection_step
+    try:
+        import bling_app_zero.ui.home_wizard as wizard
+        wizard.render_bling_connection_step = wrapped_render_bling_connection_step
+    except Exception:
+        pass
     api_flow._bling_connected_compact_banner_patch_installed = True
 
 
