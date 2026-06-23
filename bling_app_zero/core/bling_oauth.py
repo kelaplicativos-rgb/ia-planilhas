@@ -29,6 +29,8 @@ EXPECTED_STATE_KEY = 'bling_oauth_expected_state'
 CALLBACK_DONE_KEY = 'bling_oauth_callback_done_for_code'
 RETURN_CONTEXT_KEY = 'bling_oauth_return_context'
 RESTORED_AFTER_CALLBACK_KEY = 'bling_oauth_restored_after_callback'
+AUTHORIZE_FALLBACK_LOGGED_KEY = 'bling_oauth_authorize_fallback_logged_v1'
+BACKEND_AUTH_IGNORED_LOGGED_KEY = 'bling_oauth_backend_auth_ignored_logged_v1'
 STATE_SOURCE = 'ia_planilhas_bling'
 CONTEXT_BLING_API = 'bling_api'
 CONTEXT_UNIVERSAL = 'universal'
@@ -143,6 +145,14 @@ def _mask(value: str) -> str:
     return text[:4] + '***' + text[-4:]
 
 
+def _add_oauth_diagnostic_once(key: str, action: str, details: dict[str, Any]) -> None:
+    store = _state_store()
+    if store.get(key):
+        return
+    store[key] = True
+    add_audit_event(action, area='BLING_OAUTH', status='INFO', details=details)
+
+
 def _normalize_redirect_uri(value: str) -> str:
     configured = str(value or '').strip()
     if not configured:
@@ -181,13 +191,13 @@ def _looks_like_authorize_endpoint(url: str) -> bool:
 def _safe_backend_auth_url(*, log_invalid: bool = False) -> str:
     raw = backend_auth_url()
     if raw and log_invalid:
-        add_audit_event(
+        _add_oauth_diagnostic_once(
+            BACKEND_AUTH_IGNORED_LOGGED_KEY,
             'bling_oauth_backend_auth_url_ignored',
-            area='BLING_OAUTH',
-            status='AVISO',
-            details={
+            {
                 'reason': 'backend OAuth Render desativado: ele redirecionava para api.bling.com.br/OAuth2/views/login.php e gerava Token de autenticação ausente',
                 'backend_auth_url_preview': raw[:140],
+                'popup_policy': 'diagnostico_silencioso_uma_vez_por_sessao',
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
@@ -199,13 +209,14 @@ def _safe_authorize_url() -> str:
     if not raw:
         return AUTH_URL_DEFAULT
     if _looks_like_bling_api_endpoint(raw) or _looks_like_token_endpoint(raw) or not _looks_like_authorize_endpoint(raw):
-        add_audit_event(
+        _add_oauth_diagnostic_once(
+            AUTHORIZE_FALLBACK_LOGGED_KEY,
             'bling_oauth_authorize_url_fallback_used',
-            area='BLING_OAUTH',
-            status='AVISO',
-            details={
+            {
                 'reason': 'authorize_url configurado não parece endpoint oficial de autorização OAuth; usando AUTH_URL_DEFAULT',
                 'authorize_url_preview': str(raw)[:140],
+                'fallback_url': AUTH_URL_DEFAULT,
+                'popup_policy': 'diagnostico_silencioso_uma_vez_por_sessao',
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
@@ -560,7 +571,15 @@ def process_oauth_callback() -> None:
 def disconnect() -> None:
     clear_token()
     store = _state_store()
-    for key in (LAST_ERROR_KEY, EXPECTED_STATE_KEY, CALLBACK_DONE_KEY, RETURN_CONTEXT_KEY, RESTORED_AFTER_CALLBACK_KEY):
+    for key in (
+        LAST_ERROR_KEY,
+        EXPECTED_STATE_KEY,
+        CALLBACK_DONE_KEY,
+        RETURN_CONTEXT_KEY,
+        RESTORED_AFTER_CALLBACK_KEY,
+        AUTHORIZE_FALLBACK_LOGGED_KEY,
+        BACKEND_AUTH_IGNORED_LOGGED_KEY,
+    ):
         store.pop(key, None)
     add_audit_event('bling_oauth_disconnected', area='BLING_OAUTH', status='OK', details={'responsible_file': RESPONSIBLE_FILE})
 
@@ -573,7 +592,7 @@ def render_connection_status_card() -> None:
     if status.get('connected'):
         st.success('Bling conectado.')
     else:
-        st.warning('Bling não conectado.')
+        st.info('Conecte o Bling para continuar.')
     config = status.get('oauth_config') if isinstance(status.get('oauth_config'), dict) else {}
     with st.expander('Detalhes técnicos da conexão Bling', expanded=False):
         st.write({
