@@ -17,6 +17,7 @@ DecisionAction = Literal[
 STATUS_OK = 'OK'
 STATUS_ATTENTION = 'ATENCAO'
 STATUS_BLOCKED = 'BLOQUEADO'
+UNIVERSAL_OPERATIONS = {'universal', 'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}
 
 
 @dataclass(frozen=True)
@@ -66,9 +67,17 @@ def _quality_warnings(quality: object) -> tuple[str, ...]:
     return tuple(str(item) for item in list(raw) if str(item).strip())
 
 
+def _normalize_operation(operation: object) -> str:
+    return str(operation or '').strip().lower()
+
+
 def _is_stock_operation(operation: object) -> bool:
-    text = str(operation or '').strip().lower()
+    text = _normalize_operation(operation)
     return text in {'estoque', 'stock', 'atualizacao_estoque', 'atualização de estoque', 'atualização_estoque'}
+
+
+def _is_universal_operation(operation: object) -> bool:
+    return _normalize_operation(operation) in UNIVERSAL_OPERATIONS
 
 
 def _decision(
@@ -111,6 +120,7 @@ def decide_after_site_capture(
 ) -> IntelligentFlowDecision:
     """Decide automaticamente o próximo passo após captura e validação do site."""
     is_stock = _is_stock_operation(operation)
+    is_universal = _is_universal_operation(operation)
     score = _quality_value(quality, 'score')
     rows = _quality_value(quality, 'rows')
     good_rows = _quality_value(quality, 'good_rows')
@@ -133,6 +143,19 @@ def decide_after_site_capture(
             message='Não encontrei produtos suficientes para continuar. Faça nova captura com links mais específicos.',
             reasons=[*reasons, *warnings],
             next_step='origem_site',
+        )
+
+    # Fluxo universal usa o modelo anexado pelo usuário. Em modelos de estoque/saldo,
+    # a qualidade pode vir com good_rows=0 só porque não existe preço de venda. Isso
+    # não pode bloquear a origem: ela precisa seguir para revisão/mapeamento/download.
+    if is_universal and good_rows <= 0 and (missing_stock < rows or missing_description < rows):
+        return _decision(
+            action='REVISAR',
+            status=STATUS_ATTENTION,
+            title='Origem capturada para revisão',
+            message='A captura trouxe linhas aproveitáveis para o modelo anexado. Revise o mapeamento e os campos antes do download ou envio pelo fluxo Bling conectado.',
+            reasons=[*reasons, *warnings],
+            next_step='revisao_origem',
         )
 
     if good_rows <= 0:
