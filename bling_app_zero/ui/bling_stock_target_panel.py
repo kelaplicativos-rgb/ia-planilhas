@@ -42,6 +42,7 @@ def _clear_deposit_cache() -> None:
 def _render_retry_button(button_key: str) -> None:
     if st.button('Buscar depósitos novamente', use_container_width=True, key=button_key):
         _clear_deposit_cache()
+        st.session_state.pop('api_stock_deposit_select', None)
         add_audit_event(
             'stock_target_retry_load_deposits_clicked',
             area='BLING_ENVIO',
@@ -150,16 +151,15 @@ def _select_detected_deposit(deposits: list[dict[str, str]]) -> bool:
         return True
 
     labels = [_option_label(item) for item in deposits]
-    current_id = str(st.session_state.get(API_STOCK_DEPOSIT_ID_KEY) or '').strip()
     options = [PLACEHOLDER_SELECT_DEPOSIT] + labels
-    index = 0
-    for pos, item in enumerate(deposits, start=1):
-        if current_id and str(item.get('id') or '').strip() == current_id:
-            index = pos
-            break
 
-    selected_label = st.selectbox('Depósito que receberá o estoque', options, index=index, key='api_stock_deposit_select')
+    # BLINGFIX: quando existem múltiplos depósitos, não reutilizar seleção gravada
+    # por telas antigas com index=0. O widget final tem chave própria e exige uma
+    # escolha explícita do usuário antes de salvar `Bling depósito id`.
+    selected_label = st.selectbox('Depósito que receberá o estoque', options, index=0, key='api_stock_deposit_select')
     if selected_label == PLACEHOLDER_SELECT_DEPOSIT:
+        st.session_state.pop(API_STOCK_DEPOSIT_ID_KEY, None)
+        st.session_state.pop(API_STOCK_DEPOSIT_KEY, None)
         st.warning('Mais de um depósito foi encontrado. Escolha explicitamente qual depósito receberá a atualização de estoque.')
         _render_retry_button('api_stock_retry_load_deposits_multiple')
         return False
