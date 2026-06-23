@@ -14,7 +14,7 @@ from bling_app_zero.core.interaction_guard import (
 )
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/blingfix_runtime_patches.py'
-_PATCH_INSTALLED_KEY = 'blingfix_runtime_patches_installed_v8'
+_PATCH_INSTALLED_KEY = 'blingfix_runtime_patches_installed_v9'
 MAX_BLING_IMAGES_PER_PRODUCT = 6
 _IMAGE_LIST_KEYS = {'imagens', 'images', 'imagensurl', 'externas', 'externos', 'fotos'}
 
@@ -110,7 +110,7 @@ def _patch_stock_site_origin_filter() -> None:
             'stock_api_origin_url_filter_runtime_patch_installed',
             area='SITE',
             status='OK',
-            details={'target': 'site_pipeline_blingfix._filter_live_origin_rows', 'reason': 'Estoque/API não deve zerar linhas sem URL quando há identificador e quantidade.', 'responsible_file': RESPONSIBLE_FILE},
+            details={'target': 'site_pipeline_blingfix._filter_live_origin_rows', 'reason': 'Runtime v9: não usar URL de imagem nem colunas de dimensão como URL do produto.', 'responsible_file': RESPONSIBLE_FILE},
         )
     except Exception as exc:
         add_audit_event('stock_api_origin_url_filter_runtime_patch_failed', area='SITE', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
@@ -516,26 +516,14 @@ def _patch_smart_sender_image_column_mapping() -> None:
             image_terms = ('imagem', 'imagens', 'foto', 'fotos')
             url_terms = ('url', 'urls', 'link', 'links')
             external_terms = ('externa', 'externas', 'externo', 'externos')
-            for normalized, original_column in normalized_columns:
-                has_image = any(term in normalized for term in image_terms)
-                has_url = any(term in normalized for term in url_terms)
-                has_external = any(term in normalized for term in external_terms)
-                if has_image and (has_url or has_external):
-                    mapping['imagens'] = original_column
+            for normalized, original_col in normalized_columns:
+                if any(term in normalized for term in image_terms) and any(term in normalized for term in url_terms + external_terms):
+                    mapping['imagens'] = original_col
                     break
             return mapping
 
         smart._column_map = robust_column_map
-        add_audit_event(
-            'bling_smart_sender_image_column_mapping_patch_installed',
-            area='BLING_IMAGEM',
-            status='OK',
-            details={
-                'aliases_added': list(extra_aliases),
-                'reason': 'Reconhecer coluna do modelo Bling URL Imagens Externas para montar midia.imagens no payload API.',
-                'responsible_file': RESPONSIBLE_FILE,
-            },
-        )
+        add_audit_event('bling_smart_sender_image_column_mapping_patch_installed', area='BLING_IMAGEM', status='OK', details={'aliases_added': list(extra_aliases), 'reason': 'Reconhecer coluna do modelo Bling URL Imagens Externas para montar midia.imagens no payload API.', 'responsible_file': RESPONSIBLE_FILE})
     except Exception as exc:
         add_audit_event('bling_smart_sender_image_column_mapping_patch_failed', area='BLING_IMAGEM', status='AVISO', details={'error': str(exc)[:240], 'responsible_file': RESPONSIBLE_FILE})
 
@@ -564,7 +552,7 @@ def install_blingfix_runtime_patches() -> None:
     _patch_api_batch_operation_guard()
     _patch_unified_site_api_runtime_guard()
     st.session_state[_PATCH_INSTALLED_KEY] = True
-    add_audit_event('blingfix_runtime_patches_installed', area='APP', status='OK', details={'logout_guard_active': logout_guard_active(), 'api_operation_guard': True, 'stock_api_origin_url_filter_patch': True, 'unified_site_api_runtime_guard_v8': True, 'bling_image_limit_guard': True, 'max_images_per_product': MAX_BLING_IMAGES_PER_PRODUCT, 'request_wrapper_accepts_args': True, 'preview_payload_patches': True, 'smart_sender_image_column_mapping': True, 'direct_sender_payload_patch_removed': True, 'home_wizard_navigation_native': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('blingfix_runtime_patches_installed', area='APP', status='OK', details={'logout_guard_active': logout_guard_active(), 'api_operation_guard': True, 'stock_api_origin_url_filter_patch': 'runtime_v9_product_url_only', 'unified_site_api_runtime_guard_v8': True, 'bling_image_limit_guard': True, 'max_images_per_product': MAX_BLING_IMAGES_PER_PRODUCT, 'request_wrapper_accepts_args': True, 'preview_payload_patches': True, 'smart_sender_image_column_mapping': True, 'direct_sender_payload_patch_removed': True, 'home_wizard_navigation_native': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_blingfix_runtime_patches']
