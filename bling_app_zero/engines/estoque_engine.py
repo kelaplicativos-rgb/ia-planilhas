@@ -56,6 +56,9 @@ MINIMUM_STOCK_REQUIRED_HINTS = ('balanco', 'saldo', 'estoque', 'quantidade', 'qt
 AVAILABLE_PATTERNS = ['disponivel', 'disponível', 'em estoque', 'produto disponivel', 'produto disponível', 'in stock', 'available']
 LOW_PATTERNS = ['baixo', 'baixo estoque', 'estoque baixo', 'poucas unidades', 'ultimas unidades', 'últimas unidades', 'low stock']
 OUT_PATTERNS = ['esgotado', 'sem estoque', 'indisponivel', 'indisponível', 'zerado', 'out of stock', 'unavailable']
+DEFAULT_AVAILABLE_STOCK = '10'
+DEFAULT_LOW_STOCK = '3'
+DEFAULT_OUT_STOCK = '0'
 
 
 def _valid_model(df_model: pd.DataFrame | None) -> bool:
@@ -99,11 +102,13 @@ def _status_to_quantity(value: object) -> str:
     key = normalize_key(text)
     defaults = stock_defaults_from_rules(get_user_rules())
     if any(normalize_key(pattern) in key for pattern in OUT_PATTERNS):
-        return str(defaults.get('esgotado', '0'))
+        return str(defaults.get('esgotado', DEFAULT_OUT_STOCK))
     if any(normalize_key(pattern) in key for pattern in LOW_PATTERNS):
-        return str(defaults.get('baixo', '0'))
+        return str(defaults.get('baixo', DEFAULT_LOW_STOCK))
     if any(normalize_key(pattern) in key for pattern in AVAILABLE_PATTERNS):
-        return str(defaults.get('disponivel', '1000'))
+        # BLINGFIX 2026-06-22: quando o site informa apenas disponibilidade,
+        # usar estoque operacional conservador. O valor antigo 1000 gerava saldo artificial.
+        return str(defaults.get('disponivel', DEFAULT_AVAILABLE_STOCK))
     return text
 
 
