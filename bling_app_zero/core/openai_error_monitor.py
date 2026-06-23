@@ -20,9 +20,12 @@ DIAGNOSTIC_CONTEXT_KEY = 'openai_error_monitor_last_context_v1'
 DIAGNOSTIC_MODEL_KEY = 'openai_error_monitor_model_v1'
 DEFAULT_MODEL = 'gpt-5.4-mini'
 OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses'
-MAX_PAYLOAD_CHARS = 18000
-MAX_EVENT_ITEMS = 80
+MAX_PAYLOAD_CHARS = 22000
+MAX_EVENT_ITEMS = 120
 REDACTED = '[REDACTED]'
+BOOT_EVENTS_KEY = 'mapeiaai_boot_diagnostic_events_v1'
+BOOT_UPLOADS_KEY = 'mapeiaai_boot_uploads_v1'
+BOOT_MODEL_META_KEY = 'mapeiaai_boot_model_upload_last_meta_v1'
 
 SENSITIVE_PATTERNS = (
     re.compile(r'sk-[A-Za-z0-9_\-]{12,}'),
@@ -46,12 +49,17 @@ SENSITIVE_KEYWORDS = (
     'access_token',
 )
 
-ERROR_WORDS = ('erro', 'error', 'exception', 'traceback', 'falha', 'failed', 'invalid', 'unauthorized', 'timeout')
+ERROR_WORDS = ('erro', 'error', 'exception', 'traceback', 'falha', 'failed', 'invalid', 'unauthorized', 'timeout', 'bloqueado', 'blocked', 'gate')
 IMPORTANT_STATE_KEYS = (
     'app_mode',
     'selected_home_action',
     'home_route',
     'bling_wizard_step',
+    'home_wizard_step',
+    'home_active_operation_v2',
+    'mapear_planilha_sem_api_active',
+    'mapeiaai_flow_kind',
+    'flow_kind',
     'operation',
     'operation_type',
     'origem_dados',
@@ -65,6 +73,15 @@ IMPORTANT_STATE_KEYS = (
     'site_capture_rows',
     'site_capture_error',
     'site_capture_last_url',
+    'mapeiaai_universal_model_upload',
+    'mapeiaai_universal_model_df',
+    'home_modelo_universal_df',
+    'df_modelo_universal',
+    'modelo_universal_df',
+    'mapeiaai_universal_source_df',
+    BOOT_EVENTS_KEY,
+    BOOT_UPLOADS_KEY,
+    BOOT_MODEL_META_KEY,
     'df_final_cadastro_preview_rules_applied',
     'df_final',
     'mapped_df',
@@ -107,33 +124,57 @@ def _is_sensitive_key(key: Any) -> bool:
 
 
 def _summarize_value(value: Any, *, key: str = '', depth: int = 0) -> Any:
+    """Sanitiza preservando diagnóstico útil.
+
+    BLINGFIX 2026-06-23: o diagnóstico antigo retornava apenas "str" e "dict"
+    dentro de audit_events_relevantes, apagando exatamente a causa do erro. A
+    profundidade foi ampliada e UploadedFile/DataFrame recebem resumo seguro,
+    sem expor conteúdo da planilha nem credenciais.
+    """
     if _is_sensitive_key(key):
         return REDACTED
-    if depth > 2:
+    if depth > 6:
         return _redact_text(type(value).__name__, 120)
     if value is None or isinstance(value, (bool, int, float)):
         return value
     if isinstance(value, str):
-        return _redact_text(value, 600)
+        return _redact_text(value, 900)
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        raw = bytes(value or b'')
+        return {'type': 'bytes', 'size': len(raw)}
     if hasattr(value, 'shape') and hasattr(value, 'columns'):
         try:
             return {
                 'type': type(value).__name__,
                 'shape': tuple(value.shape),
-                'columns': [_redact_text(col, 80) for col in list(value.columns)[:60]],
+                'columns': [_redact_text(col, 100) for col in list(value.columns)[:80]],
                 'sample_rows': min(int(getattr(value, 'shape', [0])[0] or 0), 3),
             }
         except Exception:
             return {'type': type(value).__name__}
+    if hasattr(value, 'name') and (hasattr(value, 'size') or hasattr(value, 'getvalue')):
+        try:
+            size = getattr(value, 'size', None)
+            if size is None:
+                data = value.getvalue()
+                size = len(data or b'')
+        except Exception:
+            size = None
+        return {
+            'type': type(value).__name__,
+            'name': _redact_text(getattr(value, 'name', ''), 240),
+            'size': size,
+            'mime': _redact_text(getattr(value, 'type', ''), 160),
+        }
     if isinstance(value, dict):
         result: dict[str, Any] = {}
-        for sub_key, item in list(value.items())[:50]:
-            safe_key = _redact_text(sub_key, 100)
+        for sub_key, item in list(value.items())[:80]:
+            safe_key = _redact_text(sub_key, 140)
             result[safe_key] = _summarize_value(item, key=str(sub_key), depth=depth + 1)
         return result
     if isinstance(value, (list, tuple, set)):
-        return [_summarize_value(item, depth=depth + 1) for item in list(value)[:30]]
-    return _redact_text(type(value).__name__, 120)
+        return [_summarize_value(item, depth=depth + 1) for item in list(value)[:80]]
+    return {'type': type(value).__name__, 'repr': _redact_text(value, 240)}
 
 
 def _safe_event(item: dict[str, Any]) -> dict[str, Any]:
@@ -149,9 +190,9 @@ def _extract_relevant_events(events: list[dict[str, Any]]) -> list[dict[str, Any
     selected: list[dict[str, Any]] = []
     for item in events[-MAX_EVENT_ITEMS:]:
         text = json.dumps(item, ensure_ascii=False, default=str).lower()
-        if any(word in text for word in ERROR_WORDS):
+        if any(word in text for word in ERROR_WORDS) or 'bootdiag_' in text or 'modelo_upload' in text:
             selected.append(_safe_event(item))
-    tail = [_safe_event(item) for item in events[-25:]]
+    tail = [_safe_event(item) for item in events[-35:]]
     merged: list[dict[str, Any]] = []
     seen: set[str] = set()
     for item in selected + tail:
@@ -175,6 +216,14 @@ def _collect_state_summary(state: MutableMapping[str, Any]) -> dict[str, Any]:
     if dataframes:
         summary['dataframes_detectados'] = dataframes
     return summary
+
+
+def _collect_boot_events(state: MutableMapping[str, Any]) -> list[dict[str, Any]]:
+    raw = state.get(BOOT_EVENTS_KEY, [])
+    if not isinstance(raw, list):
+        return []
+    events = [item for item in raw if isinstance(item, dict)]
+    return _extract_relevant_events(events)
 
 
 def get_openai_api_key() -> str:
@@ -232,12 +281,15 @@ def build_diagnostic_context(*, state: MutableMapping[str, Any] | None = None, r
     store = _state_store(state)
     events = get_audit_events(store)
     logs = get_debug_logs(store)
+    boot_events = _collect_boot_events(store)
     context = {
         'generated_at': datetime.now().isoformat(timespec='seconds'),
         'app': 'IA Planilhas → Bling / MapeiaAI',
         'app_version': APP_VERSION,
         'reason': reason,
         'state_summary': _collect_state_summary(store),
+        'boot_events_relevantes': boot_events,
+        'boot_uploads_relevantes': _summarize_value(store.get(BOOT_UPLOADS_KEY, {}), key=BOOT_UPLOADS_KEY),
         'audit_events_relevantes': _extract_relevant_events(events),
         'debug_logs_relevantes': _extract_relevant_events(logs),
         'monitor_config': openai_monitor_config_status(store),
@@ -249,6 +301,7 @@ def build_diagnostic_context(*, state: MutableMapping[str, Any] | None = None, r
                 'Fluxo Bling/API deve resolver operação real antes do envio.',
                 'Imagens devem ser conferidas até chegar ao payload/API.',
                 'Produtos sem categoria podem ir para Produtos não classificados para não quebrar cadastro.',
+                'Se houver boot_events_relevantes, priorizar esses eventos porque nasceram antes da Home.',
             ],
         },
     }
@@ -295,10 +348,10 @@ def analyze_current_session_with_openai(*, state: MutableMapping[str, Any] | Non
         return result
 
     prompt = (
-        'Você é o monitor técnico do MapeiaAI/IA Planilhas → Bling. '\
-        'Analise o diagnóstico sanitizado abaixo e devolva em português: '\
-        '1) causa provável, 2) arquivo/função suspeita, 3) correção recomendada, '\
-        '4) risco para o Bling/API, 5) próximo teste manual. '\
+        'Você é o monitor técnico do MapeiaAI/IA Planilhas → Bling. '
+        'Analise o diagnóstico sanitizado abaixo e devolva em português: '
+        '1) causa provável, 2) arquivo/função suspeita, 3) correção recomendada, '
+        '4) risco para o Bling/API, 5) próximo teste manual. '
         'Se faltarem dados, diga exatamente quais dados faltam. Não invente segredos nem tokens.\n\n'
         f'{_compact_payload(context)}'
     )
