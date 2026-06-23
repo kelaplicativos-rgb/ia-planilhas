@@ -33,6 +33,7 @@ UNIVERSAL_MODEL_FILE_BYTES_KEY = 'mapeiaai_universal_model_file_bytes'
 RESPONSIBLE_FILE = 'bling_app_zero/ui/universal_flow.py'
 SOURCE_MODE_UPLOAD = 'Anexar arquivo de origem'
 SOURCE_MODE_SITE = 'Buscar produtos por site'
+SOURCE_MODE_KEY = 'mapeiaai_universal_source_mode'
 NO_API_KEYS = (
     'home_bling_connected_same_flow_api_send', 'bling_connected_api_flow_active', 'direct_bling_api_contract_active',
     'direct_bling_operation_applied', 'direct_bling_api_contract_df', 'bling_api_operation', 'api_operation',
@@ -271,13 +272,40 @@ def _render_source_site(model: pd.DataFrame | None = None) -> pd.DataFrame | Non
     return _current_df(UNIVERSAL_SOURCE_KEY)
 
 
+def _select_source_mode(value: str) -> None:
+    st.session_state[SOURCE_MODE_KEY] = value
+    st.session_state.pop(UNIVERSAL_SOURCE_KEY, None)
+    st.session_state.pop('df_origem_unificada', None)
+    st.session_state.pop('df_origem_arquivo', None)
+    st.session_state.pop('df_origem_site', None)
+
+
+def _render_source_choice_cards() -> str:
+    source_mode = str(st.session_state.get(SOURCE_MODE_KEY) or '').strip()
+    col_file, col_site = st.columns(2)
+    with col_file:
+        if st.button('📎 Arquivo', use_container_width=True, key='mapeiaai_universal_source_file_btn'):
+            _select_source_mode(SOURCE_MODE_UPLOAD)
+            safe_rerun('universal_source_file_selected')
+    with col_site:
+        if st.button('🌐 Site', use_container_width=True, key='mapeiaai_universal_source_site_btn'):
+            _select_source_mode(SOURCE_MODE_SITE)
+            safe_rerun('universal_source_site_selected')
+    source_mode = str(st.session_state.get(SOURCE_MODE_KEY) or source_mode or '').strip()
+    if not source_mode:
+        st.warning('Atenção: Escolha Arquivo ou Site.')
+    else:
+        st.success(f'Origem selecionada: {"Arquivo" if source_mode == SOURCE_MODE_UPLOAD else "Site"}.')
+    return source_mode
+
+
 def _render_source_step(model: pd.DataFrame | None = None) -> pd.DataFrame | None:
-    st.markdown('### 2. Origem de dados')
-    st.caption('Agora escolha de onde virão os dados que serão inseridos no modelo anexado.')
-    source_mode = st.radio('Como quer trazer os dados da origem?', [SOURCE_MODE_UPLOAD, SOURCE_MODE_SITE], key='mapeiaai_universal_source_mode')
+    st.markdown('### 2. Origem dos dados')
+    st.caption('Escolha a mesma origem nova usada no fluxo Bling conectado. Depois, o destino final decide entre download ou envio ao Bling.')
+    source_mode = _render_source_choice_cards()
     if source_mode == SOURCE_MODE_SITE:
         source = _render_source_site(model)
-    else:
+    elif source_mode == SOURCE_MODE_UPLOAD:
         uploaded = st.file_uploader('Arquivo de origem dos dados', type=None, key='mapeiaai_universal_source_upload')
         source = _read_source_upload(uploaded)
         if isinstance(source, pd.DataFrame):
@@ -287,6 +315,8 @@ def _render_source_step(model: pd.DataFrame | None = None) -> pd.DataFrame | Non
             st.session_state['mapeiaai_universal_source_kind'] = 'arquivo'
             _audit('mapear_planilha_fonte_anexada', rows=int(len(source)), columns=int(len(source.columns)), source_mode='upload')
         source = _current_df(UNIVERSAL_SOURCE_KEY)
+    else:
+        return None
     if not isinstance(source, pd.DataFrame):
         st.info('Carregue a origem de dados para liberar os opcionais, o mapeamento, o preview e o download.')
         return None
