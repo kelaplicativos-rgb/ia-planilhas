@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Mapping
 
 import pandas as pd
 import streamlit as st
@@ -8,7 +9,30 @@ import streamlit as st
 from bling_app_zero.core.audit import add_audit_event
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/site_checkpoint_finalizer_runtime.py'
-_PATCH_KEY = 'site_checkpoint_finalizer_runtime_installed_v1'
+_PATCH_KEY = 'site_checkpoint_finalizer_runtime_installed_v2'
+MIN_ROWS_TO_FINALIZE_WITHOUT_EXACT_TOTAL = 1
+
+
+@dataclass(frozen=True)
+class CheckpointCompletion:
+    action: str
+    complete: bool
+    rows: int
+    expected_total: int
+    pending_urls: int
+    processed_urls: int
+    reason: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            'action': self.action,
+            'complete': self.complete,
+            'rows': self.rows,
+            'expected_total': self.expected_total,
+            'pending_urls': self.pending_urls,
+            'processed_urls': self.processed_urls,
+            'reason': self.reason,
+        }
 
 
 def _normalize_operation(operation: object) -> str:
@@ -22,6 +46,87 @@ def _normalize_operation(operation: object) -> str:
     if text in {'universal', 'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}:
         return 'universal'
     return text or 'universal'
+
+
+def _as_dict(value: object) -> dict:
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _as_int(value: object) -> int:
+    try:
+        return int(float(value or 0))
+    except Exception:
+        return 0
+
+
+def _list_len(value: object) -> int:
+    if isinstance(value, str):
+        return 1 if value.strip() else 0
+    if isinstance(value, list | tuple | set):
+        return len([item for item in value if str(item or '').strip()])
+    return 0
+
+
+def _payload_expected_total(payload: Mapping[str, object], rows: int) -> int:
+    candidates = (
+        'partial_checkpoint_expected_total',
+        'expected_total',
+        'total_products',
+        'total_produtos',
+        'urls_found',
+        'deep_capture_found_products',
+        'partial_checkpoint_found',
+        'found',
+        'rows',
+    )
+    total = 0
+    for key in candidates:
+        total = max(total, _as_int(payload.get(key)))
+    return max(total, rows)
+
+
+def _payload_pending_count(payload: Mapping[str, object]) -> int:
+    pending = 0
+    for key in ('partial_checkpoint_pending_urls', 'pending_urls', 'site_checkpoint_pending_urls'):
+        pending = max(pending, _list_len(payload.get(key)))
+    return pending
+
+
+def _payload_processed_count(payload: Mapping[str, object]) -> int:
+    processed = 0
+    for key in ('partial_checkpoint_processed_urls', 'processed_urls', 'site_checkpoint_processed_urls'):
+        processed = max(processed, _list_len(payload.get(key)))
+    return processed
+
+
+def analyze_checkpoint_completion(operation: str, *, requested_columns: list[str] | None = None) -> tuple[CheckpointCompletion, pd.DataFrame | None]:
+    operation = _normalize_operation(operation)
+    try:
+        from bling_app_zero.ui.site_resume_state import checkpoint_df, checkpoint_payload
+        payload = _as_dict(checkpoint_payload(operation))
+        df = checkpoint_df(operation, requested_columns=requested_columns)
+    except Exception as exc:
+        decision = CheckpointCompletion('retomar', False, 0, 0, 0, 0, f'checkpoint_indisponivel: {exc}')
+        return decision, None
+
+    rows = len(df) if isinstance(df, pd.DataFrame) else 0
+    expected_total = _payload_expected_total(payload, rows)
+    pending_urls = _payload_pending_count(payload)
+    processed_urls = _payload_processed_count(payload)
+
+    if rows <= 0:
+        return CheckpointCompletion('retomar', False, rows, expected_total, pending_urls, processed_urls, 'sem_linhas_no_checkpoint'), df
+
+    if pending_urls > 0 and rows < expected_total:
+        return CheckpointCompletion('retomar', False, rows, expected_total, pending_urls, processed_urls, 'ainda_tem_urls_pendentes_e_quantidade_incompleta'), df
+
+    if expected_total > 0 and rows >= expected_total:
+        return CheckpointCompletion('montar_origem', True, rows, expected_total, pending_urls, processed_urls, 'quantidade_exata_atingida'), df
+
+    if pending_urls == 0 and rows >= MIN_ROWS_TO_FINALIZE_WITHOUT_EXACT_TOTAL:
+        return CheckpointCompletion('montar_origem', True, rows, expected_total, pending_urls, processed_urls, 'sem_pendencias_visiveis_checkpoint_suficiente'), df
+
+    return CheckpointCompletion('retomar', False, rows, expected_total, pending_urls, processed_urls, 'quantidade_incompleta'), df
 
 
 def _capture_context(raw_urls: str, operation: str) -> dict[str, object]:
@@ -69,28 +174,38 @@ def finalize_checkpoint_as_site_origin(
     df_modelo: pd.DataFrame | None = None,
     reason: str = 'checkpoint_finalizer',
     show_message: bool = False,
+    require_complete: bool = True,
 ) -> pd.DataFrame | None:
-    """Transforma checkpoint parcial/caído em Origem dos dados.
+    """Transforma checkpoint em Origem dos dados somente quando a busca está completa.
 
-    A origem capturada por site não pode depender do modelo anexado para existir.
-    O modelo serve para mapear a saída; o checkpoint capturado serve para montar a
-    origem bruta e liberar o próximo fluxo.
+    Primeiro compara linhas capturadas, total esperado e URLs pendentes. Se ainda
+    faltarem produtos, agenda retomada. O modelo anexado não decide se a origem
+    existe; ele só orienta o mapeamento final.
     """
     operation = _normalize_operation(operation)
-    try:
-        from bling_app_zero.ui.site_resume_state import checkpoint_count, checkpoint_df, clear_checkpoint, clear_resume_request
-        count = int(checkpoint_count(operation) or 0)
-        if count <= 0:
-            return None
-        df = checkpoint_df(operation, requested_columns=requested_columns)
-    except Exception as exc:
-        add_audit_event(
-            'site_checkpoint_finalizer_failed_to_read_checkpoint',
-            area='SITE',
-            step='entrada',
-            status='ERRO',
-            details={'operation': operation, 'error': str(exc)[:240], 'reason': reason, 'responsible_file': RESPONSIBLE_FILE},
-        )
+    completion, df = analyze_checkpoint_completion(operation, requested_columns=requested_columns)
+    st.session_state[f'site_checkpoint_completion_{operation}'] = completion.to_dict()
+
+    add_audit_event(
+        'site_checkpoint_completion_analyzed',
+        area='SITE',
+        step='entrada',
+        status='OK' if completion.complete else 'AVISO',
+        details={'operation': operation, 'analysis': completion.to_dict(), 'reason': reason, 'responsible_file': RESPONSIBLE_FILE},
+    )
+
+    if require_complete and not completion.complete:
+        try:
+            from bling_app_zero.ui.site_resume_state import request_resume
+            request_resume(operation, f'Checkpoint incompleto: {completion.reason}. Retomar antes de montar origem.')
+        except Exception:
+            pass
+        st.session_state['site_capture_running'] = False
+        st.session_state['site_capture_finished'] = False
+        st.session_state['site_capture_result_ready'] = False
+        st.session_state['site_capture_error'] = ''
+        if show_message:
+            st.info(f'Checkpoint parcial: {completion.rows}/{completion.expected_total or "?"} produto(s). Ainda faltam produtos; retomando a busca antes de montar a origem.')
         return None
 
     if not isinstance(df, pd.DataFrame) or df.empty:
@@ -99,7 +214,7 @@ def finalize_checkpoint_as_site_origin(
             area='SITE',
             step='entrada',
             status='AVISO',
-            details={'operation': operation, 'checkpoint_count': count, 'reason': reason, 'responsible_file': RESPONSIBLE_FILE},
+            details={'operation': operation, 'analysis': completion.to_dict(), 'reason': reason, 'responsible_file': RESPONSIBLE_FILE},
         )
         return None
 
@@ -139,12 +254,13 @@ def finalize_checkpoint_as_site_origin(
             clean,
             _capture_context(raw_urls, operation),
             report_key=f'blingsmartscan_checkpoint_report_{operation}',
-            message=f'Origem montada automaticamente a partir do checkpoint: {len(clean)} produto(s).',
+            message=f'Origem montada automaticamente a partir do checkpoint completo: {len(clean)} produto(s).',
         )
     except Exception:
         pass
 
     try:
+        from bling_app_zero.ui.site_resume_state import clear_checkpoint, clear_resume_request
         clear_resume_request(reset_attempts=True)
         clear_checkpoint(operation)
     except Exception:
@@ -156,9 +272,10 @@ def finalize_checkpoint_as_site_origin(
     st.session_state['blingsmartscan_finished_rows'] = int(len(clean))
     st.session_state['blingsmartscan_finished_columns'] = int(len(clean.columns))
     st.session_state['blingsmartscan_last_notice'] = {
-        'title': 'Origem montada do checkpoint.',
+        'title': 'Origem montada do checkpoint completo.',
         'rows': int(len(clean)),
-        'warnings': ['A busca caiu/pausou, mas os produtos capturados foram preservados como origem de dados.'],
+        'warnings': ['A busca caiu/pausou, mas o checkpoint completo foi preservado como origem de dados.'],
+        'analysis': completion.to_dict(),
     }
     st.session_state[f'blingsmartscan_notice_{operation}'] = st.session_state['blingsmartscan_last_notice']
 
@@ -171,7 +288,7 @@ def finalize_checkpoint_as_site_origin(
             'operation': operation,
             'rows': int(len(clean)),
             'columns': int(len(clean.columns)),
-            'checkpoint_count': count,
+            'analysis': completion.to_dict(),
             'reason': reason,
             'raw_urls_present': bool(raw_urls),
             'independent_of_model': True,
@@ -179,7 +296,7 @@ def finalize_checkpoint_as_site_origin(
         },
     )
     if show_message:
-        st.success(f'Origem montada automaticamente com {len(clean)} produto(s) capturado(s) antes da queda.')
+        st.success(f'Origem montada automaticamente com {len(clean)} produto(s), após confirmar que a quantidade capturada estava completa.')
     return clean
 
 
@@ -222,9 +339,8 @@ def install_site_checkpoint_finalizer_runtime() -> bool:
             except Exception:
                 operation = _normalize_operation(st.session_state.get('site_capture_operation') or st.session_state.get('operacao_final') or 'universal')
             if _should_try_finalize_before_render(operation):
-                finalized = finalize_checkpoint_as_site_origin(operation, reason='runtime_before_site_panel_render', show_message=True)
+                finalized = finalize_checkpoint_as_site_origin(operation, reason='runtime_before_site_panel_render', show_message=True, require_complete=True)
                 if isinstance(finalized, pd.DataFrame) and not finalized.empty:
-                    # Depois de montar a origem, deixamos o painel original renderizar o estado pronto.
                     return original()
             return original()
 
@@ -235,7 +351,7 @@ def install_site_checkpoint_finalizer_runtime() -> bool:
             area='SITE',
             step='startup',
             status='OK',
-            details={'target': 'site_panel.render_site_panel', 'responsible_file': RESPONSIBLE_FILE},
+            details={'target': 'site_panel.render_site_panel', 'completion_analysis': True, 'responsible_file': RESPONSIBLE_FILE},
         )
         return True
     except Exception as exc:
@@ -249,4 +365,4 @@ def install_site_checkpoint_finalizer_runtime() -> bool:
         return False
 
 
-__all__ = ['finalize_checkpoint_as_site_origin', 'install_site_checkpoint_finalizer_runtime']
+__all__ = ['analyze_checkpoint_completion', 'finalize_checkpoint_as_site_origin', 'install_site_checkpoint_finalizer_runtime']
