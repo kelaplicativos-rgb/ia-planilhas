@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import re
 from dataclasses import dataclass
 from io import StringIO
 from typing import Sequence
@@ -11,6 +12,13 @@ RESPONSIBLE_FILE = 'bling_app_zero/core/final_csv_exporter.py'
 INTERNAL_COLUMN_PREFIXES = ('_v2_',)
 DEFAULT_SEPARATOR = ';'
 DEFAULT_ENCODING = 'utf-8-sig'
+MAX_EXPORT_IMAGES = 6
+IMAGE_COLUMN_TERMS = ('imagem', 'imagens', 'foto', 'fotos', 'url imagem', 'url imagens', 'url imagens externas')
+BAD_IMAGE_TERMS = (
+    'logo', 'banner', 'placeholder', 'no-image', 'no_image', 'sem-imagem', 'semimagem',
+    'favicon', 'sprite', 'icon', 'icone', 'whatsapp', 'instagram', 'facebook', 'youtube',
+    'loading', 'blank', 'default', 'avatar', 'marca-dagua', 'watermark'
+)
 
 
 @dataclass(frozen=True)
@@ -90,8 +98,52 @@ def normalize_dataframe(df: pd.DataFrame | None, *, keep_internal: bool = False,
     return out.fillna('')
 
 
+def _norm_column(value: object) -> str:
+    text = clean_text(value).lower()
+    text = text.replace('ã', 'a').replace('á', 'a').replace('à', 'a').replace('â', 'a')
+    text = text.replace('é', 'e').replace('ê', 'e').replace('í', 'i')
+    text = text.replace('ó', 'o').replace('ô', 'o').replace('õ', 'o')
+    text = text.replace('ú', 'u').replace('ç', 'c')
+    return re.sub(r'[^a-z0-9]+', ' ', text).strip()
+
+
+def _is_image_column(column: object) -> bool:
+    key = _norm_column(column)
+    return any(_norm_column(term) in key for term in IMAGE_COLUMN_TERMS)
+
+
+def _clean_image_url(value: object) -> str:
+    url = clean_text(value).strip(' "\'<>')
+    if url.startswith('//'):
+        url = 'https:' + url
+    if not url.lower().startswith(('http://', 'https://')):
+        return ''
+    low = url.lower()
+    if any(term in low for term in BAD_IMAGE_TERMS):
+        return ''
+    return url
+
+
+def _normalize_image_cell(value: object, *, limit: int = MAX_EXPORT_IMAGES) -> str:
+    pieces = re.split(r'[|,;\n\r\t]+', str(value or ''))
+    urls: list[str] = []
+    for piece in pieces:
+        url = _clean_image_url(piece)
+        if url and url not in urls:
+            urls.append(url)
+        if len(urls) >= limit:
+            break
+    return '|'.join(urls)
+
+
 def normalize_image_columns(df: pd.DataFrame | None) -> pd.DataFrame:
-    return df.copy().fillna('') if isinstance(df, pd.DataFrame) else pd.DataFrame()
+    if not isinstance(df, pd.DataFrame):
+        return pd.DataFrame()
+    out = df.copy().fillna('')
+    for column in out.columns:
+        if _is_image_column(column):
+            out[column] = out[column].map(_normalize_image_cell)
+    return out.fillna('')
 
 
 def contract_from_df(df: pd.DataFrame | None, contract_columns: Sequence[object] | None = None) -> list[str]:
@@ -150,6 +202,7 @@ def sanitize_final_dataframe(df: pd.DataFrame | None, *, operation: str = 'globa
         return enforce_contract(None, contract_columns)
     contract = contract_from_df(df, contract_columns)
     safe = normalize_dataframe(df, keep_internal=False, preserve_columns=bool(contract))
+    safe = normalize_image_columns(safe)
     safe = force_empty_columns(safe, explicit_empty_columns)
     return enforce_contract(safe, contract)
 
@@ -184,6 +237,7 @@ __all__ = [
     'exact_contract_columns',
     'final_csv_bytes',
     'filename_for_operation',
+    'normalize_image_columns',
     'physical_csv_contract_errors',
     'sanitize_final_dataframe',
     'validate_contract_identity',
