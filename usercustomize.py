@@ -1,13 +1,3 @@
-"""Safety guard for Bling product image limits.
-
-Bling rejects product creation when more than 6 images are sent. This module is
-loaded automatically by Python in normal app startup and patches only the Bling
-product preparation/sending paths.
-
-The preferred flow is the visible rule in the same rules/resources group as
-GTIN and image separator. The runtime guard remains as a last safety net and
-respects the central user rule ``limit_bling_images``.
-"""
 from __future__ import annotations
 
 import importlib
@@ -40,11 +30,9 @@ def _image_limit_guard_enabled() -> bool:
         state = getattr(st, 'session_state', None)
         if state is None:
             return True
-
         rules = state.get(_RULES_SESSION_KEY)
         if isinstance(rules, dict) and _CENTRAL_LIMIT_KEY in rules:
             return bool(rules.get(_CENTRAL_LIMIT_KEY, True))
-
         decision = str(state.get(_DECISION_SESSION_KEY) or '').strip().lower()
         if decision in _SKIP_DECISIONS:
             return False
@@ -69,10 +57,7 @@ def _dedupe_items(items: Iterable[Any]) -> list[Any]:
     kept: list[Any] = []
     seen: set[str] = set()
     for item in items:
-        if isinstance(item, dict):
-            marker = str(item.get('link') or item.get('url') or item.get('src') or item).strip()
-        else:
-            marker = str(item).strip()
+        marker = str(item.get('link') or item.get('url') or item.get('src') or item).strip() if isinstance(item, dict) else str(item).strip()
         if not marker or marker in seen:
             continue
         seen.add(marker)
@@ -100,7 +85,6 @@ def _limit_payload_images(payload: Any) -> Any:
         return [_limit_payload_images(item) for item in payload[:MAX_BLING_IMAGES]]
     if not isinstance(payload, dict):
         return payload
-
     updated = dict(payload)
     for key, value in list(updated.items()):
         key_is_image = _is_image_key(key)
@@ -120,12 +104,6 @@ def _limit_payload_images(payload: Any) -> Any:
 
 
 def _limit_payload_variant(value: Any) -> Any:
-    """Protege variantes do sender inteligente.
-
-    O sender smart retorna tuplas no formato (estratégia, payload, meta). O
-    guard antigo tentava limitar a tupla inteira e não entrava no payload. Esta
-    função preserva a estrutura e limita apenas o dicionário do payload.
-    """
     if isinstance(value, tuple) and len(value) >= 2 and isinstance(value[1], dict):
         limited_payload = _limit_payload_images(value[1])
         return (value[0], limited_payload, *value[2:])
@@ -138,10 +116,8 @@ def _patch_pre_send_defaults(module: Any) -> None:
     original = getattr(module, 'apply_product_send_defaults', None)
     if not callable(original) or getattr(original, '_bling_image_limit_guard', False):
         return
-
     def guarded_apply_product_send_defaults(*args: Any, **kwargs: Any) -> Any:
         return _limit_payload_images(original(*args, **kwargs))
-
     guarded_apply_product_send_defaults._bling_image_limit_guard = True  # type: ignore[attr-defined]
     module.apply_product_send_defaults = guarded_apply_product_send_defaults
 
@@ -150,19 +126,16 @@ def _patch_payload_variants(module: Any) -> None:
     original = getattr(module, '_payload_variants', None)
     if not callable(original) or getattr(original, '_bling_image_limit_guard', False):
         return
-
     def guarded_payload_variants(*args: Any, **kwargs: Any) -> Any:
         variants = original(*args, **kwargs)
         if isinstance(variants, list):
             return [_limit_payload_variant(item) for item in variants]
         return [_limit_payload_variant(item) for item in variants]
-
     guarded_payload_variants._bling_image_limit_guard = True  # type: ignore[attr-defined]
     module._payload_variants = guarded_payload_variants
 
 
 def _install_blingclean_smart_patch(module: Any | None = None) -> None:
-    """Instala o blingClean no startup e no sender diff."""
     try:
         clean = importlib.import_module('bling_app_zero.core.bling_smart_image_limit_clean')
         apply_patch = getattr(clean, 'apply_blingclean_patch', None)
@@ -176,25 +149,12 @@ def _install_blingclean_smart_patch(module: Any | None = None) -> None:
         return
 
 
-def _install_dimension_unit_defaults() -> None:
-    """Instala Centímetros como padrão de Unidade das medidas."""
-    try:
-        runtime = importlib.import_module('bling_app_zero.core.dimension_unit_defaults_runtime')
-        install = getattr(runtime, 'install_dimension_unit_defaults_runtime', None)
-        if callable(install):
-            install()
-    except Exception:
-        return
-
-
 def _patch_force_defaults(module: Any) -> None:
     original = getattr(module, '_force_default_fields', None)
     if not callable(original) or getattr(original, '_bling_image_limit_guard', False):
         return
-
     def guarded_force_default_fields(*args: Any, **kwargs: Any) -> Any:
         return _limit_payload_images(original(*args, **kwargs))
-
     guarded_force_default_fields._bling_image_limit_guard = True  # type: ignore[attr-defined]
     module._force_default_fields = guarded_force_default_fields
 
@@ -203,12 +163,10 @@ def _patch_runtime_patch(module: Any) -> None:
     original = getattr(module, 'apply_blingfix_to_verified_module', None)
     if not callable(original) or getattr(original, '_bling_image_limit_guard', False):
         return
-
     def guarded_apply_blingfix_to_verified_module(target_module: Any) -> Any:
         result = original(target_module)
         _patch_force_defaults(target_module)
         return result
-
     guarded_apply_blingfix_to_verified_module._bling_image_limit_guard = True  # type: ignore[attr-defined]
     module.apply_blingfix_to_verified_module = guarded_apply_blingfix_to_verified_module
 
@@ -231,13 +189,9 @@ def _patch_module(module: Any) -> None:
 class _BlingImageLimitLoader(importlib.abc.Loader):
     def __init__(self, loader: importlib.abc.Loader) -> None:
         self._loader = loader
-
     def create_module(self, spec: Any) -> Any:
         create_module = getattr(self._loader, 'create_module', None)
-        if callable(create_module):
-            return create_module(spec)
-        return None
-
+        return create_module(spec) if callable(create_module) else None
     def exec_module(self, module: Any) -> None:
         self._loader.exec_module(module)  # type: ignore[attr-defined]
         _patch_module(module)
@@ -259,8 +213,6 @@ class _BlingImageLimitFinder(importlib.abc.MetaPathFinder):
                 return spec
         return None
 
-
-_install_dimension_unit_defaults()
 
 if not any(isinstance(finder, _BlingImageLimitFinder) for finder in sys.meta_path):
     sys.meta_path.insert(0, _BlingImageLimitFinder())
