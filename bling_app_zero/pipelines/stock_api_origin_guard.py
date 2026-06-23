@@ -11,8 +11,9 @@ from bling_app_zero.core.text import clean_cell
 RESPONSIBLE_FILE = 'bling_app_zero/pipelines/stock_api_origin_guard.py'
 URL_COLUMNS = ('url', 'link', 'produto_url', 'url_produto', 'origem url', 'link produto')
 STOCK_ID_COLUMNS = ('codigo', 'código', 'sku', 'gtin', 'ean', 'id produto', 'id_produto', 'id bling', 'id_bling')
-STOCK_QTY_COLUMNS = ('quantidade', 'qtd', 'saldo', 'estoque', 'balanco', 'balanço', 'stock')
+STOCK_QTY_COLUMNS = ('quantidade', 'qtd', 'saldo', 'estoque', 'balanco', 'balanço', 'stock', 'movimentacao de estoque', 'movimentação de estoque')
 CADASTRO_CORE_COLUMNS = ('nome', 'descricao', 'descrição', 'codigo', 'código', 'sku', 'preco', 'preço', 'imagens', 'imagem', 'gtin', 'marca', 'categoria')
+UNIVERSAL_OPS = {'', 'universal', 'modelo', 'modelo_destino', 'planilha', 'wizard_cadastro_estoque'}
 
 
 def _key(value: object) -> str:
@@ -81,29 +82,38 @@ def _has_cadastro_payload_columns(df: pd.DataFrame) -> bool:
     return bool(useful_cols >= 2 and has_name and has_price_or_code)
 
 
+def _is_universal_op(op: str) -> bool:
+    return str(op or '').strip().lower() in UNIVERSAL_OPS
+
+
 def _keep_api_rows_without_url(out: pd.DataFrame, *, op: str) -> pd.DataFrame | None:
-    if op == 'estoque' and _has_stock_payload_columns(out):
+    normalized = str(op or '').strip().lower()
+    universal = _is_universal_op(normalized)
+
+    if (normalized == 'estoque' or universal) and _has_stock_payload_columns(out):
         add_audit_event(
-            'site_pipeline_live_origin_url_filter_skipped_for_stock_api',
+            'site_pipeline_live_origin_url_filter_skipped_for_stock_or_universal',
             area='SITE',
             status='OK',
             details={
                 'rows_before': len(out),
-                'reason': 'Estoque/API sem coluna URL, mas com identificador e quantidade. Mantendo linhas para pré-varredura/API.',
+                'operation': normalized or 'universal',
+                'reason': 'Origem por site sem coluna URL, mas com identificador e quantidade/saldo. Mantendo linhas para fluxo unificado/API/download.',
                 'columns': list(map(str, out.columns))[:30],
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
         return out.fillna('')
 
-    if op == 'cadastro' and _has_cadastro_payload_columns(out):
+    if (normalized == 'cadastro' or universal) and _has_cadastro_payload_columns(out):
         add_audit_event(
-            'site_pipeline_live_origin_url_filter_skipped_for_cadastro_api',
+            'site_pipeline_live_origin_url_filter_skipped_for_cadastro_or_universal',
             area='SITE',
             status='OK',
             details={
                 'rows_before': len(out),
-                'reason': 'Cadastro/API sem coluna URL, mas com campos de produto válidos. Mantendo linhas para pré-varredura/API.',
+                'operation': normalized or 'universal',
+                'reason': 'Origem por site sem coluna URL, mas com campos de produto válidos. Mantendo linhas para fluxo unificado/API/download.',
                 'columns': list(map(str, out.columns))[:30],
                 'responsible_file': RESPONSIBLE_FILE,
             },
@@ -131,6 +141,12 @@ def filter_origin_rows_for_operation(df: pd.DataFrame, raw_urls: str, *, operati
         kept = _keep_api_rows_without_url(out, op=op)
         if kept is not None:
             return kept
+        add_audit_event(
+            'site_pipeline_live_origin_blocked_without_input_domain',
+            area='SITE',
+            status='BLOQUEADO',
+            details={'rows_before': len(out), 'operation': op, 'reason': 'Sem domínio público de entrada e sem payload reconhecido.', 'responsible_file': RESPONSIBLE_FILE},
+        )
         return out.iloc[0:0].copy()
 
     if not url_col:
