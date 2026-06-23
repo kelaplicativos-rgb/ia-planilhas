@@ -9,6 +9,7 @@ from bling_app_zero.core.brand_runtime_patch import install_brand_runtime_patch
 from bling_app_zero.core.cache_control import clear_cache_once_per_version
 from bling_app_zero.core.mapping_widget_state import restore_mapping_widget_state_from_snapshot
 from bling_app_zero.core.official_bling_oauth_patch import install_official_bling_oauth_patch
+from bling_app_zero.core.xml_nfe_runtime_patch import install_xml_nfe_runtime_patch
 from bling_app_zero.ui.alerts import enforce_attention_alert_policy
 from bling_app_zero.ui.blingfix_runtime_patches import install_blingfix_runtime_patches
 from bling_app_zero.ui.home import render_home
@@ -200,6 +201,7 @@ def main() -> None:
     _refresh_blingfix_runtime_patch_session()
     install_blingfix_runtime_patches()
     install_brand_runtime_patch()
+    install_xml_nfe_runtime_patch()
     install_source_upload_recovery_runtime()
     install_mapping_pagination_runtime()
     install_oauth_link_guard()
