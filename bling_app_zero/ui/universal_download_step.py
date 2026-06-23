@@ -54,6 +54,33 @@ def _has_stock_deposit_id(df: pd.DataFrame) -> bool:
     return bool(df[STOCK_DEPOSIT_ID_COLUMN].fillna('').astype(str).str.strip().ne('').any())
 
 
+def _clear_stale_stock_send_state() -> int:
+    removed = 0
+    fixed_keys = (
+        'bling_api_batch_send_state_v2',
+        'neutral_bling_send_state_v1',
+        'neutral_bling_send_report_v1',
+        'bling_api_preflight_cache_v1',
+        'bling_api_payload_preview_cache_v2',
+        'bling_background_job_created_v1',
+        'bling_api_failed_retry_rows_v1',
+        'bling_api_failed_retry_result_v1',
+        'bling_api_live_progress_v2',
+        'bling_api_intelligent_batch_plan_v1',
+        'bling_api_last_batch_seconds_v1',
+    )
+    for key in fixed_keys:
+        if key in st.session_state:
+            st.session_state.pop(key, None)
+            removed += 1
+    for key in list(st.session_state.keys()):
+        text_key = str(key)
+        if text_key.startswith('background_job_create_estoque::'):
+            st.session_state.pop(key, None)
+            removed += 1
+    return removed
+
+
 def _store_targeted_stock_dataframe(df: pd.DataFrame) -> None:
     targeted = df.copy().fillna('')
     st.session_state['df_final_bling_api'] = targeted.copy()
@@ -61,6 +88,7 @@ def _store_targeted_stock_dataframe(df: pd.DataFrame) -> None:
     st.session_state['final_download_df_snapshot'] = targeted.copy()
     st.session_state['df_final_download_snapshot'] = targeted.copy()
     st.session_state['mapeiaai_universal_output_df'] = targeted.copy()
+    removed_cache_keys = _clear_stale_stock_send_state()
     try:
         from bling_app_zero.ui.cadastro_wizard_state import set_context_final_df
         set_context_final_df(targeted.copy())
@@ -75,6 +103,7 @@ def _store_targeted_stock_dataframe(df: pd.DataFrame) -> None:
             'columns': int(len(targeted.columns)),
             'has_deposit_id_column': _has_stock_deposit_id(targeted),
             'deposit_id': str(st.session_state.get('bling_api_stock_deposit_id') or '').strip(),
+            'cleared_stale_send_state_keys': int(removed_cache_keys),
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
