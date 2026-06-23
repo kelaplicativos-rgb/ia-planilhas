@@ -141,7 +141,12 @@ def build_final_output(
     output = build_final_dataframe(source, contract, mapping, apply_rules=False)
 
     rules_config = normalize_smart_rules_config(smart_rules_config, enabled=bool(run_smart_features))
-    output = _apply_safe_category_aliases(output, source, mapping, enabled=bool(rules_config.get('enabled')))
+    output = _apply_safe_category_aliases(
+        output,
+        source,
+        mapping,
+        enabled=bool(rules_config.get('enabled')) and bool(rules_config.get('fill_category_aliases')),
+    )
 
     errors = tuple(str(item) for item in validate_universal_output(output, contract_obj) or ())
     if errors:
