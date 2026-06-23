@@ -6,7 +6,7 @@ from typing import Iterable
 import streamlit as st
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/cache_schema_guard.py'
-CACHE_SCHEMA_VERSION = '2026-06-22_origem_unica_site_panel_v5'
+CACHE_SCHEMA_VERSION = '2026-06-22_origem_unica_site_panel_v6_url_produto'
 CACHE_SCHEMA_KEY = '_mapeia_cache_schema_version'
 CACHE_SCHEMA_LAST_CLEAR_KEY = '_mapeia_cache_schema_last_clear'
 CACHE_SCHEMA_NOTICE_KEY = '_mapeia_cache_schema_notice'
@@ -73,6 +73,7 @@ CLEAR_PREFIXES = (
     'operation_site',
     'tipo_operacao_',
     'operacao_final',
+    'blingfix_runtime_patches_installed_',
 )
 
 CLEAR_EXACT_KEYS = {
@@ -103,6 +104,8 @@ CLEAR_EXACT_KEYS = {
     'df_origem_unificada',
     'df_origem_site',
     'df_origem_arquivo',
+    'blingfix_runtime_patches_installed_v7',
+    'blingfix_runtime_patches_installed_v8',
 }
 
 
