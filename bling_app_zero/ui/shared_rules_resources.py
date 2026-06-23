@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
-from bling_app_zero.core.universal_smart_rules import default_smart_rules_config, normalize_smart_rules_config
+from bling_app_zero.core.universal_smart_rules import DEFAULT_WEIGHT_VALUE, default_smart_rules_config, normalize_smart_rules_config
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/shared_rules_resources.py'
 STATE_KEY_SUFFIX = 'rules_resources_config'
@@ -38,7 +38,7 @@ def render_rules_resources_panel(
         return current
 
     st.markdown('### Regras e recursos inteligentes')
-    st.caption('Configure opcionais antes do preview/download. Tudo nasce desligado e nada muda as colunas do modelo.')
+    st.caption('Configure opcionais antes do preview/download. Campos preenchidos pelas regras ficam fora do mapeamento manual.')
 
     image_cols = sorted(set(_detect_columns(source, ('imagem', 'image', 'foto', 'url')) + _detect_columns(model, ('imagem', 'image', 'foto', 'url'))))
     gtin_cols = sorted(set(_detect_columns(source, ('gtin', 'ean', 'código de barras', 'codigo de barras')) + _detect_columns(model, ('gtin', 'ean', 'código de barras', 'codigo de barras'))))
@@ -76,9 +76,13 @@ def render_rules_resources_panel(
         height_value = st.text_input('Altura padrão', value=str(current.get('height_value') or '2'), key=f'{key_prefix}_rules_height_value')
         width_value = st.text_input('Largura padrão', value=str(current.get('width_value') or '11'), key=f'{key_prefix}_rules_width_value')
         depth_value = st.text_input('Profundidade padrão', value=str(current.get('depth_value') or '16'), key=f'{key_prefix}_rules_depth_value')
+        apply_weight_default = st.checkbox('Peso líquido/bruto', value=bool(current.get('apply_weight_default')), key=f'{key_prefix}_rules_apply_weight_default')
+        net_weight_value = st.text_input('Peso líquido padrão (Kg)', value=str(current.get('net_weight_value') or DEFAULT_WEIGHT_VALUE), key=f'{key_prefix}_rules_net_weight_value')
+        gross_weight_value = st.text_input('Peso bruto padrão (Kg)', value=str(current.get('gross_weight_value') or DEFAULT_WEIGHT_VALUE), key=f'{key_prefix}_rules_gross_weight_value')
+        st.caption(f'Padrão recomendado: {DEFAULT_WEIGHT_VALUE} Kg para peso líquido e peso bruto.')
 
         st.markdown('#### Garantias do fluxo universal')
-        st.caption('Campos não mapeados continuam vazios, exceto toggles ligados. A ordem e os nomes das colunas do modelo são preservados.')
+        st.caption('Campos não mapeados continuam vazios, exceto toggles ligados. Campos preenchidos por regras não aparecem para mapeamento manual.')
 
     config = {
         **default_smart_rules_config(),
@@ -103,6 +107,9 @@ def render_rules_resources_panel(
         'height_value': str(height_value),
         'width_value': str(width_value),
         'depth_value': str(depth_value),
+        'apply_weight_default': bool(apply_weight_default),
+        'net_weight_value': str(net_weight_value),
+        'gross_weight_value': str(gross_weight_value),
     }
     st.session_state[state_key] = config
     add_audit_event(
