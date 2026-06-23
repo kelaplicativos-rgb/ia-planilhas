@@ -160,7 +160,7 @@ def _store_failed_retry_rows(identity: str, batch_start: int, batch_len: int, re
     local_indices.update(index for index in _line_indices_from_errors(list(getattr(result, 'errors', []) or [])) if 0 <= index < batch_len)
 
     failed_count = int(getattr(result, 'failed', 0) or 0) + int(getattr(result, 'skipped', 0) or 0)
-    sent_count = int(getattr(result, 'sent') or 0)
+    sent_count = int(getattr(result, 'sent', 0) or 0)
     attempted = int(getattr(result, 'attempted', 0) or 0)
     if failed_count > 0 and not local_indices and sent_count == 0:
         local_indices.update(range(min(batch_len, attempted or batch_len)))
@@ -307,6 +307,57 @@ def _has_stock_deposit_id(download_df: pd.DataFrame) -> bool:
     if not isinstance(download_df, pd.DataFrame) or download_df.empty or 'Bling depósito id' not in download_df.columns:
         return False
     return bool(download_df['Bling depósito id'].fillna('').astype(str).str.strip().ne('').any())
+
+
+def _normalize_column_token(value: object) -> str:
+    text = str(value or '').strip().lower()
+    for old, new in {'ã': 'a', 'á': 'a', 'à': 'a', 'â': 'a', 'é': 'e', 'ê': 'e', 'í': 'i', 'ó': 'o', 'ô': 'o', 'õ': 'o', 'ú': 'u', 'ç': 'c'}.items():
+        text = text.replace(old, new)
+    return re.sub(r'\s+', ' ', re.sub(r'[^a-z0-9]+', ' ', text)).strip()
+
+
+def _first_non_empty_column(df: pd.DataFrame, candidates: list[str]) -> str:
+    normalized = {_normalize_column_token(column): str(column) for column in df.columns}
+    for candidate in candidates:
+        exact = normalized.get(_normalize_column_token(candidate))
+        if exact and df[exact].fillna('').astype(str).str.strip().ne('').any():
+            return exact
+    for column in df.columns:
+        token = _normalize_column_token(column)
+        if any(piece in token for piece in candidates) and df[column].fillna('').astype(str).str.strip().ne('').any():
+            return str(column)
+    return ''
+
+
+def _prepare_stock_dataframe_for_safe_sender(download_df: pd.DataFrame, operation: str) -> pd.DataFrame:
+    if normalize_operation(operation) != OP_ESTOQUE or not isinstance(download_df, pd.DataFrame) or download_df.empty:
+        return download_df
+    out = download_df.copy().fillna('')
+    added: dict[str, str] = {}
+
+    stock_column = _first_non_empty_column(out, ['estoque', 'quantidade', 'saldo', 'movimentacao de estoque', 'movimentação de estoque'])
+    if stock_column and ('Estoque' not in out.columns or not out['Estoque'].fillna('').astype(str).str.strip().ne('').any()):
+        out['Estoque'] = out[stock_column]
+        added['Estoque'] = stock_column
+
+    code_column = _first_non_empty_column(out, ['codigo', 'código', 'codigo sku', 'código sku', 'sku'])
+    if code_column and ('Código' not in out.columns or not out['Código'].fillna('').astype(str).str.strip().ne('').any()):
+        out['Código'] = out[code_column]
+        added['Código'] = code_column
+
+    product_id_column = _first_non_empty_column(out, ['id produto', 'id produto bling', 'id bling'])
+    if product_id_column and ('ID Produto' not in out.columns or not out['ID Produto'].fillna('').astype(str).str.strip().ne('').any()):
+        out['ID Produto'] = out[product_id_column]
+        added['ID Produto'] = product_id_column
+
+    if added:
+        add_audit_event(
+            'bling_api_batch_stock_dataframe_normalized_for_safe_sender',
+            area='BLING_ENVIO',
+            status='OK',
+            details={'operation': normalize_operation(operation), 'added_columns': added, 'rows': len(out), 'responsible_file': RESPONSIBLE_FILE},
+        )
+    return out
 
 
 def _apply_stock_deposit_target_if_needed(download_df: pd.DataFrame, operation: str) -> pd.DataFrame:
@@ -696,6 +747,9 @@ def render_bling_api_batch_panel(download_df: pd.DataFrame, operation: str, key:
     if not isinstance(download_df, pd.DataFrame) or download_df.empty:
         return
     download_df = _apply_stock_deposit_target_if_needed(download_df, operation)
+    if not isinstance(download_df, pd.DataFrame) or download_df.empty:
+        return
+    download_df = _prepare_stock_dataframe_for_safe_sender(download_df, operation)
     if not isinstance(download_df, pd.DataFrame) or download_df.empty:
         return
     signature = _df_signature(download_df)
