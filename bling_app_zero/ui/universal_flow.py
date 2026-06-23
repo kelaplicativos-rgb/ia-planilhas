@@ -12,7 +12,7 @@ from bling_app_zero.core.category_intelligence import apply_category_suggestions
 from bling_app_zero.core.files import read_uploaded_file
 from bling_app_zero.core.final_template_exporter import template_contract_columns
 from bling_app_zero.core.modelo_compactado_universal import resolver_modelo
-from bling_app_zero.core.universal_smart_rules import rule_managed_target_columns
+from bling_app_zero.core.universal_smart_rules import rule_managed_source_mapping, rule_managed_target_columns
 from bling_app_zero.features_runtime.router import active_contract
 from bling_app_zero.ui.flow_context import CONTEXT_UNIVERSAL, activate_csv_finish_mode, set_entry_context
 from bling_app_zero.ui.home_wizard_rerun import safe_rerun
@@ -194,17 +194,31 @@ def _mapping_model_without_rule_fields(model: pd.DataFrame, locked_columns: list
     return model.reindex(columns=columns).copy().fillna('')
 
 
-def _strip_rule_managed_mapping(mapping: Mapping[str, str] | None, locked_columns: list[str]) -> dict[str, str]:
+def _merge_rule_managed_mapping(
+    source: pd.DataFrame,
+    model: pd.DataFrame,
+    mapping: Mapping[str, str] | None,
+    locked_columns: list[str],
+    rules_config: Mapping[str, Any] | None,
+) -> dict[str, str]:
     clean = {str(key): str(value or '') for key, value in dict(mapping or {}).items()}
+    if not locked_columns:
+        return clean
+    hidden_mapping = rule_managed_source_mapping(
+        [str(column) for column in getattr(source, 'columns', [])],
+        [str(column) for column in getattr(model, 'columns', [])],
+        rules_config,
+    )
     for column in locked_columns:
-        clean[str(column)] = ''
+        clean[str(column)] = str(hidden_mapping.get(str(column), '') or '')
     return clean
 
 
 def _render_rule_managed_mapping_notice(locked_columns: list[str]) -> None:
     if not locked_columns:
         return
-    st.info('Campos preenchidos por regras e bloqueados no mapeamento: ' + ', '.join(locked_columns))
+    st.info('Campos preenchidos por regras e ocultos do mapeamento manual: ' + ', '.join(locked_columns))
+    st.caption('Se a origem já trouxe valor nessas colunas, o valor da linha é preservado. A regra só completa células vazias.')
     _audit('mapear_planilha_campos_de_regras_bloqueados_no_mapeamento', count=len(locked_columns), columns=locked_columns)
 
 
@@ -451,9 +465,9 @@ def render_universal_flow() -> None:
         clear_shared_mapping_widgets('mapeiaai_universal')
     _render_ai_tools(processed, mapping_model, mapping_ai)
     mapping = render_shared_contract_mapping(processed, mapping_model, signature=signature, mapping_state_key=UNIVERSAL_MAPPING_KEY, engine_state_key=UNIVERSAL_ENGINE_KEY, key_prefix='mapeiaai_universal', ai_enabled=mapping_ai)
-    mapping = _strip_rule_managed_mapping(mapping, rule_locked_columns)
+    mapping = _merge_rule_managed_mapping(processed, model, mapping, rule_locked_columns, rules_config)
     mapping, _mapping_rows = build_and_sync_mapping(processed, model, mapping, operation='universal', signature=signature, engine=str(st.session_state.get(UNIVERSAL_ENGINE_KEY) or 'local'), mapping_state_key=UNIVERSAL_MAPPING_KEY, engine_state_key=UNIVERSAL_ENGINE_KEY)
-    mapping = _strip_rule_managed_mapping(mapping, rule_locked_columns)
+    mapping = _merge_rule_managed_mapping(processed, model, mapping, rule_locked_columns, rules_config)
     st.session_state[UNIVERSAL_MAPPING_KEY] = mapping
     output = render_shared_final_csv(processed, model, mapping, key_prefix='mapeiaai_universal', file_name='mapeiaai_planilha_final_mapeada.csv', run_smart_features=rules_enabled, smart_rules_config=rules_config)
     if isinstance(output, pd.DataFrame):
