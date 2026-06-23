@@ -8,6 +8,7 @@ from bling_app_zero.core.universal_smart_rules import (
     apply_universal_smart_rules,
     default_smart_rules_config,
     normalize_smart_rules_config,
+    rule_managed_source_mapping,
     rule_managed_target_columns,
 )
 
@@ -206,3 +207,44 @@ def test_rule_managed_target_columns_returns_fixed_rule_fields_only() -> None:
         'Peso líquido (Kg)',
         'Peso bruto (Kg)',
     ]
+
+
+def test_rule_fields_preserve_filled_rows_and_fill_only_blank_cells() -> None:
+    config = normalize_smart_rules_config(
+        {
+            'enabled': True,
+            'apply_unit_default': True,
+            'unit_value': 'UN',
+            'apply_measure_unit_default': True,
+            'measure_unit_value': 'Centimetros',
+            'apply_weight_default': True,
+        }
+    )
+    source = pd.DataFrame(
+        {
+            'Unidade': ['CX', ''],
+            'Unidade de medida': ['Metros', ''],
+            'Peso líquido (Kg)': ['0.750', ''],
+            'Peso bruto (Kg)': ['0.900', ''],
+        }
+    )
+    model = pd.DataFrame(columns=['Unidade', 'Unidade de medida', 'Peso líquido (Kg)', 'Peso bruto (Kg)'])
+    hidden_mapping = rule_managed_source_mapping(source.columns, model.columns, config)
+
+    result = build_final_output(source, model, hidden_mapping, run_smart_features=True, smart_rules_config=config)
+
+    assert hidden_mapping == {
+        'Unidade': 'Unidade',
+        'Unidade de medida': 'Unidade de medida',
+        'Peso líquido (Kg)': 'Peso líquido (Kg)',
+        'Peso bruto (Kg)': 'Peso bruto (Kg)',
+    }
+    assert result.output is not None
+    assert result.output.loc[0, 'Unidade'] == 'CX'
+    assert result.output.loc[1, 'Unidade'] == 'UN'
+    assert result.output.loc[0, 'Unidade de medida'] == 'Metros'
+    assert result.output.loc[1, 'Unidade de medida'] == 'Centimetros'
+    assert result.output.loc[0, 'Peso líquido (Kg)'] == '0.750'
+    assert result.output.loc[1, 'Peso líquido (Kg)'] == DEFAULT_WEIGHT_VALUE
+    assert result.output.loc[0, 'Peso bruto (Kg)'] == '0.900'
+    assert result.output.loc[1, 'Peso bruto (Kg)'] == DEFAULT_WEIGHT_VALUE
