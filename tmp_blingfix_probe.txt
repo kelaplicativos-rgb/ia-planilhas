@@ -1,1 +1,1 @@
-probe
+BLINGFIX diagnostic marker.
