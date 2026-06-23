@@ -63,8 +63,22 @@ def render_rules_resources_panel(
         st.markdown('#### Categoria')
         fill_category_aliases = st.checkbox('Preencher categoria vazia usando categoria da origem', value=bool(current.get('fill_category_aliases')), key=f'{key_prefix}_rules_fill_category_aliases')
 
+        st.markdown('#### Valores padrão opcionais')
+        apply_unit_default = st.checkbox('Unidade', value=bool(current.get('apply_unit_default')), key=f'{key_prefix}_rules_apply_unit_default')
+        unit_value = st.text_input('Valor da Unidade', value=str(current.get('unit_value') or 'UN'), key=f'{key_prefix}_rules_unit_value')
+        apply_measure_unit_default = st.checkbox('Unidade de medida', value=bool(current.get('apply_measure_unit_default')), key=f'{key_prefix}_rules_apply_measure_unit_default')
+        measure_unit_value = st.text_input('Valor da Unidade de medida', value=str(current.get('measure_unit_value') or 'Centímetros'), key=f'{key_prefix}_rules_measure_unit_value')
+        apply_status_default = st.checkbox('Situação / Status', value=bool(current.get('apply_status_default')), key=f'{key_prefix}_rules_apply_status_default')
+        status_value = st.text_input('Valor da Situação / Status', value=str(current.get('status_value') or 'Ativo'), key=f'{key_prefix}_rules_status_value')
+        apply_condition_default = st.checkbox('Condição', value=bool(current.get('apply_condition_default')), key=f'{key_prefix}_rules_apply_condition_default')
+        condition_value = st.text_input('Valor da Condição', value=str(current.get('condition_value') or 'Novo'), key=f'{key_prefix}_rules_condition_value')
+        apply_dimensions_default = st.checkbox('Dimensões A/L/P', value=bool(current.get('apply_dimensions_default')), key=f'{key_prefix}_rules_apply_dimensions_default')
+        height_value = st.text_input('Altura padrão', value=str(current.get('height_value') or '2'), key=f'{key_prefix}_rules_height_value')
+        width_value = st.text_input('Largura padrão', value=str(current.get('width_value') or '11'), key=f'{key_prefix}_rules_width_value')
+        depth_value = st.text_input('Profundidade padrão', value=str(current.get('depth_value') or '16'), key=f'{key_prefix}_rules_depth_value')
+
         st.markdown('#### Garantias do fluxo universal')
-        st.caption('Campos não mapeados continuam vazios. A ordem e os nomes das colunas do modelo são preservados. O sistema não inventa valores.')
+        st.caption('Campos não mapeados continuam vazios, exceto toggles ligados. A ordem e os nomes das colunas do modelo são preservados.')
 
     config = {
         **default_smart_rules_config(),
@@ -77,6 +91,18 @@ def render_rules_resources_panel(
         'max_images': int(max_images),
         'validate_gtin': bool(validate_gtin),
         'fill_category_aliases': bool(fill_category_aliases),
+        'apply_unit_default': bool(apply_unit_default),
+        'unit_value': str(unit_value),
+        'apply_measure_unit_default': bool(apply_measure_unit_default),
+        'measure_unit_value': str(measure_unit_value),
+        'apply_status_default': bool(apply_status_default),
+        'status_value': str(status_value),
+        'apply_condition_default': bool(apply_condition_default),
+        'condition_value': str(condition_value),
+        'apply_dimensions_default': bool(apply_dimensions_default),
+        'height_value': str(height_value),
+        'width_value': str(width_value),
+        'depth_value': str(depth_value),
     }
     st.session_state[state_key] = config
     add_audit_event(
