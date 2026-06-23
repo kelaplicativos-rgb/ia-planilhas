@@ -40,6 +40,21 @@ def _render_model_selector() -> None:
     st.session_state[DIAGNOSTIC_MODEL_KEY] = selected
 
 
+def _render_context_download() -> bool:
+    context = st.session_state.get(DIAGNOSTIC_CONTEXT_KEY)
+    if not isinstance(context, dict) or not context:
+        return False
+    st.download_button(
+        '⬇️ Baixar contexto sanitizado recém capturado',
+        data=_json_bytes(context),
+        file_name='mapeiaai_contexto_sanitizado.json',
+        mime='application/json; charset=utf-8',
+        use_container_width=True,
+        key='download_openai_error_monitor_context_current',
+    )
+    return True
+
+
 def _render_result() -> None:
     result = st.session_state.get(DIAGNOSTIC_RESULT_KEY)
     if isinstance(result, dict) and result:
@@ -56,18 +71,6 @@ def _render_result() -> None:
             use_container_width=True,
             key='download_openai_error_monitor_result',
         )
-        return
-
-    context = st.session_state.get(DIAGNOSTIC_CONTEXT_KEY)
-    if isinstance(context, dict) and context:
-        st.download_button(
-            '⬇️ Baixar contexto sanitizado',
-            data=_json_bytes(context),
-            file_name='mapeiaai_contexto_sanitizado.json',
-            mime='application/json; charset=utf-8',
-            use_container_width=True,
-            key='download_openai_error_monitor_context_only',
-        )
 
 
 def render_openai_diagnostics_panel() -> None:
@@ -77,9 +80,12 @@ def render_openai_diagnostics_panel() -> None:
         _render_model_selector()
 
         if st.button('Capturar contexto agora', use_container_width=True, key='openai_error_monitor_capture_context'):
+            st.session_state.pop(DIAGNOSTIC_RESULT_KEY, None)
             st.session_state[DIAGNOSTIC_CONTEXT_KEY] = build_diagnostic_context(state=st.session_state, reason='manual_capture')
-            add_audit_event('openai_error_monitor_context_captured', area='OPENAI_DIAGNOSTICO', status='OK', details={'responsible_file': RESPONSIBLE_FILE})
-            st.success('Contexto sanitizado capturado.')
+            add_audit_event('openai_error_monitor_context_captured', area='OPENAI_DIAGNOSTICO', status='OK', details={'responsible_file': RESPONSIBLE_FILE, 'fresh_context': True})
+            st.success('Contexto sanitizado capturado. Use o botão de download recém capturado abaixo.')
+
+        _render_context_download()
 
         if st.button('Analisar erros com IA', use_container_width=True, key='openai_error_monitor_run_analysis'):
             with st.spinner('Analisando diagnóstico técnico...'):
