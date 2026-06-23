@@ -5,6 +5,7 @@ import streamlit as st
 from bling_app_zero.core import APP_VERSION, PAGE_CONFIG, register_critical_error
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core import bling_oauth
+from bling_app_zero.core.brand_runtime_patch import install_brand_runtime_patch
 from bling_app_zero.core.cache_control import clear_cache_once_per_version
 from bling_app_zero.core.mapping_widget_state import restore_mapping_widget_state_from_snapshot
 from bling_app_zero.core.official_bling_oauth_patch import install_official_bling_oauth_patch
@@ -198,6 +199,7 @@ def main() -> None:
     _install_bling_api_verified_media_checkpoint('before_runtime_patches')
     _refresh_blingfix_runtime_patch_session()
     install_blingfix_runtime_patches()
+    install_brand_runtime_patch()
     install_source_upload_recovery_runtime()
     install_mapping_pagination_runtime()
     install_oauth_link_guard()
