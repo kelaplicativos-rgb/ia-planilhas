@@ -326,38 +326,51 @@ def _render_source_step(model: pd.DataFrame | None = None) -> pd.DataFrame | Non
     return source
 
 
-def _render_toggles() -> dict[str, bool]:
-    st.markdown('### 3. Toggles e opcionais')
-    col1, col2 = st.columns(2)
-    with col1:
-        price = st.toggle('Preço / cálculo marketplace', value=False, key='mapeiaai_universal_toggle_price')
-        category = st.toggle('Categorização inteligente', value=False, key='mapeiaai_universal_toggle_category')
-    with col2:
-        rules = st.toggle('Regras e recursos inteligentes no download', value=False, key='mapeiaai_universal_toggle_rules')
-    toggles = {'price': bool(price), 'category': bool(category), 'rules': bool(rules)}
-    _audit('mapear_planilha_toggles_definidos', **toggles, mapping_auto_rendered_in_mapping_section=True)
-    return toggles
-
-
-def _apply_category(source: pd.DataFrame, enabled: bool) -> pd.DataFrame:
+def _render_price_group(source: pd.DataFrame, model: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
+    st.markdown('### 3. Calculadora marketplace')
+    enabled = st.toggle('Preço / cálculo marketplace', value=False, key='mapeiaai_universal_toggle_price')
     if not enabled:
-        return source
-    st.markdown('### Categorização inteligente')
+        st.caption('Desligado. O mapeamento usará os preços originais da origem, se existirem.')
+        _audit('mapear_planilha_grupo_preco_toggle', enabled=False, grouped_toggle=True)
+        return source, False
+    _audit('mapear_planilha_grupo_preco_toggle', enabled=True, grouped_toggle=True)
+    return render_shared_calculator(source, model=model, key_prefix='mapeiaai_universal', force_enabled=True), True
+
+
+def _render_category_group(source: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
+    st.markdown('### 4. Categorização inteligente')
+    enabled = st.toggle('Categorização inteligente', value=False, key='mapeiaai_universal_toggle_category')
+    if not enabled:
+        st.caption('Desligado. As categorias serão mantidas como vieram da origem/mapeamento.')
+        _audit('mapear_planilha_grupo_categoria_toggle', enabled=False, grouped_toggle=True)
+        return source, False
     try:
         analyzed, stats = classify_dataframe(source)
         confidence = st.slider('Confiança mínima para aplicar categoria', 0.50, 0.99, 0.80, 0.01, key='mapeiaai_universal_category_confidence_min')
         output, applied = apply_category_suggestions(analyzed, confidence_min=float(confidence), keep_helper_columns=True)
     except Exception as exc:
         st.warning(f'Categorização não aplicada: {exc}')
-        return source
+        _audit('mapear_planilha_grupo_categoria_toggle', enabled=True, grouped_toggle=True, applied=False, error=str(exc)[:220])
+        return source, True
     st.success(f'Categorização analisada: {stats.get("total", 0)} produto(s), {applied} categoria(s) aplicada(s).')
-    return output
+    _audit('mapear_planilha_grupo_categoria_toggle', enabled=True, grouped_toggle=True, applied=True, rows=int(len(output)))
+    return output, True
+
+
+def _render_rules_group(source: pd.DataFrame, model: pd.DataFrame) -> tuple[Mapping[str, Any] | None, bool]:
+    st.markdown('### 5. Regras e recursos inteligentes no download')
+    enabled = st.toggle('Regras e recursos inteligentes no download', value=False, key='mapeiaai_universal_toggle_rules')
+    if not enabled:
+        st.caption('Desligado. O download seguirá somente o mapeamento e as colunas finais do modelo.')
+        _audit('mapear_planilha_grupo_regras_toggle', enabled=False, grouped_toggle=True)
+        return None, False
+    _audit('mapear_planilha_grupo_regras_toggle', enabled=True, grouped_toggle=True)
+    return render_rules_resources_panel(source, model, enabled=True, key_prefix='mapeiaai_universal'), True
 
 
 def _render_ai_tools(source: pd.DataFrame, model: pd.DataFrame, enabled: bool) -> None:
     if not enabled:
         return
-    st.markdown('### Inteligência Artificial')
     if st.button('Regerar sugestão de mapeamento com IA', use_container_width=True, key='mapeiaai_universal_regen_ai_mapping'):
         suggested, engine = suggest_shared_mapping(source, model, operation='universal')
         st.session_state[UNIVERSAL_MAPPING_KEY] = suggested
@@ -368,7 +381,7 @@ def _render_ai_tools(source: pd.DataFrame, model: pd.DataFrame, enabled: bool) -
 
 
 def _render_mapping_ai_toggle() -> bool:
-    st.markdown('### Mapeamento')
+    st.markdown('### 6. Mapeamento')
     mapping_ai = render_mapping_auto_decision_toggle(
         widget_key='mapeiaai_universal_toggle_mapping_auto',
         source='universal_flow',
@@ -376,6 +389,7 @@ def _render_mapping_ai_toggle() -> bool:
         label='Mapeamento automático com IA',
     )
     st.session_state['mapeiaai_universal_toggle_mapping_ai'] = bool(mapping_ai)
+    _audit('mapear_planilha_grupo_mapeamento_toggle', enabled=bool(mapping_ai), grouped_toggle=True)
     return bool(mapping_ai)
 
 
@@ -399,14 +413,12 @@ def render_universal_flow() -> None:
     source = _render_source_step(model)
     if not isinstance(source, pd.DataFrame):
         return
-    toggles = _render_toggles()
     processed = source.copy().fillna('')
-    if toggles['price']:
-        processed = render_shared_calculator(processed, model=model, key_prefix='mapeiaai_universal', force_enabled=True)
-    processed = _apply_category(processed, toggles['category'])
-    rules_config = render_rules_resources_panel(processed, model, enabled=toggles['rules'], key_prefix='mapeiaai_universal')
+    processed, price_enabled = _render_price_group(processed, model)
+    processed, category_enabled = _render_category_group(processed)
+    rules_config, rules_enabled = _render_rules_group(processed, model)
     mapping_ai = _render_mapping_ai_toggle()
-    signature = _reset_if_changed(model, processed, mapping_ai, toggles['rules'], rules_config)
+    signature = _reset_if_changed(model, processed, mapping_ai, rules_enabled, rules_config)
     if mapping_ai and str(st.session_state.get(UNIVERSAL_ENGINE_KEY) or '') == 'manual_sem_ia':
         st.session_state.pop(UNIVERSAL_MAPPING_KEY, None)
         st.session_state.pop(UNIVERSAL_ENGINE_KEY, None)
@@ -414,12 +426,12 @@ def render_universal_flow() -> None:
     _render_ai_tools(processed, model, mapping_ai)
     mapping = render_shared_contract_mapping(processed, model, signature=signature, mapping_state_key=UNIVERSAL_MAPPING_KEY, engine_state_key=UNIVERSAL_ENGINE_KEY, key_prefix='mapeiaai_universal', ai_enabled=mapping_ai)
     mapping, _mapping_rows = build_and_sync_mapping(processed, model, mapping, operation='universal', signature=signature, engine=str(st.session_state.get(UNIVERSAL_ENGINE_KEY) or 'local'), mapping_state_key=UNIVERSAL_MAPPING_KEY, engine_state_key=UNIVERSAL_ENGINE_KEY)
-    output = render_shared_final_csv(processed, model, mapping, key_prefix='mapeiaai_universal', file_name='mapeiaai_planilha_final_mapeada.csv', run_smart_features=toggles['rules'], smart_rules_config=rules_config)
+    output = render_shared_final_csv(processed, model, mapping, key_prefix='mapeiaai_universal', file_name='mapeiaai_planilha_final_mapeada.csv', run_smart_features=rules_enabled, smart_rules_config=rules_config)
     if isinstance(output, pd.DataFrame):
         st.session_state[UNIVERSAL_OUTPUT_KEY] = output
         render_congratulations_success(area='UNIVERSAL', context='download_final_planilha_mapeada')
         _render_bling_destination_notice()
-        _audit('mapear_planilha_preview_download_pronto', rows=int(len(output)), columns=int(len(output.columns)), csv=True, unified_origin=True)
+        _audit('mapear_planilha_preview_download_pronto', rows=int(len(output)), columns=int(len(output.columns)), csv=True, unified_origin=True, price_enabled=price_enabled, category_enabled=category_enabled, rules_enabled=rules_enabled)
 
 
 __all__ = ['render_universal_flow']
