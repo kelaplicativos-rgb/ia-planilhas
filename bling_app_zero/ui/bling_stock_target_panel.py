@@ -16,6 +16,7 @@ RESPONSIBLE_FILE = 'bling_app_zero/ui/bling_stock_target_panel.py'
 MANUAL_DEPOSIT_CONFIRMED_KEY = 'api_stock_deposit_manual_confirmed'
 MANUAL_DEPOSIT_ID_INPUT_KEY = 'api_stock_deposit_manual_id'
 MANUAL_DEPOSIT_NAME_INPUT_KEY = 'api_stock_deposit_manual_name'
+PLACEHOLDER_SELECT_DEPOSIT = 'Selecione o depósito do Bling...'
 
 
 def _option_label(item: dict[str, str]) -> str:
@@ -79,27 +80,85 @@ def _render_manual_deposit_controls() -> None:
         st.info('Toque em “Usar este depósito e continuar” para confirmar o ID digitado.')
 
 
-def render_stock_target_panel(df: pd.DataFrame) -> pd.DataFrame | None:
-    st.markdown('### Depósito do estoque no Bling')
-    st.caption('Escolha o depósito que receberá a atualização de saldo nesta operação.')
+def _load_deposits_automatically() -> list[dict[str, str]]:
+    token, meta = load_token()
+    if not isinstance(token, dict) or not token.get('access_token'):
+        st.warning('Bling conectado não encontrado nesta sessão. Reconecte o Bling para buscar depósitos automaticamente.')
+        add_audit_event(
+            'stock_target_auto_deposit_lookup_blocked_no_token',
+            area='BLING_ENVIO',
+            status='BLOQUEADO',
+            details={'token_meta': meta, 'responsible_file': RESPONSIBLE_FILE},
+        )
+        return []
 
-    token, _meta = load_token()
-    deposits = _load_stock_deposits(token) if isinstance(token, dict) and token.get('access_token') else []
+    with st.spinner('Buscando depósitos automaticamente dentro do Bling...'):
+        deposits = _load_stock_deposits(token)
 
     if deposits:
-        labels = [_option_label(item) for item in deposits]
-        current_id = str(st.session_state.get(API_STOCK_DEPOSIT_ID_KEY) or '').strip()
-        index = 0
-        for pos, item in enumerate(deposits):
-            if current_id and str(item.get('id') or '').strip() == current_id:
-                index = pos
-                break
-        selected_label = st.selectbox('Depósito que receberá o estoque', labels, index=index, key='api_stock_deposit_select')
-        selected = deposits[labels.index(selected_label)]
+        add_audit_event(
+            'stock_target_auto_deposit_lookup_loaded',
+            area='BLING_ENVIO',
+            status='OK',
+            details={'count': len(deposits), 'responsible_file': RESPONSIBLE_FILE},
+        )
+        st.success(f'{len(deposits)} depósito(s) encontrado(s) automaticamente no Bling.')
+    else:
+        add_audit_event(
+            'stock_target_auto_deposit_lookup_empty',
+            area='BLING_ENVIO',
+            status='BLOQUEADO',
+            details={'responsible_file': RESPONSIBLE_FILE},
+        )
+    return deposits or []
+
+
+def _select_detected_deposit(deposits: list[dict[str, str]]) -> bool:
+    if not deposits:
+        return False
+
+    if len(deposits) == 1:
+        selected = deposits[0]
         st.session_state[API_STOCK_DEPOSIT_ID_KEY] = str(selected.get('id') or '').strip()
         st.session_state[API_STOCK_DEPOSIT_KEY] = str(selected.get('nome') or '').strip()
         st.session_state[MANUAL_DEPOSIT_CONFIRMED_KEY] = False
-        _render_retry_button('api_stock_retry_load_deposits_loaded')
+        st.info('Depósito único detectado no Bling; ele foi selecionado automaticamente.')
+        _render_retry_button('api_stock_retry_load_deposits_single')
+        return True
+
+    labels = [_option_label(item) for item in deposits]
+    current_id = str(st.session_state.get(API_STOCK_DEPOSIT_ID_KEY) or '').strip()
+    options = [PLACEHOLDER_SELECT_DEPOSIT] + labels
+    index = 0
+    for pos, item in enumerate(deposits, start=1):
+        if current_id and str(item.get('id') or '').strip() == current_id:
+            index = pos
+            break
+
+    selected_label = st.selectbox('Depósito que receberá o estoque', options, index=index, key='api_stock_deposit_select')
+    if selected_label == PLACEHOLDER_SELECT_DEPOSIT:
+        st.warning('Mais de um depósito foi encontrado. Escolha explicitamente qual depósito receberá a atualização de estoque.')
+        _render_retry_button('api_stock_retry_load_deposits_multiple')
+        return False
+
+    selected = deposits[labels.index(selected_label)]
+    st.session_state[API_STOCK_DEPOSIT_ID_KEY] = str(selected.get('id') or '').strip()
+    st.session_state[API_STOCK_DEPOSIT_KEY] = str(selected.get('nome') or '').strip()
+    st.session_state[MANUAL_DEPOSIT_CONFIRMED_KEY] = False
+    _render_retry_button('api_stock_retry_load_deposits_loaded')
+    return True
+
+
+def render_stock_target_panel(df: pd.DataFrame) -> pd.DataFrame | None:
+    st.markdown('### Depósito do estoque no Bling')
+    st.caption('Operação estoque detectada: o sistema busca automaticamente os depósitos reais do Bling antes de liberar qualquer envio.')
+
+    deposits = _load_deposits_automatically()
+
+    if deposits:
+        selected_ok = _select_detected_deposit(deposits)
+        if not selected_ok:
+            return None
     else:
         st.warning('Não consegui carregar os depósitos automaticamente.')
         _render_manual_deposit_controls()
