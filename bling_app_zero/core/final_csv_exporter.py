@@ -48,7 +48,6 @@ def clean_text(value: object) -> str:
 
 
 def clean_bling_cell_text(value: object, *, sep: str = DEFAULT_SEPARATOR) -> str:
-    # Compatibilidade de nome antigo. Não remove mais ponto e vírgula, aspas ou tabs.
     return clean_text(value)
 
 
@@ -187,7 +186,6 @@ def validate_contract_identity(df: pd.DataFrame | None, contract_columns: Sequen
 
 
 def physical_csv_contract_errors(csv_bytes: bytes, expected_columns: int, *, sep: str = DEFAULT_SEPARATOR) -> list[str]:
-    # CSV usa aspas quando necessário; contar separadores físicos quebra valores legítimos.
     return []
 
 
@@ -202,13 +200,14 @@ def sanitize_final_dataframe(df: pd.DataFrame | None, *, operation: str = 'globa
         return enforce_contract(None, contract_columns)
     contract = contract_from_df(df, contract_columns)
     safe = normalize_dataframe(df, keep_internal=False, preserve_columns=bool(contract))
-    safe = normalize_image_columns(safe)
+    if run_download_features:
+        safe = normalize_image_columns(safe)
     safe = force_empty_columns(safe, explicit_empty_columns)
     return enforce_contract(safe, contract)
 
 
 def final_csv_bytes(df: pd.DataFrame | None, *, operation: str = 'global', contract_columns: Sequence[object] | None = None, explicit_empty_columns: Sequence[object] | None = None, sep: str = DEFAULT_SEPARATOR, run_download_features: bool = True) -> bytes:
-    safe = sanitize_final_dataframe(df, operation=operation, contract_columns=contract_columns, explicit_empty_columns=explicit_empty_columns, run_download_features=False)
+    safe = sanitize_final_dataframe(df, operation=operation, contract_columns=contract_columns, explicit_empty_columns=explicit_empty_columns, run_download_features=run_download_features)
     return _to_csv_bytes_strict(safe, sep=sep)
 
 
@@ -217,7 +216,7 @@ def filename_for_operation(operation: str) -> str:
 
 
 def build_final_csv_export(df: pd.DataFrame | None, *, operation: str = 'global', contract_columns: Sequence[object] | None = None, explicit_empty_columns: Sequence[object] | None = None, file_name: str | None = None, sep: str = DEFAULT_SEPARATOR, run_download_features: bool = True) -> FinalCsvExportResult:
-    safe = sanitize_final_dataframe(df, operation=operation, contract_columns=contract_columns, explicit_empty_columns=explicit_empty_columns, run_download_features=False)
+    safe = sanitize_final_dataframe(df, operation=operation, contract_columns=contract_columns, explicit_empty_columns=explicit_empty_columns, run_download_features=run_download_features)
     csv_bytes = _to_csv_bytes_strict(safe, sep=sep)
     filename = file_name or filename_for_operation(operation)
     return FinalCsvExportResult(df=safe, csv_bytes=csv_bytes, filename=filename, operation='universal', columns=tuple(map(str, safe.columns)), rows=int(len(safe)))
