@@ -12,6 +12,7 @@ from bling_app_zero.core.category_intelligence import apply_category_suggestions
 from bling_app_zero.core.files import read_uploaded_file
 from bling_app_zero.core.final_template_exporter import template_contract_columns
 from bling_app_zero.core.modelo_compactado_universal import resolver_modelo
+from bling_app_zero.core.universal_smart_rules import rule_managed_target_columns
 from bling_app_zero.features_runtime.router import active_contract
 from bling_app_zero.ui.flow_context import CONTEXT_UNIVERSAL, activate_csv_finish_mode, set_entry_context
 from bling_app_zero.ui.home_wizard_rerun import safe_rerun
@@ -183,6 +184,28 @@ def _reset_if_changed(model: pd.DataFrame, source: pd.DataFrame, ai_enabled: boo
         _audit('universal_flow_state_reset_by_signature_change', previous=previous, current=signature)
     st.session_state[UNIVERSAL_SIGNATURE_KEY] = signature
     return signature
+
+
+def _mapping_model_without_rule_fields(model: pd.DataFrame, locked_columns: list[str]) -> pd.DataFrame:
+    if not isinstance(model, pd.DataFrame) or not locked_columns:
+        return model
+    locked = {str(column) for column in locked_columns}
+    columns = [column for column in model.columns if str(column) not in locked]
+    return model.reindex(columns=columns).copy().fillna('')
+
+
+def _strip_rule_managed_mapping(mapping: Mapping[str, str] | None, locked_columns: list[str]) -> dict[str, str]:
+    clean = {str(key): str(value or '') for key, value in dict(mapping or {}).items()}
+    for column in locked_columns:
+        clean[str(column)] = ''
+    return clean
+
+
+def _render_rule_managed_mapping_notice(locked_columns: list[str]) -> None:
+    if not locked_columns:
+        return
+    st.info('Campos preenchidos por regras e bloqueados no mapeamento: ' + ', '.join(locked_columns))
+    _audit('mapear_planilha_campos_de_regras_bloqueados_no_mapeamento', count=len(locked_columns), columns=locked_columns)
 
 
 def _render_model_step() -> pd.DataFrame | None:
@@ -417,15 +440,21 @@ def render_universal_flow() -> None:
     processed, price_enabled = _render_price_group(processed, model)
     processed, category_enabled = _render_category_group(processed)
     rules_config, rules_enabled = _render_rules_group(processed, model)
+    rule_locked_columns = rule_managed_target_columns([str(column) for column in model.columns], rules_config) if rules_enabled else []
+    _render_rule_managed_mapping_notice(rule_locked_columns)
+    mapping_model = _mapping_model_without_rule_fields(model, rule_locked_columns)
     mapping_ai = _render_mapping_ai_toggle()
     signature = _reset_if_changed(model, processed, mapping_ai, rules_enabled, rules_config)
     if mapping_ai and str(st.session_state.get(UNIVERSAL_ENGINE_KEY) or '') == 'manual_sem_ia':
         st.session_state.pop(UNIVERSAL_MAPPING_KEY, None)
         st.session_state.pop(UNIVERSAL_ENGINE_KEY, None)
         clear_shared_mapping_widgets('mapeiaai_universal')
-    _render_ai_tools(processed, model, mapping_ai)
-    mapping = render_shared_contract_mapping(processed, model, signature=signature, mapping_state_key=UNIVERSAL_MAPPING_KEY, engine_state_key=UNIVERSAL_ENGINE_KEY, key_prefix='mapeiaai_universal', ai_enabled=mapping_ai)
+    _render_ai_tools(processed, mapping_model, mapping_ai)
+    mapping = render_shared_contract_mapping(processed, mapping_model, signature=signature, mapping_state_key=UNIVERSAL_MAPPING_KEY, engine_state_key=UNIVERSAL_ENGINE_KEY, key_prefix='mapeiaai_universal', ai_enabled=mapping_ai)
+    mapping = _strip_rule_managed_mapping(mapping, rule_locked_columns)
     mapping, _mapping_rows = build_and_sync_mapping(processed, model, mapping, operation='universal', signature=signature, engine=str(st.session_state.get(UNIVERSAL_ENGINE_KEY) or 'local'), mapping_state_key=UNIVERSAL_MAPPING_KEY, engine_state_key=UNIVERSAL_ENGINE_KEY)
+    mapping = _strip_rule_managed_mapping(mapping, rule_locked_columns)
+    st.session_state[UNIVERSAL_MAPPING_KEY] = mapping
     output = render_shared_final_csv(processed, model, mapping, key_prefix='mapeiaai_universal', file_name='mapeiaai_planilha_final_mapeada.csv', run_smart_features=rules_enabled, smart_rules_config=rules_config)
     if isinstance(output, pd.DataFrame):
         st.session_state[UNIVERSAL_OUTPUT_KEY] = output
