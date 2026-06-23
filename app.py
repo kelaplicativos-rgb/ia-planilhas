@@ -21,6 +21,7 @@ from bling_app_zero.ui.mapping_pagination_runtime import install_mapping_paginat
 from bling_app_zero.ui.oauth_link_guard import install_oauth_link_guard
 from bling_app_zero.ui.preventive_bootstrap import install_preventive_bootstrap
 from bling_app_zero.ui.sidebar_tools import render_sidebar_tools
+from bling_app_zero.ui.site_checkpoint_finalizer_runtime import install_site_checkpoint_finalizer_runtime
 from bling_app_zero.ui.source_upload_recovery_runtime import install_source_upload_recovery_runtime
 from bling_app_zero.ui.startup_guard import ensure_app_ready
 
@@ -127,6 +128,7 @@ def main() -> None:
     _install_bling_api_verified_media_checkpoint('before_runtime_patches')
     _refresh_blingfix_runtime_patch_session()
     install_blingfix_runtime_patches()
+    install_site_checkpoint_finalizer_runtime()
     install_brand_runtime_patch()
     install_xml_nfe_runtime_patch()
     install_bling_api_source_first_policy()
