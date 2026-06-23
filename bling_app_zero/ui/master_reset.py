@@ -11,23 +11,21 @@ RESPONSIBLE_FILE = 'bling_app_zero/ui/master_reset.py'
 RESET_EXACT_KEYS = {
     'home_active_operation_v2',
     'home_allow_operation_v2_session',
-    'home_boot_landing_rendered_once',
     'home_single_page_flow_active',
     'home_entry_context',
     'home_slim_entry_context',
     'home_slim_flow_origin',
     'home_slim_flow_operation',
     'home_detected_operation',
-    'home_bling_connected_same_flow_api_send',
     'bling_finish_mode',
     'finish_mode',
-    'skip_direct_bling_connection_this_flow',
     'bling_wizard_step',
     'home_wizard_step',
     'neutral_wizard_state_v1',
-    'home_wizard_last_rerun_reason',
-    'home_wizard_last_rerun_target',
-    'home_wizard_scroll_target_step',
+    'neutral_final_output_state_v1',
+    'neutral_final_output_report_v1',
+    'neutral_mapping_state_v1',
+    'neutral_mapping_report_v1',
     'frontpage_origin_radio',
     'frontpage_origin_radio_universal',
     'origem_final',
@@ -41,53 +39,26 @@ RESET_EXACT_KEYS = {
     'destination_model_upload_bytes',
     'destination_model_upload_name',
     'destination_model_upload_signature',
-    'home_modelo_cadastro_df',
-    'home_modelo_estoque_df',
-    'home_modelo_universal_df',
-    'home_modelo_atualizacao_preco_df',
-    'df_modelo_cadastro',
-    'modelo_cadastro_df',
-    'df_modelo_estoque',
-    'modelo_estoque_df',
-    'df_modelo_universal',
-    'modelo_universal_df',
-    'df_modelo_atualizacao_preco',
-    'modelo_atualizacao_preco_df',
-    'cadastro_wizard_df_origem',
-    'cadastro_wizard_df_para_mapear',
-    'cadastro_wizard_df_modelo',
-    'cadastro_wizard_df_modelo_estoque',
-    'cadastro_mapping_confirmed',
-    'cadastro_mapping_confirmed_signature',
-    'df_origem',
-    'df_origem_planilha',
-    'df_produtos_origem',
-    'df_origem_cadastro_precificada',
+    'mapeiaai_universal_model_df',
+    'mapeiaai_universal_source_df',
+    'mapeiaai_universal_mapping',
+    'mapeiaai_universal_output_df',
+    'mapeiaai_universal_signature',
+    'mapeiaai_universal_mapping_engine',
+    'mapeiaai_universal_model_file_name',
+    'mapeiaai_universal_model_file_bytes',
+    'mapeiaai_universal_source_mode',
+    'mapeiaai_final_download_ready',
     'df_final_universal',
     'df_final_cadastro',
     'df_final_estoque',
     'df_final_download_snapshot',
-    'df_final_cadastro_preview_rules_applied',
-    'home_pricing_config',
-    'home_pricing_enabled_toggle',
-    'home_precificacao_inicial',
-    'cadastro_preco_calculado_ativo',
-    'price_calculator_source_cost_column',
-    'global_price_source_cost_column',
-    'price_calculator_config',
-    'global_price_config',
-    'price_calculator_ready',
-    'global_price_ready',
-    'bling_user_rules',
-    'rules_center_reviewed',
-    'rules_center_ready',
     'universal_preview_report',
     'flow_spine_preview_ready',
 }
 
 RESET_PREFIXES = (
     'df_final_',
-    'df_origem_',
     'df_modelo_',
     'modelo_',
     'mapping_',
@@ -95,7 +66,6 @@ RESET_PREFIXES = (
     'estoque_',
     'site_',
     'df_site_',
-    'blingsmartscan_',
     'destination_model_',
     'home_modelo_',
     'home_pricing_',
@@ -110,7 +80,13 @@ RESET_PREFIXES = (
     'bling_autofluxo_',
     'universal_map_',
     'mapping_page_',
+    'mapeiaai_universal_',
+    'mapeiaai_final_',
+    'neutral_mapping_',
+    'neutral_final_',
 )
+
+ORIGIN_PREFIXES = ('df_origem_', 'df_site_', 'site_')
 
 REUSABLE_ORIGIN_KEYS = (
     'cadastro_wizard_df_origem',
@@ -120,18 +96,8 @@ REUSABLE_ORIGIN_KEYS = (
     'df_origem_site',
     'df_origem_site_como_planilha',
     'df_origem_site_como_planilha_universal',
-    'df_origem_site_como_planilha_cadastro',
-    'df_origem_site_como_planilha_estoque',
-    'df_origem_site_como_planilha_atualizacao_preco',
-    'df_origem_cadastro',
-    'df_origem_estoque',
-    'df_origem_universal',
     'df_site_bruto',
     'df_site_bruto_universal',
-    'df_site_bruto_cadastro',
-    'df_site_bruto_estoque',
-    'df_site_bruto_atualizacao_preco',
-    'estoque_wizard_df_origem_site',
 )
 
 
@@ -173,20 +139,9 @@ def prepare_reuse_origin_state(state: MutableMapping[str, Any]) -> tuple[str, li
     source_key = reusable_origin_key(state)
     if not source_key:
         return '', []
-
     source_data = state.get(source_key)
-    source_kind = str(
-        state.get('home_slim_flow_origin')
-        or state.get('frontpage_origin_radio_universal')
-        or state.get('origem_final')
-        or ('site' if 'site' in source_key else 'arquivo')
-    ).strip().lower()
-    if source_kind not in {'arquivo', 'site'}:
-        source_kind = 'site' if 'site' in source_key else 'arquivo'
-
-    api_send = bool(state.get('home_bling_connected_same_flow_api_send'))
+    source_kind = 'site' if 'site' in source_key else 'arquivo'
     removed = clear_operation_state(state)
-
     state['cadastro_wizard_df_origem'] = source_data
     state['home_slim_flow_origin'] = source_kind
     state['frontpage_origin_radio_universal'] = source_kind
@@ -200,9 +155,6 @@ def prepare_reuse_origin_state(state: MutableMapping[str, Any]) -> tuple[str, li
     state['skip_direct_bling_connection_this_flow'] = True
     state['bling_wizard_step'] = 'modelo'
     state['home_wizard_step'] = 'modelo'
-    if api_send:
-        state['home_bling_connected_same_flow_api_send'] = True
-
     return source_key, removed
 
 
@@ -231,19 +183,7 @@ def master_reset_to_home() -> list[str]:
     st.session_state['home_allow_operation_v2_session'] = False
     st.session_state['home_single_page_flow_active'] = False
     clear_navigation_params()
-    add_audit_event(
-        'master_reset_new_operation',
-        area='HOME',
-        step='home',
-        status='OK',
-        details={
-            'removed_count': len(removed),
-            'removed_keys': removed[:120],
-            'bling_connection_preserved': True,
-            'navigation_history_cleared': True,
-            'responsible_file': RESPONSIBLE_FILE,
-        },
-    )
+    add_audit_event('master_reset_new_operation', area='HOME', step='home', status='OK', details={'removed_count': len(removed), 'removed_keys': removed[:120], 'universal_residue_guard': True, 'responsible_file': RESPONSIBLE_FILE})
     return removed
 
 
@@ -253,22 +193,7 @@ def reuse_origin_for_new_operation() -> bool:
         return False
     source_kind = str(st.session_state.get('home_slim_flow_origin') or 'arquivo')
     _set_reuse_navigation_params(source_kind)
-    add_audit_event(
-        'reuse_origin_for_new_operation',
-        area='HOME',
-        step='modelo',
-        status='OK',
-        details={
-            'source_key': source_key,
-            'source_kind': source_kind,
-            'removed_count': len(removed),
-            'removed_keys': removed[:120],
-            'origin_preserved': True,
-            'previous_outputs_cleared': True,
-            'bling_connection_preserved': True,
-            'responsible_file': RESPONSIBLE_FILE,
-        },
-    )
+    add_audit_event('reuse_origin_for_new_operation', area='HOME', step='modelo', status='OK', details={'source_key': source_key, 'source_kind': source_kind, 'removed_count': len(removed), 'removed_keys': removed[:120], 'origin_preserved': True, 'previous_outputs_cleared': True, 'universal_model_mapping_rules_cleared': True, 'responsible_file': RESPONSIBLE_FILE})
     return True
 
 
