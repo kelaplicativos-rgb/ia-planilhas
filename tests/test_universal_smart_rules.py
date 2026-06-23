@@ -3,7 +3,13 @@ from __future__ import annotations
 import pandas as pd
 
 from bling_app_zero.core.final_output_engine import build_final_output
-from bling_app_zero.core.universal_smart_rules import apply_universal_smart_rules, default_smart_rules_config
+from bling_app_zero.core.universal_smart_rules import (
+    DEFAULT_WEIGHT_VALUE,
+    apply_universal_smart_rules,
+    default_smart_rules_config,
+    normalize_smart_rules_config,
+    rule_managed_target_columns,
+)
 
 
 def test_smart_rules_apply_only_explicit_toggles() -> None:
@@ -69,6 +75,9 @@ def test_smart_rules_defaults_are_opt_in() -> None:
     assert defaults['apply_status_default'] is False
     assert defaults['apply_condition_default'] is False
     assert defaults['apply_dimensions_default'] is False
+    assert defaults['apply_weight_default'] is True
+    assert defaults['net_weight_value'] == DEFAULT_WEIGHT_VALUE
+    assert defaults['gross_weight_value'] == DEFAULT_WEIGHT_VALUE
     assert defaults['max_images'] == 6
 
 
@@ -145,3 +154,55 @@ def test_optional_default_toggles_fill_empty_matching_columns() -> None:
     assert output.loc[0, 'Profundidade'] == '16'
     assert output.loc[0, 'Nome'] == 'Produto'
     assert report['applied_cells'] == 7
+
+
+def test_weight_defaults_fill_both_weight_columns() -> None:
+    config = normalize_smart_rules_config({'enabled': True})
+    df = pd.DataFrame({'Peso líquido (Kg)': [''], 'Peso bruto (Kg)': [''], 'Nome': ['Produto']})
+
+    output, report = apply_universal_smart_rules(df, config)
+
+    assert output.loc[0, 'Peso líquido (Kg)'] == DEFAULT_WEIGHT_VALUE
+    assert output.loc[0, 'Peso bruto (Kg)'] == DEFAULT_WEIGHT_VALUE
+    assert output.loc[0, 'Nome'] == 'Produto'
+    assert {'column': 'Peso líquido (Kg)', 'rule': 'net_weight'} in report['fixed_columns']
+    assert {'column': 'Peso bruto (Kg)', 'rule': 'gross_weight'} in report['fixed_columns']
+
+
+def test_rule_managed_target_columns_returns_fixed_rule_fields_only() -> None:
+    config = normalize_smart_rules_config(
+        {
+            'enabled': True,
+            'apply_unit_default': True,
+            'apply_status_default': True,
+            'apply_condition_default': True,
+            'apply_dimensions_default': True,
+            'apply_weight_default': True,
+        }
+    )
+
+    locked = rule_managed_target_columns(
+        [
+            'Descricao',
+            'Unidade',
+            'Situacao',
+            'Condicao',
+            'Altura',
+            'Largura',
+            'Profundidade',
+            'Peso líquido (Kg)',
+            'Peso bruto (Kg)',
+        ],
+        config,
+    )
+
+    assert locked == [
+        'Unidade',
+        'Situacao',
+        'Condicao',
+        'Altura',
+        'Largura',
+        'Profundidade',
+        'Peso líquido (Kg)',
+        'Peso bruto (Kg)',
+    ]
