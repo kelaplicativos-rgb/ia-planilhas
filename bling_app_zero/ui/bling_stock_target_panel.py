@@ -8,7 +8,6 @@ from bling_app_zero.core.bling_direct_sender_safe import (
     API_STOCK_DEPOSIT_ID_KEY,
     API_STOCK_DEPOSIT_KEY,
     API_STOCK_DEPOSIT_OPTIONS_KEY,
-    _load_stock_deposits,
 )
 from bling_app_zero.core.bling_token_store import load_token
 
@@ -80,6 +79,30 @@ def _render_manual_deposit_controls() -> None:
         st.info('Toque em “Usar este depósito e continuar” para confirmar o ID digitado.')
 
 
+def _load_deposits_with_correct_endpoint_order() -> list[dict[str, str]]:
+    """Busca depósitos pelo fluxo oficial da UI.
+
+    O diagnóstico confirmou que `/depositos` responde corretamente e que
+    `/estoques/depositos` pode retornar 404. Por isso este painel usa a busca
+    de `home_bling_api_flow`, que já tenta `/depositos` antes dos fallbacks.
+    """
+    try:
+        from bling_app_zero.ui.home_bling_api_flow import _fetch_stock_deposits
+
+        deposits, error = _fetch_stock_deposits()
+        if error:
+            st.caption(error)
+        return deposits or []
+    except Exception as exc:
+        add_audit_event(
+            'stock_target_corrected_deposit_lookup_failed',
+            area='BLING_ENVIO',
+            status='AVISO',
+            details={'error': str(exc)[:300], 'responsible_file': RESPONSIBLE_FILE},
+        )
+        return []
+
+
 def _load_deposits_automatically() -> list[dict[str, str]]:
     token, meta = load_token()
     if not isinstance(token, dict) or not token.get('access_token'):
@@ -93,14 +116,14 @@ def _load_deposits_automatically() -> list[dict[str, str]]:
         return []
 
     with st.spinner('Buscando depósitos automaticamente dentro do Bling...'):
-        deposits = _load_stock_deposits(token)
+        deposits = _load_deposits_with_correct_endpoint_order()
 
     if deposits:
         add_audit_event(
             'stock_target_auto_deposit_lookup_loaded',
             area='BLING_ENVIO',
             status='OK',
-            details={'count': len(deposits), 'responsible_file': RESPONSIBLE_FILE},
+            details={'count': len(deposits), 'lookup_order': 'depositos_first', 'responsible_file': RESPONSIBLE_FILE},
         )
         st.success(f'{len(deposits)} depósito(s) encontrado(s) automaticamente no Bling.')
     else:
@@ -108,7 +131,7 @@ def _load_deposits_automatically() -> list[dict[str, str]]:
             'stock_target_auto_deposit_lookup_empty',
             area='BLING_ENVIO',
             status='BLOQUEADO',
-            details={'responsible_file': RESPONSIBLE_FILE},
+            details={'lookup_order': 'depositos_first', 'responsible_file': RESPONSIBLE_FILE},
         )
     return deposits or []
 
