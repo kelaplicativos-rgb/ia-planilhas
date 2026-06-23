@@ -123,7 +123,8 @@ def reusable_origin_available(state: MutableMapping[str, Any]) -> bool:
 
 def should_clear_for_new_operation(key: object) -> bool:
     text = str(key or '')
-    return text in RESET_EXACT_KEYS or any(text.startswith(prefix) for prefix in RESET_PREFIXES)
+    prefixes = RESET_PREFIXES + ORIGIN_PREFIXES
+    return text in RESET_EXACT_KEYS or any(text.startswith(prefix) for prefix in prefixes)
 
 
 def clear_operation_state(state: MutableMapping[str, Any]) -> list[str]:
