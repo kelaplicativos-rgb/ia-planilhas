@@ -264,8 +264,17 @@ def _install_stock_balance_patch() -> None:
         pass
 
 
+def _install_product_model_patch() -> None:
+    try:
+        from bling_app_zero.core import product_model_payload_patch
+        product_model_payload_patch.install()
+    except Exception:
+        pass
+
+
 def install() -> None:
     _install_stock_balance_patch()
+    _install_product_model_patch()
     for module_name in list(TARGET_MODULES):
         loaded = sys.modules.get(module_name)
         if loaded is not None:
