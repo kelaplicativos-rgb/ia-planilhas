@@ -27,14 +27,45 @@ def _with_enriched_errors(result: DirectSendResult, df) -> DirectSendResult:
     )
 
 
-def _install_incremental_product_update_guard() -> None:
-    """Evita atualização destrutiva de produto existente.
+def _compare_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(k): _compare_value(v) for k, v in sorted(value.items()) if v not in ('', None, {}, [])}
+    if isinstance(value, list):
+        return [_compare_value(v) for v in value if v not in ('', None, {}, [])]
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return round(float(value), 6)
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    numeric = text.replace('.', '').replace(',', '.')
+    try:
+        if numeric and all(ch in '-0123456789.' for ch in numeric) and any(ch.isdigit() for ch in numeric):
+            return round(float(numeric), 6)
+    except Exception:
+        pass
+    return ' '.join(text.split()).casefold()
 
-    Quando o produto já existe no Bling, a planilha tratada deve funcionar como
-    origem dos campos a atualizar. Campos vazios/não mapeados não podem apagar
-    dados existentes. Por isso substituímos o update full PUT por PATCHs
-    incrementais somente com valores presentes no payload final.
-    """
+
+def _same(current: Any, desired: Any) -> bool:
+    return _compare_value(current) == _compare_value(desired)
+
+
+def _delta_payload(current: dict[str, Any], desired: dict[str, Any]) -> dict[str, Any]:
+    current = current if isinstance(current, dict) else {}
+    out: dict[str, Any] = {}
+    for key, value in dict(desired or {}).items():
+        if value in ('', None, {}, []):
+            continue
+        current_value = current.get(key)
+        if not _same(current_value, value):
+            out[key] = value
+    return out
+
+
+def _install_incremental_product_update_guard() -> None:
+    """Produto existente: GET atual, compara e envia PATCH só dos campos diferentes."""
     from bling_app_zero.core import bling_v3_product_client as client_mod
 
     current = getattr(client_mod.BlingV3ProductClient, 'update_product', None)
@@ -57,20 +88,27 @@ def _install_incremental_product_update_guard() -> None:
 
     def update_product_incremental(self, product_id: str, payload: dict[str, Any]):
         attempts: list[dict[str, Any]] = []
-        partial_payload = client_mod._clean(payload if isinstance(payload, dict) else {})
-        if not partial_payload:
-            saved = self.get_product(product_id)
-            return client_mod.BlingV3Result(ok=True, product_id=str(product_id), status='unchanged', attempts=tuple(), persisted=saved)
+        desired_payload = client_mod._clean(payload if isinstance(payload, dict) else {})
+        saved_before = self.get_product(product_id)
+        delta = _delta_payload(saved_before, desired_payload)
+        if not delta:
+            add_audit_event(
+                'verified_api_sender_no_product_delta_detected',
+                area='BLING_ENVIO',
+                status='OK',
+                details={'product_id': str(product_id), 'desired_fields': sorted(desired_payload.keys()), 'rule': 'sem diferenças reais; nenhum PATCH enviado', 'responsible_file': RESPONSIBLE_FILE},
+            )
+            return client_mod.BlingV3Result(ok=True, product_id=str(product_id), status='unchanged_no_delta', attempts=tuple(), persisted=saved_before)
 
-        options: list[tuple[str, dict[str, Any]]] = [('product.incremental.patch', partial_payload)]
-        no_media = deepcopy(partial_payload)
+        options: list[tuple[str, dict[str, Any]]] = [('product.delta.patch', delta)]
+        no_media = deepcopy(delta)
         no_media.pop('midia', None)
         no_media.pop('imagens', None)
-        if no_media != partial_payload:
-            options.append(('product.incremental.no_media.patch', no_media))
-        options.extend(client_mod._description_payloads(partial_payload))
-        options.extend(client_mod._detail_payloads(partial_payload))
-        options.extend(client_mod._media_payloads(partial_payload))
+        if no_media != delta:
+            options.append(('product.delta.no_media.patch', no_media))
+        options.extend(client_mod._description_payloads(delta))
+        options.extend(client_mod._detail_payloads(delta))
+        options.extend(client_mod._media_payloads(delta))
         options = _dedupe_options(options)
 
         for label, item in options:
@@ -84,25 +122,21 @@ def _install_incremental_product_update_guard() -> None:
                 'changed_fields': client_mod._fields(item),
                 'response_preview': text,
                 'incremental_update_only': True,
+                'delta_only': True,
                 'no_put_full_replace': True,
             })
             if status in {401, 403, 404}:
                 break
 
-        persisted = self._after_write(product_id, partial_payload, attempts)
+        persisted = self._after_write(product_id, delta, attempts)
         ok = any(isinstance(item.get('status'), int) and int(item.get('status')) < 400 for item in attempts)
         add_audit_event(
             'verified_api_sender_incremental_product_update_guard_used',
             area='BLING_ENVIO',
             status='OK' if ok else 'AVISO',
-            details={
-                'product_id': str(product_id),
-                'attempts': attempts[-12:],
-                'rule': 'PATCH incremental; campos vazios não removem dados existentes',
-                'responsible_file': RESPONSIBLE_FILE,
-            },
+            details={'product_id': str(product_id), 'requested_fields': sorted(desired_payload.keys()), 'delta_fields': sorted(delta.keys()), 'attempts': attempts[-12:], 'rule': 'PATCH somente dos campos diferentes; vazios não apagam dados', 'responsible_file': RESPONSIBLE_FILE},
         )
-        return client_mod.BlingV3Result(ok=ok, product_id=str(product_id), status='updated_incremental', attempts=tuple(attempts), persisted=persisted)
+        return client_mod.BlingV3Result(ok=ok, product_id=str(product_id), status='updated_delta_only', attempts=tuple(attempts), persisted=persisted)
 
     update_product_incremental._mapeiaai_incremental_patch_only = True
     client_mod.BlingV3ProductClient.update_product = update_product_incremental
@@ -110,7 +144,7 @@ def _install_incremental_product_update_guard() -> None:
         'verified_api_sender_incremental_product_update_guard_installed',
         area='BLING_ENVIO',
         status='OK',
-        details={'rule': 'produto existente usa PATCH incremental, nunca PUT full replace', 'responsible_file': RESPONSIBLE_FILE},
+        details={'rule': 'produto existente usa PATCH incremental somente com delta real, nunca PUT full replace', 'responsible_file': RESPONSIBLE_FILE},
     )
 
 
