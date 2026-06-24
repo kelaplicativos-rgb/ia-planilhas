@@ -16,6 +16,7 @@ from bling_app_zero.core.mapping_state import (
     MappingRequest,
     MappingState,
 )
+from bling_app_zero.core.smart_column_profiler import profile_as_mapping
 from bling_app_zero.core.text import normalize_key as normalize_column_key
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/spreadsheet_mapping_center.py'
@@ -126,7 +127,8 @@ def _ratio(count: int, total: int) -> float:
     return count / max(total, 1)
 
 
-def _profile(df: pd.DataFrame, column: str) -> dict[str, float | str | bool]:
+def _legacy_profile(df: pd.DataFrame, column: str) -> dict[str, float | str | bool]:
+    """Fallback antigo, mantido para evitar quebra caso o profiler novo falhe."""
     values = _values(df, column)
     total = max(len(values), 1)
     text = sum(1 for value in values if TEXT_RE.search(value)) / total
@@ -139,29 +141,64 @@ def _profile(df: pd.DataFrame, column: str) -> dict[str, float | str | bool]:
     unique = len(set(value.lower() for value in values)) / total if values else 0
     return {
         'kind': infer_kind(column),
+        'header_kind': infer_kind(column),
+        'content_kind': 'custom',
+        'effective_kind': infer_kind(column),
+        'confidence': 0.0,
+        'header_conflict': False,
+        'reason': '',
+        'warning': '',
+        'samples': tuple(values[:5]),
         'text': text,
         'numeric': numeric,
+        'integer': numeric,
         'price': price,
         'gtin': gtin,
         'url': url,
         'image': image,
+        'breadcrumb': 0.0,
         'avg_len': avg_len,
         'unique': unique,
         'has_values': bool(values),
     }
 
 
-def _content_profile(df: pd.DataFrame, column: str) -> dict[str, float | str]:
+def _profile(df: pd.DataFrame, column: str) -> dict[str, float | str | bool | tuple[str, ...]]:
+    """Perfil semântico: cabeçalho + conteúdo real das linhas.
+
+    A chave ``kind`` agora representa o tipo efetivo validado pelo conteúdo,
+    não apenas o tipo inferido pelo cabeçalho. Isso evita mapear, por exemplo,
+    coluna chamada "Produto" contendo EAN para o campo Descrição.
+    """
+    try:
+        return profile_as_mapping(df, column)
+    except Exception:
+        return _legacy_profile(df, column)
+
+
+def _content_profile(df: pd.DataFrame, column: str) -> dict[str, float | str | bool | tuple[str, ...]]:
     profile = _profile(df, column)
     return {
         'kind': str(profile.get('kind') or ''),
+        'header_kind': str(profile.get('header_kind') or ''),
+        'content_kind': str(profile.get('content_kind') or ''),
+        'effective_kind': str(profile.get('effective_kind') or profile.get('kind') or ''),
+        'confidence': float(profile.get('confidence') or 0),
+        'header_conflict': bool(profile.get('header_conflict')),
+        'reason': str(profile.get('reason') or ''),
+        'warning': str(profile.get('warning') or ''),
+        'samples': tuple(profile.get('samples') or ()),
         'text': float(profile.get('text') or 0),
         'numeric': float(profile.get('numeric') or 0),
+        'integer': float(profile.get('integer') or profile.get('numeric') or 0),
         'price': float(profile.get('price') or 0),
         'gtin': float(profile.get('gtin') or 0),
         'url': float(profile.get('url') or 0),
         'image': float(profile.get('image') or 0),
+        'breadcrumb': float(profile.get('breadcrumb') or 0),
         'avg_len': float(profile.get('avg_len') or 0),
+        'unique': float(profile.get('unique') or 0),
+        'has_values': bool(profile.get('has_values')),
     }
 
 
@@ -205,12 +242,34 @@ def _source_has_price_name(column: str) -> bool:
     return bool(tokens & {normalize_column_key(term) for term in PRICE_LIKE_TERMS})
 
 
-def _auto_compatible(target: str, source: str, profile: dict[str, float | str]) -> bool:
+def _is_kind_compatible(target_kind: str, source_kind: str) -> bool:
+    if not target_kind or not source_kind or target_kind == 'custom' or source_kind == 'custom':
+        return False
+    groups = [
+        {'descricao', 'descricao_curta', 'descricao_complementar', 'nome_apoio'},
+        {'codigo', 'id_produto', 'gtin'},
+        {'preco_unitario', 'preco_custo'},
+    ]
+    if target_kind == source_kind:
+        return True
+    return any(target_kind in group and source_kind in group for group in groups)
+
+
+def _semantic_conflict(target_kind: str, profile: dict[str, float | str | bool | tuple[str, ...]]) -> bool:
+    content_kind = str(profile.get('content_kind') or profile.get('kind') or '')
+    confidence = float(profile.get('confidence') or 0)
+    if not content_kind or content_kind == 'custom' or confidence < 0.55:
+        return False
+    return not _is_kind_compatible(target_kind, content_kind)
+
+
+def _auto_compatible(target: str, source: str, profile: dict[str, float | str | bool | tuple[str, ...]]) -> bool:
     target_key = normalize_column_key(target)
     target_kind = infer_kind(target)
     source_kind = str(profile.get('kind') or '')
     text = float(profile.get('text') or 0)
     numeric = float(profile.get('numeric') or 0)
+    integer = float(profile.get('integer') or numeric)
     price = float(profile.get('price') or 0)
     gtin = float(profile.get('gtin') or 0)
     url = float(profile.get('url') or 0)
@@ -219,16 +278,18 @@ def _auto_compatible(target: str, source: str, profile: dict[str, float | str]) 
 
     if target_kind == 'custom':
         return False
-    if target_key in GENERIC_DESCRIPTION_TARGETS and source_kind != target_kind:
+    if _semantic_conflict(target_kind, profile):
+        return False
+    if target_key in GENERIC_DESCRIPTION_TARGETS and not _is_kind_compatible(target_kind, source_kind):
         return False
     if target_kind in {'codigo', 'id_produto'}:
         return source_kind in {'codigo', 'id_produto', 'gtin'} or gtin >= 0.45 or numeric >= 0.70
     if target_kind == 'gtin':
         return source_kind == 'gtin' or gtin >= 0.55
-    if target_kind in {'descricao', 'nome_apoio'}:
-        return source_kind in {'descricao', 'nome_apoio'} or (text >= 0.55 and avg_len >= 8 and url < 0.20)
+    if target_kind in {'descricao', 'nome_apoio', 'descricao_curta', 'descricao_complementar'}:
+        return _is_kind_compatible(target_kind, source_kind) or (text >= 0.55 and avg_len >= 8 and url < 0.20)
     if target_kind in {'preco_unitario', 'preco_custo'}:
-        return source_kind in {'preco_unitario', 'preco_custo'} or price >= 0.35 or numeric >= 0.70
+        return source_kind in {'preco_unitario', 'preco_custo'} or price >= 0.35 or (numeric >= 0.70 and integer < 0.75)
     if target_kind == 'estoque':
         if source_kind in {'preco_unitario', 'preco_custo'} or _source_has_price_name(str(profile.get('source_name') or '')):
             return False
@@ -244,20 +305,20 @@ def _auto_compatible(target: str, source: str, profile: dict[str, float | str]) 
     return source_kind == target_kind
 
 
-def _content_bonus(target: str, source: str, profile: dict[str, float | str]) -> int:
+def _content_bonus(target: str, source: str, profile: dict[str, float | str | bool | tuple[str, ...]]) -> int:
     profile = dict(profile)
     profile['source_name'] = source
     if not _auto_compatible(target, source, profile):
         return -1000
     target_kind = infer_kind(target)
     source_kind = str(profile.get('kind') or '')
-    if target_kind == source_kind and target_kind != 'custom':
+    if _is_kind_compatible(target_kind, source_kind) and target_kind != 'custom':
         return 45
     if target_kind == 'gtin':
         return int(float(profile.get('gtin') or 0) * 45)
     if target_kind in {'preco_unitario', 'preco_custo'}:
         return int(max(float(profile.get('price') or 0), float(profile.get('numeric') or 0)) * 35)
-    if target_kind in {'descricao', 'nome_apoio'}:
+    if target_kind in {'descricao', 'nome_apoio', 'descricao_curta', 'descricao_complementar'}:
         return int(float(profile.get('text') or 0) * 30 + min(float(profile.get('avg_len') or 0), 80) / 4)
     return 15
 
@@ -391,19 +452,20 @@ def _name_score(target: str, source: str) -> int:
     return score
 
 
-def _is_price_like_source(source: str, profile: dict[str, float | str | bool]) -> bool:
+def _is_price_like_source(source: str, profile: dict[str, float | str | bool | tuple[str, ...]]) -> bool:
     source_key = normalize_column_key(source)
     if str(profile.get('kind') or '') in {'preco_unitario', 'preco_custo'}:
         return True
     return any(normalize_column_key(term) in source_key for term in PRICE_SOURCE_TERMS)
 
 
-def _content_score(target: str, source: str, profile: dict[str, float | str | bool]) -> int:
+def _content_score(target: str, source: str, profile: dict[str, float | str | bool | tuple[str, ...]]) -> int:
     target_kind = _target_kind(target)
     source_kind = str(profile.get('kind') or infer_kind(source))
     has_values = bool(profile.get('has_values'))
     text = float(profile.get('text') or 0)
     numeric = float(profile.get('numeric') or 0)
+    integer = float(profile.get('integer') or numeric)
     price = float(profile.get('price') or 0)
     gtin = float(profile.get('gtin') or 0)
     url = float(profile.get('url') or 0)
@@ -413,16 +475,18 @@ def _content_score(target: str, source: str, profile: dict[str, float | str | bo
 
     if not has_values:
         return -80
-    if target_kind == source_kind and target_kind != 'custom':
+    if _semantic_conflict(target_kind, profile):
+        return -140
+    if _is_kind_compatible(target_kind, source_kind) and target_kind != 'custom':
         return 70
     if target_kind in {'codigo', 'id_produto'}:
         return 45 if gtin >= 0.30 or numeric >= 0.55 or source_kind in {'codigo', 'id_produto', 'gtin'} else -80
     if target_kind == 'gtin':
         return int(gtin * 110) if gtin >= 0.50 or source_kind == 'gtin' else -120
-    if target_kind in {'descricao', 'nome_apoio'}:
+    if target_kind in {'descricao', 'nome_apoio', 'descricao_curta', 'descricao_complementar'}:
         return int(text * 55 + min(avg_len, 80) / 3) if text >= 0.40 and url < 0.25 else -80
     if target_kind in {'preco_unitario', 'preco_custo'}:
-        return int(max(price, numeric) * 90) if price >= 0.25 or numeric >= 0.70 else -90
+        return int(max(price, numeric) * 90) if price >= 0.25 or (numeric >= 0.70 and integer < 0.75) else -90
     if target_kind == 'estoque':
         if _is_price_like_source(source, profile):
             return -120
@@ -442,7 +506,10 @@ def _content_score(target: str, source: str, profile: dict[str, float | str | bo
     return -30
 
 
-def _confidence_compatible(target: str, source: str, profile: dict[str, float | str | bool]) -> bool:
+def _confidence_compatible(target: str, source: str, profile: dict[str, float | str | bool | tuple[str, ...]]) -> bool:
+    target_kind = _target_kind(target)
+    if _semantic_conflict(target_kind, profile):
+        return False
     return _content_score(target, source, profile) > -70 or _name_score(target, source) >= 100
 
 
@@ -467,14 +534,25 @@ def confidence_for_mapping(df_source: pd.DataFrame, target: str, source: str) ->
         return pending_confidence()
 
     profile = _profile(df_source, source)
+    target_kind = _target_kind(target)
+    if _semantic_conflict(target_kind, profile):
+        warning = str(profile.get('warning') or 'Cabeçalho e conteúdo não combinam com o campo final.')
+        return {'score': 0, 'level': 'vermelho', 'emoji': '🔴', 'label': warning, 'order': 0, 'strict': True}
     if not _confidence_compatible(target, source, profile):
         return pending_confidence()
 
-    if _bit_to_bit_match(target, source):
+    if _bit_to_bit_match(target, source) and not bool(profile.get('header_conflict')):
         return _confidence(100, 'verde')
 
     score = _name_score(target, source) + _content_score(target, source, profile)
-    return _confidence(score)
+    result = _confidence(score)
+    if result.get('level') == 'verde' and bool(profile.get('header_conflict')):
+        result = dict(result)
+        result['level'] = 'amarelo'
+        result['emoji'] = '🟡'
+        result['label'] = 'conferir: cabeçalho e conteúdo divergem'
+        result['order'] = 1
+    return result
 
 
 def confidence_for_mapping_dict(df_source: pd.DataFrame, mapping: dict[str, str]) -> dict[str, dict[str, object]]:
@@ -495,6 +573,20 @@ def sort_targets_by_confidence(target_columns: list[str], confidence: dict[str, 
 def confidence_for(target: str, source_column: str, source: Any = None) -> tuple[str, str]:
     if not source_column:
         return CONFIDENCE_EMPTY, '🔴 vazio'
+
+    if isinstance(source, pd.DataFrame) and source_column in source.columns:
+        info = confidence_for_mapping(source, target, source_column)
+        level = str(info.get('level') or '')
+        emoji = str(info.get('emoji') or '')
+        label = str(info.get('label') or '')
+        score = info.get('score', '')
+        suffix = f' {score}%' if isinstance(score, int) and score > 0 else ''
+        if level == 'verde':
+            return CONFIDENCE_HIGH, f'{emoji} {label}{suffix}'.strip()
+        if level == 'amarelo':
+            return CONFIDENCE_REVIEW, f'{emoji} {label}{suffix}'.strip()
+        return CONFIDENCE_EMPTY, f'{emoji or "🔴"} {label or "revisar conteúdo"}'.strip()
+
     target_key = normalize_engine_key(target)
     source_key = normalize_engine_key(source_column)
     if target_key and (target_key == source_key or target_key in source_key or source_key in target_key):
@@ -526,7 +618,16 @@ def build_mapping_state(
         confidence, label = confidence_for(target_name, selected, source)
         field = MappingField(target=target_name, source=selected, confidence=confidence, label=label)
         fields.append(field)
-        rows.append({'Farol': label, 'Contrato final': target_name, 'Origem usada': selected or '(vazio)'})
+        row = {'Farol': label, 'Contrato final': target_name, 'Origem usada': selected or '(vazio)'}
+        if selected and isinstance(source, pd.DataFrame) and selected in source.columns:
+            profile = _profile(source, selected)
+            leitura = str(profile.get('kind') or profile.get('content_kind') or '')
+            if leitura:
+                row['Leitura IA'] = leitura
+            warning = str(profile.get('warning') or '')
+            if warning:
+                row['Alerta IA'] = warning
+        rows.append(row)
     state = MappingState(request=request, fields=tuple(fields), engine=engine or 'local', message=message)
     return MappingCommandResult(state=state, rows=tuple(rows), message=message, needs_rerun=False)
 
@@ -563,26 +664,24 @@ def simulate_universal_mapping_request() -> dict[str, object]:
 
     A simulação cria DataFrames de origem/modelo com ``pandas.Index`` real,
     passa pelo mesmo construtor de request usado no mapeamento e confirma que
-    nenhuma etapa depende de ``columns or []``.
+    nenhuma etapa depende de ``columns or []`` e que conteúdo conflitante não
+    passa como sugestão verde.
     """
     source = pd.DataFrame(
         {
             'SKU': ['ABC-1'],
-            'Produto': ['Produto teste'],
+            'Produto': ['7891234567890'],
+            'Título real': ['Produto teste bluetooth'],
             'Preço': ['R$ 10,00'],
             'Estoque': ['5'],
         }
     )
-    model = pd.DataFrame(columns=['Código', 'Descrição', 'Preço unitário', 'Estoque'])
+    model = pd.DataFrame(columns=['Código', 'Descrição', 'GTIN', 'Preço unitário', 'Estoque'])
     request = build_request_from_frames(source, model, operation='universal', signature='simulation')
+    mapping = auto_map_columns(source, model)
     result = build_mapping_state(
         request,
-        {
-            'Código': 'SKU',
-            'Descrição': 'Produto',
-            'Preço unitário': 'Preço',
-            'Estoque': 'Estoque',
-        },
+        mapping,
         source=source,
         engine='local_simulation',
         message='Simulação do fluxo universal corrigido.',
@@ -592,7 +691,11 @@ def simulate_universal_mapping_request() -> dict[str, object]:
         'operation': request.operation,
         'source_columns': list(request.source_columns),
         'target_columns': list(request.target_columns),
+        'mapping': result.state.mapping,
+        'rows_report': list(result.rows),
         'mapped_fields': sum(1 for value in result.state.mapping.values() if str(value or '').strip()),
+        'descricao_from_produto_blocked': result.state.mapping.get('Descrição') != 'Produto',
+        'gtin_from_produto_detected': result.state.mapping.get('GTIN') == 'Produto',
         'rows': int(len(output)),
         'columns': int(len(output.columns)),
         'ok': bool(request.source_columns and request.target_columns and len(output) == len(source)),
