@@ -21,6 +21,17 @@ from bling_app_zero.universal.universal_contract import UniversalContract, build
 RESPONSIBLE_FILE = 'bling_app_zero/core/final_output_engine.py'
 CATEGORY_SOURCE_PRIORITY = ('Categoria do produto', 'Categoria', 'categoria', 'category', 'categoria_sugerida_ia')
 EMPTY_CATEGORY_MARKERS = {'', 'nan', 'none', 'null', '<na>', 'revisar manualmente'}
+SAFE_TARGET_SOURCE_ALIASES = {
+    'preco de compra': ('preco de compra', 'preco compra', 'preco de custo', 'preco custo', 'custo', 'valor custo'),
+    'cod no fornecedor': ('cod no fornecedor', 'cod fornecedor', 'codigo no fornecedor', 'codigo fornecedor', 'cod no fornecedor'),
+    'codigo da lista de servicos': ('codigo da lista de servicos', 'codigo na lista de servicos'),
+    'gtin ean da embalagem': ('gtin ean da embalagem', 'gtin ean da embalagem'),
+    'largura do produto': ('largura do produto', 'largura produto'),
+    'condicao do produto': ('condicao do produto', 'condicao produto'),
+    'unidade de medida': ('unidade de medida', 'unidade medida'),
+    'estoque maximo': ('estoque maximo', 'estoque max'),
+    'estoque minimo': ('estoque minimo', 'estoque min'),
+}
 
 
 @dataclass(frozen=True)
@@ -40,6 +51,7 @@ def _clean_cell(value: Any) -> str:
 def _norm_column(value: Any) -> str:
     text = _clean_cell(value).casefold()
     text = text.replace('ç', 'c').replace('ã', 'a').replace('á', 'a').replace('à', 'a').replace('â', 'a')
+    text = text.replace('é', 'e').replace('ê', 'e').replace('í', 'i').replace('ó', 'o').replace('ô', 'o').replace('õ', 'o').replace('ú', 'u')
     text = re.sub(r'[^a-z0-9]+', ' ', text)
     return re.sub(r'\s+', ' ', text).strip()
 
@@ -96,6 +108,57 @@ def _apply_safe_category_aliases(output: pd.DataFrame, source: pd.DataFrame, map
     return out
 
 
+def _source_columns_by_norm(source: pd.DataFrame) -> dict[str, str]:
+    if not isinstance(source, pd.DataFrame):
+        return {}
+    out: dict[str, str] = {}
+    for column in source.columns:
+        name = str(column)
+        key = _norm_column(name)
+        if key and key not in out:
+            out[key] = name
+    return out
+
+
+def _source_column_has_values(source: pd.DataFrame, column: str) -> bool:
+    try:
+        return bool(source[column].astype(str).str.strip().ne('').any())
+    except Exception:
+        return False
+
+
+def _choose_alias_source(source: pd.DataFrame, normalized_sources: dict[str, str], target_column: str) -> str:
+    target_key = _norm_column(target_column)
+    candidates = [target_key, *SAFE_TARGET_SOURCE_ALIASES.get(target_key, ())]
+    for candidate in candidates:
+        source_column = normalized_sources.get(_norm_column(candidate))
+        if source_column and _source_column_has_values(source, source_column):
+            return source_column
+    for candidate in candidates:
+        source_column = normalized_sources.get(_norm_column(candidate))
+        if source_column:
+            return source_column
+    return ''
+
+
+def _augment_mapping_with_safe_aliases(source: pd.DataFrame, contract: pd.DataFrame, mapping: Mapping[str, str]) -> dict[str, str]:
+    clean_mapping = {str(key): _clean_cell(value) for key, value in dict(mapping or {}).items()}
+    if not isinstance(source, pd.DataFrame) or not isinstance(contract, pd.DataFrame) or not len(contract.columns):
+        return clean_mapping
+
+    normalized_sources = _source_columns_by_norm(source)
+    for target_column in [str(column) for column in contract.columns]:
+        current_source = clean_mapping.get(target_column, '')
+        if current_source and current_source in source.columns:
+            continue
+        alias_source = _choose_alias_source(source, normalized_sources, target_column)
+        if alias_source:
+            clean_mapping[target_column] = alias_source
+        elif target_column not in clean_mapping:
+            clean_mapping[target_column] = ''
+    return clean_mapping
+
+
 def apply_text_rules(output: pd.DataFrame) -> pd.DataFrame:
     out = output.copy().fillna('')
     for column in out.columns:
@@ -113,10 +176,11 @@ def build_final_dataframe(source: pd.DataFrame, contract: pd.DataFrame, mapping:
     ordem; os valores finais vêm da origem mapeada ou de valores fixos/manuais.
     Nenhuma linha de exemplo/instrução do modelo é copiada para o resultado.
     """
+    safe_mapping = _augment_mapping_with_safe_aliases(source, contract, mapping)
     if not isinstance(source, pd.DataFrame) or source.empty:
         output = empty_universal_output(contract, rows=0)
     else:
-        output = build_universal_output(source, contract, dict(mapping or {}))
+        output = build_universal_output(source, contract, safe_mapping)
     if apply_rules:
         output = apply_text_rules(output)
     return output
@@ -135,16 +199,17 @@ def build_final_output(
     contract_columns = tuple(contract_columns_from_model(contract))
     request = FinalOutputRequest(operation=operation, file_name=file_name, contract_columns=contract_columns)
     contract_obj = build_universal_contract(contract)
+    safe_mapping = _augment_mapping_with_safe_aliases(source, contract, mapping)
 
     # Saída universal fiel: não reescreve dados com IA. Regras inteligentes são
     # apenas tratamentos seguros e configurados pelo usuário nos valores finais.
-    output = build_final_dataframe(source, contract, mapping, apply_rules=False)
+    output = build_final_dataframe(source, contract, safe_mapping, apply_rules=False)
 
     rules_config = normalize_smart_rules_config(smart_rules_config, enabled=bool(run_smart_features))
     output = _apply_safe_category_aliases(
         output,
         source,
-        mapping,
+        safe_mapping,
         enabled=bool(rules_config.get('enabled')) and bool(rules_config.get('fill_category_aliases')),
     )
 
