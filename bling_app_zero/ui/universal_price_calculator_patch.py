@@ -15,6 +15,15 @@ def _audit(event: str, *, status: str = 'OK', details: dict[str, Any] | None = N
         pass
 
 
+def _install_mapping_locked_fields() -> None:
+    try:
+        from bling_app_zero.ui.mapping_locked_fields_runtime import install
+        install()
+        _audit('universal_price_runtime_mapping_locked_fields_loaded', details={'locked_fields_runtime': True})
+    except Exception as exc:
+        _audit('universal_price_runtime_mapping_locked_fields_failed', status='AVISO', details={'error': str(exc)[:220]})
+
+
 def _store_priced_source(st, universal_source_key: str, df: pd.DataFrame) -> None:
     clean = df.copy().fillna('')
     for key in (universal_source_key, 'df_origem_unificada', 'cadastro_wizard_df_para_mapear', 'df_origem_cadastro_precificada'):
@@ -62,6 +71,7 @@ def _render_preview(st, df: pd.DataFrame, selected_cost_column: str, promo_colum
 
 
 def install() -> None:
+    _install_mapping_locked_fields()
     try:
         from bling_app_zero.ui import universal_flow
     except Exception as exc:
