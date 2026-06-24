@@ -258,7 +258,7 @@ def _is_kind_compatible(target_kind: str, source_kind: str) -> bool:
 def _semantic_conflict(target_kind: str, profile: dict[str, float | str | bool | tuple[str, ...]]) -> bool:
     content_kind = str(profile.get('content_kind') or profile.get('kind') or '')
     confidence = float(profile.get('confidence') or 0)
-    if not content_kind or content_kind == 'custom' or confidence < 0.55:
+    if not target_kind or target_kind == 'custom' or not content_kind or content_kind == 'custom' or confidence < 0.55:
         return False
     return not _is_kind_compatible(target_kind, content_kind)
 
@@ -312,14 +312,15 @@ def _content_bonus(target: str, source: str, profile: dict[str, float | str | bo
         return -1000
     target_kind = infer_kind(target)
     source_kind = str(profile.get('kind') or '')
+    gtin = float(profile.get('gtin') or 0)
+    if target_kind == 'gtin':
+        return max(70, int(gtin * 85)) if source_kind == 'gtin' or gtin >= 0.55 else 15
+    if target_kind in {'preco_unitario', 'preco_custo'}:
+        return int(max(float(profile.get('price') or 0), float(profile.get('numeric') or 0)) * 55)
+    if target_kind in {'descricao', 'nome_apoio', 'descricao_curta', 'descricao_complementar'}:
+        return int(float(profile.get('text') or 0) * 40 + min(float(profile.get('avg_len') or 0), 80) / 3)
     if _is_kind_compatible(target_kind, source_kind) and target_kind != 'custom':
         return 45
-    if target_kind == 'gtin':
-        return int(float(profile.get('gtin') or 0) * 45)
-    if target_kind in {'preco_unitario', 'preco_custo'}:
-        return int(max(float(profile.get('price') or 0), float(profile.get('numeric') or 0)) * 35)
-    if target_kind in {'descricao', 'nome_apoio', 'descricao_curta', 'descricao_complementar'}:
-        return int(float(profile.get('text') or 0) * 30 + min(float(profile.get('avg_len') or 0), 80) / 4)
     return 15
 
 
@@ -472,12 +473,15 @@ def _content_score(target: str, source: str, profile: dict[str, float | str | bo
     image = float(profile.get('image') or 0)
     avg_len = float(profile.get('avg_len') or 0)
     unique = float(profile.get('unique') or 0)
+    semantic_confidence = float(profile.get('confidence') or 0)
 
     if not has_values:
         return -80
     if _semantic_conflict(target_kind, profile):
         return -140
     if _is_kind_compatible(target_kind, source_kind) and target_kind != 'custom':
+        if semantic_confidence >= 0.65:
+            return max(95, int(semantic_confidence * 110))
         return 70
     if target_kind in {'codigo', 'id_produto'}:
         return 45 if gtin >= 0.30 or numeric >= 0.55 or source_kind in {'codigo', 'id_produto', 'gtin'} else -80
@@ -545,14 +549,7 @@ def confidence_for_mapping(df_source: pd.DataFrame, target: str, source: str) ->
         return _confidence(100, 'verde')
 
     score = _name_score(target, source) + _content_score(target, source, profile)
-    result = _confidence(score)
-    if result.get('level') == 'verde' and bool(profile.get('header_conflict')):
-        result = dict(result)
-        result['level'] = 'amarelo'
-        result['emoji'] = '🟡'
-        result['label'] = 'conferir: cabeçalho e conteúdo divergem'
-        result['order'] = 1
-    return result
+    return _confidence(score)
 
 
 def confidence_for_mapping_dict(df_source: pd.DataFrame, mapping: dict[str, str]) -> dict[str, dict[str, object]]:
