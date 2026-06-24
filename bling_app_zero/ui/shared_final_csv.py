@@ -194,18 +194,27 @@ def _infer_bling_operation(output: pd.DataFrame) -> str:
     columns = {_norm_column(column) for column in output.columns} if isinstance(output, pd.DataFrame) else set()
     has_name = bool(columns & {'nome', 'produto', 'titulo', 'descricao', 'descricao produto', 'nome produto', 'nome do produto'})
     has_price = any('preco' in column or 'valor' in column for column in columns)
+    has_promotional_price = any('promocional' in column or 'promo' in column for column in columns)
     has_qty = bool(columns & {'quantidade', 'qtd', 'qtde', 'saldo', 'estoque', 'balanco'})
     has_deposit = any('deposito' in column for column in columns)
     has_code = bool(columns & {'id', 'id produto', 'id bling', 'codigo', 'sku', 'referencia', 'gtin', 'ean'})
     has_channel = any(('canal' in column or 'loja' in column or 'marketplace' in column or 'produto loja' in column or 'vinculo loja' in column or 'preco destino' in column) for column in columns)
     has_catalog_richness = any(('categoria' in column or 'imagem' in column or 'marca' in column or 'departamento' in column or 'descricao curta' in column) for column in columns)
-    if has_qty and (has_deposit or has_code):
+    if has_qty and has_code and not (has_name or has_catalog_richness or has_price):
         return OP_ESTOQUE
-    if has_price and has_code and (has_channel or not has_catalog_richness):
+    if has_qty and has_deposit and not (has_name or has_catalog_richness or has_price):
+        return OP_ESTOQUE
+    if has_price and has_code and (has_channel or has_promotional_price) and not has_qty:
         return OP_ATUALIZACAO_PRECO
-    if has_name and has_price:
+    if has_price and has_code and not (has_qty or has_catalog_richness or has_name):
+        return OP_ATUALIZACAO_PRECO
+    if has_name or has_catalog_richness or has_price:
         return OP_CADASTRO
     return OP_UNIVERSAL
+
+
+def _signature_for_df(output: pd.DataFrame) -> str:
+    return f'{len(output)}x{len(output.columns)}:{pd.util.hash_pandas_object(output.head(80).fillna("").astype(str), index=True).sum()}'
 
 
 def _prepare_final_bling_snapshot(output: pd.DataFrame, operation: str, signature: str) -> pd.DataFrame:
@@ -249,6 +258,24 @@ def _render_price_api_targets(output: pd.DataFrame) -> None:
         st.caption(f'{general_rows} linha(s) sem loja/canal: serão tratadas como preço geral do produto.')
     if unresolved:
         st.warning(f'{unresolved} linha(s) pedem loja/canal, mas ainda não têm nome ou ID suficiente para identificar a loja no Bling.')
+
+
+def _apply_price_target_choice_if_needed(output: pd.DataFrame, operation: str) -> pd.DataFrame:
+    if operation != OP_ATUALIZACAO_PRECO:
+        return output.copy().fillna('')
+    try:
+        from bling_app_zero.ui.bling_price_channel_selector import render_price_channel_selector
+    except Exception as exc:
+        st.error('Atualização de preços bloqueada: seletor de preço geral/canal indisponível.')
+        st.warning(str(exc))
+        add_audit_event('shared_final_csv_price_channel_selector_unavailable', area='BLING_API', status='BLOQUEADO', details={'error': str(exc)[:300], 'responsible_file': RESPONSIBLE_FILE})
+        return pd.DataFrame(columns=list(output.columns))
+    selected = render_price_channel_selector(output.copy().fillna(''), operation)
+    if not isinstance(selected, pd.DataFrame) or selected.empty:
+        st.info('Envio de preços bloqueado até escolher o destino: preço geral ou loja/canal do Bling.')
+        add_audit_event('shared_final_csv_price_target_required', area='BLING_API', status='BLOQUEADO', details={'rows': len(output), 'responsible_file': RESPONSIBLE_FILE})
+        return pd.DataFrame(columns=list(output.columns))
+    return selected.copy().fillna('')
 
 
 def _universal_api_send_allowed() -> bool:
@@ -296,23 +323,24 @@ def _render_final_bling_api_panel(output: pd.DataFrame, *, key_prefix: str) -> N
         st.info('Fluxo sem API: saída final liberada somente para download. Para enviar ao Bling, conecte ao Bling antes de entrar no fluxo Universal.')
         return
     operation = _infer_bling_operation(output)
-    signature = f'{len(output)}x{len(output.columns)}:{pd.util.hash_pandas_object(output.head(80).fillna("").astype(str), index=True).sum()}'
+    signature = _signature_for_df(output)
     with st.container(border=True):
         st.markdown('### Enviar esta planilha tratada ao Bling')
-        st.caption('Este botão usa exatamente a planilha final preenchida acima. A operação real é resolvida antes do envio; operação universal nunca é enviada direto para a API.')
+        st.caption('Este botão usa exatamente a planilha final preenchida como origem da API. O sistema reconhece a operação e pergunta o destino obrigatório antes de enviar.')
         cols = st.columns(3)
         cols[0].metric('Linhas', int(len(output)))
         cols[1].metric('Colunas', int(len(output.columns)))
-        cols[2].metric('Operação', 'Atualização de preços multiloja' if operation == OP_ATUALIZACAO_PRECO else operation_label(operation) if operation != OP_UNIVERSAL else 'A confirmar')
+        operation_text = 'Atualização de preços multiloja' if operation == OP_ATUALIZACAO_PRECO else 'Cadastro/atualização de produtos' if operation == OP_CADASTRO else operation_label(operation) if operation != OP_UNIVERSAL else 'A confirmar'
+        cols[2].metric('Operação', operation_text)
 
         if operation == OP_UNIVERSAL:
-            st.warning('Envio bloqueado: não consegui identificar se a planilha é Cadastro, Estoque ou Atualização de preços.')
+            st.warning('Envio bloqueado: não consegui identificar se a planilha é Cadastro/Atualização de produtos, Estoque ou Atualização de preços.')
             add_audit_event('shared_final_bling_api_operation_not_detected', area='BLING_API', status='BLOQUEADO', details={'rows': int(len(output)), 'columns': list(map(str, output.columns)), 'responsible_file': RESPONSIBLE_FILE})
             return
 
-        clean = _prepare_final_bling_snapshot(output, operation, signature)
         status = connection_status()
         if not status.get('connected'):
+            clean = _prepare_final_bling_snapshot(output, operation, signature)
             st.warning('Bling ainda não conectado. Conecte para liberar o envio direto desta planilha final.')
             context = prepare_download_oauth_return(clean, operation, signature=signature)
             context.update({'return_to': 'download_panel', 'source_step': 'shared_final_csv', 'operation': operation, 'signature': signature})
@@ -322,9 +350,19 @@ def _render_final_bling_api_panel(output: pd.DataFrame, *, key_prefix: str) -> N
             add_audit_event('shared_final_bling_api_waiting_connection', area='BLING_API', status='AGUARDANDO_CONEXAO', details={'operation': operation, 'rows': int(len(clean)), 'signature': signature, 'responsible_file': RESPONSIBLE_FILE})
             return
 
+        clean = _apply_price_target_choice_if_needed(output, operation)
+        if not isinstance(clean, pd.DataFrame) or clean.empty:
+            return
+        signature = _signature_for_df(clean)
+        clean = _prepare_final_bling_snapshot(clean, operation, signature)
+
         st.success('Bling conectado. Envio direto liberado para esta planilha final tratada.')
         if operation == OP_ATUALIZACAO_PRECO:
             _render_price_api_targets(clean)
+        elif operation == OP_ESTOQUE:
+            st.info('Operação estoque detectada: antes do envio o sistema buscará os depósitos do Bling e exigirá a escolha do depósito correto.')
+        elif operation == OP_CADASTRO:
+            st.info('Cadastro/atualização de produtos detectado: produtos existentes serão atualizados por PATCH incremental; campos vazios não removem dados existentes. Produtos novos usam a categoria da planilha tratada.')
         render_bling_api_batch_panel(clean, operation, f'{key_prefix}_final_bling_api', signature, 'shared_final_csv')
         add_audit_event('shared_final_bling_api_panel_rendered', area='BLING_API', status='OK', details={'operation': operation, 'rows': int(len(clean)), 'signature': signature, 'responsible_file': RESPONSIBLE_FILE})
 
