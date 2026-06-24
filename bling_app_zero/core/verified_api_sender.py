@@ -91,6 +91,30 @@ def _payload_has_category(payload: dict[str, Any]) -> bool:
     return bool(str(category or '').strip())
 
 
+def _has_media_value(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(_has_media_value(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_has_media_value(item) for item in value)
+    text = str(value or '').strip()
+    return text.startswith(('http://', 'https://'))
+
+
+def _payload_expects_images(payload: dict[str, Any]) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    midia = payload.get('midia') if isinstance(payload.get('midia'), dict) else {}
+    candidates = (
+        payload.get('imagens'),
+        payload.get('images'),
+        midia.get('imagens'),
+        midia.get('externas'),
+        midia.get('internas'),
+        midia.get('imagensURL'),
+    )
+    return any(_has_media_value(candidate) for candidate in candidates)
+
+
 def _force_default_fields(payload: dict[str, Any], row: Any | None = None) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return payload
@@ -150,7 +174,7 @@ def send_verified_products(df: pd.DataFrame, *, limit: int | None = None, progre
     total = len(rows)
     sent = failed = skipped = 0
     errors: list[str] = []
-    add_audit_event('verified_api_sender_started', area='BLING_ENVIO', status='OK', details={'total': total, 'mode': 'one_product_verify_before_next', 'default_brand_guard': DEFAULT_BRAND, 'default_condition_guard': DEFAULT_CONDITION, 'default_production_guard': DEFAULT_PRODUCTION, 'default_unit_guard': DEFAULT_UNIT, 'default_department_guard': DEFAULT_DEPARTMENT, 'descricao_complementar_forced_empty': True, 'category_required_before_api': True, 'provisional_category_default': 'Produtos não classificados', 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('verified_api_sender_started', area='BLING_ENVIO', status='OK', details={'total': total, 'mode': 'one_product_verify_before_next', 'default_brand_guard': DEFAULT_BRAND, 'default_condition_guard': DEFAULT_CONDITION, 'default_production_guard': DEFAULT_PRODUCTION, 'default_unit_guard': DEFAULT_UNIT, 'default_department_guard': DEFAULT_DEPARTMENT, 'descricao_complementar_forced_empty': True, 'category_required_before_api': True, 'provisional_category_default': 'Produtos não classificados', 'image_persistence_required_when_payload_has_images': True, 'responsible_file': RESPONSIBLE_FILE})
 
     for pos, (index, row) in enumerate(rows.iterrows(), start=1):
         line = int(index) + 1 if isinstance(index, int) else pos
@@ -163,6 +187,7 @@ def send_verified_products(df: pd.DataFrame, *, limit: int | None = None, progre
         _emit(progress_callback, {'stage': f'Verificando produto {pos}/{total}', 'processed': pos - 1, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': (pos - 1) / max(total, 1)})
         _label, payload, meta = variants[0]
         payload = _force_default_fields(payload, row)
+        expects_images = _payload_expects_images(payload)
         category_guard = apply_category_guard_to_payload(
             payload,
             row=row,
@@ -232,21 +257,49 @@ def send_verified_products(df: pd.DataFrame, *, limit: int | None = None, progre
             missing = missing_product_fields(saved)
 
         flags = product_persistence_flags(saved)
-        missing_important = missing_product_fields(saved, IMPORTANT_PRODUCT_FIELDS)
-        add_audit_event('verified_api_product_checkpoint', area='BLING_ENVIO', status='OK' if not missing else 'ERRO', details={'line': line, 'product_id': product_id, 'persisted_flags': flags, 'missing_required': missing, 'missing_important': missing_important, 'image_pending': not flags.get('imagens'), 'next_product_allowed': not bool(missing), 'default_brand_guard': DEFAULT_BRAND, 'default_condition_guard': DEFAULT_CONDITION, 'default_production_guard': DEFAULT_PRODUCTION, 'default_unit_guard': DEFAULT_UNIT, 'default_department_guard': DEFAULT_DEPARTMENT, 'descricao_complementar_forced_empty': True, 'link_externo_forced': bool(payload.get('linkExterno')), 'category_required_before_api': True, 'provisional_category_applied': bool(category_guard.provisional), 'category_guard_source': category_guard.source, 'category_guard_category': category_guard.category_name, 'will_update_on_next_real_category': bool(category_guard.provisional), 'attempts': attempts[-6:], 'responsible_file': RESPONSIBLE_FILE})
+        if expects_images and product_id and not flags.get('imagens'):
+            media_retry = client.update_product(product_id, payload)
+            attempts.extend(dict(item) for item in media_retry.attempts)
+            if media_retry.persisted:
+                saved = dict(media_retry.persisted)
+            else:
+                saved = client.get_product(product_id)
+            flags = product_persistence_flags(saved)
+            add_audit_event(
+                'verified_api_sender_image_retry_after_missing_persistence',
+                area='BLING_ENVIO',
+                status='OK' if flags.get('imagens') else 'PENDENCIA',
+                details={
+                    'line': line,
+                    'product_id': product_id,
+                    'expects_images': expects_images,
+                    'images_persisted_after_retry': bool(flags.get('imagens')),
+                    'attempts': attempts[-12:],
+                    'responsible_file': RESPONSIBLE_FILE,
+                },
+            )
 
-        if missing:
+        missing = missing_product_fields(saved)
+        flags = product_persistence_flags(saved)
+        image_pending = bool(expects_images and not flags.get('imagens'))
+        missing_important = missing_product_fields(saved, IMPORTANT_PRODUCT_FIELDS)
+        add_audit_event('verified_api_product_checkpoint', area='BLING_ENVIO', status='OK' if not missing and not image_pending else 'ERRO', details={'line': line, 'product_id': product_id, 'persisted_flags': flags, 'missing_required': missing, 'missing_important': missing_important, 'image_expected_from_payload': expects_images, 'image_pending': image_pending, 'next_product_allowed': not bool(missing or image_pending), 'default_brand_guard': DEFAULT_BRAND, 'default_condition_guard': DEFAULT_CONDITION, 'default_production_guard': DEFAULT_PRODUCTION, 'default_unit_guard': DEFAULT_UNIT, 'default_department_guard': DEFAULT_DEPARTMENT, 'descricao_complementar_forced_empty': True, 'link_externo_forced': bool(payload.get('linkExterno')), 'category_required_before_api': True, 'provisional_category_applied': bool(category_guard.provisional), 'category_guard_source': category_guard.source, 'category_guard_category': category_guard.category_name, 'will_update_on_next_real_category': bool(category_guard.provisional), 'attempts': attempts[-8:], 'responsible_file': RESPONSIBLE_FILE})
+
+        if missing or image_pending:
             failed += 1
+            missing_fields = list(missing)
+            if image_pending and 'imagens' not in missing_fields:
+                missing_fields.append('imagens')
             if len(errors) < 8:
-                errors.append(f'Linha {line}: produto nao aprovado. Faltando {", ".join(missing)}.')
-            add_audit_event('verified_api_sender_finished_early', area='BLING_ENVIO', status='PARCIAL', details={'line': line, 'product_id': product_id, 'missing_fields': missing, 'sent': sent, 'failed': failed, 'responsible_file': RESPONSIBLE_FILE})
+                errors.append(f'Linha {line}: produto nao aprovado. Faltando {", ".join(missing_fields)}.')
+            add_audit_event('verified_api_sender_finished_early', area='BLING_ENVIO', status='PARCIAL', details={'line': line, 'product_id': product_id, 'missing_fields': missing_fields, 'image_pending': image_pending, 'sent': sent, 'failed': failed, 'responsible_file': RESPONSIBLE_FILE})
             return DirectSendResult(pos, sent, failed, skipped, tuple(errors), tuple())
         else:
             sent += 1
 
         _emit(progress_callback, {'stage': 'Produto aprovado; seguindo para o proximo' if not missing else 'Produto reprovado; seguindo com erro registrado', 'processed': pos, 'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'progress': pos / max(total, 1)})
 
-    add_audit_event('verified_api_sender_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'default_brand_guard': DEFAULT_BRAND, 'default_condition_guard': DEFAULT_CONDITION, 'default_production_guard': DEFAULT_PRODUCTION, 'default_unit_guard': DEFAULT_UNIT, 'default_department_guard': DEFAULT_DEPARTMENT, 'descricao_complementar_forced_empty': True, 'category_required_before_api': True, 'provisional_category_default': 'Produtos não classificados', 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('verified_api_sender_finished', area='BLING_ENVIO', status='OK' if failed == 0 else 'PARCIAL', details={'total': total, 'sent': sent, 'failed': failed, 'skipped': skipped, 'default_brand_guard': DEFAULT_BRAND, 'default_condition_guard': DEFAULT_CONDITION, 'default_production_guard': DEFAULT_PRODUCTION, 'default_unit_guard': DEFAULT_UNIT, 'default_department_guard': DEFAULT_DEPARTMENT, 'descricao_complementar_forced_empty': True, 'category_required_before_api': True, 'provisional_category_default': 'Produtos não classificados', 'image_persistence_required_when_payload_has_images': True, 'responsible_file': RESPONSIBLE_FILE})
     return DirectSendResult(total, sent, failed, skipped, tuple(errors), tuple())
 
 
