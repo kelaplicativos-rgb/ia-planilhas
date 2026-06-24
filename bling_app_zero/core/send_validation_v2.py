@@ -87,6 +87,23 @@ def _category_was_auto_applied() -> bool:
     return bool(st.session_state.get(CATEGORY_DONE_KEY)) and not bool(st.session_state.get(CATEGORY_SKIP_KEY))
 
 
+def _provisional_category_policy() -> tuple[bool, str]:
+    """Lê a política provisória sem criar dependência rígida no import do guard.
+
+    A validação final roda antes do sender verificado. Quando a regra provisória
+    está ligada, ausência de coluna/célula de categoria não deve bloquear o
+    envio: o sender aplica/cria "Produtos não classificados" antes da API.
+    """
+    try:
+        from bling_app_zero.core.provisional_category import DEFAULT_PROVISIONAL_CATEGORY, provisional_category_from_rules
+
+        enabled, category_name = provisional_category_from_rules()
+        category_name = str(category_name or DEFAULT_PROVISIONAL_CATEGORY).strip() or DEFAULT_PROVISIONAL_CATEGORY
+        return bool(enabled), category_name
+    except Exception:
+        return True, 'Produtos não classificados'
+
+
 def _final_category_issue_rows(df: pd.DataFrame, category_col: str) -> tuple[int, ...]:
     if not isinstance(df, pd.DataFrame) or df.empty or not category_col or category_col not in df.columns:
         return tuple(range(1, int(len(df)) + 1)) if isinstance(df, pd.DataFrame) else tuple()
@@ -192,6 +209,8 @@ def validate_before_bling_send(df: pd.DataFrame, operation: object) -> SendGuard
     expected_category = str(st.session_state.get(CATEGORY_VALUES_SIGNATURE_KEY) or '')
     auto_category_applied = _category_was_auto_applied()
     category_issue_rows = _final_category_issue_rows(validation_df, category_col) if op == 'cadastro' and isinstance(validation_df, pd.DataFrame) else tuple()
+    provisional_enabled, provisional_category_name = _provisional_category_policy()
+    provisional_can_cover_category = bool(op == 'cadastro' and provisional_enabled and provisional_category_name)
     expected_rows, expected_columns = _table_shape_from_signature(expected_table)
     batch_subset_allowed = _is_allowed_batch_subset(
         op=op,
@@ -225,6 +244,9 @@ def validate_before_bling_send(df: pd.DataFrame, operation: object) -> SendGuard
         'category_required_complete_for_cadastro': op == 'cadastro',
         'category_missing_count': len(category_issue_rows),
         'category_missing_rows_sample': list(category_issue_rows[:50]),
+        'provisional_category_enabled': provisional_enabled,
+        'provisional_category_name': provisional_category_name,
+        'provisional_category_will_cover_missing': bool(provisional_can_cover_category and (not category_col or category_issue_rows)),
         'responsible_file': RESPONSIBLE_FILE,
     }
 
@@ -234,12 +256,18 @@ def validate_before_bling_send(df: pd.DataFrame, operation: object) -> SendGuard
         messages.append('A tabela atual mudou depois da última prévia. Gere a prévia final novamente.')
     if op == 'cadastro':
         if not category_col:
-            messages.append('Cadastro bloqueado: a tabela final não possui coluna de categoria. Nenhum produto será enviado ao Bling sem categoria válida.')
+            if provisional_can_cover_category:
+                details['category_guard_decision'] = 'sem_coluna_categoria_liberado_para_categoria_provisoria_no_sender'
+            else:
+                messages.append('Cadastro bloqueado: a tabela final não possui coluna de categoria. Nenhum produto será enviado ao Bling sem categoria válida.')
         elif category_issue_rows:
-            sample = ', '.join(map(str, list(category_issue_rows[:20])))
-            suffix = '...' if len(category_issue_rows) > 20 else ''
-            messages.append(f'Cadastro bloqueado: {len(category_issue_rows)} produto(s) estão sem categoria final válida. Linhas: {sample}{suffix}. Corrija antes de enviar ao Bling.')
-        if category_col:
+            if provisional_can_cover_category:
+                details['category_guard_decision'] = 'linhas_sem_categoria_liberadas_para_categoria_provisoria_no_sender'
+            else:
+                sample = ', '.join(map(str, list(category_issue_rows[:20])))
+                suffix = '...' if len(category_issue_rows) > 20 else ''
+                messages.append(f'Cadastro bloqueado: {len(category_issue_rows)} produto(s) estão sem categoria final válida. Linhas: {sample}{suffix}. Corrija antes de enviar ao Bling.')
+        if category_col and not category_issue_rows:
             if not _category_decision_done():
                 messages.append('Confirme ou pule a conferência de categorias antes do envio.')
             elif expected_category and expected_category not in set(category_signatures.values()):
