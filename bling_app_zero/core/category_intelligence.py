@@ -70,20 +70,33 @@ BLOCKED_GENERIC_CATEGORIES = {
     'informatica',
     'mais vendidos',
     'alimentos',
+    'geral',
+    'diversos',
+    'outros',
+    'sem categoria',
+    'sem classificacao',
+    'produtos nao classificados',
+    'revisar manualmente',
 }
 
 CATEGORY_ALIASES = {
     'fone de ouvido': 'Fones de ouvido',
     'fones de ouvido': 'Fones de ouvido',
+    'fone': 'Fones de ouvido',
+    'headset': 'Fones de ouvido',
+    'headsets': 'Fones de ouvido',
     'carregador celular': 'Carregadores para celular',
     'carregadores': 'Carregadores para celular',
     'carregadores para celular': 'Carregadores para celular',
     'controle para televisao': 'Controles para televisão',
     'controles para televisao': 'Controles para televisão',
+    'controle remoto': 'Controles para televisão',
+    'controles remotos': 'Controles para televisão',
     'caixa de som': 'Caixas de som',
     'caixas de som': 'Caixas de som',
     'maquinas para corte de cabelo': 'Máquinas para corte de cabelo',
     'maquina para corte de cabelo': 'Máquinas para corte de cabelo',
+    'maquina de aparar pelo': 'Máquinas para corte de cabelo',
     'capas para celulares': 'Capas para celulares',
     'capas para celular': 'Capas para celulares',
     'suporte': 'Suportes',
@@ -107,6 +120,8 @@ CATEGORY_ALIASES = {
     'radio am e fm': 'Rádios AM e FM',
     'radios am': 'Rádios AM e FM',
     'radio am': 'Rádios AM e FM',
+    'radio': 'Rádios AM e FM',
+    'radios': 'Rádios AM e FM',
     'smartwatch': 'Smartwatches',
     'smartwatches': 'Smartwatches',
     'calculadora': 'Calculadoras',
@@ -124,6 +139,8 @@ CATEGORY_ALIASES = {
     'guarda chuvas': 'Guarda-chuvas',
     'power bank': 'Power banks',
     'power banks': 'Power banks',
+    'tomadas': 'Energia e tomadas',
+    'tomada': 'Energia e tomadas',
     'informatica e pecas': 'Informática e peças',
 }
 
@@ -220,6 +237,32 @@ def ensure_category_column(df: pd.DataFrame, preferred: str = 'Categoria') -> tu
     return result, preferred
 
 
+def looks_like_product_title(value: object) -> bool:
+    raw = str(value or '').strip()
+    norm = normalize_text(raw)
+    if not norm:
+        return False
+    words = norm.split()
+    if len(words) >= 7:
+        return True
+    if len(raw) > 50 and len(words) >= 4:
+        return True
+    if re.search(r'\b[A-Z]{2,}[- ]?\d{2,}[A-Z0-9-]*\b', raw):
+        return True
+    if re.search(r'\b[A-Z]{1,4}-\d{2,}[A-Z0-9-]*\b', raw):
+        return True
+    tech_units = (r'\b\d+\s?(?:gb|mah|w|v|hz|mm|cm|pol|hd|uhd|4k)\b', r'\b(?:wifi|wi fi|bluetooth|usb|tipo c|bt|pd\d+)\b')
+    if len(words) >= 4 and _has(norm, tech_units):
+        return True
+    product_nouns = (
+        r'\bfone\b', r'\bheadset\b', r'\bmicrofone\b', r'\bcamera\b', r'\btomada\b',
+        r'\bfilmadora\b', r'\bmaquina\b', r'\bluminaria\b', r'\bfita\b', r'\bsensor\b',
+    )
+    if len(words) >= 5 and _has(norm, product_nouns):
+        return True
+    return False
+
+
 def canonicalize_category(value: object, catalog: Sequence[str] = DEFAULT_CATEGORY_CATALOG) -> tuple[str, bool, str]:
     raw = str(value or '').strip()
     norm = normalize_text(raw)
@@ -238,7 +281,9 @@ def canonicalize_category(value: object, catalog: Sequence[str] = DEFAULT_CATEGO
     if matches:
         canonical = normalized_catalog[matches[0]]
         return canonical, canonical != raw, 'correção por similaridade'
-    return raw, False, 'categoria não reconhecida no catálogo'
+    if looks_like_product_title(raw):
+        return '', True, f'bloqueado: categoria parece nome de produto: {raw[:80]}'
+    return '', True, f'categoria fora do catálogo seguro: {raw[:80]}'
 
 
 def _classify_text(text: str) -> tuple[str, float, str]:
@@ -303,6 +348,28 @@ def _row_text(row: pd.Series, columns: Sequence[str]) -> str:
     return normalize_text(' '.join(parts))
 
 
+def suggest_category_for_product(name: object, *, description: object = '', current_category: object = '') -> CategorySuggestion:
+    canonical, changed, reason = canonicalize_category(current_category)
+    if canonical:
+        return CategorySuggestion(canonical, 1.0 if not changed else 0.96, reason, 'CORRIGIR' if changed else 'MANTER')
+
+    name_text = normalize_text(name)
+    category, confidence, why = _classify_text(name_text)
+    if category:
+        return CategorySuggestion(category, confidence, f'{why} pelo nome', 'CRIAR/VINCULAR')
+
+    desc_text = normalize_text(description)
+    category, confidence, why = _classify_text(desc_text)
+    if category:
+        return CategorySuggestion(category, max(0.50, confidence - 0.06), f'{why} pela descrição complementar', 'CRIAR/VINCULAR')
+
+    all_text = normalize_text(f'{name or ""} {description or ""}')
+    category, confidence, why = _classify_text(all_text)
+    if category:
+        return CategorySuggestion(category, max(0.50, confidence - 0.10), f'{why} por fallback controlado', 'CRIAR/VINCULAR')
+    return CategorySuggestion('REVISAR MANUALMENTE', 0.0, 'não foi possível inferir categoria segura', 'REVISAR')
+
+
 def suggest_category_for_row(row: pd.Series, *, name_col: str | None, desc_col: str | None) -> CategorySuggestion:
     current_col = None
     for candidate in CATEGORY_COLUMNS:
@@ -310,25 +377,17 @@ def suggest_category_for_row(row: pd.Series, *, name_col: str | None, desc_col: 
             current_col = candidate
             break
     current = row.get(current_col, '') if current_col else ''
-    canonical, changed, reason = canonicalize_category(current)
-    if canonical:
-        return CategorySuggestion(canonical, 1.0 if not changed else 0.96, reason, 'CORRIGIR' if changed else 'MANTER')
-
-    name_text = _row_text(row, [name_col] if name_col else [])
-    category, confidence, why = _classify_text(name_text)
-    if category:
-        return CategorySuggestion(category, confidence, f'{why} pelo nome', 'CRIAR/VINCULAR')
-
-    desc_text = _row_text(row, [desc_col] if desc_col else [])
-    category, confidence, why = _classify_text(desc_text)
-    if category:
-        return CategorySuggestion(category, max(0.50, confidence - 0.06), f'{why} pela descrição complementar', 'CRIAR/VINCULAR')
+    name_value = row.get(name_col, '') if name_col and name_col in row.index else ''
+    desc_value = row.get(desc_col, '') if desc_col and desc_col in row.index else ''
+    suggestion = suggest_category_for_product(name_value, description=desc_value, current_category=current)
+    if suggestion.category != 'REVISAR MANUALMENTE':
+        return suggestion
 
     all_text = _row_text(row, [name_col, desc_col, 'Descrição', 'Descricao', 'Nome', 'Produto', 'Título', 'Titulo'])
     category, confidence, why = _classify_text(all_text)
     if category:
         return CategorySuggestion(category, max(0.50, confidence - 0.10), f'{why} por fallback controlado', 'CRIAR/VINCULAR')
-    return CategorySuggestion('REVISAR MANUALMENTE', 0.0, 'não foi possível inferir categoria segura', 'REVISAR')
+    return suggestion
 
 
 def classify_dataframe(df: pd.DataFrame, *, category_catalog: Sequence[str] = DEFAULT_CATEGORY_CATALOG) -> tuple[pd.DataFrame, dict[str, int]]:
@@ -342,6 +401,8 @@ def classify_dataframe(df: pd.DataFrame, *, category_catalog: Sequence[str] = DE
             canonical, changed, reason = canonicalize_category(suggestion.category, category_catalog)
             if canonical:
                 suggestion = CategorySuggestion(canonical, min(1.0, suggestion.confidence), reason if changed else suggestion.reason, suggestion.action)
+            else:
+                suggestion = CategorySuggestion('REVISAR MANUALMENTE', 0.0, reason, 'REVISAR')
         suggestions.append(suggestion)
 
     result['categoria_atual_ia'] = result[category_col].astype(str)
@@ -390,6 +451,8 @@ __all__ = [
     'detect_product_description_column',
     'detect_product_name_column',
     'ensure_category_column',
+    'looks_like_product_title',
     'normalize_text',
+    'suggest_category_for_product',
     'suggest_category_for_row',
 ]
