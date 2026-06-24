@@ -10,6 +10,7 @@ RESPONSIBLE_FILE = 'bling_app_zero/core/multiloja_price_model_patch.py'
 TARGET_MODULES = {
     'bling_app_zero.core.bling_direct_sender',
     'bling_app_zero.core.bling_price_sender_guarded',
+    'bling_app_zero.core.product_pricing_center',
 }
 
 
@@ -17,7 +18,11 @@ def _audit(module: ModuleType, event: str, *, status: str = 'OK', details: dict[
     try:
         module.add_audit_event(event, area='BLING_ENVIO', status=status, details={**(details or {}), 'responsible_file': RESPONSIBLE_FILE})
     except Exception:
-        pass
+        try:
+            from bling_app_zero.core.audit import add_audit_event
+            add_audit_event(event, area='PRECIFICACAO', status=status, details={**(details or {}), 'responsible_file': RESPONSIBLE_FILE})
+        except Exception:
+            pass
 
 
 def _extend_aliases(current: tuple[str, ...], *new_values: str) -> tuple[str, ...]:
@@ -158,12 +163,73 @@ def patch_price_sender(module: ModuleType) -> None:
     _audit(module, 'multiloja_price_model_sender_installed', details={'model_columns': ['IdProduto', 'ID na Loja', 'Preco', 'Preco Promocional', 'Nome Loja (Multilojas)']})
 
 
+def _non_blank(series) -> Any:
+    return series.fillna('').astype(str).str.strip().ne('')
+
+
+def _promo_columns(module: ModuleType, df, promo_output_column: str) -> list[str]:
+    columns: list[str] = []
+    if promo_output_column in df.columns:
+        columns.append(str(promo_output_column))
+    try:
+        for column in module.promotional_price_columns(df.columns):
+            if column not in columns:
+                columns.append(str(column))
+    except Exception:
+        pass
+    for column in list(getattr(module, 'PROMO_PRICE_TARGET_ALIASES', []) or []):
+        if str(column) in df.columns and str(column) not in columns:
+            columns.append(str(column))
+    return columns
+
+
+def patch_product_pricing_center(module: ModuleType) -> None:
+    if getattr(module, '_mapeiaai_promo_calculator_patched', False):
+        return
+    original = module.apply_shared_pricing
+
+    def apply_shared_pricing_with_promo_guard(df, cost_column: str, output_column: str = module.PRICE_OUTPUT_COLUMN, config: dict[str, Any] | None = None, channel: str = module.DEFAULT_CHANNEL, promo_output_column: str = module.PROMO_PRICE_OUTPUT_COLUMN):
+        if not hasattr(df, 'columns'):
+            return original(df, cost_column, output_column, config, channel, promo_output_column)
+        source = df.copy().fillna('')
+        existing_promo = {column: source[column].copy() for column in _promo_columns(module, source, promo_output_column) if column in source.columns}
+        out = original(source, cost_column, output_column, config, channel, promo_output_column)
+        if not hasattr(out, 'columns') or out.empty:
+            return out
+        normalized = module.normalize_shared_price_config(config)
+        promo_percent = float(normalized.get('promo_discount_percent', 0) or 0)
+        promo_values = out[promo_output_column] if promo_output_column in out.columns else None
+        has_calculated_promo = bool(promo_values is not None and _non_blank(promo_values).any())
+        if promo_percent <= 0 or not has_calculated_promo:
+            for column, values in existing_promo.items():
+                out[column] = values
+            _audit(module, 'promo_calculator_preserved_existing_promo_when_zero_discount', details={'promo_columns': list(existing_promo.keys()), 'promo_discount_percent': promo_percent})
+            return out
+        target_columns = list(dict.fromkeys([promo_output_column, *existing_promo.keys(), *list(getattr(module, 'PROMO_PRICE_TARGET_ALIASES', []) or [])]))
+        promo_mask = _non_blank(promo_values)
+        for column in target_columns:
+            name = str(column)
+            if name not in out.columns and name not in source.columns:
+                continue
+            if name not in out.columns:
+                out[name] = ''
+            out.loc[promo_mask, name] = promo_values.loc[promo_mask]
+        _audit(module, 'promo_calculator_filled_promotional_columns', details={'promo_columns': [str(c) for c in target_columns if str(c) in out.columns], 'promo_discount_percent': promo_percent})
+        return out
+
+    module.apply_shared_pricing = apply_shared_pricing_with_promo_guard
+    module._mapeiaai_promo_calculator_patched = True
+    _audit(module, 'promo_calculator_patch_installed', details={'rule': 'preco cheio + preco promocional; desconto zero preserva promocional existente'})
+
+
 def _patch_module(module: ModuleType) -> None:
     name = getattr(module, '__name__', '')
     if name == 'bling_app_zero.core.bling_direct_sender':
         patch_direct_sender(module)
     elif name == 'bling_app_zero.core.bling_price_sender_guarded':
         patch_price_sender(module)
+    elif name == 'bling_app_zero.core.product_pricing_center':
+        patch_product_pricing_center(module)
 
 
 class _PatchLoader(importlib.abc.Loader):
@@ -201,4 +267,4 @@ def install() -> None:
 
 install()
 
-__all__ = ['install', 'patch_direct_sender', 'patch_price_sender']
+__all__ = ['install', 'patch_direct_sender', 'patch_price_sender', 'patch_product_pricing_center']
