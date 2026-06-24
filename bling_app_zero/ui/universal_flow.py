@@ -30,6 +30,7 @@ UNIVERSAL_SIGNATURE_KEY = 'mapeiaai_universal_signature'
 UNIVERSAL_ENGINE_KEY = 'mapeiaai_universal_mapping_engine'
 UNIVERSAL_MODEL_FILE_NAME_KEY = 'mapeiaai_universal_model_file_name'
 UNIVERSAL_MODEL_FILE_BYTES_KEY = 'mapeiaai_universal_model_file_bytes'
+UNIVERSAL_API_SEND_KEY = 'mapeiaai_universal_allow_api_send'
 RESPONSIBLE_FILE = 'bling_app_zero/ui/universal_flow.py'
 SOURCE_MODE_UPLOAD = 'Anexar arquivo de origem'
 SOURCE_MODE_SITE = 'Buscar produtos por site'
@@ -49,22 +50,44 @@ def _audit(event: str, **details: object) -> None:
     add_audit_event(event, area='UNIVERSAL', status='OK', details={'responsible_file': RESPONSIBLE_FILE, **details})
 
 
+def _universal_api_send_allowed() -> bool:
+    flow_kind = str(st.session_state.get('mapeiaai_flow_kind') or st.session_state.get('flow_kind') or '').strip()
+    entry_path = str(st.session_state.get('mapeiaai_home_entry_path') or '').strip()
+    return bool(
+        st.session_state.get(UNIVERSAL_API_SEND_KEY)
+        or flow_kind == 'universal_model_mapping_api'
+        or entry_path == 'mapear_modelo_com_api'
+    )
+
+
 def _force_plain_context() -> None:
-    for key in NO_API_KEYS:
-        st.session_state.pop(key, None)
+    allow_api_send = _universal_api_send_allowed()
+    if not allow_api_send:
+        for key in NO_API_KEYS:
+            st.session_state.pop(key, None)
     set_entry_context(CONTEXT_UNIVERSAL)
     activate_csv_finish_mode()
-    st.session_state['mapeiaai_flow_kind'] = 'universal_model_mapping'
-    st.session_state['flow_kind'] = 'universal_model_mapping'
-    st.session_state['api_flow_active'] = False
-    st.session_state['mapear_planilha_sem_api_active'] = True
-    st.session_state['active_feature_mode'] = 'csv'
+    st.session_state['mapeiaai_flow_kind'] = 'universal_model_mapping_api' if allow_api_send else 'universal_model_mapping'
+    st.session_state['flow_kind'] = 'universal_model_mapping_api' if allow_api_send else 'universal_model_mapping'
+    st.session_state['api_flow_active'] = bool(allow_api_send)
+    if allow_api_send:
+        st.session_state[UNIVERSAL_API_SEND_KEY] = True
+        st.session_state['home_bling_connected_same_flow_api_send'] = True
+        st.session_state['bling_connected_api_flow_active'] = True
+        st.session_state.pop('mapear_planilha_sem_api_active', None)
+        st.session_state['active_feature_mode'] = 'api_bling'
+        st.session_state['flow_spine_final_destination'] = 'api_bling'
+        st.session_state['flow_spine_primary_action_label'] = 'Enviar planilha tratada ao Bling'
+    else:
+        st.session_state.pop(UNIVERSAL_API_SEND_KEY, None)
+        st.session_state['mapear_planilha_sem_api_active'] = True
+        st.session_state['active_feature_mode'] = 'csv'
+        st.session_state['flow_spine_final_destination'] = 'download'
+        st.session_state['flow_spine_primary_action_label'] = 'Download Modelo Mapeado'
     st.session_state['active_feature_operation'] = 'universal'
     st.session_state['active_feature_contract_key'] = 'universal_mapping_csv'
     st.session_state['flow_spine_contract_key'] = 'universal_mapping_csv'
     st.session_state['flow_spine_operation'] = 'universal'
-    st.session_state['flow_spine_final_destination'] = 'download'
-    st.session_state['flow_spine_primary_action_label'] = 'Download Modelo Mapeado'
 
 
 def _contract_ok() -> bool:
@@ -395,8 +418,11 @@ def _render_mapping_ai_toggle() -> bool:
 
 def _render_bling_destination_notice() -> None:
     st.markdown('### Destino final')
-    st.info('Este caminho finaliza em download. Para enviar ao Bling, inicie uma nova operação pelo botão “Bling conectado” e use a mesma Origem dos dados nova.')
-    st.warning('Se não houver conexão com o Bling, será necessário voltar ao início, conectar ao Bling e refazer/retomar a operação em modo API para liberar o envio final.')
+    if _universal_api_send_allowed():
+        st.success('Fluxo Universal com Bling conectado: depois do preview, você pode baixar a planilha ou enviar por API quando a operação real for identificada.')
+        _audit('mapear_planilha_bling_destination_notice_rendered', requires_restart_for_api=False, final_destination='api_bling')
+        return
+    st.info('Este caminho finaliza em download. Para enviar ao Bling, conecte ao Bling antes de entrar no fluxo Universal ou use o caminho “Bling conectado”.')
     _audit('mapear_planilha_bling_destination_notice_rendered', requires_restart_for_api=True, final_destination='download')
 
 
@@ -406,7 +432,10 @@ def render_universal_flow() -> None:
         st.warning('Este fluxo é exclusivo para Mapear planilha por contrato / Universal CSV.')
         return
     st.markdown('## Anexar Modelo / Mapear Planilha')
-    st.caption('Sem API: anexe o modelo final, escolha a origem dos dados, use opcionais, revise o mapeamento, veja o preview e baixe a planilha idêntica.')
+    if _universal_api_send_allowed():
+        st.caption('Bling conectado: anexe o modelo final, escolha a origem, trate os dados, revise o mapeamento, baixe ou envie a planilha tratada por API no final.')
+    else:
+        st.caption('Sem API: anexe o modelo final, escolha a origem dos dados, use opcionais, revise o mapeamento, veja o preview e baixe a planilha idêntica.')
     model = _render_model_step()
     if not isinstance(model, pd.DataFrame):
         return
@@ -431,7 +460,7 @@ def render_universal_flow() -> None:
         st.session_state[UNIVERSAL_OUTPUT_KEY] = output
         render_congratulations_success(area='UNIVERSAL', context='download_final_planilha_mapeada')
         _render_bling_destination_notice()
-        _audit('mapear_planilha_preview_download_pronto', rows=int(len(output)), columns=int(len(output.columns)), csv=True, unified_origin=True, price_enabled=price_enabled, category_enabled=category_enabled, rules_enabled=rules_enabled)
+        _audit('mapear_planilha_preview_download_pronto', rows=int(len(output)), columns=int(len(output.columns)), csv=True, unified_origin=True, price_enabled=price_enabled, category_enabled=category_enabled, rules_enabled=rules_enabled, api_send_allowed=_universal_api_send_allowed())
 
 
 __all__ = ['render_universal_flow']
