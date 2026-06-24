@@ -10,7 +10,7 @@ from bling_app_zero.ui.live_operation_panel import render_live_operation_panel, 
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/live_operation_runtime_patch.py'
 _PATCH_KEY = 'live_operation_runtime_patch_installed_v1'
-_PRICE_PATCH_KEY = 'live_operation_runtime_universal_price_calculator_installed_v2'
+_PRICE_PATCH_KEY = 'live_operation_runtime_universal_price_calculator_installed_v3'
 
 
 def _safe_int(value: object) -> int:
@@ -55,7 +55,7 @@ def _install_universal_price_calculator() -> None:
             'live_operation_runtime_universal_price_calculator_loaded',
             area='UNIVERSAL',
             status='OK',
-            details={'official_calculator': True, 'replaces': 'render_shared_calculator', 'responsible_file': RESPONSIBLE_FILE},
+            details={'official_calculator': True, 'replaces': 'render_shared_calculator', 'mapping_locked_fields': True, 'responsible_file': RESPONSIBLE_FILE},
         )
     except Exception as exc:
         add_audit_event(
@@ -67,7 +67,7 @@ def _install_universal_price_calculator() -> None:
 
 
 def _ensure_universal_price_calculator() -> None:
-    """Carrega a calculadora oficial mesmo em sessões antigas com o runtime já marcado como instalado."""
+    """Carrega a calculadora oficial e o bloqueio de campos mesmo em sessões antigas."""
     if st.session_state.get(_PRICE_PATCH_KEY):
         return
     _install_universal_price_calculator()
@@ -235,7 +235,7 @@ def install_live_operation_runtime_patch() -> None:
     _patch_api_progress()
     _patch_universal_progress()
     st.session_state[_PATCH_KEY] = True
-    add_audit_event('live_operation_runtime_patch_installed', area='PROGRESSO', status='OK', details={'site': True, 'api': True, 'universal': True, 'category_confidence_strict': True, 'official_universal_price_calculator': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('live_operation_runtime_patch_installed', area='PROGRESSO', status='OK', details={'site': True, 'api': True, 'universal': True, 'category_confidence_strict': True, 'official_universal_price_calculator': True, 'mapping_locked_fields': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_live_operation_runtime_patch']
