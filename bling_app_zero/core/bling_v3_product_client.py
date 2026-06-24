@@ -79,31 +79,44 @@ def _product_id(payload: Any) -> str:
     return ''
 
 
-def _image_links(payload: dict[str, Any]) -> list[str]:
-    midia = payload.get('midia') if isinstance(payload.get('midia'), dict) else {}
-    imagens = midia.get('imagens') if isinstance(midia.get('imagens'), (list, dict)) else payload.get('imagens') or payload.get('images') or []
-    raw: list[Any]
-    if isinstance(imagens, dict):
-        raw = list(
-            imagens.get('imagensURL')
-            or imagens.get('externas')
-            or imagens.get('externos')
-            or imagens.get('links')
-            or imagens.get('urls')
-            or []
-        )
-    elif isinstance(imagens, list):
-        raw = imagens
-    else:
-        raw = []
-    out: list[str] = []
-    for item in raw:
-        if isinstance(item, dict):
-            value = str(item.get('link') or item.get('url') or item.get('URL') or '').strip()
-        else:
-            value = str(item or '').strip()
+def _append_image_link(out: list[str], item: Any) -> None:
+    if isinstance(item, dict):
+        for key in ('link', 'url', 'URL'):
+            value = str(item.get(key) or '').strip()
+            if value.startswith(('http://', 'https://')) and value not in out:
+                out.append(value)
+    elif isinstance(item, str):
+        value = item.strip()
         if value.startswith(('http://', 'https://')) and value not in out:
             out.append(value)
+
+
+def _collect_image_links(value: Any, out: list[str]) -> None:
+    if isinstance(value, dict):
+        _append_image_link(out, value)
+        for key in ('externas', 'externos', 'imagensURL', 'links', 'urls', 'internas'):
+            _collect_image_links(value.get(key), out)
+    elif isinstance(value, list):
+        for item in value:
+            _collect_image_links(item, out)
+    else:
+        _append_image_link(out, value)
+
+
+def _image_links(payload: dict[str, Any]) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+    out: list[str] = []
+    midia = payload.get('midia') if isinstance(payload.get('midia'), dict) else {}
+    for candidate in (
+        payload.get('imagens'),
+        payload.get('images'),
+        midia.get('imagens'),
+        midia.get('externas'),
+        midia.get('internas'),
+        midia.get('imagensURL'),
+    ):
+        _collect_image_links(candidate, out)
     return out[:10]
 
 
@@ -191,6 +204,8 @@ def _media_payloads(payload: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]
     by_both = [{'link': link, 'url': link} for link in links]
     as_strings = list(links)
     return [
+        ('media.midia.imagens.externas.link', {'midia': {'imagens': {'externas': by_link}}}),
+        ('media.midia.imagens.externas.url', {'midia': {'imagens': {'externas': by_url}}}),
         ('media.midia.imagens.imagensURL.link', {'midia': {'imagens': {'imagensURL': by_link}}}),
         ('media.midia.imagens.imagensURL.url', {'midia': {'imagens': {'imagensURL': by_url}}}),
         ('media.midia.imagens.imagensURL.link_url', {'midia': {'imagens': {'imagensURL': by_both}}}),
@@ -198,8 +213,6 @@ def _media_payloads(payload: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]
         ('media.midia.imagens.link', {'midia': {'imagens': by_link}}),
         ('media.midia.imagens.url', {'midia': {'imagens': by_url}}),
         ('media.midia.imagens.link_url', {'midia': {'imagens': by_both}}),
-        ('media.midia.imagens.externas.link', {'midia': {'imagens': {'externas': by_link}}}),
-        ('media.midia.imagens.externas.url', {'midia': {'imagens': {'externas': by_url}}}),
         ('media.imagens.root.link', {'imagens': by_link}),
         ('media.imagens.root.url', {'imagens': by_url}),
     ]
@@ -295,6 +308,13 @@ def _persistence_report(saved: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _strip_media(payload: dict[str, Any]) -> dict[str, Any]:
+    out = deepcopy(payload if isinstance(payload, dict) else {})
+    for key in ('midia', 'imagens', 'images'):
+        out.pop(key, None)
+    return _clean(out)
+
+
 class BlingV3ProductClient:
     def __init__(
         self,
@@ -371,30 +391,48 @@ class BlingV3ProductClient:
             return product_id, [attempt]
         return '', [attempt]
 
+    def _apply_media_payloads(self, product_id: str, final_payload: dict[str, Any], attempts: list[dict[str, Any]]) -> dict[str, Any]:
+        last_saved: dict[str, Any] = {}
+        for label, item in _media_payloads(final_payload):
+            status, _data, text = self.request('PATCH', f'/produtos/{product_id}', item)
+            attempts.append({'method': 'PATCH', 'path': f'/produtos/{product_id}', 'label': label, 'status': status, 'payload_keys': sorted(item.keys()), 'changed_fields': _fields(item), 'response_preview': text, 'media_verified_step': True})
+            if status in {401, 403, 404}:
+                break
+            if int(status) < 400:
+                last_saved = self.get_product(product_id)
+                if _persistence_report(last_saved).get('imagens'):
+                    add_audit_event(
+                        'bling_v3_media_persisted_and_stopped',
+                        area='BLING_API_V3',
+                        status='OK',
+                        details={'product_id': str(product_id), 'label': label, 'rule': 'parar na primeira estrutura de mídia persistida', 'responsible_file': RESPONSIBLE_FILE},
+                    )
+                    return last_saved
+        return last_saved
+
     def update_product(self, product_id: str, payload: dict[str, Any]) -> BlingV3Result:
         attempts: list[dict[str, Any]] = []
         final_payload = _force_defaults(payload)
-        options: list[tuple[str, dict[str, Any]]] = [
-            ('product.full.put', final_payload),
-            ('product.full.patch', final_payload),
-        ]
-        no_media = deepcopy(final_payload)
-        no_media.pop('midia', None)
-        no_media.pop('imagens', None)
-        if no_media != final_payload:
-            options.append(('product.no_media.patch', _clean(no_media)))
-        options.extend(_description_payloads(final_payload))
-        options.extend(_detail_payloads(final_payload))
-        options.extend(_media_payloads(final_payload))
+        base_payload = _strip_media(final_payload)
+        options: list[tuple[str, dict[str, Any]]] = []
+        if base_payload:
+            options.append(('product.safe.no_media.patch', base_payload))
+            options.extend(_description_payloads(base_payload))
+            options.extend(_detail_payloads(base_payload))
 
         for label, item in options:
-            method = 'PUT' if label.endswith('.put') else 'PATCH'
+            method = 'PATCH'
             status, data, text = self.request(method, f'/produtos/{product_id}', item)
             attempts.append({'method': method, 'path': f'/produtos/{product_id}', 'label': label, 'status': status, 'payload_keys': sorted(item.keys()), 'changed_fields': _fields(item), 'response_preview': text})
             if status in {401, 403, 404}:
                 break
 
-        persisted = self._after_write(product_id, final_payload, attempts)
+        persisted = self._after_write(product_id, base_payload or final_payload, attempts) if attempts else self.get_product(product_id)
+        if _image_links(final_payload):
+            media_saved = self._apply_media_payloads(product_id, final_payload, attempts)
+            if media_saved:
+                persisted = media_saved
+
         return BlingV3Result(ok=any(isinstance(a.get('status'), int) and int(a.get('status')) < 400 for a in attempts), product_id=product_id, status='updated', attempts=tuple(attempts), persisted=persisted)
 
     def upsert_product(self, payload: dict[str, Any]) -> BlingV3Result:
