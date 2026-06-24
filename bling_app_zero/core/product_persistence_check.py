@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+# Campos que realmente devem bloquear o próximo envio quando não persistem.
+# Volumes, itensPorCaixa, dimensões, pesos e imagens podem ser importantes para
+# qualidade do cadastro, mas o Bling pode ignorar/normalizar esses campos no GET.
+# Se forem tratados como obrigatórios duros, o lote inteiro para mesmo com POST/PATCH 200.
 REQUIRED_PRODUCT_FIELDS = (
     'nome',
     'codigo',
@@ -9,13 +13,17 @@ REQUIRED_PRODUCT_FIELDS = (
     'descricaoCurta',
     'marca',
     'categoria',
+)
+
+PHYSICAL_PRODUCT_FIELDS = (
     'pesoLiquido',
     'pesoBruto',
     'dimensoes',
     'volumes',
     'itensPorCaixa',
 )
-IMPORTANT_PRODUCT_FIELDS = REQUIRED_PRODUCT_FIELDS + ('imagens',)
+
+IMPORTANT_PRODUCT_FIELDS = REQUIRED_PRODUCT_FIELDS + PHYSICAL_PRODUCT_FIELDS + ('imagens',)
 
 
 def _filled(value: Any) -> bool:
@@ -73,4 +81,10 @@ def missing_product_fields(saved: dict[str, Any], fields: tuple[str, ...] = REQU
     return [field for field in fields if not flags.get(field)]
 
 
-__all__ = ['IMPORTANT_PRODUCT_FIELDS', 'REQUIRED_PRODUCT_FIELDS', 'missing_product_fields', 'product_persistence_flags']
+__all__ = [
+    'IMPORTANT_PRODUCT_FIELDS',
+    'PHYSICAL_PRODUCT_FIELDS',
+    'REQUIRED_PRODUCT_FIELDS',
+    'missing_product_fields',
+    'product_persistence_flags',
+]
