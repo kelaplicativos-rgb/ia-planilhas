@@ -6,6 +6,7 @@ from typing import Any, Mapping
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.api_operation_lock import lock_api_operation
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.bling_oauth import build_authorization_url, connection_status
 from bling_app_zero.core.final_csv_exporter import contract_columns_from_model
@@ -19,7 +20,6 @@ from bling_app_zero.core.template_download_exporter import (
     mime_for_template_output,
     output_name_for_template,
 )
-from bling_app_zero.ui.bling_api_batch_panel import render_bling_api_batch_panel
 from bling_app_zero.ui.home_bling_api_flow import render_new_tab_connect_button
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/shared_final_csv.py'
@@ -44,6 +44,7 @@ DOWNLOAD_READY_KEY = 'mapeiaai_final_download_ready'
 FINAL_API_PANEL_KEY = 'mapeiaai_final_bling_api_panel_v1'
 UNIVERSAL_API_SEND_KEY = 'mapeiaai_universal_allow_api_send'
 USER_OPERATION_CHOICE_KEY = 'mapeiaai_final_api_operation_choice_v1'
+PRICE_TARGET_MODE_CHOICE_KEY = 'mapeiaai_final_price_target_mode_choice_v1'
 PLAIN_UNIVERSAL_FLOW_KINDS = {'universal_model_mapping'}
 API_UNIVERSAL_FLOW_KINDS = {'universal_model_mapping_api'}
 CONCRETE_API_OPERATIONS = (OP_CADASTRO, OP_ESTOQUE, OP_ATUALIZACAO_PRECO)
@@ -274,6 +275,11 @@ def _confirm_api_operation(detected_operation: str, signature: str) -> str:
     st.session_state['flow_spine_operation_resolved_for_api'] = selected_operation
     st.session_state['source_first_selected_operation'] = selected_operation
     st.session_state['source_first_operation_user_confirmed'] = True
+    st.session_state['operation'] = selected_operation
+    st.session_state['selected_operation'] = selected_operation
+    st.session_state['bling_operation'] = selected_operation
+    st.session_state['flow_operation'] = selected_operation
+    lock_api_operation(selected_operation, source=RESPONSIBLE_FILE, force=True)
     if selected_operation != detected_operation:
         st.warning(f'Operação corrigida pelo usuário: {_operation_text(selected_operation)}. A detecção automática era: {_operation_text(detected_operation)}.')
     else:
@@ -287,6 +293,7 @@ def _confirm_api_operation(detected_operation: str, signature: str) -> str:
             'selected_operation': selected_operation,
             'user_choice_has_priority': True,
             'signature': signature,
+            'operation_locked_force': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -306,6 +313,7 @@ def _prepare_final_bling_snapshot(output: pd.DataFrame, operation: str, signatur
     st.session_state['bling_api_operation'] = operation
     st.session_state['home_bling_connected_same_flow_api_send'] = True
     st.session_state[FINAL_API_PANEL_KEY] = {'operation': operation, 'rows': int(len(clean)), 'signature': signature}
+    lock_api_operation(operation, source=RESPONSIBLE_FILE, force=True)
     return clean
 
 
@@ -339,9 +347,54 @@ def _render_price_api_targets(output: pd.DataFrame) -> None:
         st.warning(f'{unresolved} linha(s) pedem loja/canal, mas ainda não têm nome ou ID suficiente para identificar a loja no Bling.')
 
 
+def _has_existing_price_targets(output: pd.DataFrame) -> bool:
+    if not isinstance(output, pd.DataFrame) or output.empty:
+        return False
+    target_terms = ('bling canal venda id', 'bling canal venda nome', 'canal venda', 'canal', 'loja', 'marketplace', 'id loja', 'produto loja', 'vinculo loja', 'vínculo loja', 'preco destino', 'preço destino')
+    for column in output.columns:
+        token = _norm_column(column)
+        if any(term in token for term in target_terms):
+            try:
+                if output[column].fillna('').astype(str).str.strip().ne('').any():
+                    return True
+            except Exception:
+                continue
+    return False
+
+
+def _inject_general_price_target(output: pd.DataFrame) -> pd.DataFrame:
+    out = output.copy().fillna('')
+    out['Bling preço destino'] = 'Preço geral'
+    out['Bling canal venda id'] = ''
+    out['Bling canal venda nome'] = ''
+    return out
+
+
 def _apply_price_target_choice_if_needed(output: pd.DataFrame, operation: str) -> pd.DataFrame:
     if operation != OP_ATUALIZACAO_PRECO:
         return output.copy().fillna('')
+    base = output.copy().fillna('')
+    if _has_existing_price_targets(base):
+        options = (
+            'Usar destinos/canais já existentes na planilha tratada',
+            'Atualizar preço geral de todos os produtos',
+            'Escolher um canal único agora',
+        )
+        choice = st.radio(
+            'Destino dos preços',
+            options,
+            index=0,
+            key=f'{PRICE_TARGET_MODE_CHOICE_KEY}_{_signature_for_df(base)}',
+            help='Quando a planilha já tem canal/loja por linha, o sistema não sobrescreve sem confirmação.',
+        )
+        if choice == options[0]:
+            st.success('Destino de preços preservado: serão usados os canais/lojas já existentes na planilha tratada.')
+            add_audit_event('shared_final_csv_price_targets_preserved_from_sheet', area='BLING_API', status='OK', details={'rows': len(base), 'responsible_file': RESPONSIBLE_FILE})
+            return base
+        if choice == options[1]:
+            st.warning('Preço geral escolhido: canais/lojas da planilha serão ignorados para este envio.')
+            return _inject_general_price_target(base)
+
     try:
         from bling_app_zero.ui.bling_price_channel_selector import render_price_channel_selector
     except Exception as exc:
@@ -349,12 +402,42 @@ def _apply_price_target_choice_if_needed(output: pd.DataFrame, operation: str) -
         st.warning(str(exc))
         add_audit_event('shared_final_csv_price_channel_selector_unavailable', area='BLING_API', status='BLOQUEADO', details={'error': str(exc)[:300], 'responsible_file': RESPONSIBLE_FILE})
         return pd.DataFrame(columns=list(output.columns))
-    selected = render_price_channel_selector(output.copy().fillna(''), operation)
+    selected = render_price_channel_selector(base, operation)
     if not isinstance(selected, pd.DataFrame) or selected.empty:
         st.info('Envio de preços bloqueado até escolher o destino: preço geral ou loja/canal do Bling.')
         add_audit_event('shared_final_csv_price_target_required', area='BLING_API', status='BLOQUEADO', details={'rows': len(output), 'responsible_file': RESPONSIBLE_FILE})
         return pd.DataFrame(columns=list(output.columns))
     return selected.copy().fillna('')
+
+
+def _strip_unconfirmed_stock_deposit_columns(output: pd.DataFrame) -> pd.DataFrame:
+    out = output.copy().fillna('')
+    removed = [column for column in ('Bling depósito id', 'Bling depósito nome') if column in out.columns]
+    for column in removed:
+        out.drop(columns=[column], inplace=True)
+    if removed:
+        add_audit_event(
+            'shared_final_csv_stock_deposit_requires_confirmation',
+            area='BLING_API',
+            status='OK',
+            details={'removed_columns_before_stock_target_panel': removed, 'reason': 'depósito da planilha é sugestão; usuário precisa confirmar depósito real antes da API', 'responsible_file': RESPONSIBLE_FILE},
+        )
+    return out
+
+
+def _render_bling_api_batch_panel_strict(download_df: pd.DataFrame, operation: str, key: str, signature: str, rules_sig: str) -> None:
+    """Renderiza o envio final sem deixar patch legado trocar a operação confirmada.
+
+    Alguns patches antigos protegiam o usuário contra envio de produto como estoque
+    forçando cadastro quando a tabela parecia catálogo. No final Universal, a
+    operação já foi confirmada pelo usuário, então chamamos a função original do
+    painel se ela existir e reforçamos o lock antes de renderizar.
+    """
+    lock_api_operation(operation, source=RESPONSIBLE_FILE, force=True)
+    from bling_app_zero.ui import bling_api_batch_panel as batch_panel
+
+    render_fn = getattr(batch_panel, '_blingfix_original_render_bling_api_batch_panel', None) or batch_panel.render_bling_api_batch_panel
+    return render_fn(download_df, operation, key, signature, rules_sig)
 
 
 def _universal_api_send_allowed() -> bool:
@@ -428,7 +511,10 @@ def _render_final_bling_api_panel(output: pd.DataFrame, *, key_prefix: str) -> N
             add_audit_event('shared_final_bling_api_waiting_connection', area='BLING_API', status='AGUARDANDO_CONEXAO', details={'operation': operation, 'rows': int(len(clean)), 'signature': signature, 'responsible_file': RESPONSIBLE_FILE})
             return
 
-        clean = _apply_price_target_choice_if_needed(output, operation)
+        clean = output.copy().fillna('')
+        if operation == OP_ESTOQUE:
+            clean = _strip_unconfirmed_stock_deposit_columns(clean)
+        clean = _apply_price_target_choice_if_needed(clean, operation)
         if not isinstance(clean, pd.DataFrame) or clean.empty:
             return
         signature = _signature_for_df(clean)
@@ -441,7 +527,7 @@ def _render_final_bling_api_panel(output: pd.DataFrame, *, key_prefix: str) -> N
             st.info('Operação estoque confirmada: antes do envio o sistema buscará os depósitos do Bling e exigirá a escolha do depósito correto.')
         elif operation == OP_CADASTRO:
             st.info('Cadastro/atualização de produtos confirmada: produtos existentes serão atualizados por PATCH incremental; campos vazios não removem dados existentes. Produtos novos usam a categoria da planilha tratada.')
-        render_bling_api_batch_panel(clean, operation, f'{key_prefix}_final_bling_api', signature, 'shared_final_csv')
+        _render_bling_api_batch_panel_strict(clean, operation, f'{key_prefix}_final_bling_api', signature, 'shared_final_csv')
         add_audit_event('shared_final_bling_api_panel_rendered', area='BLING_API', status='OK', details={'detected_operation': detected_operation, 'operation': operation, 'rows': int(len(clean)), 'signature': signature, 'responsible_file': RESPONSIBLE_FILE})
 
 
