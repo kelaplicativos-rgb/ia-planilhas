@@ -33,11 +33,13 @@ def test_universal_flow_mapping_and_output_simulation() -> None:
 
     assert result['ok'] is True
     assert result['operation'] == 'universal'
-    assert result['mapped_fields'] >= 4
+    assert result['mapped_fields'] == 5
     assert result['rows'] == 1
     assert result['columns'] == 5
     assert result['descricao_from_produto_blocked'] is True
+    assert result['gtin_from_produto_detected'] is True
     assert result['mapping']['Descrição'] == 'Título real'
+    assert result['mapping']['GTIN'] == 'Produto'
 
 
 def test_semantic_mapping_blocks_header_when_content_disagrees() -> None:
