@@ -17,6 +17,7 @@ FLOW_WIZARD = 'wizard_cadastro_estoque'
 FLOW_PRICE_UPDATE = 'price_multistore_v2'
 FLOW_MAPEAR_PLANILHA = 'mapear_planilha'
 KNOWN_FLOWS = {FLOW_HOME, FLOW_WIZARD, FLOW_PRICE_UPDATE, FLOW_MAPEAR_PLANILHA}
+UNIVERSAL_API_SEND_KEY = 'mapeiaai_universal_allow_api_send'
 
 MAPEAR_PLANILHA_ALIASES = {
     FLOW_MAPEAR_PLANILHA,
@@ -69,6 +70,7 @@ BLING_ONLY_STATE_KEYS = (
 
 UNIVERSAL_RUNTIME_KEYS_TO_LEAVE_BLING = (
     'mapear_planilha_sem_api_active',
+    UNIVERSAL_API_SEND_KEY,
     'mapeiaai_universal_source_df',
     'mapeiaai_universal_mapping',
     'mapeiaai_universal_output_df',
@@ -131,40 +133,62 @@ def _query_param(name: str) -> str:
     return str(value or '').strip()
 
 
-def _clear_no_api_session_flags() -> None:
-    for key in NO_API_SESSION_KEYS:
-        st.session_state.pop(key, None)
-    for key in BLING_ONLY_STATE_KEYS:
-        st.session_state.pop(key, None)
+def _configure_universal_context(*, allow_api_send: bool) -> None:
     set_entry_context(CONTEXT_UNIVERSAL)
     activate_csv_finish_mode()
-    st.session_state['mapeiaai_flow_kind'] = 'universal_model_mapping'
-    st.session_state['flow_kind'] = 'universal_model_mapping'
-    st.session_state['api_flow_active'] = False
-    st.session_state['active_feature_mode'] = 'csv'
+    if allow_api_send:
+        st.session_state[UNIVERSAL_API_SEND_KEY] = True
+        st.session_state['mapeiaai_flow_kind'] = 'universal_model_mapping_api'
+        st.session_state['flow_kind'] = 'universal_model_mapping_api'
+        st.session_state['api_flow_active'] = True
+        st.session_state['active_feature_mode'] = 'api_bling'
+        st.session_state['flow_spine_final_destination'] = 'api_bling'
+        st.session_state['flow_spine_final_title'] = 'Download ou Envio ao Bling'
+        st.session_state['flow_spine_primary_action_label'] = 'Enviar planilha tratada ao Bling'
+        st.session_state['home_bling_connected_same_flow_api_send'] = True
+        st.session_state['bling_connected_api_flow_active'] = True
+        st.session_state.pop('mapear_planilha_sem_api_active', None)
+    else:
+        st.session_state.pop(UNIVERSAL_API_SEND_KEY, None)
+        st.session_state['mapeiaai_flow_kind'] = 'universal_model_mapping'
+        st.session_state['flow_kind'] = 'universal_model_mapping'
+        st.session_state['api_flow_active'] = False
+        st.session_state['active_feature_mode'] = 'csv'
+        st.session_state['flow_spine_final_destination'] = 'download'
+        st.session_state['flow_spine_final_title'] = 'Download'
+        st.session_state['flow_spine_primary_action_label'] = 'Download Modelo Mapeado'
+        st.session_state['mapear_planilha_sem_api_active'] = True
     st.session_state['active_feature_operation'] = 'universal'
     st.session_state['active_feature_contract_key'] = 'universal_mapping_csv'
     st.session_state['flow_spine_contract_key'] = 'universal_mapping_csv'
     st.session_state['flow_spine_operation'] = 'universal'
-    st.session_state['flow_spine_final_destination'] = 'download'
-    st.session_state['flow_spine_final_title'] = 'Download'
-    st.session_state['flow_spine_primary_action_label'] = 'Download Modelo Mapeado'
+
+
+def _clear_no_api_session_flags(*, allow_api_send: bool = False) -> None:
+    for key in NO_API_SESSION_KEYS:
+        st.session_state.pop(key, None)
+    for key in BLING_ONLY_STATE_KEYS:
+        st.session_state.pop(key, None)
+    _configure_universal_context(allow_api_send=bool(allow_api_send))
     legacy.add_audit_event(
-        'home_router_v2_no_api_context_isolated',
+        'home_router_v2_universal_context_isolated',
         area='HOME',
         status='OK',
-        details={'responsible_file': RESPONSIBLE_FILE, 'flow_kind': 'universal_model_mapping', 'api': False},
+        details={'responsible_file': RESPONSIBLE_FILE, 'flow_kind': st.session_state.get('mapeiaai_flow_kind'), 'api': bool(allow_api_send)},
     )
 
 
 def _clear_universal_operation_state(*, keep_model: bool = False) -> None:
     preserved_model = st.session_state.get('mapeiaai_universal_model_df') if keep_model else None
+    preserved_api_send = bool(st.session_state.get(UNIVERSAL_API_SEND_KEY))
     for key in UNIVERSAL_OPERATION_KEYS:
         st.session_state.pop(key, None)
     for key in list(st.session_state.keys()):
         text_key = str(key)
         if text_key.startswith('mapeiaai_universal_map_') or text_key.startswith('mapeiaai_shared_map_'):
             st.session_state.pop(key, None)
+    if preserved_api_send:
+        st.session_state[UNIVERSAL_API_SEND_KEY] = True
     if not keep_model:
         for key in UNIVERSAL_MODEL_KEYS:
             st.session_state.pop(key, None)
@@ -177,7 +201,7 @@ def _clear_universal_operation_state(*, keep_model: bool = False) -> None:
         'home_router_v2_universal_operation_state_cleared',
         area='HOME',
         status='OK',
-        details={'responsible_file': RESPONSIBLE_FILE, 'keep_model': bool(keep_model)},
+        details={'responsible_file': RESPONSIBLE_FILE, 'keep_model': bool(keep_model), 'api_preserved': bool(preserved_api_send)},
     )
 
 
@@ -220,16 +244,14 @@ def start_price_multistore_flow() -> None:
         pass
 
 
-def start_mapear_planilha_flow() -> None:
-    _clear_no_api_session_flags()
+def start_mapear_planilha_flow(*, allow_api_send: bool | None = None) -> None:
+    if allow_api_send is None:
+        allow_api_send = bool(st.session_state.get(UNIVERSAL_API_SEND_KEY))
+    _clear_no_api_session_flags(allow_api_send=bool(allow_api_send))
     st.session_state[ACTIVE_FLOW_KEY] = FLOW_MAPEAR_PLANILHA
     st.session_state[HOME_ALLOW_FLOW_KEY] = True
     st.session_state['home_single_page_flow_active'] = False
-    st.session_state['mapear_planilha_sem_api_active'] = True
-    st.session_state['mapeiaai_home_entry_path'] = 'mapear_modelo_sem_api'
-    st.session_state['mapeiaai_flow_kind'] = 'universal_model_mapping'
-    st.session_state['flow_kind'] = 'universal_model_mapping'
-    st.session_state['api_flow_active'] = False
+    st.session_state['mapeiaai_home_entry_path'] = 'mapear_modelo_com_api' if allow_api_send else 'mapear_modelo_sem_api'
     st.session_state['bling_wizard_step'] = 'modelo'
     st.session_state['home_wizard_step'] = 'modelo'
     st.session_state['home_slim_flow_operation'] = 'universal'
@@ -301,6 +323,7 @@ def _go_home_from_independent_flow() -> None:
     st.session_state['home_single_page_flow_active'] = False
     st.session_state.pop('price_multistore_independent_route_active', None)
     st.session_state.pop('mapear_planilha_sem_api_active', None)
+    st.session_state.pop(UNIVERSAL_API_SEND_KEY, None)
     st.session_state.pop('mapeiaai_home_entry_path', None)
     try:
         st.query_params.pop('operation_v2', None)
@@ -324,12 +347,16 @@ def _render_price_multistore_route() -> None:
 
 def _render_mapear_planilha_route() -> None:
     start_mapear_planilha_flow()
+    allow_api_send = bool(st.session_state.get(UNIVERSAL_API_SEND_KEY))
     col_back, col_title = st.columns([1, 3])
     with col_back:
         if st.button('Voltar ao início', use_container_width=True, key='mapear_planilha_back_home_v2'):
             _go_home_from_independent_flow()
     with col_title:
-        st.caption('Fluxo independente sem API: anexe o modelo final, escolha origem dos dados, revise o mapeamento e baixe a planilha idêntica.')
+        if allow_api_send:
+            st.caption('Fluxo universal com Bling conectado: anexe o modelo, trate a planilha, baixe ou envie por API no final.')
+        else:
+            st.caption('Fluxo independente sem API: anexe o modelo final, escolha origem dos dados, revise o mapeamento e baixe a planilha idêntica.')
 
     has_model = isinstance(st.session_state.get('mapeiaai_universal_model_df'), pd.DataFrame)
     has_source = isinstance(st.session_state.get('mapeiaai_universal_source_df'), pd.DataFrame)
@@ -372,6 +399,11 @@ def _render_mapeiaai_home_entry() -> None:
         pass
     effective_status = legacy._effective_bling_status(try_sync=True)
     connected = bool(effective_status.get('connected'))
+    universal_text = (
+        'Bling conectado: anexe o modelo final, trate os dados, baixe a planilha ou envie por API no final.'
+        if connected else
+        'Sem API. Primeiro anexe o modelo final, depois busque origem por site ou arquivo, use toggles opcionais, veja o preview e baixe a planilha idêntica.'
+    )
     st.markdown(
         '''
 <style>
@@ -388,10 +420,11 @@ def _render_mapeiaai_home_entry() -> None:
     )
     col_mapear, col_bling = st.columns(2)
     with col_mapear:
-        st.markdown('<div class="mapeiaai-home-card"><strong>Anexar Modelo / Mapear</strong><br><span class="mapeiaai-home-muted">Sem API. Primeiro anexe o modelo final, depois busque origem por site ou arquivo, use toggles opcionais, veja o preview e baixe a planilha idêntica.</span></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="mapeiaai-home-card"><strong>Anexar Modelo / Mapear</strong><br><span class="mapeiaai-home-muted">{universal_text}</span></div>', unsafe_allow_html=True)
         if st.button('📄 Anexar Modelo / Mapear Planilha', use_container_width=True, key='home_core_mapear_modelo_v2'):
+            st.session_state[UNIVERSAL_API_SEND_KEY] = bool(connected)
             _clear_universal_operation_state(keep_model=False)
-            start_mapear_planilha_flow()
+            start_mapear_planilha_flow(allow_api_send=bool(connected))
             st.rerun()
     with col_bling:
         status = 'Bling conectado' if connected else 'Conectar ao Bling'
@@ -405,12 +438,12 @@ def _render_mapeiaai_home_entry() -> None:
                 st.session_state['home_show_bling_connection_panel_v2'] = True
                 st.rerun()
     if connected:
-        st.success('Bling conectado. Ao tocar em “Usar Bling conectado”, o fluxo começa em Origem de dados e o envio aparece somente no final.')
+        st.success('Bling conectado. Você pode usar o fluxo Bling direto ou o Universal com envio opcional no final.')
     elif bool(st.session_state.get('home_show_bling_connection_panel_v2')):
         st.markdown('---')
         st.markdown('### Conectar ao Bling')
         _render_bling_connection_panel()
-    legacy.add_audit_event('home_router_v2_render_mapeiaai_dual_core_home', area='HOME', status='OK', details={'responsible_file': RESPONSIBLE_FILE, 'home_paths': ['mapear_modelo_sem_api', 'bling_api'], 'connected': connected, 'bling_first_step_after_connection': 'origem', 'universal_first_step': 'modelo'})
+    legacy.add_audit_event('home_router_v2_render_mapeiaai_dual_core_home', area='HOME', status='OK', details={'responsible_file': RESPONSIBLE_FILE, 'home_paths': ['mapear_modelo_universal', 'bling_api'], 'connected': connected, 'bling_first_step_after_connection': 'origem', 'universal_first_step': 'modelo', 'universal_api_optional_when_connected': True})
 
 
 def _render_price_multistore_home_entry() -> None:
