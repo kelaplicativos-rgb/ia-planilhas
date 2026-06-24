@@ -24,6 +24,7 @@ from bling_app_zero.ui.success_banner import render_congratulations_success
 
 UNIVERSAL_MODEL_KEY = 'mapeiaai_universal_model_df'
 UNIVERSAL_SOURCE_KEY = 'mapeiaai_universal_source_df'
+UNIVERSAL_PROCESSED_KEY = 'mapeiaai_universal_processed_df'
 UNIVERSAL_MAPPING_KEY = 'mapeiaai_universal_mapping'
 UNIVERSAL_OUTPUT_KEY = 'mapeiaai_universal_output_df'
 UNIVERSAL_SIGNATURE_KEY = 'mapeiaai_universal_signature'
@@ -31,10 +32,31 @@ UNIVERSAL_ENGINE_KEY = 'mapeiaai_universal_mapping_engine'
 UNIVERSAL_MODEL_FILE_NAME_KEY = 'mapeiaai_universal_model_file_name'
 UNIVERSAL_MODEL_FILE_BYTES_KEY = 'mapeiaai_universal_model_file_bytes'
 UNIVERSAL_API_SEND_KEY = 'mapeiaai_universal_allow_api_send'
+UNIVERSAL_STEP_KEY = 'mapeiaai_universal_current_step'
+UNIVERSAL_MAPPING_CONFIRMED_KEY = 'mapeiaai_universal_mapping_confirmed'
+UNIVERSAL_PRICE_ENABLED_KEY = 'mapeiaai_universal_price_enabled'
+UNIVERSAL_CATEGORY_ENABLED_KEY = 'mapeiaai_universal_category_enabled'
+UNIVERSAL_RULES_ENABLED_KEY = 'mapeiaai_universal_rules_enabled'
+UNIVERSAL_RULES_CONFIG_KEY = 'mapeiaai_universal_rules_config'
 RESPONSIBLE_FILE = 'bling_app_zero/ui/universal_flow.py'
 SOURCE_MODE_UPLOAD = 'Anexar arquivo de origem'
 SOURCE_MODE_SITE = 'Buscar produtos por site'
 SOURCE_MODE_KEY = 'mapeiaai_universal_source_mode'
+STEP_MODEL = 'modelo'
+STEP_SOURCE = 'origem'
+STEP_OPTIONS = 'opcionais'
+STEP_MAPPING = 'mapeamento'
+STEP_BUILD = 'montar'
+STEP_DONE = 'final'
+STEP_ORDER = (STEP_MODEL, STEP_SOURCE, STEP_OPTIONS, STEP_MAPPING, STEP_BUILD, STEP_DONE)
+STEP_LABELS = {
+    STEP_MODEL: '1. Modelo',
+    STEP_SOURCE: '2. Origem',
+    STEP_OPTIONS: '3. Opcionais',
+    STEP_MAPPING: '4. Mapeamento',
+    STEP_BUILD: '5. Montar planilha',
+    STEP_DONE: '6. Final',
+}
 NO_API_KEYS = (
     'home_bling_connected_same_flow_api_send', 'bling_connected_api_flow_active', 'direct_bling_api_contract_active',
     'direct_bling_operation_applied', 'direct_bling_api_contract_df', 'bling_api_operation', 'api_operation',
@@ -196,26 +218,129 @@ def _flow_signature(model: pd.DataFrame, source: pd.DataFrame, ai_enabled: bool,
     return f'{_df_signature(source)}:{_df_signature(model)}:ai={int(ai_enabled)}:rules={int(rules_enabled)}:rules_cfg={_rules_signature(rules_config)}'
 
 
+def _clear_after_model() -> None:
+    for key in (
+        UNIVERSAL_SOURCE_KEY,
+        UNIVERSAL_PROCESSED_KEY,
+        UNIVERSAL_MAPPING_KEY,
+        UNIVERSAL_OUTPUT_KEY,
+        UNIVERSAL_SIGNATURE_KEY,
+        UNIVERSAL_ENGINE_KEY,
+        UNIVERSAL_MAPPING_CONFIRMED_KEY,
+        UNIVERSAL_RULES_CONFIG_KEY,
+        'df_origem_unificada',
+        'df_origem_arquivo',
+        'df_origem_site',
+        'df_origem_site_como_planilha',
+        'df_origem_site_como_planilha_universal',
+        'neutral_mapping_state_v1',
+        'neutral_mapping_report_v1',
+    ):
+        st.session_state.pop(key, None)
+    clear_shared_mapping_widgets('mapeiaai_universal')
+
+
+def _clear_after_source() -> None:
+    for key in (
+        UNIVERSAL_PROCESSED_KEY,
+        UNIVERSAL_MAPPING_KEY,
+        UNIVERSAL_OUTPUT_KEY,
+        UNIVERSAL_SIGNATURE_KEY,
+        UNIVERSAL_ENGINE_KEY,
+        UNIVERSAL_MAPPING_CONFIRMED_KEY,
+        UNIVERSAL_RULES_CONFIG_KEY,
+        'neutral_mapping_state_v1',
+        'neutral_mapping_report_v1',
+    ):
+        st.session_state.pop(key, None)
+    clear_shared_mapping_widgets('mapeiaai_universal')
+
+
+def _clear_after_options() -> None:
+    for key in (
+        UNIVERSAL_MAPPING_KEY,
+        UNIVERSAL_OUTPUT_KEY,
+        UNIVERSAL_SIGNATURE_KEY,
+        UNIVERSAL_ENGINE_KEY,
+        UNIVERSAL_MAPPING_CONFIRMED_KEY,
+        'neutral_mapping_state_v1',
+        'neutral_mapping_report_v1',
+    ):
+        st.session_state.pop(key, None)
+    clear_shared_mapping_widgets('mapeiaai_universal')
+
+
 def _reset_if_changed(model: pd.DataFrame, source: pd.DataFrame, ai_enabled: bool, rules_enabled: bool, rules_config: Mapping[str, Any] | None = None) -> str:
     signature = _flow_signature(model, source, ai_enabled, rules_enabled, rules_config)
     previous = str(st.session_state.get(UNIVERSAL_SIGNATURE_KEY) or '')
     if previous and previous != signature:
-        for key in (UNIVERSAL_MAPPING_KEY, UNIVERSAL_OUTPUT_KEY, UNIVERSAL_ENGINE_KEY, 'neutral_mapping_state_v1', 'neutral_mapping_report_v1'):
-            st.session_state.pop(key, None)
-        clear_shared_mapping_widgets('mapeiaai_universal')
+        _clear_after_options()
         _audit('universal_flow_state_reset_by_signature_change', previous=previous, current=signature)
     st.session_state[UNIVERSAL_SIGNATURE_KEY] = signature
     return signature
 
 
+def _set_step(step: str, reason: str) -> None:
+    if step not in STEP_ORDER:
+        step = STEP_MODEL
+    st.session_state[UNIVERSAL_STEP_KEY] = step
+    _audit('universal_flow_step_changed', step=step, reason=reason)
+    safe_rerun(f'universal_step_{step}_{reason}')
+
+
+def _infer_step() -> str:
+    explicit = str(st.session_state.get(UNIVERSAL_STEP_KEY) or '').strip()
+    if explicit in STEP_ORDER:
+        return explicit
+    if not isinstance(st.session_state.get(UNIVERSAL_MODEL_KEY), pd.DataFrame):
+        return STEP_MODEL
+    if not isinstance(st.session_state.get(UNIVERSAL_SOURCE_KEY), pd.DataFrame):
+        return STEP_SOURCE
+    if not isinstance(st.session_state.get(UNIVERSAL_PROCESSED_KEY), pd.DataFrame):
+        return STEP_OPTIONS
+    if not st.session_state.get(UNIVERSAL_MAPPING_CONFIRMED_KEY):
+        return STEP_MAPPING
+    if not isinstance(st.session_state.get(UNIVERSAL_OUTPUT_KEY), pd.DataFrame):
+        return STEP_BUILD
+    return STEP_DONE
+
+
+def _render_step_bar(current: str) -> None:
+    labels = []
+    current_idx = STEP_ORDER.index(current) if current in STEP_ORDER else 0
+    for idx, step in enumerate(STEP_ORDER):
+        marker = '🟢' if idx < current_idx else ('🔵' if idx == current_idx else '⚪')
+        labels.append(f'{marker} {STEP_LABELS[step]}')
+    st.caption('  →  '.join(labels))
+
+
+def _render_back_button(current: str) -> None:
+    idx = STEP_ORDER.index(current) if current in STEP_ORDER else 0
+    if idx <= 0:
+        return
+    previous = STEP_ORDER[idx - 1]
+    if st.button('⬅️ Voltar etapa', key=f'mapeiaai_universal_back_{current}'):
+        _set_step(previous, 'back')
+
+
+def _summary_card(title: str, df: pd.DataFrame | None) -> None:
+    if isinstance(df, pd.DataFrame):
+        st.caption(f'{title}: {len(df)} linha(s) x {len(df.columns)} coluna(s).')
+
+
 def _render_model_step() -> pd.DataFrame | None:
     st.markdown('### 1. Anexar Modelo / Mapear')
     model = _current_df(UNIVERSAL_MODEL_KEY)
+    uploaded = None
     if not isinstance(model, pd.DataFrame):
         st.caption('Anexe primeiro a planilha modelo exatamente no formato que você quer receber no final.')
         uploaded = st.file_uploader('Planilha modelo final', type=None, key='mapeiaai_universal_model_upload')
         df = _read_model_upload(uploaded)
         if isinstance(df, pd.DataFrame):
+            current_sig = _df_signature(_current_df(UNIVERSAL_MODEL_KEY))
+            new_sig = _df_signature(df)
+            if current_sig != 'none' and current_sig != new_sig:
+                _clear_after_model()
             _store_df(UNIVERSAL_MODEL_KEY, df)
             st.session_state['home_modelo_universal_df'] = df.copy().fillna('')
             st.session_state['df_modelo_universal'] = df.copy().fillna('')
@@ -223,11 +348,13 @@ def _render_model_step() -> pd.DataFrame | None:
             _audit('mapear_planilha_modelo_anexado_primeiro', rows=int(len(df)), columns=int(len(df.columns)), original_file_name=str(getattr(uploaded, 'name', '') or ''))
         model = _current_df(UNIVERSAL_MODEL_KEY)
     if not isinstance(model, pd.DataFrame):
-        st.info('Envie a planilha modelo final para liberar a origem de dados, os opcionais, o mapeamento, o preview e o download.')
+        st.info('Envie a planilha modelo final para liberar a próxima etapa.')
         return None
     st.success('Modelo final carregado. A saída seguirá exatamente essas colunas e essa ordem.')
     st.dataframe(model.head(3).astype(str), use_container_width=True, height=145)
     st.caption('Colunas finais: ' + ', '.join(map(str, model.columns)))
+    if st.button('Continuar para origem dos dados ➡️', use_container_width=True, key='mapeiaai_universal_go_source'):
+        _set_step(STEP_SOURCE, 'model_confirmed')
     return model
 
 
@@ -269,6 +396,9 @@ def _first_site_df_for_universal() -> pd.DataFrame | None:
 
 def _store_universal_site_source(df_site: pd.DataFrame) -> pd.DataFrame:
     clean = df_site.copy().fillna('')
+    previous = _current_df(UNIVERSAL_SOURCE_KEY)
+    if _df_signature(previous) not in {'none', _df_signature(clean)}:
+        _clear_after_source()
     _store_df(UNIVERSAL_SOURCE_KEY, clean)
     st.session_state['df_origem_unificada'] = clean.copy().fillna('')
     st.session_state['df_origem_site'] = clean.copy().fillna('')
@@ -280,7 +410,7 @@ def _store_universal_site_source(df_site: pd.DataFrame) -> pd.DataFrame:
 
 
 def _render_source_site(model: pd.DataFrame | None = None) -> pd.DataFrame | None:
-    st.caption('A busca por site usa a mesma origem nova do Bling conectado. O que muda é só o destino final: download ou envio ao Bling.')
+    st.caption('A busca por site roda somente nesta tela. A montagem final não será executada aqui.')
     _sync_universal_model_for_site_engine(model)
     try:
         from bling_app_zero.ui.site_panel import render_site_panel
@@ -301,6 +431,7 @@ def _select_source_mode(value: str) -> None:
     st.session_state.pop('df_origem_unificada', None)
     st.session_state.pop('df_origem_arquivo', None)
     st.session_state.pop('df_origem_site', None)
+    _clear_after_source()
 
 
 def _render_source_choice_cards() -> str:
@@ -324,7 +455,7 @@ def _render_source_choice_cards() -> str:
 
 def _render_source_step(model: pd.DataFrame | None = None) -> pd.DataFrame | None:
     st.markdown('### 2. Origem dos dados')
-    st.caption('Escolha a mesma origem nova usada no fluxo Bling conectado. Depois, o destino final decide entre download ou envio ao Bling.')
+    st.caption('Nesta tela o sistema apenas carrega a origem. Ele não mapeia e não monta a planilha final.')
     source_mode = _render_source_choice_cards()
     if source_mode == SOURCE_MODE_SITE:
         source = _render_source_site(model)
@@ -332,6 +463,9 @@ def _render_source_step(model: pd.DataFrame | None = None) -> pd.DataFrame | Non
         uploaded = st.file_uploader('Arquivo de origem dos dados', type=None, key='mapeiaai_universal_source_upload')
         source = _read_source_upload(uploaded)
         if isinstance(source, pd.DataFrame):
+            previous = _current_df(UNIVERSAL_SOURCE_KEY)
+            if _df_signature(previous) not in {'none', _df_signature(source)}:
+                _clear_after_source()
             _store_df(UNIVERSAL_SOURCE_KEY, source)
             st.session_state['df_origem_unificada'] = source.copy().fillna('')
             st.session_state['df_origem_arquivo'] = source.copy().fillna('')
@@ -341,17 +475,20 @@ def _render_source_step(model: pd.DataFrame | None = None) -> pd.DataFrame | Non
     else:
         return None
     if not isinstance(source, pd.DataFrame):
-        st.info('Carregue a origem de dados para liberar os opcionais, o mapeamento, o preview e o download.')
+        st.info('Carregue a origem de dados para liberar a próxima etapa.')
         return None
     st.success(f'Origem carregada: {len(source)} linha(s) x {len(source.columns)} coluna(s).')
     with st.expander('Ver origem carregada', expanded=False):
         st.dataframe(source.head(30).astype(str), use_container_width=True, height=280)
+    if st.button('Continuar para opcionais ➡️', use_container_width=True, key='mapeiaai_universal_go_options'):
+        _set_step(STEP_OPTIONS, 'source_confirmed')
     return source
 
 
 def _render_price_group(source: pd.DataFrame, model: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
-    st.markdown('### 3. Calculadora marketplace')
-    enabled = st.toggle('Preço / cálculo marketplace', value=False, key='mapeiaai_universal_toggle_price')
+    st.markdown('### Preço')
+    enabled = st.toggle('Preço / cálculo marketplace', value=bool(st.session_state.get(UNIVERSAL_PRICE_ENABLED_KEY)), key='mapeiaai_universal_toggle_price')
+    st.session_state[UNIVERSAL_PRICE_ENABLED_KEY] = bool(enabled)
     if not enabled:
         st.caption('Desligado. O mapeamento usará os preços originais da origem, se existirem.')
         _audit('mapear_planilha_grupo_preco_toggle', enabled=False, grouped_toggle=True)
@@ -360,29 +497,35 @@ def _render_price_group(source: pd.DataFrame, model: pd.DataFrame) -> tuple[pd.D
     return render_shared_calculator(source, model=model, key_prefix='mapeiaai_universal', force_enabled=True), True
 
 
-def _render_category_group(source: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
-    st.markdown('### 4. Categorização inteligente')
-    enabled = st.toggle('Categorização inteligente', value=False, key='mapeiaai_universal_toggle_category')
+def _render_category_config() -> tuple[bool, float]:
+    st.markdown('### Categorização')
+    enabled = st.toggle('Categorização inteligente', value=bool(st.session_state.get(UNIVERSAL_CATEGORY_ENABLED_KEY)), key='mapeiaai_universal_toggle_category')
+    st.session_state[UNIVERSAL_CATEGORY_ENABLED_KEY] = bool(enabled)
     if not enabled:
         st.caption('Desligado. As categorias serão mantidas como vieram da origem/mapeamento.')
-        _audit('mapear_planilha_grupo_categoria_toggle', enabled=False, grouped_toggle=True)
-        return source, False
+        return False, 0.80
+    confidence = st.slider('Confiança mínima para aplicar categoria', 0.50, 0.99, 0.80, 0.01, key='mapeiaai_universal_category_confidence_min')
+    st.caption('A categorização pesada será aplicada somente ao clicar em “Aplicar opcionais”.')
+    return True, float(confidence)
+
+
+def _apply_category_group(source: pd.DataFrame, confidence_min: float) -> pd.DataFrame:
     try:
         analyzed, stats = classify_dataframe(source)
-        confidence = st.slider('Confiança mínima para aplicar categoria', 0.50, 0.99, 0.80, 0.01, key='mapeiaai_universal_category_confidence_min')
-        output, applied = apply_category_suggestions(analyzed, confidence_min=float(confidence), keep_helper_columns=True)
+        output, applied = apply_category_suggestions(analyzed, confidence_min=float(confidence_min), keep_helper_columns=True)
     except Exception as exc:
         st.warning(f'Categorização não aplicada: {exc}')
         _audit('mapear_planilha_grupo_categoria_toggle', enabled=True, grouped_toggle=True, applied=False, error=str(exc)[:220])
-        return source, True
+        return source
     st.success(f'Categorização analisada: {stats.get("total", 0)} produto(s), {applied} categoria(s) aplicada(s).')
     _audit('mapear_planilha_grupo_categoria_toggle', enabled=True, grouped_toggle=True, applied=True, rows=int(len(output)))
-    return output, True
+    return output
 
 
 def _render_rules_group(source: pd.DataFrame, model: pd.DataFrame) -> tuple[Mapping[str, Any] | None, bool]:
-    st.markdown('### 5. Regras e recursos inteligentes no download')
-    enabled = st.toggle('Regras e recursos inteligentes no download', value=False, key='mapeiaai_universal_toggle_rules')
+    st.markdown('### Regras e recursos')
+    enabled = st.toggle('Regras e recursos inteligentes no download', value=bool(st.session_state.get(UNIVERSAL_RULES_ENABLED_KEY)), key='mapeiaai_universal_toggle_rules')
+    st.session_state[UNIVERSAL_RULES_ENABLED_KEY] = bool(enabled)
     if not enabled:
         st.caption('Desligado. O download seguirá somente o mapeamento e as colunas finais do modelo.')
         _audit('mapear_planilha_grupo_regras_toggle', enabled=False, grouped_toggle=True)
@@ -398,13 +541,15 @@ def _render_ai_tools(source: pd.DataFrame, model: pd.DataFrame, enabled: bool) -
         suggested, engine = suggest_shared_mapping(source, model, operation='universal')
         st.session_state[UNIVERSAL_MAPPING_KEY] = suggested
         st.session_state[UNIVERSAL_ENGINE_KEY] = engine
+        st.session_state.pop(UNIVERSAL_MAPPING_CONFIRMED_KEY, None)
+        st.session_state.pop(UNIVERSAL_OUTPUT_KEY, None)
         clear_shared_mapping_widgets('mapeiaai_universal')
         st.success('Sugestões de mapeamento atualizadas.')
         safe_rerun('universal_ai_mapping_regenerated')
 
 
 def _render_mapping_ai_toggle() -> bool:
-    st.markdown('### 6. Mapeamento')
+    st.markdown('### 4. Mapeamento')
     mapping_ai = render_mapping_auto_decision_toggle(
         widget_key='mapeiaai_universal_toggle_mapping_auto',
         source='universal_flow',
@@ -426,6 +571,109 @@ def _render_bling_destination_notice() -> None:
     _audit('mapear_planilha_bling_destination_notice_rendered', requires_restart_for_api=True, final_destination='download')
 
 
+def _render_options_step(model: pd.DataFrame, source: pd.DataFrame) -> None:
+    st.markdown('### 3. Opcionais')
+    st.caption('Esta tela aplica apenas opcionais. Mapeamento e montagem final ficam nas próximas telas.')
+    processed = source.copy().fillna('')
+    processed, price_enabled = _render_price_group(processed, model)
+    category_enabled, category_confidence = _render_category_config()
+    rules_config, rules_enabled = _render_rules_group(processed, model)
+    if st.button('Aplicar opcionais e ir para mapeamento ➡️', use_container_width=True, key='mapeiaai_universal_apply_options'):
+        if category_enabled:
+            processed = _apply_category_group(processed, category_confidence)
+        _store_df(UNIVERSAL_PROCESSED_KEY, processed)
+        st.session_state[UNIVERSAL_PRICE_ENABLED_KEY] = bool(price_enabled)
+        st.session_state[UNIVERSAL_CATEGORY_ENABLED_KEY] = bool(category_enabled)
+        st.session_state[UNIVERSAL_RULES_ENABLED_KEY] = bool(rules_enabled)
+        st.session_state[UNIVERSAL_RULES_CONFIG_KEY] = dict(rules_config or {})
+        _clear_after_options()
+        _audit('universal_options_applied_before_mapping', rows=int(len(processed)), columns=int(len(processed.columns)), price_enabled=price_enabled, category_enabled=category_enabled, rules_enabled=rules_enabled)
+        _set_step(STEP_MAPPING, 'options_applied')
+
+
+def _render_mapping_step(model: pd.DataFrame, processed: pd.DataFrame) -> None:
+    st.caption('Nesta tela o sistema só mapeia colunas. Ele ainda NÃO monta a planilha final.')
+    mapping_ai = _render_mapping_ai_toggle()
+    rules_enabled = bool(st.session_state.get(UNIVERSAL_RULES_ENABLED_KEY))
+    rules_config = st.session_state.get(UNIVERSAL_RULES_CONFIG_KEY)
+    signature = _reset_if_changed(model, processed, mapping_ai, rules_enabled, rules_config if isinstance(rules_config, Mapping) else None)
+    if mapping_ai and str(st.session_state.get(UNIVERSAL_ENGINE_KEY) or '') == 'manual_sem_ia':
+        st.session_state.pop(UNIVERSAL_MAPPING_KEY, None)
+        st.session_state.pop(UNIVERSAL_ENGINE_KEY, None)
+        st.session_state.pop(UNIVERSAL_MAPPING_CONFIRMED_KEY, None)
+        clear_shared_mapping_widgets('mapeiaai_universal')
+    _render_ai_tools(processed, model, mapping_ai)
+    mapping = render_shared_contract_mapping(
+        processed,
+        model,
+        signature=signature,
+        mapping_state_key=UNIVERSAL_MAPPING_KEY,
+        engine_state_key=UNIVERSAL_ENGINE_KEY,
+        key_prefix='mapeiaai_universal',
+        ai_enabled=mapping_ai,
+    )
+    mapping, _mapping_rows = build_and_sync_mapping(
+        processed,
+        model,
+        mapping,
+        operation='universal',
+        signature=signature,
+        engine=str(st.session_state.get(UNIVERSAL_ENGINE_KEY) or 'local'),
+        mapping_state_key=UNIVERSAL_MAPPING_KEY,
+        engine_state_key=UNIVERSAL_ENGINE_KEY,
+    )
+    st.session_state[UNIVERSAL_MAPPING_KEY] = dict(mapping or {})
+    st.info('Quando o mapeamento estiver correto, avance. A planilha final só será montada na próxima tela.')
+    if st.button('Confirmar mapeamento e ir para montagem ➡️', use_container_width=True, key='mapeiaai_universal_confirm_mapping'):
+        st.session_state[UNIVERSAL_MAPPING_CONFIRMED_KEY] = True
+        st.session_state.pop(UNIVERSAL_OUTPUT_KEY, None)
+        _audit('universal_mapping_confirmed_without_building_output', mapped_fields=len(dict(mapping or {})), one_step_per_screen=True)
+        _set_step(STEP_BUILD, 'mapping_confirmed')
+
+
+def _render_build_step(model: pd.DataFrame, processed: pd.DataFrame) -> None:
+    st.markdown('### 5. Montar planilha final')
+    st.caption('Agora sim o sistema executa o processamento pesado: aplicar mapeamento, regras finais, preview, download e destino Bling quando habilitado.')
+    mapping = st.session_state.get(UNIVERSAL_MAPPING_KEY)
+    if not isinstance(mapping, dict) or not mapping:
+        st.warning('Confirme o mapeamento antes de montar a planilha final.')
+        if st.button('Voltar ao mapeamento', key='mapeiaai_universal_back_to_mapping_missing'):
+            _set_step(STEP_MAPPING, 'missing_mapping')
+        return
+    rules_config = st.session_state.get(UNIVERSAL_RULES_CONFIG_KEY)
+    rules_enabled = bool(st.session_state.get(UNIVERSAL_RULES_ENABLED_KEY))
+    run_now = st.button('✅ Montar planilha final agora', use_container_width=True, key='mapeiaai_universal_build_final_now')
+    output_ready = isinstance(st.session_state.get(UNIVERSAL_OUTPUT_KEY), pd.DataFrame)
+    if not run_now and not output_ready:
+        st.info('A planilha ainda não foi montada. Clique no botão acima para processar somente nesta etapa.')
+        return
+    output = render_shared_final_csv(
+        processed,
+        model,
+        mapping,
+        key_prefix='mapeiaai_universal',
+        file_name='mapeiaai_planilha_final_mapeada.csv',
+        run_smart_features=rules_enabled,
+        smart_rules_config=rules_config if isinstance(rules_config, Mapping) else None,
+    )
+    if isinstance(output, pd.DataFrame):
+        st.session_state[UNIVERSAL_OUTPUT_KEY] = output
+        render_congratulations_success(area='UNIVERSAL', context='download_final_planilha_mapeada')
+        _render_bling_destination_notice()
+        _audit(
+            'mapear_planilha_preview_download_pronto',
+            rows=int(len(output)),
+            columns=int(len(output.columns)),
+            csv=True,
+            unified_origin=True,
+            price_enabled=bool(st.session_state.get(UNIVERSAL_PRICE_ENABLED_KEY)),
+            category_enabled=bool(st.session_state.get(UNIVERSAL_CATEGORY_ENABLED_KEY)),
+            rules_enabled=rules_enabled,
+            api_send_allowed=_universal_api_send_allowed(),
+            one_step_per_screen=True,
+        )
+
+
 def render_universal_flow() -> None:
     _force_plain_context()
     if not _contract_ok():
@@ -433,34 +681,59 @@ def render_universal_flow() -> None:
         return
     st.markdown('## Anexar Modelo / Mapear Planilha')
     if _universal_api_send_allowed():
-        st.caption('Bling conectado: anexe o modelo final, escolha a origem, trate os dados, revise o mapeamento, baixe ou envie a planilha tratada por API no final.')
+        st.caption('Bling conectado: o fluxo agora roda uma etapa por tela para evitar Running... em cada ação.')
     else:
-        st.caption('Sem API: anexe o modelo final, escolha a origem dos dados, use opcionais, revise o mapeamento, veja o preview e baixe a planilha idêntica.')
-    model = _render_model_step()
+        st.caption('Sem API: uma etapa por tela. A planilha final só é montada depois do mapeamento confirmado.')
+
+    current_step = _infer_step()
+    st.session_state[UNIVERSAL_STEP_KEY] = current_step
+    _render_step_bar(current_step)
+    _render_back_button(current_step)
+
+    model = _current_df(UNIVERSAL_MODEL_KEY)
+    source = _current_df(UNIVERSAL_SOURCE_KEY)
+    processed = _current_df(UNIVERSAL_PROCESSED_KEY)
+    _summary_card('Modelo', model)
+    _summary_card('Origem', source)
+    _summary_card('Dados preparados', processed)
+
+    if current_step == STEP_MODEL:
+        _render_model_step()
+        return
+
     if not isinstance(model, pd.DataFrame):
+        st.warning('Anexe o modelo antes de continuar.')
+        _set_step(STEP_MODEL, 'missing_model')
         return
-    source = _render_source_step(model)
+
+    if current_step == STEP_SOURCE:
+        _render_source_step(model)
+        return
+
     if not isinstance(source, pd.DataFrame):
+        st.warning('Carregue a origem antes de continuar.')
+        _set_step(STEP_SOURCE, 'missing_source')
         return
-    processed = source.copy().fillna('')
-    processed, price_enabled = _render_price_group(processed, model)
-    processed, category_enabled = _render_category_group(processed)
-    rules_config, rules_enabled = _render_rules_group(processed, model)
-    mapping_ai = _render_mapping_ai_toggle()
-    signature = _reset_if_changed(model, processed, mapping_ai, rules_enabled, rules_config)
-    if mapping_ai and str(st.session_state.get(UNIVERSAL_ENGINE_KEY) or '') == 'manual_sem_ia':
-        st.session_state.pop(UNIVERSAL_MAPPING_KEY, None)
-        st.session_state.pop(UNIVERSAL_ENGINE_KEY, None)
-        clear_shared_mapping_widgets('mapeiaai_universal')
-    _render_ai_tools(processed, model, mapping_ai)
-    mapping = render_shared_contract_mapping(processed, model, signature=signature, mapping_state_key=UNIVERSAL_MAPPING_KEY, engine_state_key=UNIVERSAL_ENGINE_KEY, key_prefix='mapeiaai_universal', ai_enabled=mapping_ai)
-    mapping, _mapping_rows = build_and_sync_mapping(processed, model, mapping, operation='universal', signature=signature, engine=str(st.session_state.get(UNIVERSAL_ENGINE_KEY) or 'local'), mapping_state_key=UNIVERSAL_MAPPING_KEY, engine_state_key=UNIVERSAL_ENGINE_KEY)
-    output = render_shared_final_csv(processed, model, mapping, key_prefix='mapeiaai_universal', file_name='mapeiaai_planilha_final_mapeada.csv', run_smart_features=rules_enabled, smart_rules_config=rules_config)
-    if isinstance(output, pd.DataFrame):
-        st.session_state[UNIVERSAL_OUTPUT_KEY] = output
-        render_congratulations_success(area='UNIVERSAL', context='download_final_planilha_mapeada')
-        _render_bling_destination_notice()
-        _audit('mapear_planilha_preview_download_pronto', rows=int(len(output)), columns=int(len(output.columns)), csv=True, unified_origin=True, price_enabled=price_enabled, category_enabled=category_enabled, rules_enabled=rules_enabled, api_send_allowed=_universal_api_send_allowed())
+
+    if current_step == STEP_OPTIONS:
+        _render_options_step(model, source)
+        return
+
+    if not isinstance(processed, pd.DataFrame):
+        _store_df(UNIVERSAL_PROCESSED_KEY, source)
+        processed = source.copy().fillna('')
+
+    if current_step == STEP_MAPPING:
+        _render_mapping_step(model, processed)
+        return
+
+    if current_step == STEP_BUILD:
+        _render_build_step(model, processed)
+        return
+
+    if current_step == STEP_DONE:
+        _render_build_step(model, processed)
+        return
 
 
 __all__ = ['render_universal_flow']
