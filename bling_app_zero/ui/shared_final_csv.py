@@ -43,8 +43,15 @@ EXCEL_LIKE_SUFFIXES = {'.xlsx', '.xlsm', '.xls', '.xlsb'}
 DOWNLOAD_READY_KEY = 'mapeiaai_final_download_ready'
 FINAL_API_PANEL_KEY = 'mapeiaai_final_bling_api_panel_v1'
 UNIVERSAL_API_SEND_KEY = 'mapeiaai_universal_allow_api_send'
+USER_OPERATION_CHOICE_KEY = 'mapeiaai_final_api_operation_choice_v1'
 PLAIN_UNIVERSAL_FLOW_KINDS = {'universal_model_mapping'}
 API_UNIVERSAL_FLOW_KINDS = {'universal_model_mapping_api'}
+CONCRETE_API_OPERATIONS = (OP_CADASTRO, OP_ESTOQUE, OP_ATUALIZACAO_PRECO)
+OPERATION_CHOICE_LABELS = {
+    OP_CADASTRO: 'Cadastro/atualização de produtos',
+    OP_ESTOQUE: 'Atualização de estoque',
+    OP_ATUALIZACAO_PRECO: 'Atualização de preços',
+}
 API_STATE_KEYS_TO_SUPPRESS = (
     FINAL_API_PANEL_KEY,
     'home_bling_connected_same_flow_api_send',
@@ -217,6 +224,75 @@ def _signature_for_df(output: pd.DataFrame) -> str:
     return f'{len(output)}x{len(output.columns)}:{pd.util.hash_pandas_object(output.head(80).fillna("").astype(str), index=True).sum()}'
 
 
+def _operation_text(operation: str) -> str:
+    return OPERATION_CHOICE_LABELS.get(operation, operation_label(operation) if operation != OP_UNIVERSAL else 'A confirmar')
+
+
+def _confirm_api_operation(detected_operation: str, signature: str) -> str:
+    detected_operation = detected_operation if detected_operation in CONCRETE_API_OPERATIONS else OP_UNIVERSAL
+    labels_by_value = dict(OPERATION_CHOICE_LABELS)
+    options: list[str] = []
+    label_to_value: dict[str, str] = {}
+
+    if detected_operation == OP_UNIVERSAL:
+        placeholder = 'Selecione a operação antes de enviar ao Bling...'
+        options.append(placeholder)
+        label_to_value[placeholder] = OP_UNIVERSAL
+    for operation in CONCRETE_API_OPERATIONS:
+        label = labels_by_value[operation]
+        if operation == detected_operation:
+            label = f'{label} · detectado automaticamente'
+        options.append(label)
+        label_to_value[label] = operation
+
+    stored = str(st.session_state.get(USER_OPERATION_CHOICE_KEY) or '').strip()
+    default_operation = stored if stored in CONCRETE_API_OPERATIONS else detected_operation
+    index = 0
+    if default_operation in CONCRETE_API_OPERATIONS:
+        for pos, label in enumerate(options):
+            if label_to_value.get(label) == default_operation:
+                index = pos
+                break
+
+    selected_label = st.selectbox(
+        'Operação que será feita no Bling',
+        options,
+        index=index,
+        key=f'{USER_OPERATION_CHOICE_KEY}_{signature}',
+        help='A detecção automática é apenas sugestão. A escolha final do usuário tem prioridade antes da API.',
+    )
+    selected_operation = label_to_value.get(selected_label, OP_UNIVERSAL)
+    if selected_operation == OP_UNIVERSAL:
+        st.warning('Escolha a operação real antes de liberar o envio por API.')
+        return OP_UNIVERSAL
+
+    st.session_state[USER_OPERATION_CHOICE_KEY] = selected_operation
+    st.session_state['api_operation'] = selected_operation
+    st.session_state['bling_api_operation'] = selected_operation
+    st.session_state['home_bling_api_operation_choice'] = selected_operation
+    st.session_state['flow_spine_sender_operation'] = selected_operation
+    st.session_state['flow_spine_operation_resolved_for_api'] = selected_operation
+    st.session_state['source_first_selected_operation'] = selected_operation
+    st.session_state['source_first_operation_user_confirmed'] = True
+    if selected_operation != detected_operation:
+        st.warning(f'Operação corrigida pelo usuário: {_operation_text(selected_operation)}. A detecção automática era: {_operation_text(detected_operation)}.')
+    else:
+        st.success(f'Operação confirmada: {_operation_text(selected_operation)}.')
+    add_audit_event(
+        'shared_final_csv_user_operation_confirmed_before_api',
+        area='BLING_API',
+        status='OK',
+        details={
+            'detected_operation': detected_operation,
+            'selected_operation': selected_operation,
+            'user_choice_has_priority': True,
+            'signature': signature,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+    return selected_operation
+
+
 def _prepare_final_bling_snapshot(output: pd.DataFrame, operation: str, signature: str) -> pd.DataFrame:
     clean = output.copy().fillna('')
     st.session_state['final_download_df_snapshot'] = clean.copy()
@@ -225,6 +301,9 @@ def _prepare_final_bling_snapshot(output: pd.DataFrame, operation: str, signatur
     st.session_state['flow_spine_sender_operation'] = operation
     st.session_state['flow_spine_sender_destination'] = 'api_bling'
     st.session_state['flow_spine_final_destination'] = 'api_bling'
+    st.session_state['flow_spine_operation_resolved_for_api'] = operation
+    st.session_state['api_operation'] = operation
+    st.session_state['bling_api_operation'] = operation
     st.session_state['home_bling_connected_same_flow_api_send'] = True
     st.session_state[FINAL_API_PANEL_KEY] = {'operation': operation, 'rows': int(len(clean)), 'signature': signature}
     return clean
@@ -322,20 +401,19 @@ def _render_final_bling_api_panel(output: pd.DataFrame, *, key_prefix: str) -> N
         _suppress_plain_universal_api_state(output)
         st.info('Fluxo sem API: saída final liberada somente para download. Para enviar ao Bling, conecte ao Bling antes de entrar no fluxo Universal.')
         return
-    operation = _infer_bling_operation(output)
+    detected_operation = _infer_bling_operation(output)
     signature = _signature_for_df(output)
     with st.container(border=True):
         st.markdown('### Enviar esta planilha tratada ao Bling')
-        st.caption('Este botão usa exatamente a planilha final preenchida como origem da API. O sistema reconhece a operação e pergunta o destino obrigatório antes de enviar.')
+        st.caption('Este botão usa exatamente a planilha final preenchida como origem da API. O sistema sugere a operação, mas a escolha final do usuário tem prioridade.')
+        operation = _confirm_api_operation(detected_operation, signature)
         cols = st.columns(3)
         cols[0].metric('Linhas', int(len(output)))
         cols[1].metric('Colunas', int(len(output.columns)))
-        operation_text = 'Atualização de preços multiloja' if operation == OP_ATUALIZACAO_PRECO else 'Cadastro/atualização de produtos' if operation == OP_CADASTRO else operation_label(operation) if operation != OP_UNIVERSAL else 'A confirmar'
-        cols[2].metric('Operação', operation_text)
+        cols[2].metric('Operação final', _operation_text(operation))
 
         if operation == OP_UNIVERSAL:
-            st.warning('Envio bloqueado: não consegui identificar se a planilha é Cadastro/Atualização de produtos, Estoque ou Atualização de preços.')
-            add_audit_event('shared_final_bling_api_operation_not_detected', area='BLING_API', status='BLOQUEADO', details={'rows': int(len(output)), 'columns': list(map(str, output.columns)), 'responsible_file': RESPONSIBLE_FILE})
+            add_audit_event('shared_final_bling_api_operation_not_confirmed', area='BLING_API', status='BLOQUEADO', details={'detected_operation': detected_operation, 'rows': int(len(output)), 'columns': list(map(str, output.columns)), 'responsible_file': RESPONSIBLE_FILE})
             return
 
         status = connection_status()
@@ -360,11 +438,11 @@ def _render_final_bling_api_panel(output: pd.DataFrame, *, key_prefix: str) -> N
         if operation == OP_ATUALIZACAO_PRECO:
             _render_price_api_targets(clean)
         elif operation == OP_ESTOQUE:
-            st.info('Operação estoque detectada: antes do envio o sistema buscará os depósitos do Bling e exigirá a escolha do depósito correto.')
+            st.info('Operação estoque confirmada: antes do envio o sistema buscará os depósitos do Bling e exigirá a escolha do depósito correto.')
         elif operation == OP_CADASTRO:
-            st.info('Cadastro/atualização de produtos detectado: produtos existentes serão atualizados por PATCH incremental; campos vazios não removem dados existentes. Produtos novos usam a categoria da planilha tratada.')
+            st.info('Cadastro/atualização de produtos confirmada: produtos existentes serão atualizados por PATCH incremental; campos vazios não removem dados existentes. Produtos novos usam a categoria da planilha tratada.')
         render_bling_api_batch_panel(clean, operation, f'{key_prefix}_final_bling_api', signature, 'shared_final_csv')
-        add_audit_event('shared_final_bling_api_panel_rendered', area='BLING_API', status='OK', details={'operation': operation, 'rows': int(len(clean)), 'signature': signature, 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('shared_final_bling_api_panel_rendered', area='BLING_API', status='OK', details={'detected_operation': detected_operation, 'operation': operation, 'rows': int(len(clean)), 'signature': signature, 'responsible_file': RESPONSIBLE_FILE})
 
 
 def apply_shared_text_rules(output: pd.DataFrame) -> pd.DataFrame:
