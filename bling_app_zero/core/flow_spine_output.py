@@ -117,17 +117,33 @@ def _operation_from_dataframe(df: Any) -> str:
     has_qty = _has_any(columns, ('quantidade', 'qtd', 'saldo', 'estoque', 'balanco'))
     has_deposit = _has_any(columns, ('deposito', 'deposito id'))
     has_identifier = _has_any(columns, ('codigo', 'sku', 'gtin', 'ean', 'id bling', 'id produto'))
+    has_price_channel = _has_any(columns, ('canal', 'loja', 'marketplace', 'id loja', 'produto loja', 'vinculo loja', 'preco destino', 'preco promocional'))
 
     stock_like_only = has_qty and has_identifier and not (has_name or has_price or has_image or has_category)
-    price_like_only = has_price and has_identifier and not (has_name or has_qty or has_image or has_category)
-    cadastro_like = has_name or has_image or has_category or (has_price and not stock_like_only)
+    price_multistore_like = has_price and has_identifier and has_price_channel and not has_qty
+    price_like_only = has_price and has_identifier and not (has_qty or has_image or has_category)
+    cadastro_like = has_name or has_image or has_category or (has_price and not stock_like_only and not price_multistore_like)
 
     if stock_like_only or (has_qty and has_deposit and not cadastro_like):
         return OP_ESTOQUE
-    if price_like_only:
+    if price_multistore_like or price_like_only:
         return OP_ATUALIZACAO_PRECO
     if cadastro_like:
         return OP_CADASTRO
+    return ''
+
+
+def _explicit_operation_hint_from_state_keys() -> str:
+    ops: list[str] = []
+    for key in _OPERATION_STATE_KEYS:
+        op = normalize_operation(_state_text(key), default=OP_UNIVERSAL)
+        if op in CONCRETE_API_OPERATIONS:
+            ops.append(op)
+    # Preço e estoque são operações mais específicas; não deixe um cadastro antigo
+    # de outro rerun sobrescrever atualização de preços multiloja ou estoque.
+    for preferred in (OP_ATUALIZACAO_PRECO, OP_ESTOQUE, OP_CADASTRO):
+        if preferred in ops:
+            return preferred
     return ''
 
 
@@ -136,16 +152,16 @@ def _session_concrete_operation_hint() -> str:
     if locked in CONCRETE_API_OPERATIONS:
         return locked
 
-    for key in _OPERATION_STATE_KEYS:
-        op = normalize_operation(_state_text(key), default=OP_UNIVERSAL)
-        if op in CONCRETE_API_OPERATIONS:
-            return op
-
     joined_hints = ' '.join(_state_text(key) for key in (*_OPERATION_STATE_KEYS, *_SITE_HINT_KEYS))
-    if any(term in joined_hints for term in ('atualizacao_preco', 'atualizacao preco', 'precos', 'preços', 'price')):
+    if any(term in joined_hints for term in ('atualizacao_preco', 'atualizacao preco', 'atualizacao de preco', 'precos', 'preços', 'price', 'multiloja', 'multi loja', 'marketplace')):
         return OP_ATUALIZACAO_PRECO
     if any(term in joined_hints for term in ('estoque', 'saldo', 'stock')):
         return OP_ESTOQUE
+
+    explicit = _explicit_operation_hint_from_state_keys()
+    if explicit in CONCRETE_API_OPERATIONS:
+        return explicit
+
     if any(term in joined_hints for term in ('cadastro', 'produto', 'produtos', 'catalogo', 'catalog')):
         return OP_CADASTRO
 
