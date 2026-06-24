@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 import pandas as pd
 
@@ -10,6 +11,10 @@ EMPTY_MARKERS = {'nan', 'none', 'null', '<na>', 'n/a', 'na'}
 IMAGE_COLUMN_TERMS = ('imagem', 'imagens', 'image', 'images', 'foto', 'fotos', 'url imagens')
 GTIN_COLUMN_TERMS = ('gtin', 'ean', 'código de barras', 'codigo de barras')
 URL_PATTERN = re.compile(r'https?://[^\s|;,]+', re.IGNORECASE)
+TRUNCATED_URL_MARKERS = ('…', '%e2%80%a6', '...')
+IMAGE_FILE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif')
+PRODUCT_PAGE_PATH_MARKERS = ('/produto/', '/produtos/', '/product/', '/products/')
+IMAGE_HOST_HINTS = ('supabase.co/storage/', 'storage.googleapis.com', 'cloudinary.com', 'cdn.', 'images.', 'image_', '/image/', '/images/', '/img/', '/fotos/', '/photos/', '/product_images/')
 
 
 # Regras opcionais do fluxo universal.
@@ -71,6 +76,42 @@ def _is_empty_marker(value: Any) -> bool:
     return _norm(value) in EMPTY_MARKERS
 
 
+def _has_truncated_url_marker(value: str) -> bool:
+    text = str(value or '').strip()
+    lower = text.casefold()
+    return any(marker in lower for marker in TRUNCATED_URL_MARKERS)
+
+
+def _looks_like_product_page_url(value: str) -> bool:
+    text = str(value or '').strip()
+    try:
+        parsed = urlsplit(text)
+    except Exception:
+        return False
+    path = str(parsed.path or '').casefold()
+    if not any(marker in path for marker in PRODUCT_PAGE_PATH_MARKERS):
+        return False
+    return not any(path.endswith(ext) for ext in IMAGE_FILE_EXTENSIONS)
+
+
+def _looks_like_image_url(value: str) -> bool:
+    text = str(value or '').strip()
+    if not text.startswith(('http://', 'https://')):
+        return False
+    if _has_truncated_url_marker(text):
+        return False
+    if _looks_like_product_page_url(text):
+        return False
+    lower = text.casefold()
+    try:
+        path = urlsplit(text).path.casefold()
+    except Exception:
+        path = lower
+    if any(path.endswith(ext) for ext in IMAGE_FILE_EXTENSIONS):
+        return True
+    return any(hint in lower for hint in IMAGE_HOST_HINTS)
+
+
 def _split_images(value: Any) -> list[str]:
     raw = '' if value is None else str(value)
     text = _clean_text(raw)
@@ -79,7 +120,7 @@ def _split_images(value: Any) -> list[str]:
 
     urls = [_clean_text(match.group(0)) for match in URL_PATTERN.finditer(raw)]
     if urls:
-        return [url for url in urls if url]
+        return [url for url in urls if _looks_like_image_url(url)]
 
     if '|' in raw:
         parts = raw.split('|')
@@ -89,7 +130,7 @@ def _split_images(value: Any) -> list[str]:
         parts = re.split(r'[,;]+', raw)
     else:
         parts = [text]
-    return [_clean_text(part) for part in parts if _clean_text(part)]
+    return [_clean_text(part) for part in parts if _looks_like_image_url(_clean_text(part))]
 
 
 def _dedupe_keep_order(values: list[str]) -> list[str]:
