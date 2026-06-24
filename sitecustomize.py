@@ -19,6 +19,7 @@ from typing import Any
 TARGET_MODULES = {
     "bling_app_zero.ui.site_panel",
     "bling_app_zero.ui.site_panel_capture",
+    "bling_app_zero.core.bling_intelligent_update_sender",
 }
 DIRECT_API_SITE_OPERATIONS = {"cadastro", "estoque", "atualizacao_preco"}
 SITE_API_CAPTURE_POLICIES: dict[str, dict[str, Any]] = {
@@ -65,6 +66,18 @@ def _audit(module: ModuleType, event: str, *, status: str = "OK", details: dict[
             step="entrada",
             status=status,
             details={**(details or {}), "responsible_file": "sitecustomize.py", "blingfix": "90_stop_42_percent_extraction"},
+        )
+    except Exception:
+        pass
+
+
+def _audit_sender(module: ModuleType, event: str, *, status: str = "OK", details: dict[str, Any] | None = None) -> None:
+    try:
+        module.add_audit_event(
+            event,
+            area="BLING_ENVIO",
+            status=status,
+            details={**(details or {}), "responsible_file": "sitecustomize.py", "blingfix": "delta_guard_runtime"},
         )
     except Exception:
         pass
@@ -302,12 +315,41 @@ def _patch_site_panel_capture(module: ModuleType) -> None:
     _audit(module, "site_api_unified_capture_patch_installed", details={"operations": sorted(DIRECT_API_SITE_OPERATIONS), "policy": "v2_stop_42_percent"})
 
 
+def _patch_intelligent_update_sender(module: ModuleType) -> None:
+    if getattr(module, "_blingfix_delta_guard_runtime_patched", False):
+        return
+    original = module.send_dataframe_to_bling_intelligent
+
+    def guarded_send_dataframe_to_bling_intelligent(df, operation: str, *, limit=None, progress_callback=None, validation_df=None):
+        op = module.normalize_operation(operation)
+        if op in {"estoque", "atualizacao_preco"}:
+            try:
+                from bling_app_zero.core.delta_update_guard import filter_changed_rows_before_api
+                changed_df, skipped = filter_changed_rows_before_api(df, op, limit=limit)
+                if skipped:
+                    _audit_sender(module, "runtime_delta_guard_skipped_unchanged_rows", details={"operation": op, "input_rows": len(df), "changed_rows": len(changed_df), "skipped_unchanged": len(skipped), "sample": skipped[:12]})
+                if skipped and changed_df.empty:
+                    msg = "Todas as linhas já estavam iguais; nada foi enviado à API."
+                    return module.DirectSendResult(len(df), 0, 0, len(skipped), (msg,), tuple())
+                if skipped:
+                    return original(changed_df, operation, limit=None, progress_callback=progress_callback, validation_df=validation_df or df)
+            except Exception as exc:
+                _audit_sender(module, "runtime_delta_guard_failed_keep_original_flow", status="AVISO", details={"operation": op, "error": str(exc)[:240]})
+        return original(df, operation, limit=limit, progress_callback=progress_callback, validation_df=validation_df)
+
+    module.send_dataframe_to_bling_intelligent = guarded_send_dataframe_to_bling_intelligent
+    module._blingfix_delta_guard_runtime_patched = True
+    _audit_sender(module, "runtime_delta_guard_installed", details={"operations": ["estoque", "atualizacao_preco"], "rule": "pula linhas sem diferenca antes da API quando a tabela possui valor atual identificado"})
+
+
 def _patch_module(module: ModuleType) -> None:
     name = getattr(module, "__name__", "")
     if name == "bling_app_zero.ui.site_panel":
         _patch_site_panel(module)
     elif name == "bling_app_zero.ui.site_panel_capture":
         _patch_site_panel_capture(module)
+    elif name == "bling_app_zero.core.bling_intelligent_update_sender":
+        _patch_intelligent_update_sender(module)
 
 
 class _BlingfixLoader(importlib.abc.Loader):
