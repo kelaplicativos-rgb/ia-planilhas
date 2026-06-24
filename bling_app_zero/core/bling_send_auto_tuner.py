@@ -22,13 +22,13 @@ FAST_BATCH_SECONDS = 16.0
 
 # BLINGPERF: perfil único inteligente por operação.
 # O usuário não escolhe modo seguro/rápido/turbo. O sistema mede o retorno da API
-# e ajusta sozinho. Cadastro foi elevado porque o custo maior estava nos reruns
-# entre lotes pequenos; se o Bling responder mal ou houver falha, reduz sozinho.
+# e ajusta sozinho. Cadastro, preços/multiloja e estoque usam o mesmo perfil rápido
+# controlado; se o Bling responder mal ou houver falha, reduz sozinho.
 OPERATION_BATCH_PROFILE: dict[str, dict[str, int]] = {
     OP_CADASTRO: {'initial': 6, 'max': 10},
-    OP_ESTOQUE: {'initial': 5, 'max': 8},
+    OP_ESTOQUE: {'initial': 6, 'max': 10},
     OP_ATUALIZACAO_PRECO: {'initial': 6, 'max': 10},
-    OP_UNIVERSAL: {'initial': 5, 'max': 8},
+    OP_UNIVERSAL: {'initial': 6, 'max': 10},
 }
 
 
@@ -66,7 +66,7 @@ def _clamp_batch_size(value: int, *, operation: object) -> int:
 
 def initial_batch_size(operation: object) -> int:
     profile = _profile(operation)
-    return _clamp_batch_size(int(profile.get('initial') or 5), operation=operation)
+    return _clamp_batch_size(int(profile.get('initial') or 6), operation=operation)
 
 
 def intelligent_batch_size(
