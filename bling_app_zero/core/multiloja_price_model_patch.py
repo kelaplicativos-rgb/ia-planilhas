@@ -256,7 +256,16 @@ class _PatchFinder(importlib.abc.MetaPathFinder):
         return spec
 
 
+def _install_stock_balance_patch() -> None:
+    try:
+        from bling_app_zero.core import stock_balance_model_patch
+        stock_balance_model_patch.install()
+    except Exception:
+        pass
+
+
 def install() -> None:
+    _install_stock_balance_patch()
     for module_name in list(TARGET_MODULES):
         loaded = sys.modules.get(module_name)
         if loaded is not None:
