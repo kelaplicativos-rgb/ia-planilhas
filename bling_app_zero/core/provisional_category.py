@@ -72,6 +72,9 @@ GENERIC_OR_BLOCKED_CATEGORIES = {
     'informatica',
     'informática',
     'alimentos',
+    'geral',
+    'diversos',
+    'outros',
     'revisar manualmente',
     'revisar',
     'produtos nao classificados',
@@ -120,28 +123,101 @@ def _is_blocked_category(value: object) -> bool:
     return not normalized or normalized in {_norm(item) for item in GENERIC_OR_BLOCKED_CATEGORIES}
 
 
-def _usable_category(value: object) -> str:
+def _looks_like_product_title(value: object) -> bool:
+    text = str(value or '').strip()
+    normalized = _norm(text)
+    if not normalized:
+        return False
+    words = normalized.split()
+    if len(words) >= 7:
+        return True
+    if len(text) > 50 and len(words) >= 4:
+        return True
+    if re.search(r'\b[A-Z]{2,}[- ]?\d{2,}[A-Z0-9-]*\b', text):
+        return True
+    if re.search(r'\b[A-Z]{1,4}-\d{2,}[A-Z0-9-]*\b', text):
+        return True
+    tech_units = (r'\b\d+\s?(?:gb|mah|w|v|hz|mm|cm|pol|hd|uhd|4k)\b', r'\b(?:wifi|wi fi|bluetooth|usb|tipo c|bt|pd\d+)\b')
+    if len(words) >= 4 and any(re.search(pattern, normalized) for pattern in tech_units):
+        return True
+    product_terms = (
+        'fone',
+        'headset',
+        'microfone',
+        'camera',
+        'filmadora',
+        'tomada',
+        'maquina',
+        'luminaria',
+        'fita',
+        'sensor',
+    )
+    return len(words) >= 5 and any(term in normalized.split() for term in product_terms)
+
+
+def _canonical_known_category(value: object) -> str:
+    try:
+        from bling_app_zero.core.category_intelligence import canonicalize_category
+    except Exception:
+        return ''
+    try:
+        canonical, _changed, reason = canonicalize_category(value)
+    except Exception:
+        return ''
+    if not canonical:
+        return ''
+    if 'fora do catálogo' in str(reason).lower() or 'parece nome de produto' in str(reason).lower():
+        return ''
+    return _clean_category(canonical)
+
+
+def is_safe_category_name(value: object, *, product_name: object = '') -> bool:
     category = _clean_category(value)
     if _is_blocked_category(category):
-        return ''
-    normalized = _norm(category)
-    if len(normalized) < 3:
-        return ''
-    if re.fullmatch(r'[0-9._/-]+', normalized):
-        return ''
-    return category
+        return False
+    if product_name and _norm(category) == _norm(product_name):
+        return False
+    if _looks_like_product_title(category):
+        return False
+    return bool(_canonical_known_category(category))
 
 
-def _payload_has_category(payload: dict[str, Any]) -> bool:
+def _usable_category(value: object, *, product_name: object = '') -> str:
+    category = _clean_category(value)
+    if not category:
+        return ''
+    if not is_safe_category_name(category, product_name=product_name):
+        return ''
+    canonical = _canonical_known_category(category)
+    return canonical or category
+
+
+def _payload_category_values(payload: dict[str, Any]) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+    category = payload.get('categoria')
+    if isinstance(category, dict):
+        values = []
+        for key in ('descricao', 'nome', 'name', 'description'):
+            text = str(category.get(key) or '').strip()
+            if text:
+                values.append(text)
+        return values
+    if str(category or '').strip():
+        return [str(category or '').strip()]
+    return []
+
+
+def _payload_has_category(payload: dict[str, Any], *, row: Any | None = None, meta: dict[str, Any] | None = None) -> bool:
     if not isinstance(payload, dict):
         return False
     category = payload.get('categoria')
-    values: list[str] = []
     if isinstance(category, dict):
-        values = [str(value or '').strip() for value in category.values()]
-    elif str(category or '').strip():
-        values = [str(category or '').strip()]
-    return any(value and not _is_blocked_category(value) for value in values)
+        category_id = str(category.get('id') or category.get('idCategoria') or '').strip()
+        if category_id and not _payload_category_values(payload):
+            return True
+    product_name = str(payload.get('nome') or '').strip() or _first_row_value(row, PRODUCT_NAME_CANDIDATES)
+    return any(is_safe_category_name(value, product_name=product_name) for value in _payload_category_values(payload))
 
 
 def _row_value(row: Any, key: str) -> str:
@@ -160,12 +236,12 @@ def _first_row_value(row: Any, keys: tuple[str, ...]) -> str:
     return ''
 
 
-def category_from_row(row: Any, meta: dict[str, Any] | None = None) -> tuple[str, str]:
-    meta_category = _usable_category((meta or {}).get('category'))
+def category_from_row(row: Any, meta: dict[str, Any] | None = None, *, product_name: object = '') -> tuple[str, str]:
+    meta_category = _usable_category((meta or {}).get('category'), product_name=product_name)
     if meta_category:
         return meta_category, 'payload_meta_category'
     for key in CATEGORY_FIELD_CANDIDATES:
-        value = _usable_category(_row_value(row, key))
+        value = _usable_category(_row_value(row, key), product_name=product_name)
         if value:
             return value, key
     return '', ''
@@ -189,8 +265,7 @@ def _category_confidence_min() -> float:
 def category_from_intelligence(row: Any, payload: dict[str, Any] | None = None, meta: dict[str, Any] | None = None) -> tuple[str, str, float, str]:
     """Classifica categoria real por contexto do produto antes da categoria provisória.
 
-    Usa a inteligência determinística de categoria já usada na etapa de categorização.
-    Não substitui categoria captada; só atua quando ela veio vazia/genérica.
+    Usa catálogo controlado e nunca promove título/modelo do produto para categoria.
     """
     try:
         from bling_app_zero.core.category_intelligence import suggest_category_for_product
@@ -202,6 +277,7 @@ def category_from_intelligence(row: Any, payload: dict[str, Any] | None = None, 
     name = str(payload.get('nome') or '').strip() or _first_row_value(row, PRODUCT_NAME_CANDIDATES)
     description = str(payload.get('descricaoCurta') or '').strip() or _first_row_value(row, PRODUCT_DESCRIPTION_CANDIDATES)
     current_category = str(meta.get('category') or '').strip() or _first_row_value(row, CATEGORY_FIELD_CANDIDATES)
+    current_category = _usable_category(current_category, product_name=name)
     if not name and not description:
         return '', '', 0.0, 'sem_nome_ou_descricao_para_classificar'
 
@@ -210,7 +286,7 @@ def category_from_intelligence(row: Any, payload: dict[str, Any] | None = None, 
     except Exception as exc:
         return '', '', 0.0, f'category_intelligence_exception:{str(exc)[:120]}'
 
-    category = _usable_category(getattr(suggestion, 'category', ''))
+    category = _usable_category(getattr(suggestion, 'category', ''), product_name=name)
     confidence = float(getattr(suggestion, 'confidence', 0.0) or 0.0)
     reason = str(getattr(suggestion, 'reason', '') or 'categoria por inteligência')
     if not category:
@@ -242,9 +318,9 @@ def apply_category_guard_to_payload(
     """Garante categoria no payload sem inventar categoria real.
 
     Ordem segura:
-    1. Se o payload já tem categoria real, não altera.
-    2. Se a categoria atual for provisória/genérica, ignora e tenta substituir.
-    3. Recupera categoria real de meta/linha, inclusive colunas auxiliares da IA.
+    1. Se o payload já tem categoria real segura, não altera.
+    2. Se a categoria atual for provisória, genérica ou parecer título/modelo, ignora e tenta substituir.
+    3. Recupera categoria real de meta/linha, inclusive colunas auxiliares da IA, só se estiver no catálogo seguro.
     4. Tenta classificar categoria real pelo contexto do produto com confiança mínima.
     5. Se ainda não existir, aplica categoria provisória universal.
     6. Só bloqueia se a regra provisória for desligada manualmente.
@@ -252,10 +328,14 @@ def apply_category_guard_to_payload(
     current = dict(payload or {})
     rule_enabled, provisional_name = provisional_category_from_rules()
 
-    if _payload_has_category(current):
+    if _payload_has_category(current, row=row, meta=meta):
         return CategoryGuardResult(current, False, False, '', '', 'payload', 'payload_already_has_real_category', rule_enabled, 1.0)
 
-    real_category, real_source = category_from_row(row, meta)
+    if str(current.get('categoria') or '').strip():
+        current.pop('categoria', None)
+
+    product_name = str(current.get('nome') or '').strip() or _first_row_value(row, PRODUCT_NAME_CANDIDATES)
+    real_category, real_source = category_from_row(row, meta, product_name=product_name)
     confidence = 1.0 if real_category else 0.0
     reason = 'real_category_recovered' if real_category else ''
     if not real_category:
@@ -298,5 +378,6 @@ __all__ = [
     'apply_category_guard_to_payload',
     'category_from_intelligence',
     'category_from_row',
+    'is_safe_category_name',
     'provisional_category_from_rules',
 ]
