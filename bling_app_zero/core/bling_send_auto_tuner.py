@@ -14,19 +14,21 @@ from bling_app_zero.core.operation_contract import (
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_send_auto_tuner.py'
 
 MIN_BATCH_SIZE = 1
-MAX_BATCH_SIZE = 5
-TARGET_BATCH_SECONDS = 12.0
-SLOW_BATCH_SECONDS = 20.0
-VERY_FAST_BATCH_SECONDS = 4.0
+MAX_BATCH_SIZE = 12
+TARGET_BATCH_SECONDS = 18.0
+SLOW_BATCH_SECONDS = 36.0
+VERY_FAST_BATCH_SECONDS = 8.0
+FAST_BATCH_SECONDS = 16.0
 
 # BLINGPERF: perfil único inteligente por operação.
 # O usuário não escolhe modo seguro/rápido/turbo. O sistema mede o retorno da API
-# e ajusta sozinho, com teto diferente por tipo de operação para proteger o Bling.
+# e ajusta sozinho. Cadastro foi elevado porque o custo maior estava nos reruns
+# entre lotes pequenos; se o Bling responder mal ou houver falha, reduz sozinho.
 OPERATION_BATCH_PROFILE: dict[str, dict[str, int]] = {
-    OP_CADASTRO: {'initial': 2, 'max': 4},
-    OP_ESTOQUE: {'initial': 3, 'max': 5},
-    OP_ATUALIZACAO_PRECO: {'initial': 3, 'max': 5},
-    OP_UNIVERSAL: {'initial': 2, 'max': 4},
+    OP_CADASTRO: {'initial': 6, 'max': 10},
+    OP_ESTOQUE: {'initial': 5, 'max': 8},
+    OP_ATUALIZACAO_PRECO: {'initial': 6, 'max': 10},
+    OP_UNIVERSAL: {'initial': 5, 'max': 8},
 }
 
 
@@ -64,7 +66,7 @@ def _clamp_batch_size(value: int, *, operation: object) -> int:
 
 def initial_batch_size(operation: object) -> int:
     profile = _profile(operation)
-    return _clamp_batch_size(int(profile.get('initial') or 2), operation=operation)
+    return _clamp_batch_size(int(profile.get('initial') or 5), operation=operation)
 
 
 def intelligent_batch_size(
@@ -83,24 +85,30 @@ def intelligent_batch_size(
     if failed > 0:
         return IntelligentSendPlan(
             op,
-            max(MIN_BATCH_SIZE, current - 1),
+            max(MIN_BATCH_SIZE, current - max(1, min(3, failed))),
             'falha detectada no lote anterior; reduzindo automaticamente para proteger a API',
         )
 
     seconds = float(last_batch_seconds or 0.0)
     if seconds <= 0:
-        return IntelligentSendPlan(op, current, 'início automático com velocidade moderada')
+        return IntelligentSendPlan(op, current, 'início automático em lote rápido controlado')
     if seconds >= SLOW_BATCH_SECONDS:
         return IntelligentSendPlan(
             op,
-            max(MIN_BATCH_SIZE, current - 1),
+            max(MIN_BATCH_SIZE, current - 2),
             'Bling respondeu devagar; reduzindo velocidade automaticamente',
         )
     if seconds <= VERY_FAST_BATCH_SECONDS and skipped == 0:
         return IntelligentSendPlan(
             op,
+            _clamp_batch_size(current + 2, operation=op),
+            'Bling respondeu muito rápido; acelerando com segurança',
+        )
+    if seconds <= FAST_BATCH_SECONDS and skipped == 0:
+        return IntelligentSendPlan(
+            op,
             _clamp_batch_size(current + 1, operation=op),
-            'Bling respondeu rápido; acelerando com segurança',
+            'Bling respondeu bem; aumentando levemente o lote',
         )
     return IntelligentSendPlan(op, current, 'velocidade mantida automaticamente pelo desempenho do último lote')
 
