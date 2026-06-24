@@ -46,6 +46,25 @@ def _install_category_confidence_strict() -> None:
         )
 
 
+def _install_universal_price_calculator() -> None:
+    try:
+        from bling_app_zero.ui.universal_price_calculator_patch import install
+        install()
+        add_audit_event(
+            'live_operation_runtime_universal_price_calculator_loaded',
+            area='UNIVERSAL',
+            status='OK',
+            details={'official_calculator': True, 'replaces': 'render_shared_calculator', 'responsible_file': RESPONSIBLE_FILE},
+        )
+    except Exception as exc:
+        add_audit_event(
+            'live_operation_runtime_universal_price_calculator_failed',
+            area='UNIVERSAL',
+            status='AVISO',
+            details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE},
+        )
+
+
 def _patch_site_progress() -> None:
     try:
         from bling_app_zero.ui import site_progress
@@ -202,11 +221,12 @@ def install_live_operation_runtime_patch() -> None:
     if st.session_state.get(_PATCH_KEY):
         return
     _install_category_confidence_strict()
+    _install_universal_price_calculator()
     _patch_site_progress()
     _patch_api_progress()
     _patch_universal_progress()
     st.session_state[_PATCH_KEY] = True
-    add_audit_event('live_operation_runtime_patch_installed', area='PROGRESSO', status='OK', details={'site': True, 'api': True, 'universal': True, 'category_confidence_strict': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('live_operation_runtime_patch_installed', area='PROGRESSO', status='OK', details={'site': True, 'api': True, 'universal': True, 'category_confidence_strict': True, 'official_universal_price_calculator': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_live_operation_runtime_patch']
