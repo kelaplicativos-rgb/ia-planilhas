@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 import pandas as pd
 
@@ -10,11 +10,13 @@ EMPTY_MARKERS = {'nan', 'none', 'null', '<na>', 'n/a', 'na'}
 IMAGE_COLUMN_TERMS = ('imagem', 'imagens', 'image', 'images', 'foto', 'fotos', 'url imagens')
 GTIN_COLUMN_TERMS = ('gtin', 'ean', 'código de barras', 'codigo de barras')
 URL_PATTERN = re.compile(r'https?://[^\s|;,]+', re.IGNORECASE)
+DEFAULT_WEIGHT_VALUE = '0.300'
 
 
 # Regras opcionais do fluxo universal.
-# Importante: todas nascem desligadas. O sistema universal não pode aplicar
-# defaults de Bling ou de qualquer outro software sem o usuário ligar o toggle.
+# Importante: o grupo principal de regras continua controlando quando os defaults
+# serão aplicados. Quando o grupo estiver ligado, pesos de cadastro nascem com o
+# padrão seguro solicitado para evitar mapeamento manual desnecessário.
 def default_smart_rules_config() -> dict[str, Any]:
     return {
         'enabled': False,
@@ -38,9 +40,9 @@ def default_smart_rules_config() -> dict[str, Any]:
         'height_value': '2',
         'width_value': '11',
         'depth_value': '16',
-        'apply_weight_default': False,
-        'gross_weight_value': '',
-        'net_weight_value': '',
+        'apply_weight_default': True,
+        'gross_weight_value': DEFAULT_WEIGHT_VALUE,
+        'net_weight_value': DEFAULT_WEIGHT_VALUE,
         'overwrite_existing_fixed_values': False,
     }
 
@@ -224,7 +226,77 @@ def normalize_smart_rules_config(config: Mapping[str, Any] | None, *, enabled: b
     if enabled is not None:
         base['enabled'] = bool(enabled)
     base['max_images'] = max(0, int(base.get('max_images') or 0))
+    if not _clean_text(base.get('gross_weight_value')):
+        base['gross_weight_value'] = DEFAULT_WEIGHT_VALUE
+    if not _clean_text(base.get('net_weight_value')):
+        base['net_weight_value'] = DEFAULT_WEIGHT_VALUE
+    base['overwrite_existing_fixed_values'] = False
     return base
+
+
+def _rule_kind_for_column(column: Any, rules: Mapping[str, Any]) -> str:
+    if not bool(rules.get('enabled')):
+        return ''
+    if bool(rules.get('apply_measure_unit_default')) and _clean_text(rules.get('measure_unit_value')) and _is_measure_unit_column(column):
+        return 'measure_unit'
+    if bool(rules.get('apply_unit_default')) and _clean_text(rules.get('unit_value')) and _is_unit_abbreviation_column(column):
+        return 'unit'
+    if bool(rules.get('apply_status_default')) and _clean_text(rules.get('status_value')) and _is_status_column(column):
+        return 'status'
+    if bool(rules.get('apply_condition_default')) and _clean_text(rules.get('condition_value')) and _is_condition_column(column):
+        return 'condition'
+    if bool(rules.get('apply_dimensions_default')) and _clean_text(rules.get('height_value')) and _is_height_column(column):
+        return 'height'
+    if bool(rules.get('apply_dimensions_default')) and _clean_text(rules.get('width_value')) and _is_width_column(column):
+        return 'width'
+    if bool(rules.get('apply_dimensions_default')) and _clean_text(rules.get('depth_value')) and _is_depth_column(column):
+        return 'depth'
+    if bool(rules.get('apply_weight_default')) and _clean_text(rules.get('gross_weight_value')) and _is_gross_weight_column(column):
+        return 'gross_weight'
+    if bool(rules.get('apply_weight_default')) and _clean_text(rules.get('net_weight_value')) and _is_net_weight_column(column):
+        return 'net_weight'
+    return ''
+
+
+def rule_managed_target_columns(columns: Iterable[Any], config: Mapping[str, Any] | None = None) -> list[str]:
+    """Retorna colunas do contrato que serão preenchidas por regras fixas.
+
+    Essas colunas não devem aparecer para mapeamento manual/IA, porque o valor
+    final será aplicado pelo painel de regras no preview/download.
+    """
+    rules = normalize_smart_rules_config(config)
+    return [str(column) for column in columns or [] if _rule_kind_for_column(column, rules)]
+
+
+def rule_managed_source_mapping(source_columns: Iterable[Any], target_columns: Iterable[Any], config: Mapping[str, Any] | None = None) -> dict[str, str]:
+    """Liga campos de regra à origem equivalente sem expor ao usuário.
+
+    A regra continua sendo fallback por célula: valores que já vieram preenchidos
+    na origem são preservados; somente células vazias recebem o padrão definido.
+    """
+    rules = normalize_smart_rules_config(config)
+    if not bool(rules.get('enabled')):
+        return {}
+
+    source_names = [str(column) for column in source_columns or []]
+    source_by_exact_key: dict[str, str] = {}
+    source_by_rule_kind: dict[str, str] = {}
+    for source in source_names:
+        source_by_exact_key.setdefault(_column_key(source), source)
+        source_kind = _rule_kind_for_column(source, rules)
+        if source_kind:
+            source_by_rule_kind.setdefault(source_kind, source)
+
+    mapping: dict[str, str] = {}
+    for target in target_columns or []:
+        target_name = str(target)
+        target_kind = _rule_kind_for_column(target_name, rules)
+        if not target_kind:
+            continue
+        selected = source_by_exact_key.get(_column_key(target_name)) or source_by_rule_kind.get(target_kind, '')
+        if selected:
+            mapping[target_name] = selected
+    return mapping
 
 
 def apply_universal_smart_rules(df: pd.DataFrame, config: Mapping[str, Any] | None = None) -> tuple[pd.DataFrame, dict[str, Any]]:
@@ -289,4 +361,10 @@ def apply_universal_smart_rules(df: pd.DataFrame, config: Mapping[str, Any] | No
     return out, report
 
 
-__all__ = ['apply_universal_smart_rules', 'default_smart_rules_config', 'normalize_smart_rules_config']
+__all__ = [
+    'apply_universal_smart_rules',
+    'default_smart_rules_config',
+    'normalize_smart_rules_config',
+    'rule_managed_source_mapping',
+    'rule_managed_target_columns',
+]
