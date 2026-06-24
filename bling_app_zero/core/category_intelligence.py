@@ -192,6 +192,13 @@ PRODUCT_DESCRIPTION_COLUMNS = (
     'Descrição do Produto no Fornecedor', 'Característica', 'Características', 'Ficha técnica',
     'Ficha tecnica', 'Informações Adicionais', 'Observações', 'description', 'descricao'
 )
+DESCRIPTION_PRIORITY_COLUMNS = (
+    'Descrição do Produto no Fornecedor', 'Descrição completa', 'Descricao completa',
+    'Descrição complementar', 'Descricao complementar', 'Descrição Curta', 'Descricao Curta',
+    'Característica', 'Características', 'Ficha técnica', 'Ficha tecnica',
+    'Informações Adicionais', 'Observações', 'description', 'descricao',
+)
+TITLE_PRIORITY_COLUMNS = ('Descrição', 'Descricao', 'Nome', 'Nome do produto', 'Produto', 'Título', 'Titulo', 'name', 'nome')
 CATEGORY_COLUMNS = ('Categoria', 'Categoria do produto', 'Categoria Produto', 'Nome da categoria', 'category', 'categoria')
 HELPER_COLUMNS = ('categoria_atual_ia', 'categoria_sugerida_ia', 'acao_categoria_ia', 'confianca_categoria_ia', 'motivo_categoria_ia')
 
@@ -348,10 +355,30 @@ def canonicalize_category(value: object, catalog: Sequence[str] = DEFAULT_CATEGO
     return '', True, f'categoria fora do catálogo seguro: {raw[:80]}'
 
 
-def _score(text: str, positives: Sequence[str], negatives: Sequence[str]) -> tuple[int, list[str], list[str]]:
+def _score(text: str, positives: Sequence[tuple[str, str]], negatives: Sequence[tuple[str, str]]) -> tuple[int, list[str], list[str]]:
     hits = [label for label, pattern in positives if re.search(pattern, text)]
     blocks = [label for label, pattern in negatives if re.search(pattern, text)]
     return len(hits) - (2 * len(blocks)), hits, blocks
+
+
+def _classify_radio_speaker_conflict(text: str) -> tuple[str, float, str]:
+    has_radio = _has(text, (r'\bradio\b', r'\bam fm\b', r'\bfm\b'))
+    has_speaker = _has(text, (r'\bcaixa de som\b', r'\bcaixa amplificada\b', r'\bspeaker\b', r'\bboombox\b', r'\balto falante\b'))
+    if not has_radio and not has_speaker:
+        return '', 0.0, 'sem conflito rádio/caixa'
+    if re.search(r'^(?:mini\s+)?radio\b|^radio\s+(?:portatil|relogio|recarregavel|am|fm)', text):
+        return 'Rádios AM e FM', 0.96, 'rádio é o produto principal'
+    if re.search(r'^(?:caixa de som|caixa amplificada|speaker|boombox)\b', text):
+        return 'Caixas de som', 0.96, 'caixa de som é o produto principal; rádio é recurso'
+    if re.search(r'\bcaixa de som\b.*\bradio\b|\bcaixa amplificada\b.*\bradio\b', text):
+        return 'Caixas de som', 0.94, 'caixa de som com rádio FM'
+    if re.search(r'\bradio\b.*\b(?:am|fm|pilha|portatil|recarregavel|antena telescopica)\b', text):
+        return 'Rádios AM e FM', 0.94, 'descrição indica rádio como produto principal'
+    if has_speaker:
+        return 'Caixas de som', 0.90, 'áudio/caixa com rádio como função'
+    if has_radio:
+        return 'Rádios AM e FM', 0.90, 'rádio detectado sem evidência de caixa como produto principal'
+    return '', 0.0, 'sem conflito rádio/caixa'
 
 
 def _classify_specialized(text: str) -> tuple[str, float, str]:
@@ -361,6 +388,10 @@ def _classify_specialized(text: str) -> tuple[str, float, str]:
     decidir categoria sozinhos. A decisão vem de evidências técnicas e de
     palavras negativas que impedem confusão entre famílias parecidas.
     """
+    radio_conflict = _classify_radio_speaker_conflict(text)
+    if radio_conflict[0] and radio_conflict[1] >= 0.94:
+        return radio_conflict
+
     specialized_rules: tuple[tuple[str, float, str, tuple[tuple[str, str], ...], tuple[tuple[str, str], ...]], ...] = (
         (
             'Antenas Wi-Fi', 0.96, 'antena Wi-Fi/rede',
@@ -408,9 +439,11 @@ def _classify_specialized(text: str) -> tuple[str, float, str]:
                 best = (category, confidence, reason, raw_score, hits, blocks)
     if best[0]:
         evidence = ', '.join(best[4][:5])
-        blocked = f"; negativos ausentes/ignorados: {', '.join(best[5][:3])}" if best[5] else ''
+        blocked = f"; negativos presentes: {', '.join(best[5][:3])}" if best[5] else ''
         confidence = max(0.80, min(best[1], best[1] - (0.04 * len(best[5]))))
         return best[0], confidence, f'{best[2]} por evidências: {evidence}{blocked}'
+    if radio_conflict[0]:
+        return radio_conflict
     return '', 0.0, 'sem regra técnica especializada'
 
 
@@ -439,7 +472,7 @@ def _classify_text(text: str) -> tuple[str, float, str]:
     rules: tuple[tuple[str, float, str, tuple[str, ...]], ...] = (
         ('Rádios AM e FM', 0.93, 'rádio/transmissor FM', (r'\bradio\b', r'\bam fm\b', r'\btransmissor fm\b', r'\bmp3 player\b')),
         ('Fones de ouvido', 0.94, 'fone/headset', (r'\bfones?\b', r'\bheadset\b', r'\bheadphone(?:s)?\b', r'\bearbuds?\b', r'\bearphones?\b')),
-        ('Caixas de som', 0.93, 'caixa de som/speaker', (r'\bcaixa de som\b', r'\bspeaker\b', r'\bboombox\b', r'\bbluetooth speaker\b')),
+        ('Caixas de som', 0.93, 'caixa de som/speaker', (r'\bcaixa de som\b', r'\bspeaker\b', r'\bboombox\b', r'\bbluetooth speaker\b', r'\bcaixa amplificada\b')),
         ('Máquinas para corte de cabelo', 0.93, 'máquina/barbeador', (r'\bmaquina de corte\b', r'\bbarbeador\b', r'\baparador\b', r'\btrimmer\b')),
         ('Mouses', 0.90, 'mouse', (r'\bmouse\b',)),
         ('Teclados', 0.90, 'teclado', (r'\bteclado\b', r'\bkeyboard\b')),
@@ -481,6 +514,42 @@ def _row_text(row: pd.Series, columns: Sequence[str | None]) -> str:
     return normalize_text(' '.join(parts))
 
 
+def _rich_description_text(row: pd.Series, desc_col: str | None = None) -> str:
+    columns: list[str | None] = [desc_col]
+    columns.extend(DESCRIPTION_PRIORITY_COLUMNS)
+    return _row_text(row, columns)
+
+
+def _rich_title_text(row: pd.Series, name_col: str | None = None) -> str:
+    columns: list[str | None] = [name_col]
+    columns.extend(TITLE_PRIORITY_COLUMNS)
+    return _row_text(row, columns)
+
+
+def _prefer_description_suggestion(description: str, title: str) -> CategorySuggestion | None:
+    """Categoria nasce da descrição/ficha técnica; título só reforça.
+
+    Se descrição e título discordarem, a descrição vence quando tiver evidência
+    suficiente. Isso evita erro como título comercial "Caixa Bluetooth" com
+    descrição real de rádio portátil AM/FM, ou título genérico "Cabo" com ficha
+    técnica RJ45/CAT6.
+    """
+    if description:
+        category, confidence, why = _classify_specialized(description)
+        if category and confidence >= 0.80:
+            return CategorySuggestion(category, confidence, f'{why} pela descrição/ficha técnica', 'CRIAR/VINCULAR')
+        category, confidence, why = _classify_text(description)
+        if category and confidence >= 0.80:
+            return CategorySuggestion(category, confidence, f'{why} pela descrição/ficha técnica', 'CRIAR/VINCULAR')
+
+    combined = normalize_text(f'{description} {title}')
+    if combined:
+        category, confidence, why = _classify_specialized(combined)
+        if category and confidence >= 0.80:
+            return CategorySuggestion(category, max(0.80, confidence - 0.02), f'{why} pela descrição + título', 'CRIAR/VINCULAR')
+    return None
+
+
 def suggest_category_for_product(name: object, *, description: object = '', current_category: object = '') -> CategorySuggestion:
     canonical, changed, reason = canonicalize_category(current_category)
     # Categoria provisória é permitida para envio, mas não deve impedir a tentativa
@@ -488,24 +557,16 @@ def suggest_category_for_product(name: object, *, description: object = '', curr
     if canonical and canonical != PROVISIONAL_CATEGORY:
         return CategorySuggestion(canonical, 1.0 if not changed else 0.96, reason, 'CORRIGIR' if changed else 'MANTER')
 
-    combined_text = normalize_text(f'{name or ""} {description or ""}')
-    category, confidence, why = _classify_specialized(combined_text)
-    if category:
-        return CategorySuggestion(category, confidence, f'{why} pelo título + descrição completa', 'CRIAR/VINCULAR')
-
-    name_text = normalize_text(name)
-    category, confidence, why = _classify_text(name_text)
-    if category:
-        return CategorySuggestion(category, confidence, f'{why} pelo nome', 'CRIAR/VINCULAR')
-
     desc_text = normalize_text(description)
-    category, confidence, why = _classify_text(desc_text)
-    if category:
-        return CategorySuggestion(category, max(0.50, confidence - 0.06), f'{why} pela descrição complementar', 'CRIAR/VINCULAR')
+    title_text = normalize_text(name)
+    desc_first = _prefer_description_suggestion(desc_text, title_text)
+    if desc_first:
+        return desc_first
 
-    category, confidence, why = _classify_text(combined_text)
+    category, confidence, why = _classify_text(title_text)
     if category:
-        return CategorySuggestion(category, max(0.50, confidence - 0.10), f'{why} por fallback controlado', 'CRIAR/VINCULAR')
+        return CategorySuggestion(category, confidence, f'{why} pelo título sem descrição suficiente', 'CRIAR/VINCULAR')
+
     return CategorySuggestion(REVIEW_CATEGORY, 0.0, 'não foi possível inferir categoria segura', 'REVISAR')
 
 
@@ -516,18 +577,19 @@ def suggest_category_for_row(row: pd.Series, *, name_col: str | None, desc_col: 
             current_col = candidate
             break
     current = row.get(current_col, '') if current_col else ''
-    name_value = row.get(name_col, '') if name_col and name_col in row.index else ''
-    desc_value = row.get(desc_col, '') if desc_col and desc_col in row.index else ''
-    suggestion = suggest_category_for_product(name_value, description=desc_value, current_category=current)
+    rich_description = _rich_description_text(row, desc_col)
+    rich_title = _rich_title_text(row, name_col)
+
+    suggestion = suggest_category_for_product(rich_title, description=rich_description, current_category=current)
     if suggestion.category != REVIEW_CATEGORY:
         return suggestion
 
     all_text = _row_text(
         row,
         [
-            name_col, desc_col, 'Descrição', 'Descricao', 'Nome', 'Produto', 'Título', 'Titulo',
-            'Descrição Curta', 'Descrição do Produto no Fornecedor', 'Descrição Complementar',
-            'Informações Adicionais', 'Observações', 'Link Externo',
+            *DESCRIPTION_PRIORITY_COLUMNS,
+            *TITLE_PRIORITY_COLUMNS,
+            'Link Externo', 'URL', 'url', 'breadcrumb', 'Categoria origem',
         ],
     )
     category, confidence, why = _classify_text(all_text)
