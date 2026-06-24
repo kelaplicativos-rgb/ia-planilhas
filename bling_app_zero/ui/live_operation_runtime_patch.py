@@ -27,6 +27,25 @@ def _safe_progress(processed: int, total: int) -> float:
     return max(0.0, min(1.0, float(processed) / max(total, 1)))
 
 
+def _install_category_confidence_strict() -> None:
+    try:
+        from bling_app_zero.ui.category_confidence_strict_runtime import install
+        install()
+        add_audit_event(
+            'live_operation_runtime_category_confidence_strict_loaded',
+            area='UNIVERSAL',
+            status='OK',
+            details={'confidence_min': 1.0, 'slider_removed': True, 'responsible_file': RESPONSIBLE_FILE},
+        )
+    except Exception as exc:
+        add_audit_event(
+            'live_operation_runtime_category_confidence_strict_failed',
+            area='UNIVERSAL',
+            status='AVISO',
+            details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE},
+        )
+
+
 def _patch_site_progress() -> None:
     try:
         from bling_app_zero.ui import site_progress
@@ -142,6 +161,10 @@ def _patch_universal_progress() -> None:
         add_audit_event('live_progress_universal_patch_failed', area='PROGRESSO', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
         return
 
+    if not hasattr(universal_flow, '_progress_callback'):
+        add_audit_event('live_progress_universal_callback_missing_ignored', area='PROGRESSO', status='INFO', details={'responsible_file': RESPONSIBLE_FILE})
+        return
+
     original_callback_factory: Callable[..., Any] | None = getattr(universal_flow, '_live_original_progress_callback', None)
     if original_callback_factory is None:
         original_callback_factory = universal_flow._progress_callback
@@ -178,11 +201,12 @@ def _patch_universal_progress() -> None:
 def install_live_operation_runtime_patch() -> None:
     if st.session_state.get(_PATCH_KEY):
         return
+    _install_category_confidence_strict()
     _patch_site_progress()
     _patch_api_progress()
     _patch_universal_progress()
     st.session_state[_PATCH_KEY] = True
-    add_audit_event('live_operation_runtime_patch_installed', area='PROGRESSO', status='OK', details={'site': True, 'api': True, 'universal': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('live_operation_runtime_patch_installed', area='PROGRESSO', status='OK', details={'site': True, 'api': True, 'universal': True, 'category_confidence_strict': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_live_operation_runtime_patch']
