@@ -34,6 +34,19 @@ def _extend_aliases(current: tuple[str, ...], *new_values: str) -> tuple[str, ..
     return tuple(out)
 
 
+def _is_blank(value: Any) -> bool:
+    if value is None:
+        return True
+    try:
+        import pandas as pd
+        if pd.isna(value):
+            return True
+    except Exception:
+        pass
+    text = str(value).strip()
+    return text == '' or text.lower() in {'nan', 'none', 'nat'}
+
+
 def _norm(value: object) -> str:
     text = str(value or '').strip().lower()
     for old, new in {'ã': 'a', 'á': 'a', 'à': 'a', 'â': 'a', 'é': 'e', 'ê': 'e', 'í': 'i', 'ó': 'o', 'ô': 'o', 'õ': 'o', 'ú': 'u', 'ç': 'c'}.items():
@@ -49,11 +62,13 @@ def _row_value(row: Any, *names: str) -> str:
     wanted = {_norm(name) for name in names}
     for key, value in items:
         if _norm(key) in wanted:
-            return '' if value is None else str(value or '').strip()
+            return '' if _is_blank(value) else str(value).strip()
     return ''
 
 
 def _number(module: ModuleType, value: object) -> float | None:
+    if _is_blank(value):
+        return None
     try:
         return module._number_value(value)
     except Exception:
