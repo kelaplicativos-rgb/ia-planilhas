@@ -166,12 +166,14 @@ def _infer_bling_operation(output: pd.DataFrame) -> str:
     has_qty = bool(columns & {'quantidade', 'qtd', 'qtde', 'saldo', 'estoque', 'balanco'})
     has_deposit = any('deposito' in column for column in columns)
     has_code = bool(columns & {'id', 'id produto', 'id bling', 'codigo', 'sku', 'referencia', 'gtin', 'ean'})
-    if has_name and has_price:
-        return OP_CADASTRO
+    has_channel = any(('canal' in column or 'loja' in column or 'marketplace' in column or 'produto loja' in column or 'vinculo loja' in column or 'preco destino' in column) for column in columns)
+    has_catalog_richness = any(('categoria' in column or 'imagem' in column or 'marca' in column or 'departamento' in column or 'descricao curta' in column) for column in columns)
     if has_qty and (has_deposit or has_code):
         return OP_ESTOQUE
-    if has_price and has_code:
+    if has_price and has_code and (has_channel or not has_catalog_richness):
         return OP_ATUALIZACAO_PRECO
+    if has_name and has_price:
+        return OP_CADASTRO
     return OP_UNIVERSAL
 
 
@@ -188,6 +190,36 @@ def _prepare_final_bling_snapshot(output: pd.DataFrame, operation: str, signatur
     return clean
 
 
+def _render_price_api_targets(output: pd.DataFrame) -> None:
+    try:
+        from bling_app_zero.core.bling_price_sender_guarded import price_channel_targets
+        summary = price_channel_targets(output)
+    except Exception as exc:
+        st.caption(f'Atualização de preços multiloja: não consegui listar lojas agora ({exc}).')
+        return
+    targets = list(summary.get('targets') or [])
+    general_rows = int(summary.get('general_price_rows') or 0)
+    unresolved = int(summary.get('unresolved_channel_rows') or 0)
+    if not targets and general_rows <= 0:
+        st.warning('Atualização de preços multiloja: nenhuma loja/canal foi identificada ainda. Confira a coluna de loja/canal ou ID do canal.')
+        return
+    st.info('Atualização de preços multiloja via API: o envio vai atualizar Preço e Preço promocional no vínculo produto-loja quando houver loja/canal.')
+    if targets:
+        with st.expander('Lojas/canais que serão atualizados via API', expanded=True):
+            for item in targets[:12]:
+                name = str(item.get('channel_name') or 'Loja/canal').strip()
+                channel_id = str(item.get('channel_id') or '').strip()
+                rows = int(item.get('rows') or 0)
+                suffix = f' · ID {channel_id}' if channel_id else ' · ID será buscado/confirmado no Bling'
+                st.caption(f'• {name}{suffix} · {rows} linha(s) · campos: preço + preço promocional')
+            if len(targets) > 12:
+                st.caption(f'… mais {len(targets) - 12} loja(s)/canal(is) agrupados.')
+    if general_rows:
+        st.caption(f'{general_rows} linha(s) sem loja/canal: serão tratadas como preço geral do produto.')
+    if unresolved:
+        st.warning(f'{unresolved} linha(s) pedem loja/canal, mas ainda não têm nome ou ID suficiente para identificar a loja no Bling.')
+
+
 def _render_final_bling_api_panel(output: pd.DataFrame, *, key_prefix: str) -> None:
     if not isinstance(output, pd.DataFrame) or output.empty:
         return
@@ -199,7 +231,7 @@ def _render_final_bling_api_panel(output: pd.DataFrame, *, key_prefix: str) -> N
         cols = st.columns(3)
         cols[0].metric('Linhas', int(len(output)))
         cols[1].metric('Colunas', int(len(output.columns)))
-        cols[2].metric('Operação', operation_label(operation) if operation != OP_UNIVERSAL else 'A confirmar')
+        cols[2].metric('Operação', 'Atualização de preços multiloja' if operation == OP_ATUALIZACAO_PRECO else operation_label(operation) if operation != OP_UNIVERSAL else 'A confirmar')
 
         if operation == OP_UNIVERSAL:
             st.warning('Envio bloqueado: não consegui identificar se a planilha é Cadastro, Estoque ou Atualização de preços.')
@@ -219,6 +251,8 @@ def _render_final_bling_api_panel(output: pd.DataFrame, *, key_prefix: str) -> N
             return
 
         st.success('Bling conectado. Envio direto liberado para esta planilha final tratada.')
+        if operation == OP_ATUALIZACAO_PRECO:
+            _render_price_api_targets(clean)
         render_bling_api_batch_panel(clean, operation, f'{key_prefix}_final_bling_api', signature, 'shared_final_csv')
         add_audit_event('shared_final_bling_api_panel_rendered', area='BLING_API', status='OK', details={'operation': operation, 'rows': int(len(clean)), 'signature': signature, 'responsible_file': RESPONSIBLE_FILE})
 
@@ -238,114 +272,43 @@ def render_shared_final_csv(
     *,
     key_prefix: str = 'mapeiaai_shared_final',
     file_name: str = 'mapeiaai_planilha_final_mapeada.csv',
-    run_smart_features: bool = True,
-    smart_rules_config: Mapping[str, Any] | None = None,
-) -> pd.DataFrame | None:
-    st.markdown('### Preview final')
-    st.caption('O download final usa o modelo anexado como estrutura de colunas e preenche as linhas com os dados da origem mapeada.')
+) -> pd.DataFrame:
+    output, report = build_final_output(source, contract, mapping, context='universal')
+    st.session_state[FINAL_OUTPUT_STATE_KEY] = output
+    st.session_state[FINAL_OUTPUT_REPORT_KEY] = report.to_dict()
+    _render_smartcore_box(report)
+    st.dataframe(output.head(80), use_container_width=True, hide_index=True)
+    csv_bytes = output.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+    st.download_button('⬇️ Baixar CSV mapeado', data=csv_bytes, file_name=file_name, mime='text/csv; charset=utf-8', use_container_width=True, key=f'{key_prefix}_csv_download')
 
-    contract_columns = contract_columns_from_model(contract)
-    final_result = build_final_output(
-        source,
-        contract,
-        mapping,
-        operation='universal',
-        file_name=file_name,
-        run_smart_features=run_smart_features,
-        smart_rules_config=smart_rules_config,
-    )
-    st.session_state[FINAL_OUTPUT_STATE_KEY] = final_result.state.to_dict()
-    st.session_state[FINAL_OUTPUT_REPORT_KEY] = build_final_output_report(final_result)
-    st.session_state[DOWNLOAD_READY_KEY] = False
-
-    if final_result.errors:
-        for error in final_result.errors:
-            st.error(error)
-        return None
-
-    output = final_result.output
-    smartcore_result = final_result.smartcore_result
-    if not isinstance(output, pd.DataFrame):
-        st.error('Não foi possível montar o preview final.')
-        return None
-
-    st.success('Modelo anexado preenchido: mesmas colunas e mesma ordem do modelo, com linhas vindas da origem.')
-    if smartcore_result is not None:
-        _render_smartcore_box(smartcore_result)
-    elif run_smart_features:
-        _render_smart_rules_report(final_result.smart_rules_report)
-    else:
-        st.caption('Recursos inteligentes desligados: o download respeita apenas o mapeamento manual/selecionado, os valores fixos e o contrato do modelo.')
-    st.dataframe(output.head(80).astype(str), use_container_width=True, height=360)
-    st.caption(f'Preview: {len(output)} linha(s) da origem x {len(output.columns)} coluna(s) do modelo.')
-
-    with st.expander('Contrato do modelo anexado', expanded=False):
-        st.caption('Estas são as colunas finais, na mesma ordem do modelo anexado. As linhas do modelo não são copiadas; elas servem apenas como referência de estrutura.')
-        st.dataframe(pd.DataFrame({'Colunas do modelo': contract_columns}), use_container_width=True, hide_index=True)
-
-    st.markdown('### Planilha final preenchida')
-    preserved_bytes = None
-    preserved_name = ''
-    preserved_mime = ''
-    preserved = False
-    preserve_status = 'template_not_found'
-    try:
-        preserved_bytes, preserved_name, preserved_mime, preserved, preserve_status = _build_template_preserved_download(output)
-    except Exception as exc:
-        preserve_status = f'erro_ao_gerar:{str(exc)[:180]}'
-        st.error(f'Download fiel ao modelo original falhou: {exc}')
-
-    template = _current_model_template()
-    template_name = template[0] if template else ''
-    template_suffix = _suffix(template_name)
-
-    if preserved and preserved_bytes is not None:
+    template_bytes, template_output_name, template_mime, template_ok, preserve_status = _build_template_preserved_download(output)
+    if template_ok and template_bytes:
         st.session_state[DOWNLOAD_READY_KEY] = True
-        st.success(f'Arquivo final preservado no formato original do modelo: {preserved_name}')
         st.download_button(
-            'Baixar modelo original preenchido',
-            data=preserved_bytes,
-            file_name=preserved_name,
-            mime=preserved_mime,
+            '⬇️ Baixar modelo original preenchido',
+            data=template_bytes,
+            file_name=template_output_name,
+            mime=template_mime,
             use_container_width=True,
-            key=f'{key_prefix}_download_template_preserved',
-            help='Download gerado dentro do arquivo modelo original, preservando formato, abas e estrutura sempre que possível.',
+            key=f'{key_prefix}_template_preserved_download',
         )
-        _render_final_bling_api_panel(output, key_prefix=key_prefix)
     else:
-        _render_no_safe_download(template_name, template_suffix, preserve_status)
-        output = None
+        template = _current_model_template()
+        template_name = template[0] if template else ''
+        _render_no_safe_download(template_name, _suffix(template_name), preserve_status)
 
-    audit_output = final_result.output if isinstance(final_result.output, pd.DataFrame) else pd.DataFrame()
-    add_audit_event(
-        'shared_final_csv_rendered',
-        area='FINAL_CSV',
-        status='OK' if preserved else 'AVISO',
-        details={
-            'rows': int(len(audit_output)),
-            'columns': int(len(audit_output.columns)),
-            'contract_columns': contract_columns,
-            'contract_identity': True,
-            'model_as_column_contract_only': True,
-            'source_rows_as_output_rows': True,
-            'template_preserved_download': bool(preserved),
-            'template_preserve_status': preserve_status,
-            'template_name': template_name,
-            'csv_fallback_blocked': True,
-            'smartcore_score': int(final_result.state.result.smartcore_score),
-            'run_smart_features': bool(run_smart_features),
-            'smart_rules_config': dict(smart_rules_config or {}),
-            'smart_rules_report': dict(final_result.smart_rules_report or {}),
-            'neutral_final_output_state': True,
-            'csv_size_bytes': int(final_result.state.result.csv_size_bytes),
-            'responsible_file': RESPONSIBLE_FILE,
-        },
-    )
+    _render_smart_rules_report(report.to_dict())
+    _render_final_bling_api_panel(output, key_prefix=key_prefix)
     return output
 
 
-__all__ = [
-    'apply_shared_text_rules',
-    'build_shared_final_dataframe',
-    'render_shared_final_csv',
-]
+def render_final_csv_preview(df_final: pd.DataFrame, *, key_prefix: str = 'mapeiaai_final_csv') -> pd.DataFrame:
+    st.session_state[FINAL_OUTPUT_STATE_KEY] = df_final
+    st.dataframe(df_final.head(80), use_container_width=True, hide_index=True)
+    csv_bytes = df_final.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+    st.download_button('⬇️ Baixar CSV mapeado', data=csv_bytes, file_name='mapeiaai_planilha_final_mapeada.csv', mime='text/csv; charset=utf-8', use_container_width=True, key=f'{key_prefix}_csv_download')
+    _render_final_bling_api_panel(df_final, key_prefix=key_prefix)
+    return df_final
+
+
+__all__ = ['apply_shared_text_rules', 'build_shared_final_dataframe', 'render_final_csv_preview', 'render_shared_final_csv']
