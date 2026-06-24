@@ -45,11 +45,15 @@ FINAL_API_PANEL_KEY = 'mapeiaai_final_bling_api_panel_v1'
 
 
 def _render_smartcore_box(result) -> None:
-    quality = result.quality
+    if result is None:
+        return
+    quality = getattr(result, 'quality', None)
+    if quality is None:
+        return
     with st.expander('Validação inteligente opcional da saída final', expanded=False):
-        st.caption(f'Origem: {result.origin} · Operação: {result.operation}')
+        st.caption(f'Origem: {getattr(result, "origin", "")} · Operação: {getattr(result, "operation", "")}')
         st.metric('Qualidade da saída', f'{quality.score}/100')
-        for item in quality.warnings[:8]:
+        for item in list(getattr(quality, 'warnings', []) or [])[:8]:
             st.warning(item)
 
 
@@ -272,13 +276,45 @@ def render_shared_final_csv(
     *,
     key_prefix: str = 'mapeiaai_shared_final',
     file_name: str = 'mapeiaai_planilha_final_mapeada.csv',
-) -> pd.DataFrame:
-    output, report = build_final_output(source, contract, mapping, context='universal')
+    run_smart_features: bool = True,
+    smart_rules_config: Mapping[str, Any] | None = None,
+) -> pd.DataFrame | None:
+    result = build_final_output(
+        source,
+        contract,
+        mapping,
+        operation='universal',
+        file_name=file_name,
+        run_smart_features=bool(run_smart_features),
+        smart_rules_config=smart_rules_config,
+    )
+
+    report = build_final_output_report(result)
+    output = result.output
+    st.session_state[FINAL_OUTPUT_REPORT_KEY] = report
+
+    if output is None or not result.state.result.ok:
+        st.session_state[DOWNLOAD_READY_KEY] = False
+        st.error(result.state.result.message or 'Saída final bloqueada por erro de geração.')
+        errors = list(result.errors or result.state.result.errors or [])
+        for error in errors[:8]:
+            st.warning(str(error))
+        add_audit_event(
+            'shared_final_csv_blocked',
+            area='UNIVERSAL',
+            status='BLOQUEADO',
+            details={
+                'errors': errors,
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+        return None
+
     st.session_state[FINAL_OUTPUT_STATE_KEY] = output
-    st.session_state[FINAL_OUTPUT_REPORT_KEY] = report.to_dict()
-    _render_smartcore_box(report)
+    _render_smartcore_box(result.smartcore_result)
     st.dataframe(output.head(80), use_container_width=True, hide_index=True)
-    csv_bytes = output.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+
+    csv_bytes = result.csv_bytes or output.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
     st.download_button('⬇️ Baixar CSV mapeado', data=csv_bytes, file_name=file_name, mime='text/csv; charset=utf-8', use_container_width=True, key=f'{key_prefix}_csv_download')
 
     template_bytes, template_output_name, template_mime, template_ok, preserve_status = _build_template_preserved_download(output)
@@ -297,7 +333,7 @@ def render_shared_final_csv(
         template_name = template[0] if template else ''
         _render_no_safe_download(template_name, _suffix(template_name), preserve_status)
 
-    _render_smart_rules_report(report.to_dict())
+    _render_smart_rules_report(result.smart_rules_report)
     _render_final_bling_api_panel(output, key_prefix=key_prefix)
     return output
 
