@@ -42,6 +42,31 @@ SUPPORTED_PRESERVE_SUFFIXES = {'.csv', '.xlsx', '.xlsm'}
 EXCEL_LIKE_SUFFIXES = {'.xlsx', '.xlsm', '.xls', '.xlsb'}
 DOWNLOAD_READY_KEY = 'mapeiaai_final_download_ready'
 FINAL_API_PANEL_KEY = 'mapeiaai_final_bling_api_panel_v1'
+PLAIN_UNIVERSAL_FLOW_KINDS = {'universal_model_mapping'}
+API_STATE_KEYS_TO_SUPPRESS = (
+    FINAL_API_PANEL_KEY,
+    'home_bling_connected_same_flow_api_send',
+    'bling_connected_api_flow_active',
+    'direct_bling_api_contract_active',
+    'direct_bling_operation_applied',
+    'direct_bling_api_contract_df',
+    'bling_api_operation',
+    'api_operation',
+    'home_bling_api_operation_choice',
+    'bling_connected_api_operation',
+    'flow_spine_sender_operation',
+    'flow_spine_sender_destination',
+    'flow_spine_final_destination',
+    'flow_spine_operation_resolved_for_api',
+    'flow_spine_api_batch_operation',
+    'source_first_selected_operation',
+    'source_first_operation_user_confirmed',
+    'source_first_operation_pending_choice',
+    'bling_api_required_selector',
+    'bling_api_final_action',
+    'bling_api_manual_mapping_required',
+    'bling_api_must_run_ai_check',
+)
 
 
 def _render_smartcore_box(result) -> None:
@@ -224,8 +249,37 @@ def _render_price_api_targets(output: pd.DataFrame) -> None:
         st.warning(f'{unresolved} linha(s) pedem loja/canal, mas ainda não têm nome ou ID suficiente para identificar a loja no Bling.')
 
 
+def _is_plain_universal_download_only() -> bool:
+    flow_kind = str(st.session_state.get('mapeiaai_flow_kind') or st.session_state.get('flow_kind') or '').strip()
+    return bool(
+        flow_kind in PLAIN_UNIVERSAL_FLOW_KINDS
+        or st.session_state.get('mapear_planilha_sem_api_active') is True
+        or st.session_state.get('active_feature_contract_key') == 'universal_mapping_csv'
+    )
+
+
+def _suppress_plain_universal_api_state(output: pd.DataFrame) -> None:
+    for key in API_STATE_KEYS_TO_SUPPRESS:
+        st.session_state.pop(key, None)
+    add_audit_event(
+        'shared_final_csv_api_panel_suppressed_download_only',
+        area='BLING_API',
+        status='BLOQUEADO',
+        details={
+            'reason': 'plain_universal_mapping_csv_download_only',
+            'rows': int(len(output)) if isinstance(output, pd.DataFrame) else 0,
+            'columns': list(map(str, output.columns)) if isinstance(output, pd.DataFrame) else [],
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+
+
 def _render_final_bling_api_panel(output: pd.DataFrame, *, key_prefix: str) -> None:
     if not isinstance(output, pd.DataFrame) or output.empty:
+        return
+    if _is_plain_universal_download_only():
+        _suppress_plain_universal_api_state(output)
+        st.info('Fluxo sem API: saída final liberada somente para download. Para enviar ao Bling, use o fluxo Bling conectado.')
         return
     operation = _infer_bling_operation(output)
     signature = f'{len(output)}x{len(output.columns)}:{pd.util.hash_pandas_object(output.head(80).fillna("").astype(str), index=True).sum()}'
