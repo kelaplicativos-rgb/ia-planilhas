@@ -181,6 +181,64 @@ def _guarded_price_preview_payloads(df: pd.DataFrame, *, limit: int = 5) -> list
     return previews
 
 
+def price_channel_targets(df: pd.DataFrame, *, limit: int = 300) -> dict[str, Any]:
+    """Resumo leve para UI: mostra para qual loja/canal a atualização de preço vai mirar."""
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return {'operation': OP_ATUALIZACAO_PRECO, 'total_rows': 0, 'targets': [], 'general_price_rows': 0, 'unresolved_channel_rows': 0}
+    rows = df.fillna('').head(limit).copy()
+    mapping = raw_sender._column_map(rows.columns)
+    token, _mode = raw_sender._token()
+    token_ok = isinstance(token, dict) and bool(token.get('access_token'))
+    targets: dict[str, dict[str, Any]] = {}
+    general_rows = 0
+    unresolved_rows = 0
+    resolved_by_name = 0
+    for _position, (_index, row) in enumerate(rows.iterrows(), start=1):
+        channel_id = raw_sender._id_text(raw_sender._value(row, mapping, 'channel_id'))
+        channel_name = raw_sender._value(row, mapping, 'channel_name')
+        target = raw_sender._value(row, mapping, 'price_target')
+        wants_channel = bool(channel_id or channel_name or 'canal' in raw_sender._norm(target) or 'loja' in raw_sender._norm(target) or 'marketplace' in raw_sender._norm(target))
+        if not wants_channel:
+            general_rows += 1
+            continue
+        if not channel_id and channel_name and token_ok:
+            channel_id = _resolve_channel_id_by_name(token, channel_name)
+            if channel_id:
+                resolved_by_name += 1
+        if not channel_id and not channel_name:
+            unresolved_rows += 1
+            continue
+        key = channel_id or raw_sender._norm(channel_name) or 'loja_sem_id'
+        entry = targets.setdefault(
+            key,
+            {
+                'channel_id': channel_id,
+                'channel_name': channel_name or 'Loja/canal informado sem nome',
+                'rows': 0,
+                'resolved_by_name': bool(channel_id and channel_name),
+                'api_target': raw_sender.PRODUCT_STORE_UPDATE_PATH_TEMPLATE,
+                'fields': ['preco', 'precoPromocional'],
+            },
+        )
+        if channel_id and not entry.get('channel_id'):
+            entry['channel_id'] = channel_id
+        if channel_name and (not entry.get('channel_name') or entry.get('channel_name') == 'Loja/canal informado sem nome'):
+            entry['channel_name'] = channel_name
+        entry['rows'] = int(entry.get('rows') or 0) + 1
+    out_targets = sorted(targets.values(), key=lambda item: (-int(item.get('rows') or 0), str(item.get('channel_name') or '')))
+    return {
+        'operation': OP_ATUALIZACAO_PRECO,
+        'total_rows': int(len(df)),
+        'sampled_rows': int(len(rows)),
+        'targets': out_targets,
+        'general_price_rows': int(general_rows),
+        'unresolved_channel_rows': int(unresolved_rows),
+        'resolved_by_name': int(resolved_by_name),
+        'token_available': bool(token_ok),
+        'responsible_file': RESPONSIBLE_FILE,
+    }
+
+
 def _install_price_payload_guard() -> None:
     raw_sender._product_store_price_payloads = _product_store_price_payloads
     raw_sender._price_preview_payloads = _guarded_price_preview_payloads
@@ -195,6 +253,7 @@ def _install_price_payload_guard() -> None:
             'preview_guarded': True,
             'auto_channel_lookup_by_name': True,
             'channel_lookup_paths': list(_channel_lookup_paths()),
+            'ui_target_summary': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -379,4 +438,4 @@ def send_dataframe_to_bling_price(
     return DirectSendResult(attempted, sent, failed, skipped, tuple(errors[:80]), tuple(not_found))
 
 
-__all__ = ['preview_payloads', 'send_dataframe_to_bling_price']
+__all__ = ['preview_payloads', 'price_channel_targets', 'send_dataframe_to_bling_price']
