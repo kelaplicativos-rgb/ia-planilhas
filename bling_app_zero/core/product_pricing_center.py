@@ -7,7 +7,7 @@ from typing import Any, Iterable
 
 import pandas as pd
 
-from bling_app_zero.core.easy_reprice import calc_easy_promo_price, calc_easy_sale_price, money_or_empty
+from bling_app_zero.core.easy_reprice import calc_easy_sale_price, money_or_empty
 from bling_app_zero.core.text import normalize_key
 from bling_app_zero.v2.marketplace_calculator import (
     CalculatorInputs,
@@ -236,6 +236,37 @@ def _rule(config: dict[str, Any], channel: str = DEFAULT_CHANNEL) -> Marketplace
     )
 
 
+def _discount_decimal(config: dict[str, Any] | None) -> Decimal:
+    normalized = normalize_shared_price_config(config)
+    discount = D(normalized.get('promo_discount_percent', 0))
+    if discount < Decimal('0'):
+        return Decimal('0')
+    if discount >= Decimal('95'):
+        return Decimal('95')
+    return discount
+
+
+def price_pair_from_promotional_target(promotional_target: Any, config: dict[str, Any] | None) -> tuple[Decimal, Decimal]:
+    """Retorna (preço cheio, preço promocional).
+
+    Regra do MapeiaAI: primeiro calcula o preço-alvo que deve cair na promoção.
+    Depois aumenta o preço cheio para que, ao aplicar o desconto informado, o
+    preço promocional continue preservando margem/custos.
+    Ex.: alvo 120 com desconto 10% => Preço 133,33 e Preço Promocional 120,00.
+    """
+    promo = D(promotional_target)
+    if promo <= Decimal('0'):
+        return Decimal('0'), Decimal('0')
+    discount = _discount_decimal(config)
+    if discount <= Decimal('0'):
+        return promo, Decimal('0')
+    divider = Decimal('1') - (discount / Decimal('100'))
+    if divider <= Decimal('0'):
+        return Decimal('0'), Decimal('0')
+    full_price = promo / divider
+    return full_price, promo
+
+
 def calculate_quick_reprice_decimal(cost: Any, config: dict[str, Any] | None) -> Decimal:
     normalized = normalize_shared_price_config(config)
     base = D(cost)
@@ -265,18 +296,14 @@ def calculate_shared_price_decimal(cost: Any, config: dict[str, Any] | None, cha
 
 
 def calculate_shared_price(cost: Any, config: dict[str, Any] | None, channel: str = DEFAULT_CHANNEL) -> str:
-    value = calculate_shared_price_decimal(cost, config, channel)
-    return money(value) if value > Decimal('0') else ''
+    target = calculate_shared_price_decimal(cost, config, channel)
+    full_price, _promo_price = price_pair_from_promotional_target(target, config)
+    return money(full_price) if full_price > Decimal('0') else ''
 
 
 def calculate_promotional_price_from_sale(sale_price: Any, config: dict[str, Any] | None) -> str:
-    normalized = normalize_shared_price_config(config)
-    discount = D(normalized.get('promo_discount_percent', 0))
-    sale = D(sale_price)
-    if sale <= Decimal('0') or discount <= Decimal('0'):
-        return ''
-    promo = sale * (Decimal('1') - (discount / Decimal('100')))
-    return money(promo) if promo > Decimal('0') else ''
+    _full_price, promo_price = price_pair_from_promotional_target(sale_price, config)
+    return money(promo_price) if promo_price > Decimal('0') else ''
 
 
 def apply_shared_pricing(df: pd.DataFrame, cost_column: str, output_column: str = PRICE_OUTPUT_COLUMN, config: dict[str, Any] | None = None, channel: str = DEFAULT_CHANNEL, promo_output_column: str = PROMO_PRICE_OUTPUT_COLUMN) -> pd.DataFrame:
@@ -286,10 +313,10 @@ def apply_shared_pricing(df: pd.DataFrame, cost_column: str, output_column: str 
         return df.copy().fillna('')
     normalized = normalize_shared_price_config(config)
     out = df.copy().fillna('')
-    sale_values = out[cost_column].apply(lambda value: calculate_shared_price_decimal(value, normalized, channel))
-    out[output_column] = sale_values.apply(lambda value: money(value) if value > Decimal('0') else '')
-    promo_discount = D(normalized.get('promo_discount_percent', 0))
-    out[promo_output_column] = sale_values.apply(lambda value: calculate_promotional_price_from_sale(value, normalized)) if promo_discount > Decimal('0') else ''
+    target_values = out[cost_column].apply(lambda value: calculate_shared_price_decimal(value, normalized, channel))
+    pairs = target_values.apply(lambda value: price_pair_from_promotional_target(value, normalized))
+    out[output_column] = pairs.apply(lambda pair: money(pair[0]) if pair[0] > Decimal('0') else '')
+    out[promo_output_column] = pairs.apply(lambda pair: money(pair[1]) if pair[1] > Decimal('0') else '')
     return out
 
 
@@ -363,20 +390,23 @@ def apply_promotional_price_aliases(df: pd.DataFrame, calculated_column: str = P
 
 def _apply_easy_pricing(df: pd.DataFrame, cost_column: str, output_column: str, promo_output_column: str, config: dict[str, Any]) -> pd.DataFrame:
     out = df.copy().fillna('')
+    promo_percent = float(config.get('promo_discount_percent', 0) or 0)
     existing_promo: dict[str, pd.Series] = {
         column: out[column].copy()
         for column in promotional_price_columns(out.columns)
         if column in out.columns
     }
-    sale_values = out[cost_column].apply(lambda value: calc_easy_sale_price(value, config))
-    promo_percent = config.get('promo_discount_percent', 0)
-    out[output_column] = sale_values.apply(money_or_empty)
-    if float(promo_percent or 0) > 0:
-        out[promo_output_column] = sale_values.apply(lambda value: money_or_empty(calc_easy_promo_price(value, promo_percent)))
-    elif promo_output_column not in out.columns:
-        out[promo_output_column] = ''
-    for column, values in existing_promo.items():
-        out[column] = values
+    # O preço promocional é o alvo calculado. O preço cheio é inflado antes para
+    # suportar o desconto informado e não reduzir a margem final.
+    base_config = dict(config or {})
+    base_config['promo_discount_percent'] = 0
+    promotional_targets = out[cost_column].apply(lambda value: calc_easy_sale_price(value, base_config))
+    pairs = promotional_targets.apply(lambda value: price_pair_from_promotional_target(value, config))
+    out[output_column] = pairs.apply(lambda pair: money_or_empty(pair[0]))
+    out[promo_output_column] = pairs.apply(lambda pair: money_or_empty(pair[1])) if promo_percent > 0 else ''
+    if promo_percent <= 0:
+        for column, values in existing_promo.items():
+            out[column] = values
     return out
 
 
@@ -409,5 +439,6 @@ __all__ = [
     'calculate_price', 'calculate_product_price', 'calculate_promotional_price_from_sale',
     'calculate_quick_reprice_decimal', 'calculate_shared_price',
     'calculate_shared_price_decimal', 'detect_discount_percent', 'normalize_percent',
-    'normalize_shared_price_config', 'promotional_price_columns', 'to_number',
+    'normalize_shared_price_config', 'price_pair_from_promotional_target',
+    'promotional_price_columns', 'to_number',
 ]
