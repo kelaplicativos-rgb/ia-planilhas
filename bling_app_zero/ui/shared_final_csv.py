@@ -42,7 +42,9 @@ SUPPORTED_PRESERVE_SUFFIXES = {'.csv', '.xlsx', '.xlsm'}
 EXCEL_LIKE_SUFFIXES = {'.xlsx', '.xlsm', '.xls', '.xlsb'}
 DOWNLOAD_READY_KEY = 'mapeiaai_final_download_ready'
 FINAL_API_PANEL_KEY = 'mapeiaai_final_bling_api_panel_v1'
+UNIVERSAL_API_SEND_KEY = 'mapeiaai_universal_allow_api_send'
 PLAIN_UNIVERSAL_FLOW_KINDS = {'universal_model_mapping'}
+API_UNIVERSAL_FLOW_KINDS = {'universal_model_mapping_api'}
 API_STATE_KEYS_TO_SUPPRESS = (
     FINAL_API_PANEL_KEY,
     'home_bling_connected_same_flow_api_send',
@@ -249,7 +251,19 @@ def _render_price_api_targets(output: pd.DataFrame) -> None:
         st.warning(f'{unresolved} linha(s) pedem loja/canal, mas ainda não têm nome ou ID suficiente para identificar a loja no Bling.')
 
 
+def _universal_api_send_allowed() -> bool:
+    flow_kind = str(st.session_state.get('mapeiaai_flow_kind') or st.session_state.get('flow_kind') or '').strip()
+    return bool(
+        st.session_state.get(UNIVERSAL_API_SEND_KEY)
+        or flow_kind in API_UNIVERSAL_FLOW_KINDS
+        or st.session_state.get('api_flow_active') is True
+        or st.session_state.get('home_bling_connected_same_flow_api_send') is True
+    )
+
+
 def _is_plain_universal_download_only() -> bool:
+    if _universal_api_send_allowed():
+        return False
     flow_kind = str(st.session_state.get('mapeiaai_flow_kind') or st.session_state.get('flow_kind') or '').strip()
     return bool(
         flow_kind in PLAIN_UNIVERSAL_FLOW_KINDS
@@ -279,13 +293,13 @@ def _render_final_bling_api_panel(output: pd.DataFrame, *, key_prefix: str) -> N
         return
     if _is_plain_universal_download_only():
         _suppress_plain_universal_api_state(output)
-        st.info('Fluxo sem API: saída final liberada somente para download. Para enviar ao Bling, use o fluxo Bling conectado.')
+        st.info('Fluxo sem API: saída final liberada somente para download. Para enviar ao Bling, conecte ao Bling antes de entrar no fluxo Universal.')
         return
     operation = _infer_bling_operation(output)
     signature = f'{len(output)}x{len(output.columns)}:{pd.util.hash_pandas_object(output.head(80).fillna("").astype(str), index=True).sum()}'
     with st.container(border=True):
         st.markdown('### Enviar esta planilha tratada ao Bling')
-        st.caption('Este botão usa exatamente a planilha final preenchida acima. Não precisa iniciar nova operação.')
+        st.caption('Este botão usa exatamente a planilha final preenchida acima. A operação real é resolvida antes do envio; operação universal nunca é enviada direto para a API.')
         cols = st.columns(3)
         cols[0].metric('Linhas', int(len(output)))
         cols[1].metric('Colunas', int(len(output.columns)))
