@@ -25,7 +25,7 @@ SAFE_TARGET_SOURCE_ALIASES = {
     'preco de compra': ('preco de compra', 'preco compra', 'preco de custo', 'preco custo', 'custo', 'valor custo'),
     'cod no fornecedor': ('cod no fornecedor', 'cod fornecedor', 'codigo no fornecedor', 'codigo fornecedor', 'cod no fornecedor'),
     'codigo da lista de servicos': ('codigo da lista de servicos', 'codigo na lista de servicos'),
-    'gtin ean da embalagem': ('gtin ean da embalagem', 'gtin ean da embalagem'),
+    'gtin ean da embalagem': ('gtin ean da embalagem',),
     'largura do produto': ('largura do produto', 'largura produto'),
     'condicao do produto': ('condicao do produto', 'condicao produto'),
     'unidade de medida': ('unidade de medida', 'unidade medida'),
@@ -129,7 +129,9 @@ def _source_column_has_values(source: pd.DataFrame, column: str) -> bool:
 
 def _choose_alias_source(source: pd.DataFrame, normalized_sources: dict[str, str], target_column: str) -> str:
     target_key = _norm_column(target_column)
-    candidates = [target_key, *SAFE_TARGET_SOURCE_ALIASES.get(target_key, ())]
+    candidates = list(SAFE_TARGET_SOURCE_ALIASES.get(target_key, ()))
+    if not candidates:
+        return ''
     for candidate in candidates:
         source_column = normalized_sources.get(_norm_column(candidate))
         if source_column and _source_column_has_values(source, source_column):
