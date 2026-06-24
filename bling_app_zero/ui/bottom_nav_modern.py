@@ -14,6 +14,7 @@ RESPONSIBLE_FILE = 'bling_app_zero/ui/bottom_nav_modern.py'
 BLING_IMPORTADOR_PRODUTOS_URL = 'https://www.bling.com.br/' + 'importador.produtos.php'
 BLING_IMPORTADOR_ESTOQUE_URL = 'https://www.bling.com.br/' + 'importador.saldos.estoque.php'
 BLING_IMPORTADOR_PRECOS_MULTILOJA_URL = 'https://www.bling.com.br/' + 'importador.precos.produtos.multiloja.php'
+BLING_MODELO_PRODUTOS_URL = 'https://www.bling.com.br/downloads/produtos.zip'
 BLING_MODELO_SALDO_ESTOQUE_URL = 'https://www.bling.com.br/downloads/saldo_estoque.csv.zip'
 RESET_CONFIRM_KEY = 'sidebar_new_operation_reset_confirmation'
 
@@ -81,6 +82,7 @@ def _render_sidebar_action_buttons() -> None:
         if st.button(action.title, use_container_width=True, key=f'sidebar_system_action_{action.key}'):
             _run_sidebar_action(action.key)
     st.link_button('📥 Importar produtos no Bling', BLING_IMPORTADOR_PRODUTOS_URL, use_container_width=True)
+    st.link_button('📄 Baixar modelo oficial de produtos', BLING_MODELO_PRODUTOS_URL, use_container_width=True)
     st.link_button('📄 Baixar modelo saldo de estoque', BLING_MODELO_SALDO_ESTOQUE_URL, use_container_width=True)
     st.link_button('📦 Importar saldos de estoque no Bling', BLING_IMPORTADOR_ESTOQUE_URL, use_container_width=True)
     st.link_button('💰 Importar preços multiloja no Bling', BLING_IMPORTADOR_PRECOS_MULTILOJA_URL, use_container_width=True)
@@ -138,6 +140,7 @@ __all__ = [
     'BLING_IMPORTADOR_ESTOQUE_URL',
     'BLING_IMPORTADOR_PRECOS_MULTILOJA_URL',
     'BLING_IMPORTADOR_PRODUTOS_URL',
+    'BLING_MODELO_PRODUTOS_URL',
     'BLING_MODELO_SALDO_ESTOQUE_URL',
     'render_bottom_nav',
     'render_persistent_operation_controls',
