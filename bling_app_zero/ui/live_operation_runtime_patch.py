@@ -10,6 +10,7 @@ from bling_app_zero.ui.live_operation_panel import render_live_operation_panel, 
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/live_operation_runtime_patch.py'
 _PATCH_KEY = 'live_operation_runtime_patch_installed_v1'
+_PRICE_PATCH_KEY = 'live_operation_runtime_universal_price_calculator_installed_v2'
 
 
 def _safe_int(value: object) -> int:
@@ -63,6 +64,14 @@ def _install_universal_price_calculator() -> None:
             status='AVISO',
             details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE},
         )
+
+
+def _ensure_universal_price_calculator() -> None:
+    """Carrega a calculadora oficial mesmo em sessões antigas com o runtime já marcado como instalado."""
+    if st.session_state.get(_PRICE_PATCH_KEY):
+        return
+    _install_universal_price_calculator()
+    st.session_state[_PRICE_PATCH_KEY] = True
 
 
 def _patch_site_progress() -> None:
@@ -218,10 +227,10 @@ def _patch_universal_progress() -> None:
 
 
 def install_live_operation_runtime_patch() -> None:
+    _ensure_universal_price_calculator()
     if st.session_state.get(_PATCH_KEY):
         return
     _install_category_confidence_strict()
-    _install_universal_price_calculator()
     _patch_site_progress()
     _patch_api_progress()
     _patch_universal_progress()
