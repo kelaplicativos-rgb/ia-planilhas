@@ -14,6 +14,13 @@ def _valid_gtin(value) -> str:
     return digits if len(digits) in {8, 12, 13, 14} else ''
 
 
+def _nonzero(value) -> bool:
+    try:
+        return float(str(value or '').replace(',', '.')) != 0.0
+    except Exception:
+        return bool(str(value or '').strip())
+
+
 def is_real_product_url(value) -> bool:
     text = str(value or '').strip().lower()
     if not text.startswith(('http://', 'https://')):
@@ -80,6 +87,10 @@ def apply_blingfix_to_verified_module(verified):
         if not str(updated.get('departamento') or '').strip():
             updated['departamento'] = 'Adulto Unissex'
         updated['descricaoComplementar'] = ''
+        if not _nonzero(updated.get('volumes')):
+            updated['volumes'] = 1
+        if not _nonzero(updated.get('itensPorCaixa')):
+            updated['itensPorCaixa'] = 1
 
         gtin = ''
         for candidate in (
