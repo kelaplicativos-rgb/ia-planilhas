@@ -10,7 +10,13 @@ import pandas as pd
 
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/category_intelligence.py'
+PROVISIONAL_CATEGORY = 'Produtos não classificados'
+REVIEW_CATEGORY = 'REVISAR MANUALMENTE'
 
+# Catálogo controlado: a IA/regras podem escolher somente estes nomes.
+# Categorias amplas continuam existindo por compatibilidade, mas as regras novas
+# priorizam subcategorias técnicas para não misturar antena TV com antena Wi-Fi,
+# cabo de rede com cabo USB, energia ou áudio.
 DEFAULT_CATEGORY_CATALOG: tuple[str, ...] = (
     'Fones de ouvido',
     'Carregadores para celular',
@@ -18,6 +24,10 @@ DEFAULT_CATEGORY_CATALOG: tuple[str, ...] = (
     'Caixas de som',
     'Máquinas para corte de cabelo',
     'Cabos de rede',
+    'Cabos USB e dados',
+    'Cabos de energia',
+    'Cabos de áudio',
+    'Cabos HDMI e vídeo',
     'Capas para celulares',
     'Suportes',
     'Mouses',
@@ -28,6 +38,8 @@ DEFAULT_CATEGORY_CATALOG: tuple[str, ...] = (
     'Controles gamer',
     'Cartões de memória',
     'Projetores',
+    'Antenas para TV',
+    'Antenas Wi-Fi',
     'Antenas',
     'Assistência',
     'Game sticks',
@@ -64,6 +76,7 @@ DEFAULT_CATEGORY_CATALOG: tuple[str, ...] = (
     'TV Box e streaming',
     'Informática e peças',
     'Logística e embalagem',
+    PROVISIONAL_CATEGORY,
 )
 
 BLOCKED_GENERIC_CATEGORIES = {
@@ -75,8 +88,14 @@ BLOCKED_GENERIC_CATEGORIES = {
     'outros',
     'sem categoria',
     'sem classificacao',
-    'produtos nao classificados',
     'revisar manualmente',
+}
+
+PROVISIONAL_CATEGORY_NORMALIZED = {
+    'produtos nao classificados',
+    'produto nao classificado',
+    'nao classificados',
+    'nao classificado',
 }
 
 CATEGORY_ALIASES = {
@@ -97,6 +116,29 @@ CATEGORY_ALIASES = {
     'maquinas para corte de cabelo': 'Máquinas para corte de cabelo',
     'maquina para corte de cabelo': 'Máquinas para corte de cabelo',
     'maquina de aparar pelo': 'Máquinas para corte de cabelo',
+    'cabo rede': 'Cabos de rede',
+    'cabo de rede': 'Cabos de rede',
+    'cabos de rede': 'Cabos de rede',
+    'rj45': 'Cabos de rede',
+    'cabo usb': 'Cabos USB e dados',
+    'cabos usb': 'Cabos USB e dados',
+    'cabo tipo c': 'Cabos USB e dados',
+    'cabo type c': 'Cabos USB e dados',
+    'cabo lightning': 'Cabos USB e dados',
+    'cabo de forca': 'Cabos de energia',
+    'cabos de forca': 'Cabos de energia',
+    'cabo energia': 'Cabos de energia',
+    'cabo p2': 'Cabos de áudio',
+    'cabo p10': 'Cabos de áudio',
+    'cabo rca': 'Cabos de áudio',
+    'cabo hdmi': 'Cabos HDMI e vídeo',
+    'cabos hdmi': 'Cabos HDMI e vídeo',
+    'antena tv': 'Antenas para TV',
+    'antena digital': 'Antenas para TV',
+    'antenas digitais': 'Antenas para TV',
+    'antena wifi': 'Antenas Wi-Fi',
+    'antena wi fi': 'Antenas Wi-Fi',
+    'antenas wifi': 'Antenas Wi-Fi',
     'capas para celulares': 'Capas para celulares',
     'capas para celular': 'Capas para celulares',
     'suporte': 'Suportes',
@@ -145,7 +187,11 @@ CATEGORY_ALIASES = {
 }
 
 PRODUCT_NAME_COLUMNS = ('Descrição', 'Descricao', 'Nome', 'Nome do produto', 'Produto', 'Título', 'Titulo', 'name', 'nome')
-PRODUCT_DESCRIPTION_COLUMNS = ('Descrição Curta', 'Descricao Curta', 'Descrição complementar', 'Descricao complementar', 'Características', 'Ficha técnica', 'description', 'descricao')
+PRODUCT_DESCRIPTION_COLUMNS = (
+    'Descrição Curta', 'Descricao Curta', 'Descrição complementar', 'Descricao complementar',
+    'Descrição do Produto no Fornecedor', 'Característica', 'Características', 'Ficha técnica',
+    'Ficha tecnica', 'Informações Adicionais', 'Observações', 'description', 'descricao'
+)
 CATEGORY_COLUMNS = ('Categoria', 'Categoria do produto', 'Categoria Produto', 'Nome da categoria', 'category', 'categoria')
 HELPER_COLUMNS = ('categoria_atual_ia', 'categoria_sugerida_ia', 'acao_categoria_ia', 'confianca_categoria_ia', 'motivo_categoria_ia')
 
@@ -163,6 +209,13 @@ def normalize_text(value: object) -> str:
     text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
     text = text.lower().replace('&', ' e ').replace('/', ' ')
     replacements = {
+        'wi-fi': 'wifi',
+        'wireless': 'wifi',
+        '2.4 ghz': '2 4ghz',
+        '5 ghz': '5ghz',
+        'cat 5e': 'cat5e',
+        'cat 6': 'cat6',
+        'cat.6': 'cat6',
         'adaptaroes': 'adaptadores',
         'adptador': 'adaptador',
         'adapitador': 'adaptador',
@@ -182,7 +235,8 @@ def normalize_text(value: object) -> str:
     }
     for old, new in replacements.items():
         text = text.replace(old, new)
-    text = re.sub(r'[^a-z0-9]+', ' ', text)
+    text = re.sub(r'(?<=\d),(?=\d)', '.', text)
+    text = re.sub(r'[^a-z0-9.]+', ' ', text)
     return re.sub(r'\s+', ' ', text).strip()
 
 
@@ -242,6 +296,8 @@ def looks_like_product_title(value: object) -> bool:
     norm = normalize_text(raw)
     if not norm:
         return False
+    if norm in PROVISIONAL_CATEGORY_NORMALIZED:
+        return False
     words = norm.split()
     if len(words) >= 7:
         return True
@@ -251,12 +307,16 @@ def looks_like_product_title(value: object) -> bool:
         return True
     if re.search(r'\b[A-Z]{1,4}-\d{2,}[A-Z0-9-]*\b', raw):
         return True
-    tech_units = (r'\b\d+\s?(?:gb|mah|w|v|hz|mm|cm|pol|hd|uhd|4k)\b', r'\b(?:wifi|wi fi|bluetooth|usb|tipo c|bt|pd\d+)\b')
+    tech_units = (
+        r'\b\d+\s?(?:gb|mah|w|v|hz|mm|cm|pol|hd|uhd|4k|dbi|ghz|mbps)\b',
+        r'\b(?:wifi|bluetooth|usb|tipo c|type c|bt|pd\d+|rj45|cat5e|cat6)\b',
+    )
     if len(words) >= 4 and _has(norm, tech_units):
         return True
     product_nouns = (
         r'\bfone\b', r'\bheadset\b', r'\bmicrofone\b', r'\bcamera\b', r'\btomada\b',
         r'\bfilmadora\b', r'\bmaquina\b', r'\bluminaria\b', r'\bfita\b', r'\bsensor\b',
+        r'\bantena\b', r'\bcabo\b',
     )
     if len(words) >= 5 and _has(norm, product_nouns):
         return True
@@ -268,6 +328,8 @@ def canonicalize_category(value: object, catalog: Sequence[str] = DEFAULT_CATEGO
     norm = normalize_text(raw)
     if not norm:
         return '', False, 'categoria vazia'
+    if norm in PROVISIONAL_CATEGORY_NORMALIZED:
+        return PROVISIONAL_CATEGORY, PROVISIONAL_CATEGORY != raw, 'categoria provisória controlada'
     if norm in BLOCKED_GENERIC_CATEGORIES:
         return '', True, f'categoria genérica/removida: {raw}'
     alias = CATEGORY_ALIASES.get(norm)
@@ -286,15 +348,85 @@ def canonicalize_category(value: object, catalog: Sequence[str] = DEFAULT_CATEGO
     return '', True, f'categoria fora do catálogo seguro: {raw[:80]}'
 
 
+def _score(text: str, positives: Sequence[str], negatives: Sequence[str]) -> tuple[int, list[str], list[str]]:
+    hits = [label for label, pattern in positives if re.search(pattern, text)]
+    blocks = [label for label, pattern in negatives if re.search(pattern, text)]
+    return len(hits) - (2 * len(blocks)), hits, blocks
+
+
+def _classify_specialized(text: str) -> tuple[str, float, str]:
+    """Classificação técnica antes das categorias genéricas.
+
+    A regra intencional aqui é: termos amplos como "antena" e "cabo" não podem
+    decidir categoria sozinhos. A decisão vem de evidências técnicas e de
+    palavras negativas que impedem confusão entre famílias parecidas.
+    """
+    specialized_rules: tuple[tuple[str, float, str, tuple[tuple[str, str], ...], tuple[tuple[str, str], ...]], ...] = (
+        (
+            'Antenas Wi-Fi', 0.96, 'antena Wi-Fi/rede',
+            (('antena', r'\bantena\b'), ('wifi', r'\bwifi\b'), ('roteador', r'\broteador\b'), ('dbi', r'\b\d+\s?dbi\b'), ('sma', r'\b(?:rp\s?)?sma\b'), ('ghz', r'\b(?:2\.4|2 4|5)\s?ghz\b')),
+            (('tv', r'\btv\b'), ('televisao', r'\btelevisao\b'), ('uhf/vhf', r'\b(?:uhf|vhf|hdtv)\b')),
+        ),
+        (
+            'Antenas para TV', 0.95, 'antena TV/digital',
+            (('antena', r'\bantena\b'), ('tv', r'\btv\b'), ('televisao', r'\btelevisao\b'), ('digital/hdtv', r'\b(?:digital|hdtv|uhf|vhf)\b'), ('interna/externa', r'\b(?:interna|externa)\b')),
+            (('wifi', r'\bwifi\b'), ('roteador', r'\broteador\b'), ('sma', r'\b(?:rp\s?)?sma\b'), ('ghz', r'\b(?:2\.4|2 4|5)\s?ghz\b')),
+        ),
+        (
+            'Cabos de rede', 0.97, 'cabo de rede/RJ45/Ethernet',
+            (('cabo', r'\bcabo(?:s)?\b'), ('rj45', r'\brj45\b'), ('cat5e/cat6', r'\bcat\s?(?:5e|6|6a|7)\b'), ('ethernet/lan', r'\b(?:ethernet|lan|patch cord|utp)\b'), ('rede', r'\brede\b')),
+            (('usb', r'\busb\b'), ('audio', r'\b(?:p2|p10|rca|xlr|audio|auxiliar)\b'), ('energia', r'\b(?:forca|energia|tomada|tripolar|bipolar)\b')),
+        ),
+        (
+            'Cabos USB e dados', 0.96, 'cabo USB/dados/celular',
+            (('cabo', r'\bcabo(?:s)?\b'), ('usb', r'\busb\b'), ('tipo c', r'\b(?:tipo c|type c|usb c|usb-c)\b'), ('micro usb', r'\bmicro usb\b'), ('lightning', r'\blightning\b'), ('dados/celular', r'\b(?:dados|celular|iphone|android)\b')),
+            (('rj45', r'\brj45\b'), ('cat', r'\bcat\s?(?:5e|6|6a|7)\b'), ('audio', r'\b(?:p2|p10|rca|xlr|audio|auxiliar)\b'), ('energia', r'\b(?:forca|energia|tripolar|bipolar)\b')),
+        ),
+        (
+            'Cabos de energia', 0.95, 'cabo de energia/força',
+            (('cabo', r'\bcabo(?:s)?\b'), ('forca/energia', r'\b(?:forca|energia|alimentacao|ac)\b'), ('tomada', r'\btomada\b'), ('tripolar/bipolar', r'\b(?:tripolar|bipolar|10a|20a)\b')),
+            (('usb', r'\busb\b'), ('rj45', r'\brj45\b'), ('audio', r'\b(?:p2|p10|rca|xlr|audio|auxiliar)\b'), ('hdmi', r'\bhdmi\b')),
+        ),
+        (
+            'Cabos de áudio', 0.95, 'cabo de áudio',
+            (('cabo', r'\bcabo(?:s)?\b'), ('p2/p10', r'\b(?:p2|p10)\b'), ('rca/xlr', r'\b(?:rca|xlr)\b'), ('audio/auxiliar', r'\b(?:audio|auxiliar|microfone|estereo|som)\b')),
+            (('rj45', r'\brj45\b'), ('cat', r'\bcat\s?(?:5e|6|6a|7)\b'), ('usb c', r'\b(?:usb c|usb-c|tipo c|type c)\b'), ('energia', r'\b(?:forca|energia|tripolar|bipolar)\b')),
+        ),
+        (
+            'Cabos HDMI e vídeo', 0.94, 'cabo de vídeo/HDMI',
+            (('cabo', r'\bcabo(?:s)?\b'), ('hdmi', r'\bhdmi\b'), ('vga/displayport', r'\b(?:vga|displayport|dp)\b'), ('video/av', r'\b(?:video|av)\b')),
+            (('rj45', r'\brj45\b'), ('usb dados', r'\b(?:micro usb|lightning|tipo c|type c)\b'), ('audio puro', r'\b(?:p2|p10|xlr)\b')),
+        ),
+    )
+    best: tuple[str, float, str, int, list[str], list[str]] = ('', 0.0, '', 0, [], [])
+    for category, confidence, reason, positives, negatives in specialized_rules:
+        raw_score, hits, blocks = _score(text, positives, negatives)
+        # Exige pelo menos a família principal + um sinal técnico. Ex.: "antena"
+        # sozinha não basta; "antena wifi" ou "antena digital tv" basta.
+        if raw_score >= 2 and len(hits) >= 2:
+            if raw_score > best[3]:
+                best = (category, confidence, reason, raw_score, hits, blocks)
+    if best[0]:
+        evidence = ', '.join(best[4][:5])
+        blocked = f"; negativos ausentes/ignorados: {', '.join(best[5][:3])}" if best[5] else ''
+        confidence = max(0.80, min(best[1], best[1] - (0.04 * len(best[5]))))
+        return best[0], confidence, f'{best[2]} por evidências: {evidence}{blocked}'
+    return '', 0.0, 'sem regra técnica especializada'
+
+
 def _classify_text(text: str) -> tuple[str, float, str]:
+    specialized = _classify_specialized(text)
+    if specialized[0]:
+        return specialized
+
     if _has(text, (r'\bcontrole\b', r'\bjoystick\b')):
         if _has(text, (r'\btv\b', r'\btelevisao\b', r'\bphilco\b', r'\bsamsung\b', r'\baoc\b', r'\breceptor\b', r'\buniversal\b', r'\bremoto\b')):
             return 'Controles para televisão', 0.94, 'controle remoto TV/box'
         return 'Controles gamer', 0.88, 'controle para jogo'
     if _has(text, (r'\bcabo de rede\b', r'\bpatch cord\b', r'\brj45\b', r'\butp\b')):
         return 'Cabos de rede', 0.95, 'cabo de rede'
-    if _has(text, (r'\bcabo(?:s)?\b', r'\blightning\b')) and _has(text, (r'\btipo c\b', r'\biphone\b', r'\busb\b', r'\blightning\b')):
-        return 'Cabos', 0.94, 'cabo de celular/dados'
+    if _has(text, (r'\bcabo(?:s)?\b', r'\blightning\b')) and _has(text, (r'\btipo c\b', r'\btype c\b', r'\biphone\b', r'\busb\b', r'\blightning\b')):
+        return 'Cabos USB e dados', 0.94, 'cabo de celular/dados'
     if _has(text, (r'\bcarregador(?:es)?\b', r'\btomada usb\b', r'\btomada veicular\b', r'\bcarregamento\b')):
         return 'Carregadores para celular', 0.91, 'carregador/tomada de celular'
     if _has(text, (r'\bporteiro\b', r'\bvideo porteiro\b', r'\bporteiro eletronico\b')):
@@ -316,7 +448,6 @@ def _classify_text(text: str) -> tuple[str, float, str]:
         ('Câmeras', 0.90, 'câmera/webcam', (r'\bcamera\b', r'\bwebcam\b', r'\bcam\b')),
         ('Celulares', 0.90, 'celular/smartphone', (r'\bcelular\b', r'\bsmartphone\b', r'\btelefone celular\b')),
         ('Smartwatches', 0.90, 'relógio inteligente', (r'\bsmartwatch\b', r'\bsmart watch\b', r'\brelogio inteligente\b')),
-        ('Antenas', 0.88, 'antena', (r'\bantena\b',)),
         ('Chips', 0.88, 'chip/sim card', (r'\bchip\b', r'\bsim card\b')),
         ('Cartões de memória', 0.92, 'cartão de memória', (r'\bcartao de memoria\b', r'\bmemory card\b', r'\bmicrosd\b', r'\bsd card\b')),
         ('Pen drives', 0.92, 'pen drive', (r'\bpen drive\b', r'\bpendrive\b', r'\bflash drive\b')),
@@ -333,6 +464,8 @@ def _classify_text(text: str) -> tuple[str, float, str]:
         ('Adaptadores', 0.84, 'adaptador genérico', (r'\badaptador\b', r'\badapter\b')),
         ('Suportes', 0.82, 'suporte/base', (r'\bsuporte\b', r'\bholder\b', r'\bbase para\b')),
         ('Assistência', 0.78, 'serviço/reparo', (r'\btroca de\b', r'\bservico\b', r'\breparo\b', r'\bconserto\b')),
+        ('Antenas', 0.76, 'antena sem subtipo técnico suficiente', (r'\bantena\b',)),
+        ('Cabos', 0.74, 'cabo sem subtipo técnico suficiente', (r'\bcabo(?:s)?\b',)),
     )
     for category, confidence, reason, patterns in rules:
         if _has(text, patterns):
@@ -340,7 +473,7 @@ def _classify_text(text: str) -> tuple[str, float, str]:
     return '', 0.0, 'sem regra segura'
 
 
-def _row_text(row: pd.Series, columns: Sequence[str]) -> str:
+def _row_text(row: pd.Series, columns: Sequence[str | None]) -> str:
     parts = []
     for col in columns:
         if col and col in row.index and _is_filled(row[col]):
@@ -350,8 +483,15 @@ def _row_text(row: pd.Series, columns: Sequence[str]) -> str:
 
 def suggest_category_for_product(name: object, *, description: object = '', current_category: object = '') -> CategorySuggestion:
     canonical, changed, reason = canonicalize_category(current_category)
-    if canonical:
+    # Categoria provisória é permitida para envio, mas não deve impedir a tentativa
+    # de encontrar uma categoria real em uma nova operação.
+    if canonical and canonical != PROVISIONAL_CATEGORY:
         return CategorySuggestion(canonical, 1.0 if not changed else 0.96, reason, 'CORRIGIR' if changed else 'MANTER')
+
+    combined_text = normalize_text(f'{name or ""} {description or ""}')
+    category, confidence, why = _classify_specialized(combined_text)
+    if category:
+        return CategorySuggestion(category, confidence, f'{why} pelo título + descrição completa', 'CRIAR/VINCULAR')
 
     name_text = normalize_text(name)
     category, confidence, why = _classify_text(name_text)
@@ -363,11 +503,10 @@ def suggest_category_for_product(name: object, *, description: object = '', curr
     if category:
         return CategorySuggestion(category, max(0.50, confidence - 0.06), f'{why} pela descrição complementar', 'CRIAR/VINCULAR')
 
-    all_text = normalize_text(f'{name or ""} {description or ""}')
-    category, confidence, why = _classify_text(all_text)
+    category, confidence, why = _classify_text(combined_text)
     if category:
         return CategorySuggestion(category, max(0.50, confidence - 0.10), f'{why} por fallback controlado', 'CRIAR/VINCULAR')
-    return CategorySuggestion('REVISAR MANUALMENTE', 0.0, 'não foi possível inferir categoria segura', 'REVISAR')
+    return CategorySuggestion(REVIEW_CATEGORY, 0.0, 'não foi possível inferir categoria segura', 'REVISAR')
 
 
 def suggest_category_for_row(row: pd.Series, *, name_col: str | None, desc_col: str | None) -> CategorySuggestion:
@@ -380,13 +519,20 @@ def suggest_category_for_row(row: pd.Series, *, name_col: str | None, desc_col: 
     name_value = row.get(name_col, '') if name_col and name_col in row.index else ''
     desc_value = row.get(desc_col, '') if desc_col and desc_col in row.index else ''
     suggestion = suggest_category_for_product(name_value, description=desc_value, current_category=current)
-    if suggestion.category != 'REVISAR MANUALMENTE':
+    if suggestion.category != REVIEW_CATEGORY:
         return suggestion
 
-    all_text = _row_text(row, [name_col, desc_col, 'Descrição', 'Descricao', 'Nome', 'Produto', 'Título', 'Titulo'])
+    all_text = _row_text(
+        row,
+        [
+            name_col, desc_col, 'Descrição', 'Descricao', 'Nome', 'Produto', 'Título', 'Titulo',
+            'Descrição Curta', 'Descrição do Produto no Fornecedor', 'Descrição Complementar',
+            'Informações Adicionais', 'Observações', 'Link Externo',
+        ],
+    )
     category, confidence, why = _classify_text(all_text)
     if category:
-        return CategorySuggestion(category, max(0.50, confidence - 0.10), f'{why} por fallback controlado', 'CRIAR/VINCULAR')
+        return CategorySuggestion(category, max(0.50, confidence - 0.10), f'{why} por leitura ampla da linha', 'CRIAR/VINCULAR')
     return suggestion
 
 
@@ -397,12 +543,12 @@ def classify_dataframe(df: pd.DataFrame, *, category_catalog: Sequence[str] = DE
     suggestions: list[CategorySuggestion] = []
     for _, row in result.iterrows():
         suggestion = suggest_category_for_row(row, name_col=name_col, desc_col=desc_col)
-        if suggestion.category not in {'', 'REVISAR MANUALMENTE'}:
+        if suggestion.category not in {'', REVIEW_CATEGORY}:
             canonical, changed, reason = canonicalize_category(suggestion.category, category_catalog)
             if canonical:
                 suggestion = CategorySuggestion(canonical, min(1.0, suggestion.confidence), reason if changed else suggestion.reason, suggestion.action)
             else:
-                suggestion = CategorySuggestion('REVISAR MANUALMENTE', 0.0, reason, 'REVISAR')
+                suggestion = CategorySuggestion(REVIEW_CATEGORY, 0.0, reason, 'REVISAR')
         suggestions.append(suggestion)
 
     result['categoria_atual_ia'] = result[category_col].astype(str)
@@ -421,7 +567,13 @@ def classify_dataframe(df: pd.DataFrame, *, category_catalog: Sequence[str] = DE
     return result, stats
 
 
-def apply_category_suggestions(df: pd.DataFrame, *, confidence_min: float = 0.80, keep_helper_columns: bool = False) -> tuple[pd.DataFrame, int]:
+def apply_category_suggestions(
+    df: pd.DataFrame,
+    *,
+    confidence_min: float = 0.80,
+    keep_helper_columns: bool = False,
+    fallback_unclassified: bool = False,
+) -> tuple[pd.DataFrame, int]:
     result = df.copy()
     result, category_col = ensure_category_column(result)
     if 'categoria_sugerida_ia' not in result.columns:
@@ -432,10 +584,16 @@ def apply_category_suggestions(df: pd.DataFrame, *, confidence_min: float = 0.80
     for idx, row in result.iterrows():
         suggestion = str(row.get('categoria_sugerida_ia', '')).strip()
         confidence = float(row.get('confianca_categoria_ia', 0) or 0)
-        if suggestion and suggestion != 'REVISAR MANUALMENTE' and confidence >= confidence_min:
-            if str(result.at[idx, category_col]).strip() != suggestion:
+        current = str(result.at[idx, category_col]).strip()
+        current_norm = normalize_text(current)
+        current_is_empty_or_provisional = not current or current_norm in PROVISIONAL_CATEGORY_NORMALIZED or current_norm in BLOCKED_GENERIC_CATEGORIES
+        if suggestion and suggestion != REVIEW_CATEGORY and confidence >= confidence_min:
+            if current != suggestion:
                 result.at[idx, category_col] = suggestion
                 applied += 1
+        elif fallback_unclassified and current_is_empty_or_provisional:
+            result.at[idx, category_col] = PROVISIONAL_CATEGORY
+            applied += 1
     if not keep_helper_columns:
         result = result.drop(columns=[col for col in HELPER_COLUMNS if col in result.columns], errors='ignore')
     return result, applied
@@ -443,6 +601,8 @@ def apply_category_suggestions(df: pd.DataFrame, *, confidence_min: float = 0.80
 
 __all__ = [
     'DEFAULT_CATEGORY_CATALOG',
+    'PROVISIONAL_CATEGORY',
+    'REVIEW_CATEGORY',
     'CategorySuggestion',
     'apply_category_suggestions',
     'canonicalize_category',
