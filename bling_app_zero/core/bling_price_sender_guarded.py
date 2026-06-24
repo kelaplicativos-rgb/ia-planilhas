@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 import pandas as pd
+import requests
 
 from bling_app_zero.core import bling_direct_sender as raw_sender
 from bling_app_zero.core.audit import add_audit_event
@@ -10,6 +11,8 @@ from bling_app_zero.core.bling_direct_sender import DirectSendResult
 from bling_app_zero.core.operation_contract import OP_ATUALIZACAO_PRECO
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/bling_price_sender_guarded.py'
+CHANNEL_ID_COLUMN = 'Bling canal venda id'
+DEFAULT_CHANNEL_LOOKUP_PATHS = ('/lojas', '/lojas/vendas', '/canais-venda', '/canaisVenda', '/marketplaces')
 
 
 def _store_price_values(price_value: int | float, field: str) -> dict[str, Any]:
@@ -56,21 +59,119 @@ def _product_store_price_payloads(product_store_id: str, product_id: str, channe
     return raw_sender._dedupe_price_attempts(attempts)
 
 
+def _channel_lookup_paths() -> tuple[str, ...]:
+    configured = raw_sender._secret('channel_lookup_paths', '') or raw_sender._secret('store_lookup_paths', '')
+    if configured:
+        paths = [part.strip() for part in configured.replace('\n', ';').replace(',', ';').split(';') if part.strip()]
+        if paths:
+            return tuple(paths)
+    return DEFAULT_CHANNEL_LOOKUP_PATHS
+
+
+def _item_channel_ids(item: dict[str, Any]) -> list[str]:
+    return raw_sender._unique_non_empty([
+        item.get('id'), item.get('idLoja'), item.get('idLojaVirtual'), item.get('lojaId'), item.get('idCanalVenda'), item.get('idMarketplace'),
+        raw_sender._nested(item, 'loja', 'id'), raw_sender._nested(item, 'lojaVirtual', 'id'), raw_sender._nested(item, 'canalVenda', 'id'), raw_sender._nested(item, 'marketplace', 'id'),
+    ])
+
+
+def _item_channel_names(item: dict[str, Any]) -> list[str]:
+    values = [
+        item.get('nome'), item.get('descricao'), item.get('descrição'), item.get('nomeLoja'), item.get('nomeLojaVirtual'),
+        item.get('apelido'), item.get('canal'), item.get('marketplace'), item.get('tipoIntegracao'),
+        raw_sender._nested(item, 'loja', 'nome'), raw_sender._nested(item, 'lojaVirtual', 'nome'), raw_sender._nested(item, 'canalVenda', 'nome'), raw_sender._nested(item, 'marketplace', 'nome'),
+    ]
+    out: list[str] = []
+    for value in values:
+        text = str(value or '').strip()
+        if text and text not in out:
+            out.append(text)
+    return out
+
+
+def _name_matches(wanted: str, names: list[str]) -> bool:
+    target = raw_sender._norm(wanted)
+    if not target:
+        return False
+    for name in names:
+        current = raw_sender._norm(name)
+        if current and (current == target or current in target or target in current):
+            return True
+    return False
+
+
+def _resolve_channel_id_by_name(token: dict[str, Any], channel_name: str) -> str:
+    channel_name = str(channel_name or '').strip()
+    if not channel_name:
+        return ''
+    cache = raw_sender._session_cache('bling_direct_price_channel_name_cache_v1')
+    cache_key = raw_sender._norm(channel_name)
+    if cache_key in cache:
+        return str(cache.get(cache_key) or '')
+
+    attempts: list[dict[str, Any]] = []
+    params_variants = ({}, {'nome': channel_name}, {'pesquisa': channel_name}, {'criterio': channel_name})
+    for path in _channel_lookup_paths():
+        for params in params_variants:
+            try:
+                response = requests.get(raw_sender._url(path), headers=raw_sender._headers(token), params=params or None, timeout=raw_sender.PRICE_LOOKUP_TIMEOUT)
+                attempts.append({'method': 'GET', 'path': path, 'params': params, 'status': int(response.status_code), 'response_preview': str(response.text or '')[:220]})
+                if response.status_code in {401, 403}:
+                    break
+                if response.status_code >= 400:
+                    continue
+                for item in raw_sender._extract_items(raw_sender._safe_json(response)):
+                    names = _item_channel_names(item)
+                    ids = _item_channel_ids(item)
+                    if ids and _name_matches(channel_name, names):
+                        cache[cache_key] = ids[0]
+                        add_audit_event(
+                            'bling_price_channel_id_resolved_by_name',
+                            area='BLING_ENVIO',
+                            status='OK',
+                            details={'channel_name': channel_name, 'channel_id': ids[0], 'path': path, 'names': names[:8], 'responsible_file': RESPONSIBLE_FILE},
+                        )
+                        return ids[0]
+            except Exception as exc:
+                attempts.append({'method': 'GET', 'path': path, 'params': params, 'status': 'EXCEPTION', 'error': str(exc)[:180]})
+                break
+    cache[cache_key] = ''
+    add_audit_event(
+        'bling_price_channel_id_not_resolved_by_name',
+        area='BLING_ENVIO',
+        status='AVISO',
+        details={'channel_name': channel_name, 'paths': list(_channel_lookup_paths()), 'attempts': attempts[-8:], 'responsible_file': RESPONSIBLE_FILE},
+    )
+    return ''
+
+
+def _ensure_channel_id_column(rows: pd.DataFrame, mapping: dict[str, str]) -> str:
+    column = mapping.get('channel_id')
+    if column and column in rows.columns:
+        return column
+    if CHANNEL_ID_COLUMN not in rows.columns:
+        rows[CHANNEL_ID_COLUMN] = ''
+    mapping['channel_id'] = CHANNEL_ID_COLUMN
+    return CHANNEL_ID_COLUMN
+
+
 def _guarded_price_preview_payloads(df: pd.DataFrame, *, limit: int = 5) -> list[dict[str, Any]]:
     mapping = raw_sender._column_map(df.columns)
     previews: list[dict[str, Any]] = []
     for _index, row in df.fillna('').head(limit).iterrows():
         price = raw_sender._number_value(raw_sender._value(row, mapping, 'preco'))
         channel_id = raw_sender._id_text(raw_sender._value(row, mapping, 'channel_id'))
-        target = raw_sender._value(row, mapping, 'price_target') or ('Canal de venda' if channel_id else 'Preço geral')
+        channel_name = raw_sender._value(row, mapping, 'channel_name')
+        target = raw_sender._value(row, mapping, 'price_target') or ('Canal de venda' if channel_id or channel_name else 'Preço geral')
         if price is None:
             previews.append({'payload': {}, 'status': 'IGNORADO', 'motivo': 'Preço ausente ou inválido.'})
             continue
         price_value = raw_sender._api_number(price)
-        if channel_id:
+        if channel_id or channel_name:
             payload = {'preco': price_value, 'precoPromocional': price_value}
             endpoint = raw_sender.PRODUCT_STORE_UPDATE_PATH_TEMPLATE
-            reason = f'Destino: {target} | Canal selecionado: atualiza Preço e Preço promocional do anúncio da loja.'
+            name_note = f' | Loja/canal por nome: {channel_name}' if channel_name and not channel_id else ''
+            reason = f'Destino: {target} | Canal selecionado: atualiza Preço e Preço promocional do anúncio da loja.{name_note}'
         else:
             field = raw_sender._price_field_from_target(target)
             payload = {field: price_value}
@@ -92,6 +193,8 @@ def _install_price_payload_guard() -> None:
             'legacy_price_paths_blocked': True,
             'store_price_fields': ['preco', 'precoPromocional'],
             'preview_guarded': True,
+            'auto_channel_lookup_by_name': True,
+            'channel_lookup_paths': list(_channel_lookup_paths()),
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -128,7 +231,7 @@ def _safe_tuple_attr(obj: object, name: str) -> tuple[Any, ...]:
 
 
 def _price_channel_separation(df: pd.DataFrame, *, limit: int | None = None) -> tuple[pd.DataFrame, list[int], list[str], dict[str, Any]]:
-    rows = df.fillna('').head(limit) if limit else df.fillna('')
+    rows = (df.fillna('').head(limit) if limit else df.fillna('')).copy()
     mapping = raw_sender._column_map(rows.columns)
     token, _mode = raw_sender._token()
     if not isinstance(token, dict) or not token.get('access_token'):
@@ -138,12 +241,30 @@ def _price_channel_separation(df: pd.DataFrame, *, limit: int | None = None) -> 
     missing_positions: list[int] = []
     errors: list[str] = []
     missing_details: list[dict[str, str]] = []
+    resolved_channels = 0
 
-    for position, (_index, row) in enumerate(rows.iterrows()):
+    for position, (index, row) in enumerate(rows.iterrows()):
         channel_id = raw_sender._id_text(raw_sender._value(row, mapping, 'channel_id'))
+        channel_name = raw_sender._value(row, mapping, 'channel_name')
         target = raw_sender._value(row, mapping, 'price_target')
-        if not channel_id and 'canal' not in raw_sender._norm(target):
+        wants_channel = bool(channel_id or channel_name or 'canal' in raw_sender._norm(target) or 'loja' in raw_sender._norm(target) or 'marketplace' in raw_sender._norm(target))
+
+        if wants_channel and not channel_id and channel_name:
+            channel_id = _resolve_channel_id_by_name(token, channel_name)
+            if channel_id:
+                channel_column = _ensure_channel_id_column(rows, mapping)
+                rows.at[index, channel_column] = channel_id
+                resolved_channels += 1
+                row = rows.loc[index]
+
+        if not wants_channel:
             send_positions.append(position)
+            continue
+        if not channel_id:
+            missing_positions.append(position)
+            label = f' ({channel_name})' if channel_name else ''
+            errors.append(f'Linha {position + 1}: canal/loja{label} não encontrado no Bling para atualização multiloja.')
+            missing_details.append({'line': str(position + 1), 'product_id': '', 'channel_id': '', 'channel_name': channel_name, 'reason': 'loja_nao_encontrada_por_nome'})
             continue
 
         product_id = ''
@@ -154,18 +275,16 @@ def _price_channel_separation(df: pd.DataFrame, *, limit: int | None = None) -> 
         if not product_id:
             missing_positions.append(position)
             errors.append(f'Linha {position + 1}: produto não encontrado no Bling por ID/Código/SKU/GTIN.')
-            missing_details.append({'line': str(position + 1), 'product_id': '', 'channel_id': channel_id, 'reason': 'produto_nao_encontrado'})
+            missing_details.append({'line': str(position + 1), 'product_id': '', 'channel_id': channel_id, 'channel_name': channel_name, 'reason': 'produto_nao_encontrado'})
             continue
 
-        if channel_id:
-            product_store_id = raw_sender._resolve_product_store_link_id(token, product_id, channel_id, row, mapping)
-            if not product_store_id:
-                channel_name = raw_sender._value(row, mapping, 'channel_name')
-                label = f' ({channel_name})' if channel_name else ''
-                missing_positions.append(position)
-                errors.append(f'Linha {position + 1}: produto ID {product_id} não encontrado no canal {channel_id}{label}.')
-                missing_details.append({'line': str(position + 1), 'product_id': product_id, 'channel_id': channel_id, 'channel_name': channel_name, 'reason': 'produto_sem_vinculo_no_canal'})
-                continue
+        product_store_id = raw_sender._resolve_product_store_link_id(token, product_id, channel_id, row, mapping)
+        if not product_store_id:
+            label = f' ({channel_name})' if channel_name else ''
+            missing_positions.append(position)
+            errors.append(f'Linha {position + 1}: produto ID {product_id} não encontrado no canal {channel_id}{label}.')
+            missing_details.append({'line': str(position + 1), 'product_id': product_id, 'channel_id': channel_id, 'channel_name': channel_name, 'reason': 'produto_sem_vinculo_no_canal'})
+            continue
 
         send_positions.append(position)
 
@@ -175,6 +294,7 @@ def _price_channel_separation(df: pd.DataFrame, *, limit: int | None = None) -> 
         'total_rows': len(rows),
         'sendable_rows': len(send_positions),
         'missing_channel_rows': len(missing_positions),
+        'resolved_channels_by_name': resolved_channels,
         'send_positions': send_positions,
         'missing_details': missing_details[:30],
     }
