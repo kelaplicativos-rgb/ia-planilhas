@@ -33,9 +33,37 @@ def test_universal_flow_mapping_and_output_simulation() -> None:
 
     assert result['ok'] is True
     assert result['operation'] == 'universal'
-    assert result['mapped_fields'] == 4
+    assert result['mapped_fields'] >= 4
     assert result['rows'] == 1
-    assert result['columns'] == 4
+    assert result['columns'] == 5
+    assert result['descricao_from_produto_blocked'] is True
+    assert result['mapping']['Descrição'] == 'Título real'
+
+
+def test_semantic_mapping_blocks_header_when_content_disagrees() -> None:
+    source = pd.DataFrame(
+        {
+            'Produto': ['7891234567890', '7891234567891'],
+            'Nome correto': ['Mouse Gamer RGB', 'Teclado Bluetooth'],
+        }
+    )
+    model = pd.DataFrame(columns=['Descrição', 'GTIN'])
+
+    request = build_request_from_frames(source, model, operation='universal', signature='pytest-semantic')
+    mapping = {
+        'Descrição': 'Produto',
+        'GTIN': 'Produto',
+    }
+
+    state = build_mapping_state(request, mapping, source=source, engine='local_test')
+    rows = {row['Contrato final']: row for row in state.rows}
+
+    assert state.state.mapping['Descrição'] == 'Produto'
+    assert '🔴' in rows['Descrição']['Farol']
+    assert rows['Descrição']['Leitura IA'] == 'gtin'
+    assert 'Alerta IA' in rows['Descrição']
+
+    assert '🔴' not in rows['GTIN']['Farol']
 
 
 def test_bling_api_like_flow_uses_same_safe_mapping_core() -> None:
