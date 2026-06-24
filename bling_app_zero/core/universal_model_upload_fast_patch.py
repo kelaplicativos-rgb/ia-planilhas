@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.abc
 import importlib.machinery
 import sys
@@ -8,9 +9,10 @@ from typing import Any
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/universal_model_upload_fast_patch.py'
 TARGET_MODULE = 'bling_app_zero.ui.universal_flow'
-PATCH_VERSION = 'fast_contract_first_20260623_v1'
+PATCH_VERSION = 'fast_contract_first_20260624_light_v1'
 MODEL_FILE_NAME_KEY = 'mapeiaai_universal_model_file_name'
 MODEL_FILE_BYTES_KEY = 'mapeiaai_universal_model_file_bytes'
+MODEL_LAST_READ_SIGNATURE_KEY = 'mapeiaai_universal_model_fast_patch_last_read_signature_v1'
 
 
 def _safe(value: Any, limit: int = 500) -> str:
@@ -18,17 +20,33 @@ def _safe(value: Any, limit: int = 500) -> str:
     return text[:limit] + '...' if len(text) > limit else text
 
 
-def _audit(event: str, **details: Any) -> None:
+def _sha16(data: bytes) -> str:
+    return hashlib.sha256(bytes(data or b'')).hexdigest()[:16]
+
+
+def _state_from_module(module: ModuleType | None = None) -> Any | None:
+    st = getattr(module, 'st', None) if module is not None else sys.modules.get('streamlit')
+    if st is None:
+        return None
+    try:
+        return st.session_state
+    except Exception:
+        return None
+
+
+def _audit(event: str, *, module: ModuleType | None = None, important: bool = False, **details: Any) -> None:
+    """Audita só o necessário.
+
+    O diagnóstico de boot já foi desligado. Este patch continua funcional, mas
+    evita gravar eventos repetidos a cada rerun/leitura normal de arquivo.
+    """
     status = str(details.pop('status', 'OK'))
+    if not important and status == 'OK':
+        return
     payload = {'responsible_file': RESPONSIBLE_FILE, 'patch_version': PATCH_VERSION, **details}
     try:
         from bling_app_zero.core.audit import add_audit_event
         add_audit_event(event, area='MODELO', status=status, details=payload)
-    except Exception:
-        pass
-    try:
-        from bling_app_zero.core.diagnostico_boot import boot_event
-        boot_event(event, area='MODELO', status=status, details=payload)
     except Exception:
         pass
 
@@ -53,8 +71,22 @@ def _read_contract_first(module: ModuleType, name: str, data: bytes) -> Any | No
         if _valid_dataframe(module, df):
             return df
     except Exception as exc:
-        _audit('universal_model_contract_first_failed', file_name=name, error_type=type(exc).__name__, error=_safe(exc, 300), status='AVISO')
+        _audit('universal_model_contract_first_failed', module=module, important=True, file_name=name, error_type=type(exc).__name__, error=_safe(exc, 300), status='AVISO')
     return None
+
+
+def _should_log_read(module: ModuleType, signature: str) -> bool:
+    state = _state_from_module(module)
+    if state is None:
+        return False
+    try:
+        previous = str(state.get(MODEL_LAST_READ_SIGNATURE_KEY) or '')
+        if previous == signature:
+            return False
+        state[MODEL_LAST_READ_SIGNATURE_KEY] = signature
+        return True
+    except Exception:
+        return False
 
 
 def _patch_module(module: ModuleType) -> None:
@@ -73,32 +105,37 @@ def _patch_module(module: ModuleType) -> None:
             data = bytes(uploaded_file.getvalue() or b'')
         except Exception:
             data = b''
+        signature = f'{name}:{len(data)}:{_sha16(data)}'
+        should_log = _should_log_read(module, signature)
         if st is not None and name and data:
             try:
                 st.session_state[MODEL_FILE_NAME_KEY] = name
                 st.session_state[MODEL_FILE_BYTES_KEY] = data
             except Exception:
                 pass
-        _audit('universal_model_contract_first_read_start', file_name=name, byte_size=len(data))
+        if should_log:
+            _audit('universal_model_contract_first_read_start', module=module, important=True, file_name=name, byte_size=len(data))
         df = _read_contract_first(module, name, data)
         if _valid_dataframe(module, df):
-            _audit('universal_model_contract_first_read_ok', file_name=name, columns=int(len(df.columns)))
+            if should_log:
+                _audit('universal_model_contract_first_read_ok', module=module, important=True, file_name=name, columns=int(len(df.columns)))
             return df.fillna('')
-        _audit('universal_model_contract_first_fallback_original', file_name=name, status='AVISO')
+        _audit('universal_model_contract_first_fallback_original', module=module, important=should_log, file_name=name, status='AVISO')
         try:
             df = original(uploaded_file)
         except Exception as exc:
-            _audit('universal_model_contract_first_original_failed', file_name=name, error_type=type(exc).__name__, error=_safe(exc, 400), status='ERRO')
+            _audit('universal_model_contract_first_original_failed', module=module, important=True, file_name=name, error_type=type(exc).__name__, error=_safe(exc, 400), status='ERRO')
             return None
         if _valid_dataframe(module, df):
-            _audit('universal_model_contract_first_original_ok', file_name=name, columns=int(len(df.columns)))
+            if should_log:
+                _audit('universal_model_contract_first_original_ok', module=module, important=True, file_name=name, columns=int(len(df.columns)))
         else:
-            _audit('universal_model_contract_first_no_columns', file_name=name, status='ERRO')
+            _audit('universal_model_contract_first_no_columns', module=module, important=True, file_name=name, status='ERRO')
         return df
 
     module._read_model_upload = read_model_upload_contract_first
     module._mapeiaai_universal_model_fast_patch_installed = True
-    _audit('universal_model_contract_first_patch_installed', module=getattr(module, '__name__', TARGET_MODULE))
+    _audit('universal_model_contract_first_patch_installed', module=module, important=False, target=getattr(module, '__name__', TARGET_MODULE))
 
 
 class _Loader(importlib.abc.Loader):
@@ -130,12 +167,16 @@ class _Finder(importlib.abc.MetaPathFinder):
 
 
 def install_universal_model_upload_fast_patch() -> None:
+    installed_now = False
     loaded = sys.modules.get(TARGET_MODULE)
-    if loaded is not None:
+    if loaded is not None and not getattr(loaded, '_mapeiaai_universal_model_fast_patch_installed', False):
         _patch_module(loaded)
+        installed_now = True
     if not any(isinstance(finder, _Finder) for finder in sys.meta_path):
         sys.meta_path.insert(0, _Finder())
-    _audit('universal_model_contract_first_import_hook_installed', target=TARGET_MODULE)
+        installed_now = True
+    if installed_now:
+        _audit('universal_model_contract_first_import_hook_installed', important=False, target=TARGET_MODULE)
 
 
 __all__ = ['install_universal_model_upload_fast_patch']
