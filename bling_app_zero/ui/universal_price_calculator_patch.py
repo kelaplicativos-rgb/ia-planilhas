@@ -24,6 +24,15 @@ def _install_mapping_locked_fields() -> None:
         _audit('universal_price_runtime_mapping_locked_fields_failed', status='AVISO', details={'error': str(exc)[:220]})
 
 
+def _install_critical_mapping_visual_patch() -> None:
+    try:
+        from bling_app_zero.ui.critical_mapping_visual_patch import install
+        install()
+        _audit('universal_price_runtime_critical_mapping_visual_loaded', details={'critical_mapping_visual': True})
+    except Exception as exc:
+        _audit('universal_price_runtime_critical_mapping_visual_failed', status='AVISO', details={'error': str(exc)[:220]})
+
+
 def _store_priced_source(st, universal_source_key: str, df: pd.DataFrame) -> None:
     clean = df.copy().fillna('')
     for key in (universal_source_key, 'df_origem_unificada', 'cadastro_wizard_df_para_mapear', 'df_origem_cadastro_precificada'):
@@ -72,6 +81,7 @@ def _render_preview(st, df: pd.DataFrame, selected_cost_column: str, promo_colum
 
 def install() -> None:
     _install_mapping_locked_fields()
+    _install_critical_mapping_visual_patch()
     try:
         from bling_app_zero.ui import universal_flow
     except Exception as exc:
