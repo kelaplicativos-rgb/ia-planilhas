@@ -8,7 +8,7 @@ import streamlit as st
 
 from bling_app_zero.adapters.streamlit_mapping_bridge import build_and_sync_mapping
 from bling_app_zero.core.audit import add_audit_event
-from bling_app_zero.core.category_intelligence import apply_category_suggestions, classify_dataframe
+from bling_app_zero.core.category_intelligence import DEFAULT_CATEGORY_CATALOG, apply_category_suggestions, classify_dataframe
 from bling_app_zero.core.files import read_uploaded_file
 from bling_app_zero.core.final_template_exporter import template_contract_columns
 from bling_app_zero.core.modelo_compactado_universal import resolver_modelo
@@ -66,6 +66,14 @@ NO_API_KEYS = (
     'bling_api_final_action', 'bling_api_manual_mapping_required', 'bling_api_must_run_ai_check',
 )
 TECHNICAL_COLUMNS = {'arquivo', 'status'}
+UNIVERSAL_CATEGORY_SEARCH_KEY = 'mapeiaai_universal_category_review_search_v1'
+UNIVERSAL_CATEGORY_ACTION_KEY = 'mapeiaai_universal_category_review_action_v1'
+UNIVERSAL_CATEGORY_VALUE_KEY = 'mapeiaai_universal_category_review_category_v1'
+UNIVERSAL_CATEGORY_ATTENTION_KEY = 'mapeiaai_universal_category_review_attention_v1'
+UNIVERSAL_CATEGORY_EDITOR_KEY = 'mapeiaai_universal_category_review_editor_v1'
+PRODUCT_COLUMNS = ('Nome', 'Descrição', 'Descricao', 'Produto', 'Título', 'Titulo', 'name', 'produto')
+CODE_COLUMNS = ('Código', 'Codigo', 'SKU', 'GTIN', 'EAN', 'ID', 'Id')
+CATEGORY_COL = 'Categoria do produto'
 
 
 def _audit(event: str, **details: object) -> None:
@@ -504,9 +512,165 @@ def _render_category_config() -> tuple[bool, float]:
     if not enabled:
         st.caption('Desligado. As categorias serão mantidas como vieram da origem/mapeamento.')
         return False, 0.80
-    confidence = st.slider('Confiança mínima para aplicar categoria', 0.50, 0.99, 0.80, 0.01, key='mapeiaai_universal_category_confidence_min')
-    st.caption('A categorização pesada será aplicada somente ao clicar em “Aplicar opcionais”.')
+    confidence = st.slider('Confiança mínima para sugerir/aplicar categoria', 0.50, 0.99, 0.80, 0.01, key='mapeiaai_universal_category_confidence_min')
+    st.caption('Confira as categorias abaixo. Edite “Categoria corrigida” antes de avançar para o mapeamento.')
     return True, float(confidence)
+
+
+def _first_existing_column(df: pd.DataFrame, candidates: tuple[str, ...]) -> str:
+    for column in candidates:
+        if column in df.columns:
+            return column
+    return ''
+
+
+def _row_text(row: pd.Series, columns: tuple[str, ...]) -> str:
+    values: list[str] = []
+    for column in columns:
+        if column in row.index:
+            value = str(row.get(column) or '').strip()
+            if value:
+                values.append(value)
+    return ' · '.join(values)
+
+
+def _build_category_review_preview(df: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame()
+    category_col = CATEGORY_COL if CATEGORY_COL in df.columns else None
+    product_col = _first_existing_column(df, PRODUCT_COLUMNS)
+    code_col = _first_existing_column(df, CODE_COLUMNS)
+    rows: list[dict[str, object]] = []
+    for position, (_idx, row) in enumerate(df.fillna('').iterrows()):
+        current = str(row.get('categoria_atual_ia') or (row.get(category_col) if category_col else '') or '').strip()
+        suggested = str(row.get('categoria_sugerida_ia') or (row.get(category_col) if category_col else '') or '').strip()
+        action = str(row.get('acao_categoria_ia') or 'MANTER').strip() or 'MANTER'
+        final_category = suggested or current
+        rows.append(
+            {
+                '__row_index': int(position),
+                'linha': int(position) + 1,
+                'Produto': str(row.get(product_col) or _row_text(row, PRODUCT_COLUMNS) or '').strip(),
+                'Código/SKU': str(row.get(code_col) or _row_text(row, CODE_COLUMNS) or '').strip(),
+                'Categoria atual': current,
+                'Categoria sugerida': suggested,
+                'Categoria corrigida': final_category,
+                'Ação': action,
+                'Confiança': row.get('confianca_categoria_ia', ''),
+                'Motivo': str(row.get('motivo_categoria_ia') or '').strip(),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _filter_category_review(preview: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(preview, pd.DataFrame) or preview.empty:
+        return preview
+    with st.container(border=True):
+        st.markdown('**Preview de produtos e categorias**')
+        left, middle, right = st.columns([2, 1, 1])
+        search = left.text_input('Filtrar por produto, código ou categoria', key=UNIVERSAL_CATEGORY_SEARCH_KEY, placeholder='Ex.: power bank, cabo, fonte, adaptador...')
+        actions = ['Todas'] + sorted({str(v) for v in preview['Ação'].fillna('').astype(str) if str(v).strip()})
+        action = middle.selectbox('Ação', actions, key=UNIVERSAL_CATEGORY_ACTION_KEY)
+        categories = sorted({str(v).strip() for v in preview['Categoria corrigida'].fillna('').astype(str) if str(v).strip()})
+        category = right.selectbox('Categoria', ['Todas'] + categories, key=UNIVERSAL_CATEGORY_VALUE_KEY)
+        attention_only = st.checkbox('Mostrar somente corrigidos/revisar', value=False, key=UNIVERSAL_CATEGORY_ATTENTION_KEY)
+
+    filtered = preview.copy().fillna('')
+    if search.strip():
+        token = search.strip().casefold()
+        haystack = filtered.drop(columns=['__row_index'], errors='ignore').astype(str).agg(' '.join, axis=1).str.casefold()
+        filtered = filtered[haystack.str.contains(token, regex=False, na=False)]
+    if action != 'Todas':
+        filtered = filtered[filtered['Ação'].astype(str) == action]
+    if category != 'Todas':
+        filtered = filtered[filtered['Categoria corrigida'].astype(str) == category]
+    if attention_only:
+        filtered = filtered[filtered['Ação'].astype(str).ne('MANTER')]
+    return filtered
+
+
+def _category_options(preview: pd.DataFrame) -> list[str]:
+    options = list(DEFAULT_CATEGORY_CATALOG)
+    if isinstance(preview, pd.DataFrame) and not preview.empty:
+        for column in ('Categoria atual', 'Categoria sugerida', 'Categoria corrigida'):
+            if column in preview.columns:
+                options.extend([str(v).strip() for v in preview[column].fillna('').astype(str) if str(v).strip()])
+    return sorted(dict.fromkeys(options))
+
+
+def _editor_row_to_base_index(row: pd.Series, max_rows: int) -> int | None:
+    candidates: list[tuple[object, bool]] = []
+    if '__row_index' in row.index:
+        candidates.append((row.get('__row_index'), False))
+    if 'linha' in row.index:
+        candidates.append((row.get('linha'), True))
+    for value, one_based in candidates:
+        try:
+            if value is None or pd.isna(value):
+                continue
+        except Exception:
+            pass
+        try:
+            number = int(float(str(value).strip()))
+        except Exception:
+            continue
+        index = number - 1 if one_based else number
+        if 0 <= index < max_rows:
+            return index
+    return None
+
+
+def _render_universal_category_review(df: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return df
+    preview = _build_category_review_preview(df)
+    if preview.empty:
+        return df
+    filtered = _filter_category_review(preview)
+    st.caption(f'Mostrando {len(filtered)} de {len(preview)} produto(s). Edite apenas “Categoria corrigida” antes de avançar.')
+    if filtered.empty:
+        st.info('Nenhum produto encontrado com estes filtros.')
+        return df
+    edited = st.data_editor(
+        filtered,
+        key=UNIVERSAL_CATEGORY_EDITOR_KEY,
+        use_container_width=True,
+        hide_index=True,
+        height=430,
+        disabled=[col for col in filtered.columns if col != 'Categoria corrigida'],
+        column_order=['linha', 'Produto', 'Código/SKU', 'Categoria atual', 'Categoria sugerida', 'Categoria corrigida', 'Ação', 'Confiança', 'Motivo'],
+        column_config={
+            'Categoria corrigida': st.column_config.SelectboxColumn('Categoria corrigida', options=_category_options(preview), required=True),
+            'linha': st.column_config.NumberColumn('Linha', disabled=True),
+            'Produto': st.column_config.TextColumn('Produto', disabled=True),
+            'Código/SKU': st.column_config.TextColumn('Código/SKU', disabled=True),
+            'Categoria atual': st.column_config.TextColumn('Categoria atual', disabled=True),
+            'Categoria sugerida': st.column_config.TextColumn('Categoria sugerida', disabled=True),
+            'Ação': st.column_config.TextColumn('Ação', disabled=True),
+            'Confiança': st.column_config.TextColumn('Confiança', disabled=True),
+            'Motivo': st.column_config.TextColumn('Motivo', disabled=True),
+        },
+    )
+    output = df.copy().fillna('')
+    if CATEGORY_COL not in output.columns:
+        output[CATEGORY_COL] = ''
+    manual_changes = 0
+    for _, row in edited.iterrows():
+        row_index = _editor_row_to_base_index(row, len(output))
+        if row_index is None:
+            continue
+        new_category = str(row.get('Categoria corrigida') or '').strip()
+        if not new_category:
+            continue
+        old_category = str(output.at[output.index[row_index], CATEGORY_COL] or '').strip()
+        if new_category != old_category:
+            output.at[output.index[row_index], CATEGORY_COL] = new_category
+            manual_changes += 1
+    if manual_changes:
+        st.success(f'{manual_changes} categoria(s) ajustada(s) na prévia. Clique em “Aplicar opcionais e ir para mapeamento” para gravar no fluxo.')
+        _audit('universal_category_preview_manual_edits_ready', manual_changes=manual_changes, rows=int(len(output)))
+    return output
 
 
 def _apply_category_group(source: pd.DataFrame, confidence_min: float) -> pd.DataFrame:
@@ -518,8 +682,9 @@ def _apply_category_group(source: pd.DataFrame, confidence_min: float) -> pd.Dat
         _audit('mapear_planilha_grupo_categoria_toggle', enabled=True, grouped_toggle=True, applied=False, error=str(exc)[:220])
         return source
     st.success(f'Categorização analisada: {stats.get("total", 0)} produto(s), {applied} categoria(s) aplicada(s).')
-    _audit('mapear_planilha_grupo_categoria_toggle', enabled=True, grouped_toggle=True, applied=True, rows=int(len(output)))
-    return output
+    reviewed = _render_universal_category_review(output)
+    _audit('mapear_planilha_grupo_categoria_toggle', enabled=True, grouped_toggle=True, applied=True, rows=int(len(reviewed)), preview_filter=True, manual_review_enabled=True)
+    return reviewed
 
 
 def _render_rules_group(source: pd.DataFrame, model: pd.DataFrame) -> tuple[Mapping[str, Any] | None, bool]:
@@ -573,21 +738,21 @@ def _render_bling_destination_notice() -> None:
 
 def _render_options_step(model: pd.DataFrame, source: pd.DataFrame) -> None:
     st.markdown('### 3. Opcionais')
-    st.caption('Esta tela aplica apenas opcionais. Mapeamento e montagem final ficam nas próximas telas.')
+    st.caption('Esta tela aplica opcionais e permite conferir/corrigir categorias antes do mapeamento.')
     processed = source.copy().fillna('')
     processed, price_enabled = _render_price_group(processed, model)
     category_enabled, category_confidence = _render_category_config()
+    if category_enabled:
+        processed = _apply_category_group(processed, category_confidence)
     rules_config, rules_enabled = _render_rules_group(processed, model)
     if st.button('Aplicar opcionais e ir para mapeamento ➡️', use_container_width=True, key='mapeiaai_universal_apply_options'):
-        if category_enabled:
-            processed = _apply_category_group(processed, category_confidence)
         _store_df(UNIVERSAL_PROCESSED_KEY, processed)
         st.session_state[UNIVERSAL_PRICE_ENABLED_KEY] = bool(price_enabled)
         st.session_state[UNIVERSAL_CATEGORY_ENABLED_KEY] = bool(category_enabled)
         st.session_state[UNIVERSAL_RULES_ENABLED_KEY] = bool(rules_enabled)
         st.session_state[UNIVERSAL_RULES_CONFIG_KEY] = dict(rules_config or {})
         _clear_after_options()
-        _audit('universal_options_applied_before_mapping', rows=int(len(processed)), columns=int(len(processed.columns)), price_enabled=price_enabled, category_enabled=category_enabled, rules_enabled=rules_enabled)
+        _audit('universal_options_applied_before_mapping', rows=int(len(processed)), columns=int(len(processed.columns)), price_enabled=price_enabled, category_enabled=category_enabled, rules_enabled=rules_enabled, category_preview_reviewed=category_enabled)
         _set_step(STEP_MAPPING, 'options_applied')
 
 
