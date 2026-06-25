@@ -127,10 +127,6 @@ def _same_words_case_insensitive(left: object, right: object) -> bool:
     return bool(left_words and right_words and left_words == right_words)
 
 
-def _pct(score: float) -> int:
-    return int(round(max(0.0, min(1.0, float(score or 0))) * 100))
-
-
 def _sample_values(source: pd.DataFrame, source_column: str, limit: int = 3) -> list[str]:
     if not isinstance(source, pd.DataFrame) or not source_column or source_column not in source.columns:
         return []
@@ -257,7 +253,6 @@ def _value_semantic_scores(values: list[str]) -> dict[str, float]:
     cest_ratio = sum(1 for v in values if _looks_like_cest(v)) / total
     long_text_ratio = sum(1 for v in values if len(v) >= 80) / total
     title_text_ratio = sum(1 for v in values if 8 <= len(v) <= 120 and not _looks_like_url(v) and not _looks_like_money(v)) / total
-
     scores: dict[str, float] = {}
     if money_ratio >= 0.70:
         scores['preco_venda'] = max(scores.get('preco_venda', 0.0), 0.84)
@@ -313,7 +308,7 @@ def _target_semantic_scores(target_name: str) -> dict[str, float]:
         scores['gtin_ean'] = max(scores.get('gtin_ean', 0.0), 0.98)
     if target_norm in {'descricao', 'descrio', 'nomeproduto', 'nomedoproduto'}:
         scores['titulo_produto'] = max(scores.get('titulo_produto', 0.0), 0.95)
-    if 'descricaocurta' in target_norm or 'descriçãocurta' in target_norm:
+    if 'descricaocurta' in target_norm:
         scores['descricao_curta'] = max(scores.get('descricao_curta', 0.0), 0.96)
     if 'precopromocional' in target_norm or 'promocional' in target_norm:
         scores['preco_promocional'] = max(scores.get('preco_promocional', 0.0), 0.96)
@@ -404,23 +399,17 @@ def _columns_have_same_values(source: pd.DataFrame, left_column: str, right_colu
 
 
 def _render_bling_import_guard(target_name: str, selected_value: str, source: pd.DataFrame, mapping: dict[str, str]) -> None:
-    if is_fixed_value(selected_value):
-        selected_display = decode_fixed_value(selected_value)
-    else:
-        selected_display = str(selected_value or '').strip()
-
+    selected_display = decode_fixed_value(selected_value) if is_fixed_value(selected_value) else str(selected_value or '').strip()
     if _is_category_field(target_name):
         if not selected_display:
             st.error('🚫 Campo crítico do Bling: **Categoria** vazia pode travar a importação. Mapeie uma categoria ou use uma categoria padrão como **Produtos não classificados**.')
         else:
             st.warning('⚠️ Campo crítico do Bling: confirme se a **Categoria** existe/corresponde ao cadastro do Bling. Categoria ausente ou inválida pode bloquear a importação.')
-
     if _is_tag_field(target_name):
         if not selected_display:
             st.warning('⚠️ Campo crítico do Bling: produto sem **tag válida** pode gerar erro. Se usar Tags, mapeie somente tags já válidas no Bling; se não usar, mantenha vazio conscientemente.')
         else:
             st.warning('⚠️ Campo crítico do Bling: **Tags** precisam ser válidas/existentes no Bling. Tag inválida gera erro de importação.')
-
     if _is_parent_code_field(target_name):
         st.error('🚫 Campo crítico do Bling: **Código Pai** não pode ser igual ao próprio código do produto. Produto não pode ser variação dele mesmo.')
         main_code_source = _find_main_code_source(mapping)
@@ -555,23 +544,13 @@ def _metadata_scores(target_name: str, suggestions_index: dict[str, dict[str, An
     return scores
 
 
-def _ranked_source_options(
-    target_name: str,
-    current_value: str,
-    source_columns: list[str],
-    suggestions_index: dict[str, dict[str, Any]],
-    source_profiles: dict[str, dict[str, float]] | None = None,
-) -> tuple[list[str], dict[str, str]]:
+def _ranked_source_options(target_name: str, current_value: str, source_columns: list[str], suggestions_index: dict[str, dict[str, Any]], source_profiles: dict[str, dict[str, float]] | None = None) -> tuple[list[str], dict[str, str]]:
     source_profiles = source_profiles or {}
     scores = _metadata_scores(target_name, suggestions_index)
     if current_value in source_columns:
         scores[current_value] = max(scores.get(current_value, 0.0), 0.96)
     for column in source_columns:
-        scores[column] = max(
-            scores.get(column, 0.0),
-            _score_from_similarity(target_name, column),
-            _semantic_match_score(target_name, column, source_profiles),
-        )
+        scores[column] = max(scores.get(column, 0.0), _score_from_similarity(target_name, column), _semantic_match_score(target_name, column, source_profiles))
     original_position = {column: pos for pos, column in enumerate(source_columns)}
     ranked_columns = sorted(source_columns, key=lambda column: (-float(scores.get(column, 0.0)), original_position.get(column, 9999), str(column).casefold()))
     confident_columns = [column for column in ranked_columns if float(scores.get(column, 0.0)) >= 0.70]
@@ -588,6 +567,27 @@ def _ranked_source_options(
         else:
             labels[column] = f'⚪ {column}{suffix}'
     return options, labels
+
+
+def _auto_bind_exact_green_matches(current: dict[str, str], target_columns: list[str], source_columns: list[str]) -> tuple[dict[str, str], int]:
+    lookup: dict[tuple[str, ...], str] = {}
+    for source_column in source_columns:
+        key = _word_tuple(source_column)
+        if key and key not in lookup:
+            lookup[key] = source_column
+    updated = dict(current or {})
+    applied = 0
+    for target_name in target_columns:
+        key = _word_tuple(target_name)
+        source_column = lookup.get(key)
+        if not source_column:
+            continue
+        current_value = str(updated.get(target_name, '') or '')
+        if is_fixed_value(current_value) or current_value == source_column:
+            continue
+        updated[target_name] = source_column
+        applied += 1
+    return updated, applied
 
 
 def _initial_select_value(current_value: str, source_options: list[str]) -> str:
@@ -623,6 +623,10 @@ def _suggestion_state_key(mapping_state_key: str, signature: str) -> str:
 
 def _source_profile_state_key(mapping_state_key: str, signature: str) -> str:
     return f'{mapping_state_key}_source_profiles_{short_hash(signature, size=10)}'
+
+
+def _auto_green_state_key(mapping_state_key: str, signature: str) -> str:
+    return f'{mapping_state_key}_auto_green_{short_hash(signature, size=10)}'
 
 
 def _filter_target_columns(target_columns: list[str], query: str) -> list[str]:
@@ -674,6 +678,8 @@ def render_shared_contract_mapping(source: pd.DataFrame, target: pd.DataFrame, *
     search_key = _mapping_search_key(key_prefix, signature)
     suggestions_key = _suggestion_state_key(mapping_state_key, signature)
     source_profiles_key = _source_profile_state_key(mapping_state_key, signature)
+    auto_green_key = _auto_green_state_key(mapping_state_key, signature)
+    auto_green_applied_key = f'{auto_green_key}_applied'
     st.session_state.pop(scroll_key, None)
 
     if ai_enabled:
@@ -706,16 +712,38 @@ def render_shared_contract_mapping(source: pd.DataFrame, target: pd.DataFrame, *
 
     current = dict(st.session_state.get(mapping_state_key) or {})
     current = _apply_price_calculator_mapping_hint(current, source, target)
+    source_columns = [str(column) for column in source.columns]
+    all_target_columns = [str(column) for column in getattr(target, 'columns', [])]
+
+    auto_green_enabled = st.toggle(
+        '🟢 Auto vincular campos idênticos',
+        key=auto_green_key,
+        help='Quando ligar, o sistema mapeia automaticamente somente os campos com bolinha verde: mesmo nome no modelo e na origem, ignorando maiúsculas/minúsculas e acentos. Depois você pode desfazer no dropdown.',
+    )
+    auto_signature = f'{signature}:{len(all_target_columns)}:{len(source_columns)}:{short_hash("|".join(all_target_columns + source_columns), 12)}'
+    if auto_green_enabled:
+        if st.session_state.get(auto_green_applied_key) != auto_signature:
+            current, applied_count = _auto_bind_exact_green_matches(current, all_target_columns, source_columns)
+            st.session_state[mapping_state_key] = current
+            st.session_state[auto_green_applied_key] = auto_signature
+            if applied_count:
+                st.success(f'🟢 {applied_count} campo(s) idêntico(s) foram auto vinculados. Campos com ⚠️/🟡 continuam para revisão manual.')
+            else:
+                st.info('🟢 Auto vínculo ligado, mas nenhum novo campo idêntico foi encontrado.')
+        else:
+            st.caption('🟢 Auto vínculo verde já aplicado nesta origem/modelo. Para reaplicar, desligue e ligue novamente. Para desfazer, altere o dropdown do campo.')
+    else:
+        st.session_state.pop(auto_green_applied_key, None)
+        st.caption('⚠️ Auto vínculo verde desligado. As sugestões continuam aparecendo, mas você decide cada campo.')
+
     st.session_state[mapping_state_key] = current
     suggestions_index = st.session_state.get(suggestions_key)
     suggestions_index = suggestions_index if isinstance(suggestions_index, dict) else {}
     source_profiles = st.session_state.get(source_profiles_key)
     source_profiles = source_profiles if isinstance(source_profiles, dict) else {}
-    source_columns = [str(column) for column in source.columns]
     edited: dict[str, str] = dict(current)
     rows: list[dict[str, str]] = []
 
-    all_target_columns = [str(column) for column in getattr(target, 'columns', [])]
     search_query = st.text_input('Buscar campo/coluna do modelo', value=str(st.session_state.get(search_key) or ''), key=search_key, placeholder='Ex.: validade, preço, vídeo, estoque', help='Filtra somente os campos do modelo.').strip()
     _reset_page_when_search_changes(page_key, search_key, search_query)
     target_columns = _filter_target_columns(all_target_columns, search_query)
@@ -735,7 +763,7 @@ def render_shared_contract_mapping(source: pd.DataFrame, target: pd.DataFrame, *
         st.warning('Nenhum campo encontrado para essa busca. Limpe ou altere o texto para voltar aos campos do modelo.')
 
     st.caption(f'Mostrando campos {start_display}–{end} de {total_fields}. Limite: {MAPPING_FIELDS_PER_PAGE} campos por página para não pesar a tela.')
-    st.caption('As melhores sugestões aparecem primeiro. 🟢 só aparece quando o campo do modelo e o cabeçalho da origem são idênticos, ignorando maiúsculas/minúsculas. Campos críticos do Bling exibem alerta visual.')
+    st.caption('🟢 = cabeçalho idêntico e pode ser auto vinculado. 🟡/⚠️ = atenção/revisão manual. Campos críticos do Bling exibem alerta visual.')
     _render_mapping_page_controls(page_key, scroll_key, current_page, total_pages, where='top')
 
     for offset, target_name in enumerate(page_columns):
