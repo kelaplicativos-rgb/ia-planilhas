@@ -115,6 +115,18 @@ def _tokens(value: object) -> set[str]:
     return {part for part in re.split(r'[^a-z0-9]+', text) if part}
 
 
+def _word_tuple(value: object) -> tuple[str, ...]:
+    text = str(value or '').strip().casefold()
+    text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
+    return tuple(part for part in re.split(r'[^a-z0-9]+', text) if part)
+
+
+def _same_words_case_insensitive(left: object, right: object) -> bool:
+    left_words = _word_tuple(left)
+    right_words = _word_tuple(right)
+    return bool(left_words and right_words and left_words == right_words)
+
+
 def _pct(score: float) -> int:
     return int(round(max(0.0, min(1.0, float(score or 0))) * 100))
 
@@ -164,7 +176,6 @@ def _looks_like_money(text: str) -> bool:
     if re.search(r'(^|\s)r\$\s*\d', lower_value):
         return True
     compact = re.sub(r'\s+', '', value)
-    # Inteiros puros como 10, 20 e 50 são mais prováveis estoque/quantidade do que preço.
     if re.fullmatch(r'\d+', compact):
         return False
     return bool(
@@ -342,13 +353,8 @@ def confidence_flag(target: str, source_column: str, source: pd.DataFrame) -> st
         return '🟢 fixo'
     if not source_column:
         return '🔴 vazio'
-    target_key = _norm(target)
-    source_key = _norm(source_column)
-    if target_key and (target_key == source_key or target_key in source_key or source_key in target_key):
-        return '🟢 alto'
-    source_profiles = _source_column_profiles(source)
-    if _semantic_match_score(target, source_column, source_profiles) >= 0.86:
-        return '🟢 conteúdo'
+    if _same_words_case_insensitive(target, source_column):
+        return '🟢 idêntico'
     if source_column in source.columns and source[source_column].astype(str).str.strip().ne('').any():
         return '🟡 revisar'
     return '🔴 vazio'
@@ -491,17 +497,12 @@ def _ranked_source_options(
     options = confident_columns + [EMPTY_OPTION, WRITE_OPTION] + other_columns if confident_columns else [EMPTY_OPTION, WRITE_OPTION] + other_columns
     labels: dict[str, str] = {EMPTY_OPTION: EMPTY_OPTION, WRITE_OPTION: WRITE_OPTION}
     for column in source_columns:
-        percent = _pct(scores.get(column, 0.0))
         detail = _best_semantic_label(column, source_profiles)
         suffix = f' · {detail}' if detail else ''
-        if percent >= 99:
-            labels[column] = f'🟢 100% recomendado — {column}{suffix}'
-        elif percent >= 95:
-            labels[column] = f'🟢 {percent}% recomendado — {column}{suffix}'
-        elif percent >= 90:
-            labels[column] = f'🟢 {percent}% alta confiança — {column}{suffix}'
-        elif percent >= 70:
-            labels[column] = f'🟡 {percent}% revisar — {column}{suffix}'
+        if _same_words_case_insensitive(target_name, column):
+            labels[column] = f'🟢 {column}'
+        elif float(scores.get(column, 0.0)) >= 0.70:
+            labels[column] = f'🟡 {column}{suffix}'
         else:
             labels[column] = f'⚪ {column}{suffix}'
     return options, labels
@@ -652,7 +653,7 @@ def render_shared_contract_mapping(source: pd.DataFrame, target: pd.DataFrame, *
         st.warning('Nenhum campo encontrado para essa busca. Limpe ou altere o texto para voltar aos campos do modelo.')
 
     st.caption(f'Mostrando campos {start_display}–{end} de {total_fields}. Limite: {MAPPING_FIELDS_PER_PAGE} campos por página para não pesar a tela.')
-    st.caption('Camada 1: leitura do conteúdo da origem. Camada 2: comparação com o modelo anexado. As melhores sugestões aparecem primeiro no dropdown.')
+    st.caption('As melhores sugestões aparecem primeiro. 🟢 só aparece quando o campo do modelo e o cabeçalho da origem são idênticos, ignorando maiúsculas/minúsculas.')
     _render_mapping_page_controls(page_key, scroll_key, current_page, total_pages, where='top')
 
     for offset, target_name in enumerate(page_columns):
@@ -666,7 +667,7 @@ def render_shared_contract_mapping(source: pd.DataFrame, target: pd.DataFrame, *
             st.caption(f'Campo {index + 1}: **{target_name}**')
             top_option = next((option for option in source_options if option not in {EMPTY_OPTION, WRITE_OPTION}), '')
             top_label = option_labels.get(top_option, '') if top_option else ''
-            if top_label.startswith('🟢'):
+            if top_label:
                 st.caption(f'Melhor sugestão: {top_label}')
             selected = st.selectbox(f'Como preencher “{target_name}”', source_options, index=default_index, key=mapping_widget_key(key_prefix, signature, index, target_name), format_func=lambda option, labels=option_labels: labels.get(str(option), str(option)))
 
