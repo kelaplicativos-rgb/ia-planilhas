@@ -11,6 +11,7 @@ RESPONSIBLE_FILE = 'bling_app_zero/core/category_semantic_bridge.py'
 TITLE_ALIAS = 'Descrição'
 DESCRIPTION_ALIAS = 'Descrição complementar'
 CATEGORY_ALIAS = 'Categoria'
+_ORIGINAL_CLASSIFY_DATAFRAME = ci.classify_dataframe
 
 
 def _profile(df: pd.DataFrame, column: str) -> dict[str, Any]:
@@ -65,7 +66,7 @@ def classify_dataframe_semantic(df: pd.DataFrame, *, category_catalog: Sequence[
         source = _best_column(prepared, {'categoria'}, prefer='category')
         if source:
             prepared[CATEGORY_ALIAS] = prepared[source].fillna('').astype(str)
-    result, stats = ci.classify_dataframe(prepared, category_catalog=category_catalog)
+    result, stats = _ORIGINAL_CLASSIFY_DATAFRAME(prepared, category_catalog=category_catalog)
     removable = [column for column in temp_columns if column in result.columns and column not in getattr(df, 'columns', [])]
     if removable:
         result = result.drop(columns=removable, errors='ignore')
