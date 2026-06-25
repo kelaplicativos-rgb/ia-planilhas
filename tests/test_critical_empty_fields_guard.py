@@ -60,3 +60,39 @@ def test_download_final_respeita_usuario_quando_mapeia_tags_e_codigo_pai():
     assert result.output['Código'].tolist() == ['ABC-1', 'ABC-2']
     assert result.output['Tags'].tolist() == ['tag-valida', 'outra-tag']
     assert result.output['Código Pai'].tolist() == ['PAI-1', 'PAI-2']
+
+
+def test_download_final_respeita_categoria_mapeada_sem_regras_inteligentes():
+    source = pd.DataFrame([
+        {'Produto': 'Mouse Sem Fio', 'Categoria origem': 'Minha Categoria Manual'},
+    ])
+    model = pd.DataFrame(columns=['Descrição', 'Categoria do produto'])
+    mapping = {
+        'Descrição': 'Produto',
+        'Categoria do produto': 'Categoria origem',
+    }
+
+    result = build_final_output(source, model, mapping, run_smart_features=False)
+
+    assert result.state.result.ok
+    assert result.output is not None
+    assert result.output['Descrição'].tolist() == ['Mouse Sem Fio']
+    assert result.output['Categoria do produto'].tolist() == ['Minha Categoria Manual']
+    assert 'category_finalizer' not in (result.smart_rules_report or {})
+
+
+def test_download_final_respeita_categoria_vazia_sem_regras_inteligentes():
+    source = pd.DataFrame([
+        {'Produto': 'Mouse Sem Fio', 'Categoria origem': 'Mouses'},
+    ])
+    model = pd.DataFrame(columns=['Descrição', 'Categoria do produto'])
+    mapping = {
+        'Descrição': 'Produto',
+        'Categoria do produto': '',
+    }
+
+    result = build_final_output(source, model, mapping, run_smart_features=False)
+
+    assert result.state.result.ok
+    assert result.output is not None
+    assert result.output['Categoria do produto'].tolist() == ['']
