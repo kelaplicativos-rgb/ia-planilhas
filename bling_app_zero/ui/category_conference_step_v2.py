@@ -362,6 +362,34 @@ def _category_options(preview: pd.DataFrame) -> list[str]:
     return sorted(dict.fromkeys([*options, *extra]))
 
 
+def _editor_row_to_base_index(row: pd.Series, max_rows: int) -> int | None:
+    """Resolve a linha da base mesmo se o data_editor não devolver coluna oculta.
+
+    O caminho preferencial é __row_index, mas algumas versões/configurações do
+    Streamlit podem não devolver colunas fora do column_order. Nesse caso usamos
+    a coluna visível `linha`, que é 1-based.
+    """
+    candidates: list[tuple[object, bool]] = []
+    if '__row_index' in row.index:
+        candidates.append((row.get('__row_index'), False))
+    if 'linha' in row.index:
+        candidates.append((row.get('linha'), True))
+    for value, one_based in candidates:
+        try:
+            if value is None or pd.isna(value):
+                continue
+        except Exception:
+            pass
+        try:
+            number = int(float(str(value).strip()))
+        except Exception:
+            continue
+        index = number - 1 if one_based else number
+        if 0 <= index < max_rows:
+            return index
+    return None
+
+
 def _apply_manual_review_edits(base_df: pd.DataFrame, edited: pd.DataFrame, source_key: str) -> int:
     if not _valid_df(base_df) or not _valid_df(edited):
         return 0
@@ -370,12 +398,11 @@ def _apply_manual_review_edits(base_df: pd.DataFrame, edited: pd.DataFrame, sour
     if category_col not in corrected.columns:
         corrected[category_col] = ''
     changed = 0
+    skipped_without_index = 0
     for _, row in edited.iterrows():
-        try:
-            row_index = int(row.get('__row_index'))
-        except Exception:
-            continue
-        if row_index < 0 or row_index >= len(corrected):
+        row_index = _editor_row_to_base_index(row, len(corrected))
+        if row_index is None:
+            skipped_without_index += 1
             continue
         new_value = str(row.get('Categoria corrigida') or '').strip()
         if not new_value:
@@ -385,6 +412,14 @@ def _apply_manual_review_edits(base_df: pd.DataFrame, edited: pd.DataFrame, sour
             corrected.at[corrected.index[row_index], category_col] = new_value
             changed += 1
     if changed <= 0:
+        if skipped_without_index:
+            add_audit_event(
+                'category_conference_manual_review_no_row_index',
+                area='CATEGORIAS',
+                step='conferencia_categorias',
+                status='AVISO',
+                details={'skipped_rows': skipped_without_index, 'edited_rows': int(len(edited)), 'responsible_file': RESPONSIBLE_FILE},
+            )
         return 0
     _analyzed_after, stats_after = classify_dataframe(corrected, category_catalog=_catalog())
     _store_corrected_everywhere(corrected, source_key, applied_count=changed, stats=stats_after)
@@ -393,7 +428,14 @@ def _apply_manual_review_edits(base_df: pd.DataFrame, edited: pd.DataFrame, sour
         area='CATEGORIAS',
         step='conferencia_categorias',
         status='OK',
-        details={'manual_changes': changed, 'rows': int(len(corrected)), 'category_column': category_col, 'responsible_file': RESPONSIBLE_FILE},
+        details={
+            'manual_changes': changed,
+            'rows': int(len(corrected)),
+            'category_column': category_col,
+            'fallback_visible_line_enabled': True,
+            'skipped_rows_without_index': skipped_without_index,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
     )
     return changed
 
