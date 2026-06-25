@@ -16,9 +16,12 @@ class RequestedField:
     required: bool = False
 
 
+# Campos que continuam vazios por padrão quando não há evidência segura.
+# Importante: não colocar aqui campos que podem ser detectados pelo conteúdo real
+# da planilha, como NCM, fornecedor ou preço de compra/custo.
 STRICT_EMPTY_TERMS = [
-    'unidade', 'ncm', 'origem', 'ipi', 'valor ipi', 'situacao', 'situação',
-    'fornecedor', 'localizacao', 'localização', 'estoque maximo', 'estoque máximo',
+    'unidade', 'origem', 'ipi', 'valor ipi', 'situacao', 'situação',
+    'localizacao', 'localização', 'estoque maximo', 'estoque máximo',
     'estoque minimo', 'estoque mínimo', 'peso liquido', 'peso líquido', 'peso bruto',
     'largura', 'altura', 'profundidade', 'comprimento', 'data validade',
     'itens p caixa', 'itens por caixa', 'produto variacao', 'produto variação',
@@ -28,8 +31,7 @@ STRICT_EMPTY_TERMS = [
     'grupo de produtos', 'cest', 'volumes', 'cross docking', 'cross-docking',
     'meses garantia', 'clonar dados do pai', 'condicao do produto', 'condição do produto',
     'frete gratis', 'frete grátis', 'numero fci', 'número fci', 'video', 'vídeo',
-    'unidade de medida', 'preco de compra', 'preço de compra', 'valor base icms',
-    'valor icms', 'icms proprio', 'icms próprio',
+    'unidade de medida', 'valor base icms', 'valor icms', 'icms proprio', 'icms próprio',
 ]
 
 KIND_SYNONYMS = {
@@ -43,7 +45,7 @@ KIND_SYNONYMS = {
     'descricao': ['descricao produto', 'descrição produto', 'descricao', 'descrição', 'nome produto', 'nome do produto', 'titulo', 'título'],
     'deposito': ['deposito', 'depósito', 'almoxarifado', 'local estoque'],
     'estoque': ['balanco', 'balanço', 'estoque', 'quantidade', 'saldo', 'qtd'],
-    'preco_custo': ['preco de custo', 'preço de custo', 'preco custo', 'preço custo', 'valor custo'],
+    'preco_custo': ['preco de custo', 'preço de custo', 'preco custo', 'preço custo', 'valor custo', 'preco de compra', 'preço de compra', 'valor compra', 'valor de compra'],
     'preco_unitario': ['preco unitario', 'preço unitário', 'preco de venda', 'preço de venda', 'preco venda', 'preço venda', 'valor unitario', 'valor unitário', 'valor venda', 'preco', 'preço'],
     'observacao': ['observacao', 'observação', 'obs', 'comentario', 'comentário'],
     'data': ['data', 'dt'],
@@ -51,8 +53,9 @@ KIND_SYNONYMS = {
     'nome_apoio': ['nome apoio', 'nome auxiliar'],
     'imagem': ['imagem', 'imagens', 'url imagens', 'url imagens externas', 'foto', 'fotos'],
     'marca': ['marca', 'fabricante'],
+    'fornecedor': ['fornecedor', 'supplier', 'nome fornecedor', 'nome do fornecedor'],
     'categoria': ['categoria', 'categoria do produto', 'departamento'],
-    'ncm': ['ncm'],
+    'ncm': ['ncm', 'codigo ncm', 'código ncm', 'classificacao fiscal', 'classificação fiscal'],
 }
 
 
@@ -71,8 +74,6 @@ def infer_kind(column_name: str) -> str:
     key = _clean_column_key(column_name)
     if not key:
         return 'custom'
-    if _is_strict_empty_column(key):
-        return 'custom'
 
     best_kind = 'custom'
     best_score = 0
@@ -89,6 +90,9 @@ def infer_kind(column_name: str) -> str:
             if score > best_score:
                 best_score = score
                 best_kind = kind
+
+    if best_kind == 'custom' and _is_strict_empty_column(key):
+        return 'custom'
     return best_kind
 
 
