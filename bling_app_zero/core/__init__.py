@@ -8,6 +8,14 @@ try:
 except Exception:
     pass
 
+try:
+    from bling_app_zero.core import category_intelligence as _category_intelligence
+    from bling_app_zero.core.category_semantic_bridge import classify_dataframe_semantic as _classify_dataframe_semantic
+
+    _category_intelligence.classify_dataframe = _classify_dataframe_semantic
+except Exception:
+    pass
+
 from bling_app_zero.core.app_config import APP_VERSION, PAGE_CONFIG
 from bling_app_zero.core.app_errors import register_critical_error
 
