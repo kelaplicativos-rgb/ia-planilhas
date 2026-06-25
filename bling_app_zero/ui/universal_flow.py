@@ -72,6 +72,7 @@ UNIVERSAL_CATEGORY_VALUE_KEY = 'mapeiaai_universal_category_review_category_v1'
 UNIVERSAL_CATEGORY_ATTENTION_KEY = 'mapeiaai_universal_category_review_attention_v1'
 UNIVERSAL_CATEGORY_EDITOR_KEY = 'mapeiaai_universal_category_review_editor_v1'
 UNIVERSAL_CATEGORY_APPLY_KEY = 'mapeiaai_universal_category_review_apply_v1'
+UNIVERSAL_CATEGORY_MANUAL_MAP_KEY = 'mapeiaai_universal_category_manual_map_v1'
 PRODUCT_COLUMNS = ('Nome', 'Descrição', 'Descricao', 'Produto', 'Título', 'Titulo', 'name', 'produto')
 CODE_COLUMNS = ('Código', 'Codigo', 'SKU', 'GTIN', 'EAN', 'ID', 'Id')
 CATEGORY_COL = 'Categoria do produto'
@@ -237,6 +238,7 @@ def _clear_after_model() -> None:
         UNIVERSAL_ENGINE_KEY,
         UNIVERSAL_MAPPING_CONFIRMED_KEY,
         UNIVERSAL_RULES_CONFIG_KEY,
+        UNIVERSAL_CATEGORY_MANUAL_MAP_KEY,
         'df_origem_unificada',
         'df_origem_arquivo',
         'df_origem_site',
@@ -258,6 +260,7 @@ def _clear_after_source() -> None:
         UNIVERSAL_ENGINE_KEY,
         UNIVERSAL_MAPPING_CONFIRMED_KEY,
         UNIVERSAL_RULES_CONFIG_KEY,
+        UNIVERSAL_CATEGORY_MANUAL_MAP_KEY,
         'neutral_mapping_state_v1',
         'neutral_mapping_report_v1',
     ):
@@ -514,7 +517,7 @@ def _render_category_config() -> tuple[bool, float]:
         st.caption('Desligado. As categorias serão mantidas como vieram da origem/mapeamento.')
         return False, 0.80
     confidence = st.slider('Confiança mínima para sugerir/aplicar categoria', 0.50, 0.99, 0.80, 0.01, key='mapeiaai_universal_category_confidence_min')
-    st.caption('Confira as categorias abaixo. Edite “Categoria corrigida” antes de avançar para o mapeamento.')
+    st.caption('Confira as categorias abaixo. Edite “Categoria corrigida” e clique em “Aplicar correções manuais de categoria” antes de avançar.')
     return True, float(confidence)
 
 
@@ -535,18 +538,48 @@ def _row_text(row: pd.Series, columns: tuple[str, ...]) -> str:
     return ' · '.join(values)
 
 
+def _manual_category_map() -> dict[int, str]:
+    raw = st.session_state.get(UNIVERSAL_CATEGORY_MANUAL_MAP_KEY)
+    if not isinstance(raw, dict):
+        return {}
+    cleaned: dict[int, str] = {}
+    for key, value in raw.items():
+        try:
+            row_index = int(key)
+        except Exception:
+            continue
+        category = str(value or '').strip()
+        if category:
+            cleaned[row_index] = category
+    return cleaned
+
+
+def _apply_manual_category_map(df: pd.DataFrame) -> pd.DataFrame:
+    output = df.copy().fillna('')
+    manual_map = _manual_category_map()
+    if not manual_map:
+        return output
+    if CATEGORY_COL not in output.columns:
+        output[CATEGORY_COL] = ''
+    for row_index, category in manual_map.items():
+        if 0 <= row_index < len(output):
+            output.at[output.index[row_index], CATEGORY_COL] = category
+    return output
+
+
 def _build_category_review_preview(df: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame()
     category_col = CATEGORY_COL if CATEGORY_COL in df.columns else None
     product_col = _first_existing_column(df, PRODUCT_COLUMNS)
     code_col = _first_existing_column(df, CODE_COLUMNS)
+    manual_map = _manual_category_map()
     rows: list[dict[str, object]] = []
     for position, (_idx, row) in enumerate(df.fillna('').iterrows()):
         current = str(row.get('categoria_atual_ia') or (row.get(category_col) if category_col else '') or '').strip()
         suggested = str(row.get('categoria_sugerida_ia') or (row.get(category_col) if category_col else '') or '').strip()
         action = str(row.get('acao_categoria_ia') or 'MANTER').strip() or 'MANTER'
-        final_category = suggested or current
+        final_category = manual_map.get(position) or suggested or current
         rows.append(
             {
                 '__row_index': int(position),
@@ -556,7 +589,7 @@ def _build_category_review_preview(df: pd.DataFrame) -> pd.DataFrame:
                 'Categoria atual': current,
                 'Categoria sugerida': suggested,
                 'Categoria corrigida': final_category,
-                'Ação': action,
+                'Ação': 'CORRIGIDO MANUALMENTE' if position in manual_map else action,
                 'Confiança': row.get('confianca_categoria_ia', ''),
                 'Motivo': str(row.get('motivo_categoria_ia') or '').strip(),
             }
@@ -625,14 +658,15 @@ def _editor_row_to_base_index(row: pd.Series, max_rows: int) -> int | None:
 def _render_universal_category_review(df: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return df
-    preview = _build_category_review_preview(df)
+    base = _apply_manual_category_map(df)
+    preview = _build_category_review_preview(base)
     if preview.empty:
-        return df
+        return base
     filtered = _filter_category_review(preview)
-    st.caption(f'Mostrando {len(filtered)} de {len(preview)} produto(s). Edite apenas “Categoria corrigida” antes de avançar.')
+    st.caption(f'Mostrando {len(filtered)} de {len(preview)} produto(s). Edite apenas “Categoria corrigida” e clique no botão de aplicar.')
     if filtered.empty:
         st.info('Nenhum produto encontrado com estes filtros.')
-        return df
+        return base
     edited = st.data_editor(
         filtered,
         key=UNIVERSAL_CATEGORY_EDITOR_KEY,
@@ -653,9 +687,10 @@ def _render_universal_category_review(df: pd.DataFrame) -> pd.DataFrame:
             'Motivo': st.column_config.TextColumn('Motivo', disabled=True),
         },
     )
-    output = df.copy().fillna('')
+    output = base.copy().fillna('')
     if CATEGORY_COL not in output.columns:
         output[CATEGORY_COL] = ''
+    pending_map = _manual_category_map()
     manual_changes = 0
     for _, row in edited.iterrows():
         row_index = _editor_row_to_base_index(row, len(output))
@@ -667,15 +702,18 @@ def _render_universal_category_review(df: pd.DataFrame) -> pd.DataFrame:
         old_category = str(output.at[output.index[row_index], CATEGORY_COL] or '').strip()
         if new_category != old_category:
             output.at[output.index[row_index], CATEGORY_COL] = new_category
+            pending_map[row_index] = new_category
             manual_changes += 1
     if st.button('✅ Aplicar correções manuais de categoria', use_container_width=True, key=UNIVERSAL_CATEGORY_APPLY_KEY):
         if manual_changes:
-            st.success(f'{manual_changes} categoria(s) corrigida(s) manualmente na prévia. Agora avance para o mapeamento.')
-            _audit('universal_category_preview_manual_edits_applied', manual_changes=manual_changes, rows=int(len(output)), dedicated_apply_button=True)
+            st.session_state[UNIVERSAL_CATEGORY_MANUAL_MAP_KEY] = dict(pending_map)
+            st.success(f'{manual_changes} categoria(s) corrigida(s) manualmente e gravada(s) para o mapeamento.')
+            _audit('universal_category_preview_manual_edits_applied', manual_changes=manual_changes, rows=int(len(output)), manual_map_size=len(pending_map), dedicated_apply_button=True)
+            safe_rerun('universal_category_manual_edits_applied')
         else:
             st.info('Nenhuma categoria manual diferente foi informada neste filtro.')
     if manual_changes:
-        st.caption('Correções manuais detectadas na prévia. O botão “Aplicar opcionais e ir para mapeamento” levará essas categorias para o mapeamento.')
+        st.caption('Há correções manuais pendentes nesta prévia. Use o botão acima para fixar antes de avançar.')
     return output
 
 
@@ -689,7 +727,7 @@ def _apply_category_group(source: pd.DataFrame, confidence_min: float) -> pd.Dat
         return source
     st.success(f'Categorização analisada: {stats.get("total", 0)} produto(s), {applied} categoria(s) aplicada(s).')
     reviewed = _render_universal_category_review(output)
-    _audit('mapear_planilha_grupo_categoria_toggle', enabled=True, grouped_toggle=True, applied=True, rows=int(len(reviewed)), preview_filter=True, manual_review_enabled=True)
+    _audit('mapear_planilha_grupo_categoria_toggle', enabled=True, grouped_toggle=True, applied=True, rows=int(len(reviewed)), preview_filter=True, manual_review_enabled=True, manual_map_size=len(_manual_category_map()))
     return reviewed
 
 
@@ -752,13 +790,14 @@ def _render_options_step(model: pd.DataFrame, source: pd.DataFrame) -> None:
         processed = _apply_category_group(processed, category_confidence)
     rules_config, rules_enabled = _render_rules_group(processed, model)
     if st.button('Aplicar opcionais e ir para mapeamento ➡️', use_container_width=True, key='mapeiaai_universal_apply_options'):
+        processed = _apply_manual_category_map(processed) if category_enabled else processed
         _store_df(UNIVERSAL_PROCESSED_KEY, processed)
         st.session_state[UNIVERSAL_PRICE_ENABLED_KEY] = bool(price_enabled)
         st.session_state[UNIVERSAL_CATEGORY_ENABLED_KEY] = bool(category_enabled)
         st.session_state[UNIVERSAL_RULES_ENABLED_KEY] = bool(rules_enabled)
         st.session_state[UNIVERSAL_RULES_CONFIG_KEY] = dict(rules_config or {})
         _clear_after_options()
-        _audit('universal_options_applied_before_mapping', rows=int(len(processed)), columns=int(len(processed.columns)), price_enabled=price_enabled, category_enabled=category_enabled, rules_enabled=rules_enabled, category_preview_reviewed=category_enabled)
+        _audit('universal_options_applied_before_mapping', rows=int(len(processed)), columns=int(len(processed.columns)), price_enabled=price_enabled, category_enabled=category_enabled, rules_enabled=rules_enabled, category_preview_reviewed=category_enabled, manual_category_map_size=len(_manual_category_map()))
         _set_step(STEP_MAPPING, 'options_applied')
 
 
