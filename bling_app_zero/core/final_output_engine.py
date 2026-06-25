@@ -21,6 +21,7 @@ from bling_app_zero.universal.universal_contract import UniversalContract, build
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/final_output_engine.py'
 CATEGORY_SOURCE_PRIORITY = ('Categoria do produto', 'Categoria', 'categoria', 'category', 'categoria_sugerida_ia')
+CATEGORY_HELPER_COLUMNS = ('categoria_sugerida_ia', 'acao_categoria_ia', 'confianca_categoria_ia', 'motivo_categoria_ia')
 EMPTY_CATEGORY_MARKERS = {'', 'nan', 'none', 'null', '<na>', 'revisar manualmente'}
 SAFE_TARGET_SOURCE_ALIASES = {
     'preco de compra': ('preco de compra', 'preco compra', 'preco de custo', 'preco custo', 'custo', 'valor custo'),
@@ -66,6 +67,20 @@ def _has_category_column(df: pd.DataFrame) -> bool:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return False
     return any(_is_category_column(column) for column in df.columns)
+
+
+def _has_category_helper_columns(df: pd.DataFrame) -> bool:
+    if not isinstance(df, pd.DataFrame):
+        return False
+    columns = {_norm_column(column) for column in df.columns}
+    return any(_norm_column(column) in columns for column in CATEGORY_HELPER_COLUMNS)
+
+
+def _category_finalizer_allowed(source: pd.DataFrame, rules_config: Mapping[str, Any]) -> bool:
+    # Sem categorização inteligente/regras, categoria mapeada é decisão do usuário.
+    # Com helper da categorização ou regra de categoria ligada, o sistema pode aplicar
+    # o finalizador para manter a categoria conforme definido pelo próprio sistema.
+    return bool(_has_category_helper_columns(source) or (bool(rules_config.get('enabled')) and bool(rules_config.get('fill_category_aliases'))))
 
 
 def _first_source_category_column(source: pd.DataFrame) -> str | None:
@@ -234,7 +249,7 @@ def build_final_output(
 
     output = sanitize_final_dataframe(output, operation=operation, contract_columns=list(contract_columns), run_download_features=False)
 
-    if _has_category_column(output):
+    if _category_finalizer_allowed(source, rules_config) and _has_category_column(output):
         output, category_report = finalize_categories_for_output(
             output,
             context='final_output_engine_before_csv',
