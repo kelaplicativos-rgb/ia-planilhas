@@ -160,9 +160,18 @@ def _looks_like_money(text: str) -> bool:
     value = str(text or '').strip()
     if not value:
         return False
-    if re.search(r'(^|\s)r\$\s*\d', value.lower()):
+    lower_value = value.lower()
+    if re.search(r'(^|\s)r\$\s*\d', lower_value):
         return True
-    return bool(re.fullmatch(r'\d{1,7}([.,]\d{2})?', value.replace(' ', '')))
+    compact = re.sub(r'\s+', '', value)
+    # Inteiros puros como 10, 20 e 50 são mais prováveis estoque/quantidade do que preço.
+    if re.fullmatch(r'\d+', compact):
+        return False
+    return bool(
+        re.fullmatch(r'\d{1,7}[.,]\d{2}', compact)
+        or re.fullmatch(r'\d{1,3}([.]\d{3})+[,]\d{2}', compact)
+        or re.fullmatch(r'\d{1,3}([,]\d{3})+[.]\d{2}', compact)
+    )
 
 
 def _looks_like_gtin(text: str) -> bool:
