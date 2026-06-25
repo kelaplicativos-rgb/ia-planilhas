@@ -37,6 +37,28 @@ def test_pilha_mah_nao_vira_power_bank():
     assert categories == ['Pilhas e baterias']
 
 
+def test_fonte_notebook_nao_vira_carregador_celular():
+    categories, _report = _run([
+        {
+            'Descrição': 'Fonte Carregador Universal Notebook 9 Conectores 120w',
+            'Descrição Complementar': 'Fonte universal para notebook laptop com 9 conectores.',
+            'Categoria do produto': 'Carregadores para celular',
+        },
+    ])
+    assert categories == ['Fontes']
+
+
+def test_adaptador_fone_tipo_c_nao_vira_fone():
+    categories, _report = _run([
+        {
+            'Descrição': 'Adptador de fone Tipo C Hmaston ZHQ16',
+            'Descrição Complementar': 'Adaptador de fone USB C para P2, conversor de audio tipo c.',
+            'Categoria do produto': 'Fones de ouvido',
+        },
+    ])
+    assert categories == ['Adaptadores']
+
+
 def test_radio_nao_vira_caixa_de_som():
     categories, _report = _run([
         {
