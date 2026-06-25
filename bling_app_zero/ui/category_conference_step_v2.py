@@ -25,10 +25,15 @@ CATEGORY_DATASET_SIGNATURE_KEY = 'category_conference_dataset_signature_v1'
 CATEGORY_AUTO_APPLIED_SIGNATURE_KEY = 'category_conference_auto_applied_signature_v1'
 CATEGORY_AUTO_BLOCKED_SIGNATURE_KEY = 'category_conference_auto_blocked_signature_v1'
 CATEGORY_REBUILD_BUTTON_KEY = 'category_conference_rebuild_auto_v1'
+CATEGORY_REVIEW_SEARCH_KEY = 'category_conference_review_search_v1'
+CATEGORY_REVIEW_ACTION_KEY = 'category_conference_review_action_v1'
+CATEGORY_REVIEW_CATEGORY_KEY = 'category_conference_review_category_v1'
+CATEGORY_REVIEW_ONLY_ATTENTION_KEY = 'category_conference_review_only_attention_v1'
+CATEGORY_REVIEW_EDITOR_KEY = 'category_conference_review_editor_v1'
+CATEGORY_REVIEW_APPLY_KEY = 'category_conference_review_apply_v1'
 
-# Não existe controle manual de confiança nesta etapa. Ao ligar a categorização,
-# o sistema aplica automaticamente e só libera quando 100% dos produtos tiverem
-# categoria final válida.
+# Não existe controle manual de confiança. Ao ligar a categorização, o sistema
+# aplica automaticamente e libera um preview filtrável para conferência/correção.
 CATEGORY_AUTO_CONFIDENCE_MIN = 0.80
 BLOCKED_FINAL_CATEGORY_VALUES = {'', 'nan', 'none', 'null', '<na>', 'na', 'n/a', 'sem categoria', 'revisar manualmente'}
 
@@ -49,6 +54,9 @@ PRIMARY_KEYS = (
     'cadastro_wizard_df_para_mapear', 'df_origem', 'df_origem_planilha', 'df_origem_cadastro', 'df_origem_universal',
     'df_final_bling_api', 'df_final_universal', 'df_final_cadastro',
 )
+
+PRODUCT_COLUMNS = ('Nome', 'Descrição', 'Descricao', 'Produto', 'Título', 'Titulo', 'name', 'produto')
+CODE_COLUMNS = ('Código', 'Codigo', 'SKU', 'GTIN', 'EAN', 'ID', 'Id')
 
 
 def _valid_df(value: object) -> bool:
@@ -77,7 +85,7 @@ def category_values_signature(df: pd.DataFrame) -> str:
 
 
 def _final_category_issue_rows(df: pd.DataFrame) -> tuple[int, ...]:
-    """Linhas 1-based sem categoria final válida após aplicar IA."""
+    """Linhas 1-based sem categoria final válida após aplicar IA/manual."""
     if not _valid_df(df):
         return tuple()
     category_col = detect_category_column(df)
@@ -98,7 +106,7 @@ def _category_issue_preview(df: pd.DataFrame, rows: tuple[int, ...], *, limit: i
     preview = df.iloc[indexes].copy().fillna('')
     preview.insert(0, 'linha', [row for row in rows[:len(indexes)]])
     preferred = [
-        'linha', 'Código', 'SKU', 'GTIN', 'Nome', 'Descrição', 'Descricao', 'Produto', 'Categoria',
+        'linha', 'Código', 'SKU', 'GTIN', 'Nome', 'Descrição', 'Descricao', 'Produto', 'Categoria', 'Categoria do produto',
         'categoria_atual_ia', 'categoria_sugerida_ia', 'acao_categoria_ia', 'confianca_categoria_ia', 'motivo_categoria_ia',
     ]
     cols = [col for col in preferred if col in preview.columns]
@@ -156,10 +164,14 @@ def _catalog() -> tuple[str, ...]:
     return tuple(line.strip() for line in text.splitlines() if line.strip())
 
 
+def _category_col_or_default(df: pd.DataFrame) -> str:
+    return detect_category_column(df) or 'Categoria do produto'
+
+
 def _apply_category_values(target: pd.DataFrame, corrected: pd.DataFrame) -> pd.DataFrame:
     result = target.copy().fillna('')
-    source_col = detect_category_column(corrected) or 'Categoria'
-    target_col = detect_category_column(result) or 'Categoria'
+    source_col = detect_category_column(corrected) or 'Categoria do produto'
+    target_col = detect_category_column(result) or 'Categoria do produto'
     if target_col not in result.columns:
         result[target_col] = ''
     if source_col not in corrected.columns:
@@ -251,12 +263,7 @@ def _apply_or_block(analyzed: pd.DataFrame, source_key: str, *, stats: dict[str,
         area='CATEGORIAS',
         step='conferencia_categorias',
         status='OK',
-        details={
-            'rows': int(len(corrected)),
-            'applied_count': int(applied_count),
-            'required_completion_percent': 100,
-            'responsible_file': RESPONSIBLE_FILE,
-        },
+        details={'rows': int(len(corrected)), 'applied_count': int(applied_count), 'required_completion_percent': 100, 'responsible_file': RESPONSIBLE_FILE},
     )
     return True, tuple(), int(applied_count), corrected
 
@@ -267,6 +274,169 @@ def _render_blocked(blocked_rows: tuple[int, ...], analyzed: pd.DataFrame) -> No
     preview = _category_issue_preview(analyzed, blocked_rows)
     if _valid_df(preview):
         st.dataframe(preview, use_container_width=True, hide_index=True, height=360)
+
+
+def _first_existing_column(df: pd.DataFrame, candidates: tuple[str, ...]) -> str:
+    for column in candidates:
+        if column in df.columns:
+            return column
+    return ''
+
+
+def _row_text(row: pd.Series, columns: tuple[str, ...]) -> str:
+    values: list[str] = []
+    for column in columns:
+        if column in row.index:
+            value = str(row.get(column) or '').strip()
+            if value:
+                values.append(value)
+    return ' · '.join(values)
+
+
+def _build_review_preview(analyzed: pd.DataFrame) -> pd.DataFrame:
+    if not _valid_df(analyzed):
+        return pd.DataFrame()
+    category_col = _category_col_or_default(analyzed)
+    if category_col not in analyzed.columns:
+        analyzed = analyzed.copy().fillna('')
+        analyzed[category_col] = ''
+    product_col = _first_existing_column(analyzed, PRODUCT_COLUMNS)
+    code_col = _first_existing_column(analyzed, CODE_COLUMNS)
+    rows: list[dict[str, object]] = []
+    for idx, row in analyzed.fillna('').iterrows():
+        current = str(row.get('categoria_atual_ia') or row.get(category_col) or '').strip()
+        suggested = str(row.get('categoria_sugerida_ia') or row.get(category_col) or '').strip()
+        action = str(row.get('acao_categoria_ia') or 'MANTER').strip() or 'MANTER'
+        final_category = suggested or current
+        rows.append(
+            {
+                '__row_index': int(idx),
+                'linha': int(idx) + 1,
+                'Produto': str(row.get(product_col) or _row_text(row, PRODUCT_COLUMNS) or '').strip(),
+                'Código/SKU': str(row.get(code_col) or _row_text(row, CODE_COLUMNS) or '').strip(),
+                'Categoria atual': current,
+                'Categoria sugerida': suggested,
+                'Categoria corrigida': final_category,
+                'Ação': action,
+                'Confiança': row.get('confianca_categoria_ia', ''),
+                'Motivo': str(row.get('motivo_categoria_ia') or '').strip(),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _filter_review_preview(preview: pd.DataFrame) -> pd.DataFrame:
+    if not _valid_df(preview):
+        return preview
+    with st.container(border=True):
+        st.markdown('**Conferência rápida de produtos e categorias**')
+        left, middle, right = st.columns([2, 1, 1])
+        search = left.text_input('Filtrar por produto, código ou categoria', key=CATEGORY_REVIEW_SEARCH_KEY, placeholder='Ex.: power bank, cabo, fonte, adaptador...')
+        action_options = ['Todas'] + sorted({str(value) for value in preview['Ação'].fillna('').astype(str) if str(value).strip()})
+        action = middle.selectbox('Ação', action_options, key=CATEGORY_REVIEW_ACTION_KEY)
+        categories = sorted({str(value).strip() for value in preview['Categoria corrigida'].fillna('').astype(str) if str(value).strip()})
+        category = right.selectbox('Categoria', ['Todas'] + categories, key=CATEGORY_REVIEW_CATEGORY_KEY)
+        only_attention = st.checkbox('Mostrar primeiro somente produtos corrigidos/revisar', value=False, key=CATEGORY_REVIEW_ONLY_ATTENTION_KEY)
+
+    filtered = preview.copy().fillna('')
+    if search.strip():
+        token = search.strip().casefold()
+        haystack = filtered.drop(columns=['__row_index'], errors='ignore').astype(str).agg(' '.join, axis=1).str.casefold()
+        filtered = filtered[haystack.str.contains(token, regex=False, na=False)]
+    if action != 'Todas':
+        filtered = filtered[filtered['Ação'].astype(str) == action]
+    if category != 'Todas':
+        filtered = filtered[filtered['Categoria corrigida'].astype(str) == category]
+    if only_attention:
+        filtered = filtered[filtered['Ação'].astype(str).ne('MANTER')]
+    return filtered
+
+
+def _category_options(preview: pd.DataFrame) -> list[str]:
+    options = list(_catalog())
+    extra = []
+    if _valid_df(preview):
+        for column in ('Categoria atual', 'Categoria sugerida', 'Categoria corrigida'):
+            if column in preview.columns:
+                extra.extend([str(value).strip() for value in preview[column].fillna('').astype(str) if str(value).strip()])
+    return sorted(dict.fromkeys([*options, *extra]))
+
+
+def _apply_manual_review_edits(base_df: pd.DataFrame, edited: pd.DataFrame, source_key: str) -> int:
+    if not _valid_df(base_df) or not _valid_df(edited):
+        return 0
+    corrected = base_df.copy().fillna('')
+    category_col = _category_col_or_default(corrected)
+    if category_col not in corrected.columns:
+        corrected[category_col] = ''
+    changed = 0
+    for _, row in edited.iterrows():
+        try:
+            row_index = int(row.get('__row_index'))
+        except Exception:
+            continue
+        if row_index < 0 or row_index >= len(corrected):
+            continue
+        new_value = str(row.get('Categoria corrigida') or '').strip()
+        if not new_value:
+            continue
+        old_value = str(corrected.at[corrected.index[row_index], category_col] or '').strip()
+        if new_value != old_value:
+            corrected.at[corrected.index[row_index], category_col] = new_value
+            changed += 1
+    if changed <= 0:
+        return 0
+    _analyzed_after, stats_after = classify_dataframe(corrected, category_catalog=_catalog())
+    _store_corrected_everywhere(corrected, source_key, applied_count=changed, stats=stats_after)
+    add_audit_event(
+        'category_conference_manual_review_applied',
+        area='CATEGORIAS',
+        step='conferencia_categorias',
+        status='OK',
+        details={'manual_changes': changed, 'rows': int(len(corrected)), 'category_column': category_col, 'responsible_file': RESPONSIBLE_FILE},
+    )
+    return changed
+
+
+def _render_category_review_grid(analyzed: pd.DataFrame, base_df: pd.DataFrame, source_key: str) -> None:
+    preview = _build_review_preview(analyzed)
+    if not _valid_df(preview):
+        st.info('Não encontrei produtos para exibir na conferência de categorias.')
+        return
+    filtered = _filter_review_preview(preview)
+    st.caption(f'Mostrando {len(filtered)} de {len(preview)} produto(s). Edite apenas a coluna “Categoria corrigida” e aplique antes de avançar.')
+    if filtered.empty:
+        st.info('Nenhum produto encontrado com estes filtros.')
+        return
+    options = _category_options(preview)
+    column_config = {
+        'Categoria corrigida': st.column_config.SelectboxColumn('Categoria corrigida', options=options, required=True),
+        'linha': st.column_config.NumberColumn('Linha', disabled=True),
+        'Produto': st.column_config.TextColumn('Produto', disabled=True),
+        'Código/SKU': st.column_config.TextColumn('Código/SKU', disabled=True),
+        'Categoria atual': st.column_config.TextColumn('Categoria atual', disabled=True),
+        'Categoria sugerida': st.column_config.TextColumn('Categoria sugerida', disabled=True),
+        'Ação': st.column_config.TextColumn('Ação', disabled=True),
+        'Confiança': st.column_config.TextColumn('Confiança', disabled=True),
+        'Motivo': st.column_config.TextColumn('Motivo', disabled=True),
+    }
+    edited = st.data_editor(
+        filtered,
+        key=CATEGORY_REVIEW_EDITOR_KEY,
+        use_container_width=True,
+        hide_index=True,
+        height=430,
+        disabled=[col for col in filtered.columns if col not in {'Categoria corrigida'}],
+        column_config=column_config,
+        column_order=['linha', 'Produto', 'Código/SKU', 'Categoria atual', 'Categoria sugerida', 'Categoria corrigida', 'Ação', 'Confiança', 'Motivo'],
+    )
+    if st.button('✅ Aplicar correções manuais de categoria', use_container_width=True, key=CATEGORY_REVIEW_APPLY_KEY):
+        changed = _apply_manual_review_edits(base_df, edited, source_key)
+        if changed:
+            st.success(f'{changed} categoria(s) corrigida(s) manualmente e aplicadas na base final.')
+            st.rerun()
+        else:
+            st.info('Nenhuma categoria manual diferente foi informada neste filtro.')
 
 
 def category_conference_ready() -> bool:
@@ -285,7 +455,7 @@ def render_category_conference_step() -> None:
     _reset_if_source_changed(df, source_key)
 
     st.markdown('### Conferência inteligente de categorias')
-    st.caption('Aplicação 100% automática: ao ligar a categorização, o sistema corrige e padroniza sem botão de aplicar e sem controle manual de confiança.')
+    st.caption('A categorização automática padroniza primeiro; depois você confere por filtros e corrige manualmente em uma grade rápida.')
     st.warning('Trava 100%: nenhum produto será liberado enquanto existir categoria final vazia ou “REVISAR MANUALMENTE”.')
 
     if CATEGORY_CATALOG_KEY not in st.session_state:
@@ -305,21 +475,14 @@ def render_category_conference_step() -> None:
         st.success(f'Categorização aplicada automaticamente: {applied_count} categoria(s) corrigida(s)/padronizada(s). 100% dos produtos têm categoria final válida.')
         st.rerun()
 
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric('Produtos', stats.get('total', 0))
-    col2.metric('Sem categoria', stats.get('sem_categoria', 0))
-    col3.metric('Corrigir', stats.get('corrigir', 0))
-    col4.metric('Criar/vincular', stats.get('criar_vincular', 0))
-    col5.metric('Revisar', stats.get('revisar', 0))
+    total = int(stats.get('total', len(df)) or len(df))
+    sem_categoria = int(stats.get('sem_categoria', 0) or 0)
+    corrigir = int(stats.get('corrigir', 0) or 0)
+    revisar = int(stats.get('revisar', 0) or 0)
+    criar_vincular = int(stats.get('criar_vincular', 0) or 0)
+    st.caption(f'Resumo: {total} produto(s) · sem categoria: {sem_categoria} · corrigir: {corrigir} · criar/vincular: {criar_vincular} · revisar: {revisar}')
 
-    action_df = analyzed[analyzed['acao_categoria_ia'] != 'MANTER'].copy() if 'acao_categoria_ia' in analyzed.columns else pd.DataFrame()
-    if action_df.empty:
-        st.success('Todas as categorias estão padronizadas.')
-    else:
-        display_cols = [col for col in ('Nome', 'Descrição', 'Descricao', 'Produto', 'categoria_atual_ia', 'categoria_sugerida_ia', 'acao_categoria_ia', 'confianca_categoria_ia', 'motivo_categoria_ia') if col in action_df.columns]
-        st.dataframe(action_df[display_cols].head(500), use_container_width=True, hide_index=True, height=360)
-        if len(action_df) > 500:
-            st.caption(f'Mostrando 500 de {len(action_df)} produtos com ação de categoria.')
+    _render_category_review_grid(analyzed, df, source_key)
 
     if category_conference_ready():
         if st.button('🔄 Refazer categorização automática', use_container_width=True, key=CATEGORY_REBUILD_BUTTON_KEY):
@@ -329,7 +492,7 @@ def render_category_conference_step() -> None:
     if category_conference_was_skipped():
         st.warning('Conferência pulada porque a categorização foi desligada antes de entrar no painel.')
     elif category_conference_ready():
-        st.success('Conferência confirmada automaticamente. O envio ao Bling usará o nome corrigido da categoria.')
+        st.success('Conferência confirmada. O envio ao Bling usará a categoria corrigida nesta prévia.')
     else:
         st.info('Sistema aplicando categorias automaticamente. Se alguma categoria não for segura, a etapa será bloqueada.')
 
