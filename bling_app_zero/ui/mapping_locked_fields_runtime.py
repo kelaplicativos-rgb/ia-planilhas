@@ -36,24 +36,24 @@ def _locked_fields(st, key_prefix: str, target: pd.DataFrame) -> dict[str, dict[
             continue
         if isinstance(data, dict):
             value = str(data.get('value') or '')
-            reason = str(data.get('reason') or 'Tratado pelas regras inteligentes')
+            reason = str(data.get('reason') or 'Sugestão das regras inteligentes')
             kind = str(data.get('kind') or 'rule')
         else:
             value = str(data or '')
-            reason = 'Tratado pelas regras inteligentes'
+            reason = 'Sugestão das regras inteligentes'
             kind = 'rule'
         out[field_name] = {'value': value, 'reason': reason, 'kind': kind}
     return out
 
 
-def _render_locked_summary(st, locked: dict[str, dict[str, str]]) -> None:
-    if not locked:
+def _render_suggested_summary(st, suggested: dict[str, dict[str, str]]) -> None:
+    if not suggested:
         return
-    st.info('🔒 Alguns campos foram bloqueados porque serão preenchidos/tratados pelas Regras e recursos inteligentes.')
+    st.info('💡 Alguns campos receberam sugestão das Regras e recursos inteligentes, mas continuam editáveis. Você pode deixar vazio, trocar a origem ou escrever valor fixo.')
     rows = []
-    for field, data in locked.items():
-        rows.append({'Campo bloqueado': field, 'Origem/valor usado': _fixed_display(data.get('value', '')), 'Motivo': data.get('reason', '')})
-    with st.expander('Ver campos bloqueados pelas regras', expanded=False):
+    for field, data in suggested.items():
+        rows.append({'Campo com sugestão': field, 'Origem/valor sugerido': _fixed_display(data.get('value', '')), 'Motivo': data.get('reason', '')})
+    with st.expander('Ver sugestões das regras inteligentes', expanded=False):
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=min(320, 80 + len(rows) * 35))
 
 
@@ -67,10 +67,9 @@ def install() -> None:
 
     if getattr(shared_mapping, '_mapeiaai_locked_fields_runtime_patched', False):
         return
-
     original = shared_mapping.render_shared_contract_mapping
 
-    def render_shared_contract_mapping_locked(
+    def render_shared_contract_mapping_suggested(
         source: pd.DataFrame,
         target: pd.DataFrame,
         *,
@@ -80,34 +79,35 @@ def install() -> None:
         key_prefix: str = 'mapeiaai_shared',
         ai_enabled: bool = True,
     ) -> dict[str, str]:
-        locked = _locked_fields(st, key_prefix, target)
-        if not locked:
-            return original(source, target, signature=signature, mapping_state_key=mapping_state_key, engine_state_key=engine_state_key, key_prefix=key_prefix, ai_enabled=ai_enabled)
+        suggested = _locked_fields(st, key_prefix, target)
+        if suggested:
+            current = dict(st.session_state.get(mapping_state_key) or {})
+            # Só pré-preenche campos ainda não decididos. Se o usuário já deixou vazio,
+            # escolheu uma coluna ou escreveu valor fixo, essa decisão prevalece.
+            for field, data in suggested.items():
+                if str(current.get(field, '') or '').strip():
+                    continue
+                value = str(data.get('value') or '').strip()
+                if value:
+                    current[field] = value
+            st.session_state[mapping_state_key] = current
+            _render_suggested_summary(st, suggested)
 
-        current = dict(st.session_state.get(mapping_state_key) or {})
-        for field, data in locked.items():
-            current[field] = str(data.get('value') or '')
-        st.session_state[mapping_state_key] = current
+        edited = original(
+            source,
+            target,
+            signature=signature,
+            mapping_state_key=mapping_state_key,
+            engine_state_key=engine_state_key,
+            key_prefix=key_prefix,
+            ai_enabled=ai_enabled,
+        )
+        _audit('mapping_rule_suggestions_applied_editable', details={'suggested_fields': list(suggested.keys()), 'mapping_state_key': mapping_state_key})
+        return dict(edited or {})
 
-        _render_locked_summary(st, locked)
-        editable_columns = [column for column in target.columns if str(column) not in locked]
-        if editable_columns:
-            editable_target = target.loc[:, editable_columns].copy()
-            edited = original(source, editable_target, signature=signature, mapping_state_key=mapping_state_key, engine_state_key=engine_state_key, key_prefix=key_prefix, ai_enabled=ai_enabled)
-        else:
-            st.success('Todos os campos deste modelo foram tratados pelas regras inteligentes. Não há campos manuais para revisar.')
-            edited = {}
-
-        combined = dict(edited or {})
-        for field, data in locked.items():
-            combined[field] = str(data.get('value') or '')
-        st.session_state[mapping_state_key] = combined
-        _audit('mapping_locked_fields_applied', details={'locked_fields': list(locked.keys()), 'editable_fields': len(editable_columns), 'mapping_state_key': mapping_state_key})
-        return combined
-
-    shared_mapping.render_shared_contract_mapping = render_shared_contract_mapping_locked
+    shared_mapping.render_shared_contract_mapping = render_shared_contract_mapping_suggested
     shared_mapping._mapeiaai_locked_fields_runtime_patched = True
-    _audit('mapping_locked_fields_runtime_installed', details={'strategy': 'locked_fields_removed_from_manual_mapping'})
+    _audit('mapping_locked_fields_runtime_installed', details={'strategy': 'rule_suggestions_remain_editable'})
 
 
 __all__ = ['install']
