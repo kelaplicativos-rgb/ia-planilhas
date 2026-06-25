@@ -8,9 +8,11 @@ from bling_app_zero.core.text import normalize_key
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/critical_empty_fields_guard.py'
 
-# Campos que não devem ser preenchidos automaticamente no fluxo Universal.
-# Tags inválidas e Código Pai indevido são causas comuns de falha/variação errada no Bling.
-CRITICAL_EMPTY_COMPACT_KEYS = {
+# Campos sensíveis que exigem escolha consciente do usuário.
+# Eles NÃO são forçados a vazio. Apenas não devem ser preenchidos por automação
+# silenciosa/auto-green. Se o usuário selecionar uma coluna ou valor fixo, o
+# sistema deve respeitar e exportar o dado.
+MANUAL_CHOICE_COMPACT_KEYS = {
     'tag',
     'tags',
     'etiqueta',
@@ -30,47 +32,32 @@ def _compact(value: object) -> str:
     return normalize_key(value).replace(' ', '')
 
 
-def is_critical_empty_target(column: object) -> bool:
+def is_manual_choice_target(column: object) -> bool:
     key = _compact(column)
-    if key in CRITICAL_EMPTY_COMPACT_KEYS:
+    if key in MANUAL_CHOICE_COMPACT_KEYS:
         return True
     return key.startswith('codigopai') or key.startswith('grupodetags') or key.startswith('tagsdoproduto')
 
 
+# Compatibilidade com patches antigos: o nome antigo continua existindo, mas
+# agora significa apenas "campo sensível que requer escolha manual".
+def is_critical_empty_target(column: object) -> bool:
+    return is_manual_choice_target(column)
+
+
+# Compatibilidade: não remove mais nada. Deixar vazio ou preencher é decisão do usuário.
 def strip_critical_empty_mappings(mapping: Mapping[str, str] | None) -> tuple[dict[str, str], list[dict[str, str]]]:
-    result = {str(key): str(value or '').strip() for key, value in dict(mapping or {}).items()}
-    report: list[dict[str, str]] = []
-    for target, source in list(result.items()):
-        if is_critical_empty_target(target) and source:
-            result[target] = ''
-            report.append({
-                'target': target,
-                'blocked_source': source,
-                'reason': 'campo crítico deve ficar vazio no fluxo Universal: Tags/Código Pai não podem ser auto preenchidos por farol ou coluna igual',
-                'responsible_file': RESPONSIBLE_FILE,
-            })
-    return result, report
+    return {str(key): str(value or '').strip() for key, value in dict(mapping or {}).items()}, []
 
 
+# Compatibilidade: não limpa mais o download final. Se o usuário mapeou, exporta.
 def force_critical_empty_columns(df: pd.DataFrame | None) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
-    if not isinstance(df, pd.DataFrame):
-        return pd.DataFrame(), []
-    out = df.copy().fillna('')
-    report: list[dict[str, Any]] = []
-    for column in list(out.columns):
-        if not is_critical_empty_target(column):
-            continue
-        series = out[column].fillna('').astype(str).str.strip()
-        filled = int(series.ne('').sum())
-        if filled:
-            out[column] = ''
-            report.append({
-                'column': str(column),
-                'cleared_cells': filled,
-                'reason': 'campo crítico limpo antes do download/API final',
-                'responsible_file': RESPONSIBLE_FILE,
-            })
-    return out, report
+    return df.copy().fillna('') if isinstance(df, pd.DataFrame) else pd.DataFrame(), []
 
 
-__all__ = ['is_critical_empty_target', 'strip_critical_empty_mappings', 'force_critical_empty_columns']
+__all__ = [
+    'is_manual_choice_target',
+    'is_critical_empty_target',
+    'strip_critical_empty_mappings',
+    'force_critical_empty_columns',
+]
