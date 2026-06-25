@@ -12,6 +12,7 @@ from bling_app_zero.core.column_contract import infer_kind
 RESPONSIBLE_FILE = 'bling_app_zero/core/mapping_certainty_guard.py'
 
 GTIN_RE = re.compile(r'^\d{8}$|^\d{12}$|^\d{13}$|^\d{14}$')
+NCM_FORMAT_RE = re.compile(r'^\d{4}[\.\s-]?\d{2}[\.\s-]?\d{2}$')
 NUMBER_RE = re.compile(r'^-?\d+(?:[\.,]\d+)?$')
 INTEGER_RE = re.compile(r'^-?\d+$')
 PRICE_RE = re.compile(r'(?:R\$\s*)?-?\d{1,9}(?:[\.,]\d{2})')
@@ -23,7 +24,6 @@ BREADCRUMB_RE = re.compile(r'\s(?:>|/|\\|\|)\s')
 DESCRIPTION_KINDS = {'descricao', 'descricao_curta', 'descricao_complementar', 'nome_apoio'}
 CODE_KINDS = {'codigo', 'id_produto'}
 PRICE_KINDS = {'preco_unitario', 'preco_custo'}
-TEXTUAL_KINDS = DESCRIPTION_KINDS | {'marca', 'categoria', 'fornecedor', 'observacao'}
 
 
 @dataclass(frozen=True)
@@ -95,6 +95,8 @@ def _target_kind(target: str) -> str:
     if kind != 'custom':
         return kind
     key = normalize_header(target)
+    if any(term in key for term in ('ncm', 'classificacao fiscal', 'classificação fiscal')):
+        return 'ncm'
     if any(term in key for term in ('descricao', 'descrição', 'nome', 'titulo', 'título', 'produto')):
         return 'descricao'
     if any(term in key for term in ('marca', 'fabricante', 'brand')):
@@ -120,8 +122,41 @@ def _source_kind(source: str) -> str:
     return infer_kind(source)
 
 
+def _header_confirms(target_kind: str, target: str, source: str, source_kind: str) -> bool:
+    exact_header = _equivalent_headers(target, source)
+    if target_kind == 'custom':
+        return exact_header
+    if exact_header or _kind_compatible(target_kind, source_kind):
+        return True
+    terms_by_kind = {
+        'ncm': ('ncm', 'classificacao fiscal', 'classificação fiscal'),
+        'gtin': ('gtin', 'ean', 'codigo barras', 'código barras', 'barra'),
+        'preco_unitario': ('preco', 'preço', 'valor', 'venda', 'unitario', 'unitário'),
+        'preco_custo': ('preco', 'preço', 'valor', 'custo', 'compra'),
+        'estoque': ('estoque', 'saldo', 'quantidade', 'qtd', 'balanco', 'balanço'),
+        'imagem': ('imagem', 'foto', 'url imagem'),
+        'url': ('url', 'link', 'pagina', 'página'),
+        'descricao': ('descricao', 'descrição', 'nome', 'titulo', 'título', 'produto'),
+        'descricao_curta': ('descricao', 'descrição', 'resumo', 'curta'),
+        'descricao_complementar': ('descricao', 'descrição', 'complementar', 'completa', 'ficha', 'caracteristica', 'característica'),
+        'marca': ('marca', 'fabricante', 'brand'),
+        'categoria': ('categoria', 'departamento', 'grupo', 'familia', 'família'),
+        'codigo': ('codigo', 'código', 'sku', 'referencia', 'referência', 'ref'),
+        'id_produto': ('id', 'codigo', 'código', 'sku'),
+    }
+    return _any_header_term(source, terms_by_kind.get(target_kind, ()))
+
+
 def _is_gtin(value: str) -> bool:
     return bool(GTIN_RE.fullmatch(_digits(value)))
+
+
+def _is_ncm(value: str, header_confirms: bool) -> bool:
+    digits = _digits(value)
+    if len(digits) != 8:
+        return False
+    text = str(value or '').strip()
+    return header_confirms or (text != digits and bool(NCM_FORMAT_RE.fullmatch(text)))
 
 
 def _is_url(value: str) -> bool:
@@ -180,50 +215,56 @@ def is_certain_mapping(df_source: Any, target: str, source: str) -> MappingCerta
 
     target_kind = _target_kind(target)
     source_kind = _source_kind(source)
-    exact_header = _equivalent_headers(target, source)
+    header_ok = _header_confirms(target_kind, target, source, source_kind)
+    if not header_ok:
+        return MappingCertainty(False, 'cabeçalho não confirma o campo de destino', target_kind, source_kind, len(values))
+
+    if target_kind == 'ncm':
+        ok = _all(values, lambda value: _is_ncm(value, header_ok))
+        return MappingCertainty(ok, 'NCM confirmado por cabeçalho e conteúdo' if ok else 'NCM sem validação de conteúdo', target_kind, source_kind, len(values))
 
     if target_kind == 'gtin':
         ok = _all(values, _is_gtin)
-        return MappingCertainty(ok, 'GTIN confirmado em todas as amostras' if ok else 'GTIN não confirmado em todas as amostras', target_kind, source_kind, len(values))
+        return MappingCertainty(ok, 'GTIN confirmado por cabeçalho e conteúdo' if ok else 'GTIN não confirmado nas amostras', target_kind, source_kind, len(values))
 
     if target_kind in PRICE_KINDS:
-        ok = _all(values, _is_price) and (_kind_compatible(target_kind, source_kind) or exact_header or _any_header_term(source, ('preco', 'preço', 'valor', 'custo', 'unitario', 'unitário')))
-        return MappingCertainty(ok, 'preço confirmado em todas as amostras' if ok else 'preço sem certeza máxima', target_kind, source_kind, len(values))
+        ok = _all(values, _is_price)
+        return MappingCertainty(ok, 'preço confirmado por cabeçalho e conteúdo' if ok else 'preço sem validação de conteúdo', target_kind, source_kind, len(values))
 
     if target_kind == 'estoque':
         ok = _all(values, _is_integer) and not _any_header_term(source, ('preco', 'preço', 'valor', 'custo'))
-        return MappingCertainty(ok, 'estoque confirmado como inteiro em todas as amostras' if ok else 'estoque sem certeza máxima', target_kind, source_kind, len(values))
+        return MappingCertainty(ok, 'estoque confirmado por cabeçalho e conteúdo' if ok else 'estoque sem validação de conteúdo', target_kind, source_kind, len(values))
 
     if target_kind == 'imagem':
         ok = _all(values, _is_image)
-        return MappingCertainty(ok, 'imagem confirmada em todas as amostras' if ok else 'imagem sem certeza máxima', target_kind, source_kind, len(values))
+        return MappingCertainty(ok, 'imagem confirmada por cabeçalho e conteúdo' if ok else 'imagem sem validação de conteúdo', target_kind, source_kind, len(values))
 
     if target_kind == 'url':
         ok = _all(values, _is_url)
-        return MappingCertainty(ok, 'URL confirmada em todas as amostras' if ok else 'URL sem certeza máxima', target_kind, source_kind, len(values))
+        return MappingCertainty(ok, 'URL confirmada por cabeçalho e conteúdo' if ok else 'URL sem validação de conteúdo', target_kind, source_kind, len(values))
 
     if target_kind in DESCRIPTION_KINDS:
-        ok = _is_safe_description(values) and (exact_header or _kind_compatible(target_kind, source_kind) or _any_header_term(source, ('descricao', 'descrição', 'nome', 'titulo', 'título', 'produto')))
-        return MappingCertainty(ok, 'texto descritivo confirmado em todas as amostras' if ok else 'descrição sem certeza máxima', target_kind, source_kind, len(values))
+        ok = _is_safe_description(values)
+        return MappingCertainty(ok, 'texto descritivo confirmado por cabeçalho e conteúdo' if ok else 'descrição sem validação de conteúdo', target_kind, source_kind, len(values))
 
     if target_kind == 'marca':
-        ok = _is_safe_short_text(values, 45) and (exact_header or source_kind == 'marca' or _any_header_term(source, ('marca', 'fabricante', 'brand')))
-        return MappingCertainty(ok, 'marca confirmada em todas as amostras' if ok else 'marca sem certeza máxima', target_kind, source_kind, len(values))
+        ok = _is_safe_short_text(values, 45)
+        return MappingCertainty(ok, 'marca confirmada por cabeçalho e conteúdo' if ok else 'marca sem validação de conteúdo', target_kind, source_kind, len(values))
 
     if target_kind == 'categoria':
-        ok = _is_safe_description(values) and (exact_header or source_kind == 'categoria' or _any_header_term(source, ('categoria', 'departamento', 'grupo', 'familia', 'família')) or _all(values, lambda value: bool(BREADCRUMB_RE.search(value))))
-        return MappingCertainty(ok, 'categoria confirmada em todas as amostras' if ok else 'categoria sem certeza máxima', target_kind, source_kind, len(values))
+        ok = _is_safe_description(values)
+        return MappingCertainty(ok, 'categoria confirmada por cabeçalho e conteúdo' if ok else 'categoria sem validação de conteúdo', target_kind, source_kind, len(values))
 
     if target_kind in CODE_KINDS:
-        ok = (exact_header or _kind_compatible(target_kind, source_kind) or _any_header_term(source, ('codigo', 'código', 'sku', 'referencia', 'referência', 'ref'))) and not _all(values, _is_gtin) and not _all(values, _is_price) and not _all(values, _is_url)
-        return MappingCertainty(ok, 'código confirmado por cabeçalho e conteúdo' if ok else 'código sem certeza máxima', target_kind, source_kind, len(values))
+        ok = not _all(values, _is_gtin) and not _all(values, _is_price) and not _all(values, _is_url)
+        return MappingCertainty(ok, 'código confirmado por cabeçalho e conteúdo' if ok else 'código sem validação de conteúdo', target_kind, source_kind, len(values))
 
     if target_kind == 'custom':
-        ok = exact_header
+        ok = _equivalent_headers(target, source)
         return MappingCertainty(ok, 'campo customizado confirmado por nome idêntico' if ok else 'campo customizado sem certeza máxima', target_kind, source_kind, len(values))
 
-    ok = exact_header and _kind_compatible(target_kind, source_kind)
-    return MappingCertainty(ok, 'mapeamento confirmado' if ok else 'sem certeza máxima', target_kind, source_kind, len(values))
+    ok = _kind_compatible(target_kind, source_kind)
+    return MappingCertainty(ok, 'mapeamento confirmado por cabeçalho e conteúdo' if ok else 'sem certeza máxima', target_kind, source_kind, len(values))
 
 
 def is_unique_certain_mapping(df_source: Any, target: str, source: str) -> MappingCertainty:
