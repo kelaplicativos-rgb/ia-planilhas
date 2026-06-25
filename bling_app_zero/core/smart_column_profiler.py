@@ -79,7 +79,13 @@ def _compact_number(value: str) -> str:
 def _looks_ncm(value: str, header_kind: str) -> bool:
     text = str(value or '').strip()
     digits = _compact_number(text)
-    return len(digits) == 8 and (header_kind == 'ncm' or bool(NCM_RE.fullmatch(text)))
+    if len(digits) != 8:
+        return False
+    if header_kind == 'ncm':
+        return True
+    # Sem cabeçalho fiscal, número puro de 8 dígitos pode ser EAN-8/GTIN-8
+    # ou código interno. Só aceite NCM automático quando houver separador fiscal.
+    return text != digits and bool(NCM_RE.fullmatch(text))
 
 
 def _kind_group(kind: str) -> set[str]:
