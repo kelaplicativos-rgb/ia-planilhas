@@ -23,6 +23,49 @@ WRITE_OPTION = '✍️ escrever valor fixo/manual'
 FIXED_VALUE_PREFIX = '__mapeiaai_fixed_value__:'
 MAPPING_FIELDS_PER_PAGE = 10
 
+SEMANTIC_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
+    'titulo_produto': ('descricao', 'descrição', 'nome', 'produto', 'titulo', 'título', 'name', 'title', 'item'),
+    'descricao_curta': ('descricao curta', 'descrição curta', 'descricao complementar', 'descrição complementar', 'detalhes', 'observacao', 'observação', 'obs'),
+    'preco_venda': ('preco', 'preço', 'valor', 'venda', 'valor venda', 'preco venda', 'preço venda', 'price'),
+    'preco_custo': ('custo', 'preco custo', 'preço custo', 'valor custo', 'compra', 'cost'),
+    'preco_promocional': ('promocional', 'promo', 'oferta', 'desconto', 'sale price', 'preco promo', 'preço promo'),
+    'estoque': ('estoque', 'saldo', 'quantidade', 'qtd', 'qtde', 'stock', 'inventory'),
+    'sku_codigo': ('sku', 'codigo', 'código', 'ref', 'referencia', 'referência', 'cod produto', 'id produto'),
+    'gtin_ean': ('gtin', 'ean', 'codigo barras', 'código barras', 'codigo de barras', 'código de barras', 'barcode'),
+    'marca': ('marca', 'brand', 'fabricante', 'manufacturer'),
+    'categoria': ('categoria', 'departamento', 'grupo', 'subgrupo', 'category'),
+    'imagem': ('imagem', 'imagens', 'foto', 'fotos', 'image', 'url imagem', 'link imagem'),
+    'video': ('video', 'vídeo', 'youtube', 'link video', 'link vídeo'),
+    'ncm': ('ncm',),
+    'cest': ('cest',),
+    'peso': ('peso', 'weight', 'kg'),
+    'altura': ('altura', 'height'),
+    'largura': ('largura', 'width'),
+    'comprimento': ('comprimento', 'profundidade', 'length', 'depth'),
+    'unidade': ('unidade', 'un', 'medida', 'unit'),
+}
+SEMANTIC_LABELS: dict[str, str] = {
+    'titulo_produto': 'título do produto',
+    'descricao_curta': 'descrição curta',
+    'preco_venda': 'preço de venda',
+    'preco_custo': 'preço de custo',
+    'preco_promocional': 'preço promocional',
+    'estoque': 'estoque/saldo',
+    'sku_codigo': 'SKU/código',
+    'gtin_ean': 'GTIN/EAN',
+    'marca': 'marca',
+    'categoria': 'categoria',
+    'imagem': 'imagem',
+    'video': 'vídeo',
+    'ncm': 'NCM',
+    'cest': 'CEST',
+    'peso': 'peso',
+    'altura': 'altura',
+    'largura': 'largura',
+    'comprimento': 'comprimento',
+    'unidade': 'unidade',
+}
+
 
 def render_shared_cadastro_mapping(df_source: pd.DataFrame, df_modelo: pd.DataFrame | None) -> None:
     render_manual_mapping(df_source, df_modelo)
@@ -97,6 +140,194 @@ def _short_preview(values: list[str], max_chars: int = 150) -> str:
     return text if len(text) <= max_chars else text[: max_chars - 1].rstrip() + '…'
 
 
+def _series_values(source: pd.DataFrame, column: str, limit: int = 40) -> list[str]:
+    if column not in source.columns:
+        return []
+    values: list[str] = []
+    try:
+        for value in source[column].dropna().astype(str).head(limit * 2):
+            text = str(value or '').strip()
+            if text and text.lower() not in {'nan', 'none', 'null'}:
+                values.append(text)
+            if len(values) >= limit:
+                break
+    except Exception:
+        return []
+    return values
+
+
+def _looks_like_money(text: str) -> bool:
+    value = str(text or '').strip()
+    if not value:
+        return False
+    if re.search(r'(^|\s)r\$\s*\d', value.lower()):
+        return True
+    return bool(re.fullmatch(r'\d{1,7}([.,]\d{2})?', value.replace(' ', '')))
+
+
+def _looks_like_gtin(text: str) -> bool:
+    digits = re.sub(r'\D+', '', str(text or ''))
+    return len(digits) in {8, 12, 13, 14}
+
+
+def _looks_like_url(text: str) -> bool:
+    value = str(text or '').lower()
+    return value.startswith(('http://', 'https://')) or 'www.' in value
+
+
+def _looks_like_image(text: str) -> bool:
+    value = str(text or '').lower()
+    return _looks_like_url(value) and any(ext in value for ext in ('.jpg', '.jpeg', '.png', '.webp', '.gif', 'image', 'foto', 'img'))
+
+
+def _looks_like_video(text: str) -> bool:
+    value = str(text or '').lower()
+    return _looks_like_url(value) and any(part in value for part in ('youtube', 'youtu.be', 'vimeo', '.mp4', 'video'))
+
+
+def _looks_like_stock(text: str) -> bool:
+    value = str(text or '').strip().lower()
+    if value in {'sim', 'não', 'nao', 'yes', 'no', 'novo', 'usado'}:
+        return False
+    return bool(re.fullmatch(r'-?\d{1,6}([.,]0+)?', value))
+
+
+def _looks_like_ncm(text: str) -> bool:
+    return bool(re.fullmatch(r'\d{8}', re.sub(r'\D+', '', str(text or ''))))
+
+
+def _looks_like_cest(text: str) -> bool:
+    return bool(re.fullmatch(r'\d{7}', re.sub(r'\D+', '', str(text or ''))))
+
+
+def _header_semantic_score(column_name: str, semantic_key: str) -> float:
+    header_norm = _norm(column_name)
+    header_tokens = _tokens(column_name)
+    best = 0.0
+    for alias in SEMANTIC_FIELD_ALIASES.get(semantic_key, ()):
+        alias_norm = _norm(alias)
+        alias_tokens = _tokens(alias)
+        if not alias_norm:
+            continue
+        if header_norm == alias_norm:
+            best = max(best, 0.98)
+        elif alias_norm in header_norm or header_norm in alias_norm:
+            best = max(best, 0.88)
+        elif alias_tokens and header_tokens:
+            overlap = len(alias_tokens & header_tokens) / max(len(alias_tokens), 1)
+            if overlap >= 0.75:
+                best = max(best, 0.82)
+            elif overlap >= 0.50:
+                best = max(best, 0.68)
+    return best
+
+
+def _value_semantic_scores(values: list[str]) -> dict[str, float]:
+    if not values:
+        return {}
+    total = max(len(values), 1)
+    avg_len = sum(len(v) for v in values) / total
+    money_ratio = sum(1 for v in values if _looks_like_money(v)) / total
+    gtin_ratio = sum(1 for v in values if _looks_like_gtin(v)) / total
+    url_ratio = sum(1 for v in values if _looks_like_url(v)) / total
+    image_ratio = sum(1 for v in values if _looks_like_image(v)) / total
+    video_ratio = sum(1 for v in values if _looks_like_video(v)) / total
+    stock_ratio = sum(1 for v in values if _looks_like_stock(v)) / total
+    ncm_ratio = sum(1 for v in values if _looks_like_ncm(v)) / total
+    cest_ratio = sum(1 for v in values if _looks_like_cest(v)) / total
+    long_text_ratio = sum(1 for v in values if len(v) >= 80) / total
+    title_text_ratio = sum(1 for v in values if 8 <= len(v) <= 120 and not _looks_like_url(v) and not _looks_like_money(v)) / total
+
+    scores: dict[str, float] = {}
+    if money_ratio >= 0.70:
+        scores['preco_venda'] = max(scores.get('preco_venda', 0.0), 0.84)
+        scores['preco_custo'] = max(scores.get('preco_custo', 0.0), 0.72)
+    if gtin_ratio >= 0.70:
+        scores['gtin_ean'] = max(scores.get('gtin_ean', 0.0), 0.92)
+    if image_ratio >= 0.45:
+        scores['imagem'] = max(scores.get('imagem', 0.0), 0.92)
+    elif url_ratio >= 0.55:
+        scores['imagem'] = max(scores.get('imagem', 0.0), 0.62)
+    if video_ratio >= 0.35:
+        scores['video'] = max(scores.get('video', 0.0), 0.92)
+    if stock_ratio >= 0.70 and money_ratio < 0.20 and gtin_ratio < 0.20:
+        scores['estoque'] = max(scores.get('estoque', 0.0), 0.78)
+    if ncm_ratio >= 0.70:
+        scores['ncm'] = max(scores.get('ncm', 0.0), 0.90)
+    if cest_ratio >= 0.70:
+        scores['cest'] = max(scores.get('cest', 0.0), 0.90)
+    if long_text_ratio >= 0.35 or avg_len >= 90:
+        scores['descricao_curta'] = max(scores.get('descricao_curta', 0.0), 0.80)
+    if title_text_ratio >= 0.60 and avg_len < 90:
+        scores['titulo_produto'] = max(scores.get('titulo_produto', 0.0), 0.72)
+    return scores
+
+
+def _source_column_profiles(source: pd.DataFrame) -> dict[str, dict[str, float]]:
+    profiles: dict[str, dict[str, float]] = {}
+    if not isinstance(source, pd.DataFrame):
+        return profiles
+    for column in [str(c) for c in source.columns]:
+        values = _series_values(source, column)
+        profile: dict[str, float] = {}
+        for semantic_key in SEMANTIC_FIELD_ALIASES:
+            header_score = _header_semantic_score(column, semantic_key)
+            if header_score:
+                profile[semantic_key] = max(profile.get(semantic_key, 0.0), header_score)
+        for semantic_key, value_score in _value_semantic_scores(values).items():
+            header_score = profile.get(semantic_key, 0.0)
+            combined = max(value_score, min(1.0, (header_score * 0.55) + (value_score * 0.65)))
+            profile[semantic_key] = max(header_score, combined)
+        profiles[column] = profile
+    return profiles
+
+
+def _target_semantic_scores(target_name: str) -> dict[str, float]:
+    scores: dict[str, float] = {}
+    target_norm = _norm(target_name)
+    for semantic_key in SEMANTIC_FIELD_ALIASES:
+        score = _header_semantic_score(target_name, semantic_key)
+        if score:
+            scores[semantic_key] = max(scores.get(semantic_key, 0.0), score)
+    if 'gtin' in target_norm or 'ean' in target_norm or 'codigobarras' in target_norm:
+        scores['gtin_ean'] = max(scores.get('gtin_ean', 0.0), 0.98)
+    if target_norm in {'descricao', 'descrio', 'nomeproduto', 'nomedoproduto'}:
+        scores['titulo_produto'] = max(scores.get('titulo_produto', 0.0), 0.95)
+    if 'descricaocurta' in target_norm or 'descriçãocurta' in target_norm:
+        scores['descricao_curta'] = max(scores.get('descricao_curta', 0.0), 0.96)
+    if 'precopromocional' in target_norm or 'promocional' in target_norm:
+        scores['preco_promocional'] = max(scores.get('preco_promocional', 0.0), 0.96)
+    elif 'preco' in target_norm or 'valor' in target_norm:
+        scores['preco_venda'] = max(scores.get('preco_venda', 0.0), 0.93)
+    if 'custo' in target_norm or 'compra' in target_norm:
+        scores['preco_custo'] = max(scores.get('preco_custo', 0.0), 0.94)
+    if 'categoria' in target_norm or 'departamento' in target_norm or 'grupo' in target_norm:
+        scores['categoria'] = max(scores.get('categoria', 0.0), 0.94)
+    return scores
+
+
+def _semantic_match_score(target_name: str, source_column: str, source_profiles: dict[str, dict[str, float]]) -> float:
+    target_scores = _target_semantic_scores(target_name)
+    source_scores = source_profiles.get(source_column, {})
+    best = 0.0
+    for semantic_key, target_score in target_scores.items():
+        source_score = source_scores.get(semantic_key, 0.0)
+        if source_score and target_score:
+            best = max(best, min(1.0, (source_score * 0.60) + (target_score * 0.45)))
+    return best
+
+
+def _best_semantic_label(column: str, source_profiles: dict[str, dict[str, float]]) -> str:
+    profile = source_profiles.get(column, {})
+    if not profile:
+        return ''
+    semantic_key, score = max(profile.items(), key=lambda item: item[1])
+    if score < 0.70:
+        return ''
+    label = SEMANTIC_LABELS.get(semantic_key, semantic_key)
+    return f'conteúdo detectado: {label}'
+
+
 def confidence_flag(target: str, source_column: str, source: pd.DataFrame) -> str:
     if is_fixed_value(source_column):
         return '🟢 fixo'
@@ -106,6 +337,9 @@ def confidence_flag(target: str, source_column: str, source: pd.DataFrame) -> st
     source_key = _norm(source_column)
     if target_key and (target_key == source_key or target_key in source_key or source_key in target_key):
         return '🟢 alto'
+    source_profiles = _source_column_profiles(source)
+    if _semantic_match_score(target, source_column, source_profiles) >= 0.86:
+        return '🟢 conteúdo'
     if source_column in source.columns and source[source_column].astype(str).str.strip().ne('').any():
         return '🟡 revisar'
     return '🔴 vazio'
@@ -224,12 +458,23 @@ def _metadata_scores(target_name: str, suggestions_index: dict[str, dict[str, An
     return scores
 
 
-def _ranked_source_options(target_name: str, current_value: str, source_columns: list[str], suggestions_index: dict[str, dict[str, Any]]) -> tuple[list[str], dict[str, str]]:
+def _ranked_source_options(
+    target_name: str,
+    current_value: str,
+    source_columns: list[str],
+    suggestions_index: dict[str, dict[str, Any]],
+    source_profiles: dict[str, dict[str, float]] | None = None,
+) -> tuple[list[str], dict[str, str]]:
+    source_profiles = source_profiles or {}
     scores = _metadata_scores(target_name, suggestions_index)
     if current_value in source_columns:
         scores[current_value] = max(scores.get(current_value, 0.0), 0.96)
     for column in source_columns:
-        scores[column] = max(scores.get(column, 0.0), _score_from_similarity(target_name, column))
+        scores[column] = max(
+            scores.get(column, 0.0),
+            _score_from_similarity(target_name, column),
+            _semantic_match_score(target_name, column, source_profiles),
+        )
     original_position = {column: pos for pos, column in enumerate(source_columns)}
     ranked_columns = sorted(source_columns, key=lambda column: (-float(scores.get(column, 0.0)), original_position.get(column, 9999), str(column).casefold()))
     confident_columns = [column for column in ranked_columns if float(scores.get(column, 0.0)) >= 0.70]
@@ -238,16 +483,18 @@ def _ranked_source_options(target_name: str, current_value: str, source_columns:
     labels: dict[str, str] = {EMPTY_OPTION: EMPTY_OPTION, WRITE_OPTION: WRITE_OPTION}
     for column in source_columns:
         percent = _pct(scores.get(column, 0.0))
+        detail = _best_semantic_label(column, source_profiles)
+        suffix = f' · {detail}' if detail else ''
         if percent >= 99:
-            labels[column] = f'🟢 100% recomendado — {column}'
+            labels[column] = f'🟢 100% recomendado — {column}{suffix}'
         elif percent >= 95:
-            labels[column] = f'🟢 {percent}% recomendado — {column}'
+            labels[column] = f'🟢 {percent}% recomendado — {column}{suffix}'
         elif percent >= 90:
-            labels[column] = f'🟢 {percent}% alta confiança — {column}'
+            labels[column] = f'🟢 {percent}% alta confiança — {column}{suffix}'
         elif percent >= 70:
-            labels[column] = f'🟡 {percent}% revisar — {column}'
+            labels[column] = f'🟡 {percent}% revisar — {column}{suffix}'
         else:
-            labels[column] = f'⚪ {column}'
+            labels[column] = f'⚪ {column}{suffix}'
     return options, labels
 
 
@@ -280,6 +527,10 @@ def _mapping_search_key(key_prefix: str, signature: str) -> str:
 
 def _suggestion_state_key(mapping_state_key: str, signature: str) -> str:
     return f'{mapping_state_key}_suggestions_{short_hash(signature, size=10)}'
+
+
+def _source_profile_state_key(mapping_state_key: str, signature: str) -> str:
+    return f'{mapping_state_key}_source_profiles_{short_hash(signature, size=10)}'
 
 
 def _filter_target_columns(target_columns: list[str], query: str) -> list[str]:
@@ -330,10 +581,11 @@ def render_shared_contract_mapping(source: pd.DataFrame, target: pd.DataFrame, *
     page_key, scroll_key = _mapping_page_keys(key_prefix, signature)
     search_key = _mapping_search_key(key_prefix, signature)
     suggestions_key = _suggestion_state_key(mapping_state_key, signature)
+    source_profiles_key = _source_profile_state_key(mapping_state_key, signature)
     st.session_state.pop(scroll_key, None)
 
     if ai_enabled:
-        st.caption('IA opcional ligada: o sistema sugere os campos, mas você revisa e pode alterar tudo antes do preview final.')
+        st.caption('IA opcional ligada: o sistema lê cabeçalhos + conteúdo das linhas e sugere os campos para você revisar antes do preview final.')
 
     if mapping_state_key not in st.session_state:
         if ai_enabled:
@@ -343,23 +595,30 @@ def render_shared_contract_mapping(source: pd.DataFrame, target: pd.DataFrame, *
         st.session_state[mapping_state_key] = suggested
         st.session_state[engine_state_key] = engine
         st.session_state[suggestions_key] = suggestions_index
+        st.session_state[source_profiles_key] = _source_column_profiles(source)
+
+    if source_profiles_key not in st.session_state:
+        st.session_state[source_profiles_key] = _source_column_profiles(source)
 
     if not ai_enabled and str(st.session_state.get(engine_state_key) or '') != 'manual_sem_ia':
         st.session_state[mapping_state_key] = blank_shared_mapping(target)
         st.session_state[engine_state_key] = 'manual_sem_ia'
         st.session_state[suggestions_key] = {}
+        st.session_state[source_profiles_key] = {}
 
     engine = str(st.session_state.get(engine_state_key) or 'local')
     if engine == 'openai_validated':
-        st.caption('Motor de sugestão: OpenAI validada')
+        st.caption('Motor de sugestão: OpenAI validada + leitura semântica do conteúdo')
     elif engine != 'manual_sem_ia':
-        st.caption('Motor de sugestão: local seguro')
+        st.caption('Motor de sugestão: local seguro + leitura semântica do conteúdo')
 
     current = dict(st.session_state.get(mapping_state_key) or {})
     current = _apply_price_calculator_mapping_hint(current, source, target)
     st.session_state[mapping_state_key] = current
     suggestions_index = st.session_state.get(suggestions_key)
     suggestions_index = suggestions_index if isinstance(suggestions_index, dict) else {}
+    source_profiles = st.session_state.get(source_profiles_key)
+    source_profiles = source_profiles if isinstance(source_profiles, dict) else {}
     source_columns = [str(column) for column in source.columns]
     edited: dict[str, str] = dict(current)
     rows: list[dict[str, str]] = []
@@ -384,13 +643,13 @@ def render_shared_contract_mapping(source: pd.DataFrame, target: pd.DataFrame, *
         st.warning('Nenhum campo encontrado para essa busca. Limpe ou altere o texto para voltar aos campos do modelo.')
 
     st.caption(f'Mostrando campos {start_display}–{end} de {total_fields}. Limite: {MAPPING_FIELDS_PER_PAGE} campos por página para não pesar a tela.')
-    st.caption('As melhores sugestões aparecem primeiro no dropdown: 🟢 100%/95%/90%, depois 🟡 revisar e por último as demais colunas.')
+    st.caption('Camada 1: leitura do conteúdo da origem. Camada 2: comparação com o modelo anexado. As melhores sugestões aparecem primeiro no dropdown.')
     _render_mapping_page_controls(page_key, scroll_key, current_page, total_pages, where='top')
 
     for offset, target_name in enumerate(page_columns):
         index = all_target_columns.index(target_name) if target_name in all_target_columns else start + offset
         current_value = str(current.get(target_name, '') or '')
-        source_options, option_labels = _ranked_source_options(target_name, current_value, source_columns, suggestions_index)
+        source_options, option_labels = _ranked_source_options(target_name, current_value, source_columns, suggestions_index, source_profiles)
         selected_initial = _initial_select_value(current_value, source_options)
         default_index = source_options.index(selected_initial) if selected_initial in source_options else 0
 
@@ -426,7 +685,12 @@ def render_shared_contract_mapping(source: pd.DataFrame, target: pd.DataFrame, *
 def clear_shared_mapping_widgets(key_prefix: str = 'mapeiaai_shared') -> None:
     for key in list(st.session_state.keys()):
         text = str(key)
-        if text.startswith(f'{key_prefix}_map_') or text.startswith(f'{key_prefix}_mapping_page_') or text.startswith(f'{key_prefix}_mapping_scroll_') or text.startswith(f'{key_prefix}_mapping_search_'):
+        if (
+            text.startswith(f'{key_prefix}_map_')
+            or text.startswith(f'{key_prefix}_mapping_page_')
+            or text.startswith(f'{key_prefix}_mapping_scroll_')
+            or text.startswith(f'{key_prefix}_mapping_search_')
+        ):
             st.session_state.pop(key, None)
 
 
