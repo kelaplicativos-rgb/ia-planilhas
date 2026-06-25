@@ -8,7 +8,7 @@ import pandas as pd
 
 from bling_app_zero.core.category_intelligence import PROVISIONAL_CATEGORY, canonicalize_category, normalize_text
 
-FAMILIES = {'Power banks','Fontes','Adaptadores','Rádios AM e FM','Caixas de som','Fones de ouvido','Microfones','Mouses','Máquinas para corte de cabelo','Pen drives','Cartões de memória','Carregadores para celular','Pilhas e baterias','Cabos de rede','Cabos USB e dados','Cabos HDMI e vídeo','Conversores','Controles para televisão','Redes e internet','Antenas Wi-Fi','Antenas para TV','Telefones fixos'}
+FAMILIES = {'Power banks','Fontes','Adaptadores','Rádios AM e FM','Caixas de som','Fones de ouvido','Microfones','Mouses','Máquinas para corte de cabelo','Pen drives','Cartões de memória','Carregadores para celular','Pilhas e baterias','Cabos de rede','Cabos USB e dados','Cabos de energia','Cabos de áudio','Cabos HDMI e vídeo','Conversores','Controles para televisão','Redes e internet','Antenas Wi-Fi','Antenas para TV','Telefones fixos'}
 GENERIC = {'','nan','none','null','<na>','na','n/a','sem categoria','revisar manualmente','revisao manual','diversos','geral','outros','informatica','produtos nao classificados'}
 
 @dataclass(frozen=True)
@@ -54,12 +54,28 @@ def infer_category_by_evidence(title: object, description: object = '', context:
         cat = 'Pilhas e baterias'
     elif _has(x, r'\bcarregador turbo\b', r'\bcarregador de tomada\b', r'\bfonte carregador\b', r'\btomada usb\b') and not t.startswith('cabo'):
         cat = 'Carregadores para celular'
+    elif t.startswith('cabo') and _has(x, r'\brj\s?45\b', r'\bcabo de rede\b', r'\bcat\s?(5e|6|6a|7)\b', r'\bethernet\b'):
+        cat = 'Cabos de rede'
+    elif t.startswith('cabo') and _has(x, r'\busb\b', r'\btipo c\b', r'\blightning\b', r'\bv8\b', r'\bcabo de dados\b'):
+        cat = 'Cabos USB e dados'
+    elif t.startswith('cabo') and _has(x, r'\bp2\b', r'\bp10\b', r'\brca\b', r'\bxlr\b', r'\baudio\b', r'\bauxiliar\b'):
+        cat = 'Cabos de áudio'
+    elif t.startswith('cabo') and _has(x, r'\bforca\b', r'\benergia\b', r'\btripolar\b', r'\b10a\b', r'\b20a\b'):
+        cat = 'Cabos de energia'
+    elif t.startswith(('cabo', 'adaptador')) and _has(x, r'\bhdmi\b', r'\bvga\b', r'\bal\s?vga\b', r'\bhd03\b'):
+        cat = 'Cabos HDMI e vídeo'
     elif _has(x, r'\bconversor\b', r'\breceptor\b', r'\bgravador digital\b', r'\btv box\b', r'\bmcd\s?-?\d+\b', r'\bmta\s?-?\d+\b', r'\bmtv\s?-?\d+\b') and not t.startswith('controle'):
         cat = 'Conversores'
     elif _has(x, r'\bcontrole remoto\b', r'\bcontrole para tv\b', r'\bcontrole tv\b') or (t.startswith('controle') and _has(x, r'\btv\b', r'\baoc\b', r'\bcce\b', r'\bphilco\b')):
         cat = 'Controles para televisão'
     elif _has(x, r'\brepetidor\b', r'\broteador\b', r'\bwifi\b', r'\bwireless\b') and not _has(x, r'\bantena\b.*\btv\b'):
         cat = 'Redes e internet'
+    elif _has(x, r'\bantena\b.*\bwifi\b', r'\bantena\b.*\bwireless\b', r'\bantena\b.*\bdbi\b'):
+        cat = 'Antenas Wi-Fi'
+    elif _has(x, r'\bantena\b.*\btv\b', r'\bantena digital\b', r'\bantena\b.*\buhf\b'):
+        cat = 'Antenas para TV'
+    elif _has(x, r'\btelefone fixo\b', r'\binterfone\b', r'\bporteiro\b', r'\bvideo porteiro\b'):
+        cat = 'Telefones fixos'
     if not cat:
         return CategoryDecision(PROVISIONAL_CATEGORY, '', 0.0, 'LOW_CONFIDENCE', 'sem evidência forte de categoria')
     return CategoryDecision(cat, cat, 0.95, 'CATEGORY_EVIDENCE', f'evidência forte de {cat}')
