@@ -14,6 +14,7 @@ DESCRIPTION_KINDS = {'descricao', 'descricao_curta', 'descricao_complementar', '
 PRICE_KINDS = {'preco_unitario', 'preco_custo'}
 CODE_KINDS = {'codigo', 'id_produto'}
 URL_KINDS = {'url', 'imagem'}
+STRICT_KINDS = {'ncm', 'gtin', 'codigo', 'id_produto', 'estoque', 'preco_unitario', 'preco_custo'}
 
 TARGET_ALIASES = {
     'descricao': ('descricao', 'descrição', 'nome produto', 'titulo', 'título', 'produto'),
@@ -48,6 +49,22 @@ def _target_kind(column: str) -> str:
     return 'custom'
 
 
+def _kind_group(kind: str) -> set[str]:
+    groups = [DESCRIPTION_KINDS, PRICE_KINDS, CODE_KINDS, URL_KINDS, {'gtin'}, {'ncm'}, {'marca'}, {'categoria'}, {'fornecedor'}, {'estoque'}]
+    for group in groups:
+        if kind in group:
+            return set(group)
+    return {kind}
+
+
+def _kind_compatible(target_kind: str, source_kind: str) -> bool:
+    if target_kind == source_kind and target_kind != 'custom':
+        return True
+    if not target_kind or not source_kind or target_kind == 'custom' or source_kind == 'custom':
+        return False
+    return bool(_kind_group(target_kind) & _kind_group(source_kind))
+
+
 def _header_similarity(source: str, target: str, target_kind: str) -> float:
     source_key = normalize_key(source)
     target_key = normalize_key(target)
@@ -56,96 +73,116 @@ def _header_similarity(source: str, target: str, target_kind: str) -> float:
     if _compact(source_key) == _compact(target_key):
         return 1.0
     if source_key in target_key or target_key in source_key:
-        return 0.86
-    source_kind = infer_kind(source)
-    if source_kind == target_kind and source_kind != 'custom':
         return 0.88
+    source_kind = infer_kind(source)
+    if _kind_compatible(target_kind, source_kind):
+        return 0.86
     aliases = TARGET_ALIASES.get(target_kind, ())
     if any(normalize_key(alias) in source_key for alias in aliases):
         return 0.84
     return round(SequenceMatcher(None, source_key, target_key).ratio(), 3)
 
 
-def _kind_compatible(target_kind: str, source_kind: str) -> bool:
-    if target_kind == source_kind and target_kind != 'custom':
-        return True
-    groups = [DESCRIPTION_KINDS, PRICE_KINDS, CODE_KINDS | {'gtin'}, URL_KINDS, {'ncm'}, {'marca'}, {'categoria'}, {'fornecedor'}, {'estoque'}]
-    return any(target_kind in group and source_kind in group for group in groups)
+def _header_confirms_target(source: str, target: str, target_kind: str, profile: dict[str, object]) -> tuple[bool, float, str]:
+    if target_kind == 'custom':
+        exact = _compact(source) == _compact(target)
+        return exact, 1.0 if exact else 0.0, 'campo customizado exige cabeçalho idêntico'
+    header_kind = str(profile.get('header_kind') or infer_kind(source) or '')
+    similarity = _header_similarity(source, target, target_kind)
+    if _kind_compatible(target_kind, header_kind):
+        return True, max(0.86, similarity), f'cabeçalho confirma {header_kind}'
+    if similarity >= 0.82:
+        return True, similarity, 'cabeçalho semelhante ao destino'
+    return False, similarity, f'cabeçalho não confirma {target_kind}'
 
 
-def _content_score(target_kind: str, source_profile: dict[str, object]) -> tuple[float, str]:
-    source_kind = str(source_profile.get('kind') or '')
-    content_kind = str(source_profile.get('content_kind') or '')
-    confidence = float(source_profile.get('confidence') or 0)
-    text = float(source_profile.get('text') or 0)
-    numeric = float(source_profile.get('numeric') or 0)
-    integer = float(source_profile.get('integer') or 0)
-    price = float(source_profile.get('price') or 0)
-    gtin = float(source_profile.get('gtin') or 0)
-    url = float(source_profile.get('url') or 0)
-    image = float(source_profile.get('image') or 0)
-    breadcrumb = float(source_profile.get('breadcrumb') or 0)
-    avg_len = float(source_profile.get('avg_len') or 0)
-    unique = float(source_profile.get('unique') or 0)
+def _content_validation(target_kind: str, profile: dict[str, object]) -> tuple[bool, float, str]:
+    if not bool(profile.get('has_values')):
+        return False, 0.0, 'sem conteúdo preenchido para validar'
+    content_kind = str(profile.get('content_kind') or '')
+    effective_kind = str(profile.get('kind') or '')
+    confidence = float(profile.get('confidence') or 0)
+    text = float(profile.get('text') or 0)
+    numeric = float(profile.get('numeric') or 0)
+    integer = float(profile.get('integer') or 0)
+    price = float(profile.get('price') or 0)
+    gtin = float(profile.get('gtin') or 0)
+    ncm = float(profile.get('ncm') or 0)
+    url = float(profile.get('url') or 0)
+    image = float(profile.get('image') or 0)
+    breadcrumb = float(profile.get('breadcrumb') or 0)
+    avg_len = float(profile.get('avg_len') or 0)
+    unique = float(profile.get('unique') or 0)
 
-    if _kind_compatible(target_kind, source_kind):
-        return max(0.76, min(0.99, confidence or 0.80)), f'conteúdo identificado como {source_kind}'
+    if _kind_compatible(target_kind, content_kind) or _kind_compatible(target_kind, effective_kind):
+        return True, max(0.70, min(0.99, confidence or 0.80)), f'conteúdo valida {content_kind or effective_kind}'
 
     if target_kind in DESCRIPTION_KINDS:
-        score = text * 0.65 + min(avg_len, 90) / 300
-        if url >= 0.25 or price >= 0.25 or gtin >= 0.40:
-            score -= 0.40
-        return max(0.0, min(0.95, score)), 'amostras parecem texto de produto'
+        if text >= 0.45 and price < 0.25 and gtin < 0.35 and ncm < 0.35 and url < 0.20 and image < 0.20:
+            score = min(0.95, 0.55 + text * 0.25 + min(avg_len, 120) / 500)
+            return True, score, 'conteúdo textual compatível com descrição/título'
+        return False, 0.0, 'conteúdo não valida descrição'
     if target_kind in PRICE_KINDS:
-        return max(price, numeric * 0.55), 'amostras parecem valores/preços'
+        if price >= 0.45 or numeric >= 0.80:
+            return True, max(price, numeric * 0.75), 'conteúdo valida preço/valor'
+        return False, 0.0, 'conteúdo não valida preço'
     if target_kind == 'estoque':
-        score = integer if price < 0.25 and avg_len <= 10 else 0.0
-        return score, 'amostras parecem saldo/quantidade inteira'
+        if integer >= 0.70 and price < 0.25 and avg_len <= 10:
+            return True, min(0.94, 0.55 + integer * 0.35), 'conteúdo valida estoque/saldo inteiro'
+        return False, 0.0, 'conteúdo não valida estoque'
     if target_kind == 'gtin':
-        return gtin, 'amostras parecem GTIN/EAN'
+        if gtin >= 0.55:
+            return True, min(0.99, 0.70 + gtin * 0.25), 'conteúdo valida GTIN/EAN'
+        return False, 0.0, 'conteúdo não valida GTIN/EAN'
     if target_kind == 'ncm':
-        ncm_hint = 0.92 if source_kind == 'ncm' or content_kind == 'ncm' else 0.0
-        return ncm_hint, 'amostras/cabeçalho parecem NCM/classificação fiscal'
+        if ncm >= 0.55:
+            return True, min(0.99, 0.70 + ncm * 0.25), 'conteúdo valida NCM'
+        return False, 0.0, 'conteúdo não valida NCM'
     if target_kind == 'imagem':
-        return image, 'amostras parecem URLs de imagens'
+        if image >= 0.30:
+            return True, min(0.98, 0.65 + image * 0.30), 'conteúdo valida URL de imagem'
+        return False, 0.0, 'conteúdo não valida imagem'
     if target_kind == 'url':
-        return url, 'amostras parecem links/URLs'
+        if url >= 0.60:
+            return True, min(0.97, 0.60 + url * 0.30), 'conteúdo valida URL/link'
+        return False, 0.0, 'conteúdo não valida URL'
     if target_kind == 'marca':
-        score = text * 0.55 + (0.25 if avg_len <= 45 and url == 0 and price == 0 else -0.20)
-        return max(0.0, min(0.90, score)), 'amostras parecem marca/fabricante'
+        if text >= 0.40 and avg_len <= 45 and price < 0.10 and url < 0.10 and image < 0.10:
+            return True, min(0.88, 0.50 + text * 0.25 + (0.10 if unique <= 0.85 else 0.0)), 'conteúdo valida marca/fabricante'
+        return False, 0.0, 'conteúdo não valida marca'
     if target_kind == 'fornecedor':
-        score = text * 0.55 + (0.25 if avg_len <= 70 and url == 0 and unique <= 0.85 else 0.0)
-        return max(0.0, min(0.88, score)), 'amostras parecem fornecedor'
+        if text >= 0.40 and avg_len <= 80 and price < 0.10 and url < 0.10 and image < 0.10:
+            return True, min(0.88, 0.50 + text * 0.25 + (0.10 if unique <= 0.90 else 0.0)), 'conteúdo valida fornecedor'
+        return False, 0.0, 'conteúdo não valida fornecedor'
     if target_kind == 'categoria':
-        score = max(breadcrumb, text * 0.45 + (0.20 if avg_len <= 110 else -0.20))
-        return max(0.0, min(0.88, score)), 'amostras parecem categoria/departamento'
+        if breadcrumb >= 0.25 or (text >= 0.45 and avg_len <= 110 and price < 0.10 and url < 0.10 and image < 0.10):
+            return True, min(0.88, max(breadcrumb, text * 0.45 + 0.20)), 'conteúdo valida categoria/departamento'
+        return False, 0.0, 'conteúdo não valida categoria'
     if target_kind in CODE_KINDS:
-        score = max(numeric * 0.55, 0.72 if source_kind in CODE_KINDS else 0.0)
-        if gtin >= 0.55 or price >= 0.35 or url >= 0.30:
-            score -= 0.40
-        return max(0.0, min(0.86, score)), 'amostras parecem código/SKU'
-    return 0.0, 'sem leitura semântica suficiente'
+        if price >= 0.35 or gtin >= 0.55 or ncm >= 0.55 or url >= 0.30 or image >= 0.30:
+            return False, 0.0, 'conteúdo conflita com código/SKU'
+        if numeric >= 0.40 or text >= 0.20:
+            return True, min(0.86, 0.45 + max(numeric, text * 0.60) * 0.35), 'conteúdo valida código/SKU'
+        return False, 0.0, 'conteúdo não valida código/SKU'
+    return False, 0.0, 'sem validação de conteúdo para o destino'
 
 
 def _score_source_for_target(source: str, target: str, profile: dict[str, object]) -> tuple[float, str]:
     target_kind = _target_kind(target)
-    if target_kind == 'custom':
-        exact = _compact(source) == _compact(target)
-        return (1.0 if exact else 0.0), 'campo customizado exige cabeçalho idêntico'
-
+    header_ok, header_score, header_reason = _header_confirms_target(source, target, target_kind, profile)
+    if not header_ok:
+        return 0.0, header_reason
+    content_ok, content_score, content_reason = _content_validation(target_kind, profile)
+    if not content_ok:
+        return 0.0, f'{header_reason}; bloqueado: {content_reason}'
     if bool(profile.get('header_conflict')) and float(profile.get('confidence') or 0) >= 0.70:
-        source_kind = str(profile.get('kind') or '')
-        if not _kind_compatible(target_kind, source_kind):
-            return 0.0, str(profile.get('warning') or 'conteúdo conflita com o destino')
-
-    header = _header_similarity(source, target, target_kind)
-    content, reason = _content_score(target_kind, profile)
-    combined = (header * 0.38) + (content * 0.62)
-    if header >= 0.90 and content >= 0.35:
-        combined = max(combined, 0.84)
-    if content >= 0.88 and header >= 0.25:
-        combined = max(combined, 0.82)
-    return round(max(0.0, min(1.0, combined)), 3), f'cabeçalho {header:.2f}; {reason} ({content:.2f})'
+        content_kind = str(profile.get('content_kind') or '')
+        if not _kind_compatible(target_kind, content_kind):
+            return 0.0, str(profile.get('warning') or 'cabeçalho e conteúdo conflitam')
+    final = round(min(1.0, max(0.0, (header_score * 0.60) + (content_score * 0.40))), 3)
+    if target_kind in STRICT_KINDS and header_score < 0.82:
+        return 0.0, f'{header_reason}; campo crítico exige cabeçalho claro'
+    return final, f'{header_reason}; {content_reason}'
 
 
 def suggest_mapping(source_df: pd.DataFrame, target_df: pd.DataFrame) -> AIResult:
@@ -163,11 +200,11 @@ def suggest_mapping(source_df: pd.DataFrame, target_df: pd.DataFrame) -> AIResul
             if source in used_sources:
                 continue
             score, reason = _score_source_for_target(source, target, profiles[source])
-            ranked.append({'source_column': source, 'score': score, 'reason': reason, 'detected_kind': profiles[source].get('kind', '')})
+            ranked.append({'source_column': source, 'score': score, 'reason': reason, 'detected_kind': profiles[source].get('kind', ''), 'header_kind': profiles[source].get('header_kind', ''), 'content_kind': profiles[source].get('content_kind', '')})
         ranked = sorted(ranked, key=lambda item: float(item['score']), reverse=True)
         best = ranked[0] if ranked else {'source_column': '', 'score': 0.0, 'reason': 'sem colunas de origem'}
         confidence = float(best.get('score') or 0)
-        source = str(best.get('source_column') or '') if confidence >= 0.62 else ''
+        source = str(best.get('source_column') or '') if confidence >= 0.70 else ''
         if source:
             mapping[target] = source
             used_sources.add(source)
@@ -176,17 +213,17 @@ def suggest_mapping(source_df: pd.DataFrame, target_df: pd.DataFrame) -> AIResul
                 'target_column': target,
                 'source_column': source,
                 'confidence': confidence if source else 0.0,
-                'reason': best.get('reason') if source else 'sem correspondência segura pelo conteúdo das linhas',
+                'reason': best.get('reason') if source else 'sem correspondência segura: cabeçalho não confirmou ou conteúdo não validou',
                 'alternatives': ranked[:3],
-                'engine': 'semantic_content_local',
+                'engine': 'header_confirmed_content_validated',
             }
         )
 
     return AIResult(
         ok=True,
         task='mapping_suggester',
-        message=f'{len(mapping)} campo(s) sugerido(s) por leitura inteligente do conteúdo das linhas.',
-        data={'mapping': mapping, 'suggestions': suggestions, 'engine': 'semantic_content_local'},
+        message=f'{len(mapping)} campo(s) sugerido(s) por cabeçalho confirmado e conteúdo validado.',
+        data={'mapping': mapping, 'suggestions': suggestions, 'engine': 'header_confirmed_content_validated'},
     )
 
 
