@@ -8,6 +8,7 @@ import pandas as pd
 
 from bling_app_zero.ai.ai_text_rules import clean_title_to_limit, is_description_column, is_title_column
 from bling_app_zero.core.category_finalizer import finalize_categories_for_output
+from bling_app_zero.core.critical_empty_fields_guard import force_critical_empty_columns
 from bling_app_zero.core.final_csv_exporter import (
     contract_columns_from_model,
     final_csv_bytes,
@@ -233,6 +234,11 @@ def build_final_output(
         output, smart_rules_report = apply_universal_smart_rules(output, rules_config)
 
     output = sanitize_final_dataframe(output, operation=operation, contract_columns=list(contract_columns), run_download_features=False)
+    output, critical_empty_report = force_critical_empty_columns(output)
+    if critical_empty_report:
+        if smart_rules_report is None:
+            smart_rules_report = {}
+        smart_rules_report['critical_empty_fields'] = list(critical_empty_report)
 
     if _has_category_column(output):
         output, category_report = finalize_categories_for_output(
@@ -275,13 +281,8 @@ def build_final_output_report(result: FinalOutputCommandResult) -> dict[str, Any
         'result': result.state.result.to_dict(),
         'ok': result.state.result.ok,
         'smart_rules_report': result.smart_rules_report or {},
+        'errors': list(result.errors or ()),
     }
 
 
-__all__ = [
-    'FinalOutputCommandResult',
-    'apply_text_rules',
-    'build_final_dataframe',
-    'build_final_output',
-    'build_final_output_report',
-]
+__all__ = ['FinalOutputCommandResult', 'apply_text_rules', 'build_final_dataframe', 'build_final_output', 'build_final_output_report']
