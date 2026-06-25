@@ -727,14 +727,14 @@ def render_shared_contract_mapping(source: pd.DataFrame, target: pd.DataFrame, *
             st.session_state[mapping_state_key] = current
             st.session_state[auto_green_applied_key] = auto_signature
             if applied_count:
-                st.success(f'🟢 {applied_count} campo(s) idêntico(s) foram auto vinculados. Campos com ⚠️/🟡 continuam para revisão manual.')
+                st.success(f'🟢 {applied_count} campo(s) idêntico(s) foram auto vinculados. Campos 🟡 continuam para revisão manual. O ⚠️ aparece apenas em Categoria, Tags e Código Pai.')
             else:
                 st.info('🟢 Auto vínculo ligado, mas nenhum novo campo idêntico foi encontrado.')
         else:
             st.caption('🟢 Auto vínculo verde já aplicado nesta origem/modelo. Para reaplicar, desligue e ligue novamente. Para desfazer, altere o dropdown do campo.')
     else:
         st.session_state.pop(auto_green_applied_key, None)
-        st.caption('⚠️ Auto vínculo verde desligado. As sugestões continuam aparecendo, mas você decide cada campo.')
+        st.caption('🟡 Auto vínculo verde desligado. As sugestões continuam aparecendo, mas você decide cada campo.')
 
     st.session_state[mapping_state_key] = current
     suggestions_index = st.session_state.get(suggestions_key)
@@ -763,7 +763,7 @@ def render_shared_contract_mapping(source: pd.DataFrame, target: pd.DataFrame, *
         st.warning('Nenhum campo encontrado para essa busca. Limpe ou altere o texto para voltar aos campos do modelo.')
 
     st.caption(f'Mostrando campos {start_display}–{end} de {total_fields}. Limite: {MAPPING_FIELDS_PER_PAGE} campos por página para não pesar a tela.')
-    st.caption('🟢 = cabeçalho idêntico e pode ser auto vinculado. 🟡/⚠️ = atenção/revisão manual. Campos críticos do Bling exibem alerta visual.')
+    st.caption('🟢 = cabeçalho idêntico e pode ser auto vinculado. 🟡 = atenção/revisão manual. ⚠️ aparece apenas em Categoria, Tags e Código Pai.')
     _render_mapping_page_controls(page_key, scroll_key, current_page, total_pages, where='top')
 
     for offset, target_name in enumerate(page_columns):
