@@ -7,6 +7,7 @@ from typing import Any, Mapping
 import pandas as pd
 
 from bling_app_zero.ai.ai_text_rules import clean_title_to_limit, is_description_column, is_title_column
+from bling_app_zero.core.category_finalizer import finalize_categories_for_output
 from bling_app_zero.core.final_csv_exporter import (
     contract_columns_from_model,
     final_csv_bytes,
@@ -59,6 +60,12 @@ def _norm_column(value: Any) -> str:
 def _is_category_column(column: Any) -> bool:
     normalized = _norm_column(column)
     return normalized in {'categoria', 'category', 'categoria produto', 'categoria do produto'} or normalized.startswith('categoria ')
+
+
+def _has_category_column(df: pd.DataFrame) -> bool:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return False
+    return any(_is_category_column(column) for column in df.columns)
 
 
 def _first_source_category_column(source: pd.DataFrame) -> str | None:
@@ -226,6 +233,16 @@ def build_final_output(
         output, smart_rules_report = apply_universal_smart_rules(output, rules_config)
 
     output = sanitize_final_dataframe(output, operation=operation, contract_columns=list(contract_columns), run_download_features=False)
+
+    if _has_category_column(output):
+        output, category_report = finalize_categories_for_output(
+            output,
+            context='final_output_engine_before_csv',
+            fallback_unclassified=True,
+        )
+        if smart_rules_report is None:
+            smart_rules_report = {}
+        smart_rules_report['category_finalizer'] = dict(category_report or {})
 
     identity_errors = tuple(str(item) for item in validate_contract_identity(output, list(contract_columns)) or ())
     if identity_errors:
