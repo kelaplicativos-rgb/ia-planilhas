@@ -348,6 +348,88 @@ def _best_semantic_label(column: str, source_profiles: dict[str, dict[str, float
     return f'conteúdo detectado: {label}'
 
 
+def _is_category_field(target_name: str) -> bool:
+    key = _norm(target_name)
+    return 'categoria' in key or 'category' in key or 'departamento' in key or key in {'grupo', 'subgrupo'}
+
+
+def _is_tag_field(target_name: str) -> bool:
+    key = _norm(target_name)
+    return key in {'tag', 'tags', 'etiqueta', 'etiquetas'} or 'tagproduto' in key or 'tagsproduto' in key
+
+
+def _is_parent_code_field(target_name: str) -> bool:
+    key = _norm(target_name)
+    return 'codigopai' in key or 'codpai' in key or 'skupai' in key or key in {'pai', 'idpai'}
+
+
+def _is_main_code_field(target_name: str) -> bool:
+    key = _norm(target_name)
+    if _is_parent_code_field(target_name):
+        return False
+    blocked = ('fornecedor', 'integracao', 'lista', 'servico', 'barras', 'gtin', 'ean', 'ncm', 'cest')
+    if any(part in key for part in blocked):
+        return False
+    return key in {'codigo', 'codigosku', 'sku', 'codproduto', 'codigoproduto', 'idproduto'}
+
+
+def _find_main_code_source(mapping: dict[str, str]) -> str:
+    preferred: list[tuple[int, str]] = []
+    for target_name, source_column in dict(mapping or {}).items():
+        if not source_column or is_fixed_value(source_column):
+            continue
+        if _is_main_code_field(str(target_name)):
+            key = _norm(target_name)
+            priority = 0 if key in {'codigo', 'codigosku', 'sku'} else 1
+            preferred.append((priority, str(source_column)))
+    preferred.sort(key=lambda item: item[0])
+    return preferred[0][1] if preferred else ''
+
+
+def _columns_have_same_values(source: pd.DataFrame, left_column: str, right_column: str, limit: int = 25) -> bool:
+    if not isinstance(source, pd.DataFrame):
+        return False
+    if not left_column or not right_column or left_column not in source.columns or right_column not in source.columns:
+        return False
+    try:
+        left_values = source[left_column].dropna().astype(str).str.strip().head(limit).tolist()
+        right_values = source[right_column].dropna().astype(str).str.strip().head(limit).tolist()
+    except Exception:
+        return False
+    pairs = [(left, right) for left, right in zip(left_values, right_values) if left or right]
+    if not pairs:
+        return False
+    equal_count = sum(1 for left, right in pairs if left and right and left == right)
+    return equal_count >= max(1, int(len(pairs) * 0.80))
+
+
+def _render_bling_import_guard(target_name: str, selected_value: str, source: pd.DataFrame, mapping: dict[str, str]) -> None:
+    if is_fixed_value(selected_value):
+        selected_display = decode_fixed_value(selected_value)
+    else:
+        selected_display = str(selected_value or '').strip()
+
+    if _is_category_field(target_name):
+        if not selected_display:
+            st.error('🚫 Campo crítico do Bling: **Categoria** vazia pode travar a importação. Mapeie uma categoria ou use uma categoria padrão como **Produtos não classificados**.')
+        else:
+            st.warning('⚠️ Campo crítico do Bling: confirme se a **Categoria** existe/corresponde ao cadastro do Bling. Categoria ausente ou inválida pode bloquear a importação.')
+
+    if _is_tag_field(target_name):
+        if not selected_display:
+            st.warning('⚠️ Campo crítico do Bling: produto sem **tag válida** pode gerar erro. Se usar Tags, mapeie somente tags já válidas no Bling; se não usar, mantenha vazio conscientemente.')
+        else:
+            st.warning('⚠️ Campo crítico do Bling: **Tags** precisam ser válidas/existentes no Bling. Tag inválida gera erro de importação.')
+
+    if _is_parent_code_field(target_name):
+        st.error('🚫 Campo crítico do Bling: **Código Pai** não pode ser igual ao próprio código do produto. Produto não pode ser variação dele mesmo.')
+        main_code_source = _find_main_code_source(mapping)
+        if selected_display and main_code_source and selected_display == main_code_source:
+            st.error(f'🚫 Risco detectado: **Código Pai** está usando a mesma coluna do código principal (**{main_code_source}**). Isso causa o erro de variação dela mesma.')
+        elif selected_display and main_code_source and _columns_have_same_values(source, selected_display, main_code_source):
+            st.error(f'🚫 Risco detectado: os valores de **{selected_display}** parecem iguais aos valores de **{main_code_source}**. Revise antes de importar no Bling.')
+
+
 def confidence_flag(target: str, source_column: str, source: pd.DataFrame) -> str:
     if is_fixed_value(source_column):
         return '🟢 fixo'
@@ -653,7 +735,7 @@ def render_shared_contract_mapping(source: pd.DataFrame, target: pd.DataFrame, *
         st.warning('Nenhum campo encontrado para essa busca. Limpe ou altere o texto para voltar aos campos do modelo.')
 
     st.caption(f'Mostrando campos {start_display}–{end} de {total_fields}. Limite: {MAPPING_FIELDS_PER_PAGE} campos por página para não pesar a tela.')
-    st.caption('As melhores sugestões aparecem primeiro. 🟢 só aparece quando o campo do modelo e o cabeçalho da origem são idênticos, ignorando maiúsculas/minúsculas.')
+    st.caption('As melhores sugestões aparecem primeiro. 🟢 só aparece quando o campo do modelo e o cabeçalho da origem são idênticos, ignorando maiúsculas/minúsculas. Campos críticos do Bling exibem alerta visual.')
     _render_mapping_page_controls(page_key, scroll_key, current_page, total_pages, where='top')
 
     for offset, target_name in enumerate(page_columns):
@@ -677,6 +759,7 @@ def render_shared_contract_mapping(source: pd.DataFrame, target: pd.DataFrame, *
 
             selected_value = encode_fixed_value(fixed_value) if selected == WRITE_OPTION else ('' if selected == EMPTY_OPTION else str(selected))
             edited[target_name] = selected_value
+            _render_bling_import_guard(target_name, selected_value, source, edited)
             _render_mapping_preview(target_name, selected_value, source)
 
     st.session_state[mapping_state_key] = edited
