@@ -5,7 +5,6 @@ from typing import Any, Mapping, Sequence
 import pandas as pd
 
 from bling_app_zero.core.category_intelligence import (
-    PROVISIONAL_CATEGORY,
     REVIEW_CATEGORY,
     canonicalize_category,
     looks_like_product_title,
@@ -33,13 +32,13 @@ CATEGORY_TARGET_TERMS = ('categoria', 'category', 'departamento', 'grupo', 'fami
 
 
 def _frame_columns(frame: Any) -> list[str]:
+    columns = getattr(frame, 'columns', None)
+    if columns is None:
+        return []
     try:
-        return [str(column) for column in list(getattr(frame, 'columns', []) or [])]
+        return [str(column) for column in list(columns)]
     except Exception:
-        try:
-            return [str(column) for column in list(getattr(frame, 'columns', []))]
-        except Exception:
-            return []
+        return []
 
 
 def _target_is_category(target: object) -> bool:
