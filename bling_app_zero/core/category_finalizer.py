@@ -54,7 +54,7 @@ TITLE_COLS = ('Descrição', 'Descricao', 'Nome', 'Nome do produto', 'Produto', 
 CONTEXT_COLS = ('Categoria origem', 'Grupo de produtos', 'Link Externo', 'URL', 'url', 'Marca', 'Código', 'SKU')
 
 # Termos de produto principal. A ordem na decisão é intencional:
-# power bank -> rádio/caixa -> fone -> microfone -> carregador -> cabo.
+# power bank -> fontes notebook -> adaptadores -> rádio/caixa -> fone -> microfone -> carregador -> cabo.
 # Isso evita transformar recurso/conexão em categoria principal.
 FONE_PATTERNS = (
     r'\bfone\b', r'\bfone de ouvido\b', r'\bfone gamer\b', r'\bfone bluetooth\b',
@@ -70,6 +70,16 @@ POWER_BANK_PATTERNS = (r'\bpower bank\b', r'\bcarregador portatil\b', r'\bbateri
 BATTERY_ONLY_PATTERNS = (
     r'\bpilha(?:s)?\b', r'\baa\b', r'\baaa\b', r'\bbateria recarregavel\b',
     r'\bbaterias recarregaveis\b', r'\bbateria 9v\b', r'\bcr2032\b', r'\blr44\b',
+)
+NOTEBOOK_POWER_SUPPLY_PATTERNS = (
+    r'\bnotebook\b', r'\blaptop\b', r'\bultrabook\b', r'\bfonte universal\b',
+    r'\bcarregador universal notebook\b', r'\bfonte carregador universal notebook\b',
+    r'\b9 conectores\b', r'\b10 conectores\b', r'\b120w\b', r'\b90w\b',
+)
+ADAPTER_PATTERNS = (
+    r'\badaptador de fone\b', r'\badaptador para fone\b', r'\badaptador p2\b', r'\badaptador p3\b',
+    r'\badaptador usb c\b', r'\badaptador tipo c\b', r'\badaptador lightning\b', r'\badaptador para iphone\b',
+    r'\bconversor tipo c\b', r'\bconversor usb c\b', r'\badaptador de audio\b', r'\badaptador de áudio\b',
 )
 RADIO_MAIN_PATTERNS = (
     r'\bradio portatil\b', r'\bradio am fm\b', r'\bradio am e fm\b',
@@ -125,7 +135,21 @@ def _looks_like_power_bank(full: str) -> bool:
     return _has_pattern(full, POWER_BANK_PATTERNS) and not _looks_like_battery_only(full)
 
 
+def _looks_like_notebook_power_supply(full: str) -> bool:
+    if not _has_pattern(full, NOTEBOOK_POWER_SUPPLY_PATTERNS):
+        return False
+    return _has_pattern(full, (r'\bfonte\b', r'\bcarregador\b', r'\badaptador ac\b', r'\bconectores\b', r'\b120w\b', r'\b90w\b'))
+
+
+def _looks_like_audio_or_typec_adapter(full: str) -> bool:
+    return _has_pattern(full, ADAPTER_PATTERNS)
+
+
 def _looks_like_wall_or_vehicle_charger(full: str) -> bool:
+    if _looks_like_notebook_power_supply(full):
+        return False
+    if _looks_like_audio_or_typec_adapter(full):
+        return False
     return _has_pattern(full, CHARGER_PATTERNS) or bool(re.search(r'\b(?:20w|25w|30w|33w|45w|65w)\b', full))
 
 
@@ -146,6 +170,8 @@ def _principal_is_cable(title: str, description: str) -> bool:
 def _principal_is_not_cable(full: str, title: str, description: str) -> bool:
     # USB/Tipo C, entrada USB ou cabo incluso são recursos comuns de fone,
     # carregador, rádio e caixa. Nesses casos não podem transformar o produto em cabo.
+    if _looks_like_audio_or_typec_adapter(full):
+        return True
     if _has_pattern(full, FONE_PATTERNS + MICROPHONE_PATTERNS + SPEAKER_MAIN_PATTERNS + RADIO_MAIN_PATTERNS):
         return True
     if _looks_like_wall_or_vehicle_charger(full) and not _principal_is_cable(title, description):
@@ -164,7 +190,13 @@ def _force_from_evidence(description: str, title: str, context: str) -> tuple[st
             extra = ' com mAh' if _has_mah(full) else ''
             return 'Power banks', 0.97, f'produto principal é power bank/bateria externa{extra}, antes de carregador genérico'
 
-    # 2) Rádio e caixa antes de fone/microfone, porque podem ter entrada de fone
+    # 2) Fontes de notebook e adaptadores precisam vencer carregador/fone genérico.
+    if _looks_like_notebook_power_supply(full):
+        return 'Fontes', 0.96, 'produto principal é fonte/carregador universal de notebook, não carregador de celular'
+    if _looks_like_audio_or_typec_adapter(full):
+        return 'Adaptadores', 0.95, 'produto principal é adaptador/conversor de áudio ou Tipo C, não fone de ouvido'
+
+    # 3) Rádio e caixa antes de fone/microfone, porque podem ter entrada de fone
     # ou microfone incluso sem mudar o produto principal.
     if _has_pattern(desc_first, RADIO_MAIN_PATTERNS):
         if not _has_pattern(desc_first, SPEAKER_MAIN_PATTERNS):
@@ -174,7 +206,7 @@ def _force_from_evidence(description: str, title: str, context: str) -> tuple[st
     if _has_pattern(desc_first, SPEAKER_MAIN_PATTERNS) or _has_pattern(title_only, SPEAKER_MAIN_PATTERNS):
         return 'Caixas de som', 0.95, 'produto principal é caixa de som; microfone/rádio pode ser recurso'
 
-    # 3) Produto principal de áudio antes de cabo/USB/Tipo C.
+    # 4) Produto principal de áudio antes de cabo/USB/Tipo C.
     if _has_pattern(full, FONE_PATTERNS):
         if not (title_only.startswith('cabo') and _has_pattern(full, (r'\bp2\b', r'\bp10\b', r'\brca\b', r'\bxlr\b', r'\baudio\b', r'\bauxiliar\b'))):
             return 'Fones de ouvido', 0.96, 'produto principal é fone/headset; USB/Tipo C é recurso/conexão'
@@ -182,12 +214,12 @@ def _force_from_evidence(description: str, title: str, context: str) -> tuple[st
         if not (title_only.startswith('cabo') and _has_pattern(full, (r'\bp2\b', r'\bp10\b', r'\bxlr\b', r'\baudio\b', r'\bauxiliar\b'))):
             return 'Microfones', 0.95, 'produto principal é microfone; cabo/conexão é acessório ou interface'
 
-    # 4) Carregador de tomada/veicular/fonte antes de cabo. Power bank já foi tratado.
+    # 5) Carregador de tomada/veicular/fonte antes de cabo. Power bank/fontes/adaptadores já foram tratados.
     if _looks_like_wall_or_vehicle_charger(full) and not _looks_like_power_bank(full):
         if not title_only.startswith('cabo'):
             return 'Carregadores para celular', 0.94, 'produto principal é carregador/fonte/tomada; USB/Tipo C é porta/conexão'
 
-    # 5) Cabos técnicos somente quando o produto principal for cabo.
+    # 6) Cabos técnicos somente quando o produto principal for cabo.
     principal_cable = _principal_is_cable(title_only, desc_first)
     if principal_cable and not _principal_is_not_cable(full, title_only, desc_first):
         if _has_pattern(full, (r'\brj\s?45\b', r'\bcat5e\b', r'\bcat6\b', r'\bcat6a\b', r'\bcat7\b', r'\bethernet\b', r'\bpatch cord\b', r'\blan\b', r'\butp\b', r'\brede internet\b')):
@@ -201,7 +233,7 @@ def _force_from_evidence(description: str, title: str, context: str) -> tuple[st
         if _has_pattern(full, (r'\bhdmi\b', r'\bvga\b', r'\bdisplayport\b', r'\bcabo av\b')):
             return 'Cabos HDMI e vídeo', 0.94, 'produto principal é cabo de vídeo/HDMI'
 
-    # 6) Antenas técnicas: não deixar como Antenas genérico quando há subtipo.
+    # 7) Antenas técnicas: não deixar como Antenas genérico quando há subtipo.
     if re.search(r'\bantena\b', full):
         if _has_pattern(full, (r'\bwifi\b', r'\bwi fi\b', r'\bwireless\b', r'\broteador\b', r'\brp sma\b', r'\bsma\b', r'\bdbi\b', r'\b2 4ghz\b', r'\b5ghz\b')):
             return 'Antenas Wi-Fi', 0.96, 'evidência antena Wi-Fi/roteador/dBi/SMA'
