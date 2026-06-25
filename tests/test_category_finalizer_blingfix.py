@@ -73,3 +73,47 @@ def test_antena_wifi_nao_fica_generica():
         },
     ])
     assert categories == ['Antenas Wi-Fi']
+
+
+def test_fone_tipo_c_nao_vira_cabo_usb():
+    categories, _report = _run([
+        {
+            'Descrição': 'Fone de Ouvido Tipo C com Microfone',
+            'Descrição Complementar': 'Fone intra auricular tipo c para celular android.',
+            'Categoria do produto': 'Cabos USB e dados',
+        },
+    ])
+    assert categories == ['Fones de ouvido']
+
+
+def test_microfone_com_cabo_nao_vira_cabo_audio():
+    categories, _report = _run([
+        {
+            'Descrição': 'Microfone de Lapela P2 para Celular',
+            'Descrição Complementar': 'Microfone lapela com cabo p2 para gravação de voz.',
+            'Categoria do produto': 'Cabos de áudio',
+        },
+    ])
+    assert categories == ['Microfones']
+
+
+def test_carregador_tipo_c_nao_vira_cabo_usb():
+    categories, _report = _run([
+        {
+            'Descrição': 'Carregador Turbo Tipo C 30W',
+            'Descrição Complementar': 'Fonte carregador de tomada usb c para celular.',
+            'Categoria do produto': 'Cabos USB e dados',
+        },
+    ])
+    assert categories == ['Carregadores para celular']
+
+
+def test_cabo_tipo_c_continua_cabo_usb():
+    categories, _report = _run([
+        {
+            'Descrição': 'Cabo Tipo C para iPhone 1 Metro',
+            'Descrição Complementar': 'Cabo de dados tipo c lightning para celular.',
+            'Categoria do produto': '',
+        },
+    ])
+    assert categories == ['Cabos USB e dados']
