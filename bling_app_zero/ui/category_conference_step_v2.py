@@ -303,15 +303,17 @@ def _build_review_preview(analyzed: pd.DataFrame) -> pd.DataFrame:
     product_col = _first_existing_column(analyzed, PRODUCT_COLUMNS)
     code_col = _first_existing_column(analyzed, CODE_COLUMNS)
     rows: list[dict[str, object]] = []
-    for idx, row in analyzed.fillna('').iterrows():
+    # Use posição real, não o índice interno do DataFrame. Isso evita aplicar
+    # correção manual na linha errada quando a planilha chega com índice quebrado.
+    for position, (_idx, row) in enumerate(analyzed.fillna('').iterrows()):
         current = str(row.get('categoria_atual_ia') or row.get(category_col) or '').strip()
         suggested = str(row.get('categoria_sugerida_ia') or row.get(category_col) or '').strip()
         action = str(row.get('acao_categoria_ia') or 'MANTER').strip() or 'MANTER'
         final_category = suggested or current
         rows.append(
             {
-                '__row_index': int(idx),
-                'linha': int(idx) + 1,
+                '__row_index': int(position),
+                'linha': int(position) + 1,
                 'Produto': str(row.get(product_col) or _row_text(row, PRODUCT_COLUMNS) or '').strip(),
                 'Código/SKU': str(row.get(code_col) or _row_text(row, CODE_COLUMNS) or '').strip(),
                 'Categoria atual': current,
