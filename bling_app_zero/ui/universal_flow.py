@@ -71,6 +71,7 @@ UNIVERSAL_CATEGORY_ACTION_KEY = 'mapeiaai_universal_category_review_action_v1'
 UNIVERSAL_CATEGORY_VALUE_KEY = 'mapeiaai_universal_category_review_category_v1'
 UNIVERSAL_CATEGORY_ATTENTION_KEY = 'mapeiaai_universal_category_review_attention_v1'
 UNIVERSAL_CATEGORY_EDITOR_KEY = 'mapeiaai_universal_category_review_editor_v1'
+UNIVERSAL_CATEGORY_APPLY_KEY = 'mapeiaai_universal_category_review_apply_v1'
 PRODUCT_COLUMNS = ('Nome', 'Descrição', 'Descricao', 'Produto', 'Título', 'Titulo', 'name', 'produto')
 CODE_COLUMNS = ('Código', 'Codigo', 'SKU', 'GTIN', 'EAN', 'ID', 'Id')
 CATEGORY_COL = 'Categoria do produto'
@@ -667,9 +668,14 @@ def _render_universal_category_review(df: pd.DataFrame) -> pd.DataFrame:
         if new_category != old_category:
             output.at[output.index[row_index], CATEGORY_COL] = new_category
             manual_changes += 1
+    if st.button('✅ Aplicar correções manuais de categoria', use_container_width=True, key=UNIVERSAL_CATEGORY_APPLY_KEY):
+        if manual_changes:
+            st.success(f'{manual_changes} categoria(s) corrigida(s) manualmente na prévia. Agora avance para o mapeamento.')
+            _audit('universal_category_preview_manual_edits_applied', manual_changes=manual_changes, rows=int(len(output)), dedicated_apply_button=True)
+        else:
+            st.info('Nenhuma categoria manual diferente foi informada neste filtro.')
     if manual_changes:
-        st.success(f'{manual_changes} categoria(s) ajustada(s) na prévia. Clique em “Aplicar opcionais e ir para mapeamento” para gravar no fluxo.')
-        _audit('universal_category_preview_manual_edits_ready', manual_changes=manual_changes, rows=int(len(output)))
+        st.caption('Correções manuais detectadas na prévia. O botão “Aplicar opcionais e ir para mapeamento” levará essas categorias para o mapeamento.')
     return output
 
 
