@@ -17,6 +17,7 @@ _ORIGINAL_CLASSIFY_DATAFRAME = ci.classify_dataframe
 TITLE_KINDS = {'descricao', 'descricao_curta', 'nome_apoio'}
 DESCRIPTION_KINDS = {'descricao', 'descricao_complementar', 'descricao_curta', 'ficha_tecnica', 'caracteristicas'}
 CATEGORY_KINDS = {'categoria'}
+CATEGORY_HEADER_TERMS = ('categoria', 'departamento', 'grupo', 'familia', 'família', 'breadcrumb', 'caminho')
 
 
 def _profile(df: pd.DataFrame, column: str) -> dict[str, Any]:
@@ -27,7 +28,13 @@ def _profile(df: pd.DataFrame, column: str) -> dict[str, Any]:
 
 
 def _header_ok(profile: dict[str, Any], column: str, kinds: set[str]) -> bool:
-    return str(profile.get('header_kind') or infer_kind(column) or '') in kinds
+    header_kind = str(profile.get('header_kind') or infer_kind(column) or '')
+    if header_kind in kinds:
+        return True
+    key = str(column or '').strip().lower()
+    if 'categoria' in kinds and any(term in key for term in CATEGORY_HEADER_TERMS):
+        return True
+    return False
 
 
 def _content_ok(profile: dict[str, Any], kinds: set[str], prefer: str) -> tuple[bool, float]:
