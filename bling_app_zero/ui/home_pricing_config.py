@@ -19,6 +19,7 @@ from bling_app_zero.v2.price_multistore.quick_ui import (
 )
 
 HOME_PRICING_CONFIG_KEY = 'home_pricing_config'
+PRICE_PROMO_EXTRA_KEYS = ('promo_action', 'promo_base')
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,9 @@ def normalize_home_pricing_config(raw: dict[str, Any] | None) -> dict[str, Any]:
         config.update(raw)
     normalized = normalize_shared_price_config(config)
     normalized['enabled'] = bool(config.get('enabled', False))
+    for key in PRICE_PROMO_EXTRA_KEYS:
+        if key in config:
+            normalized[key] = str(config.get(key) or '').strip()
     return normalized
 
 
