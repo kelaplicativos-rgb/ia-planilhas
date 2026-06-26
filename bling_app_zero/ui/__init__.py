@@ -232,6 +232,16 @@ def _install_model_data_preserve_patch() -> None:
     try:
         from bling_app_zero.ui import universal_flow
         universal_flow.render_shared_final_csv = render_shared_final_csv_with_preserve
+        original_model_step = getattr(universal_flow, '_mapeiaai_original_render_model_step', None) or universal_flow._render_model_step
+        setattr(universal_flow, '_mapeiaai_original_render_model_step', original_model_step)
+
+        def render_model_step_with_preserve_controls():
+            model = original_model_step()
+            if isinstance(model, pd.DataFrame):
+                _render_model_preserve_controls(model, None, 'mapeiaai_universal_model')
+            return model
+
+        universal_flow._render_model_step = render_model_step_with_preserve_controls
     except Exception:
         pass
     shared_final_csv._mapeiaai_model_data_preserve_patched = True
