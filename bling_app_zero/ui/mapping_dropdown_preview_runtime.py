@@ -97,7 +97,7 @@ def _restore_dataframe_preview_if_previous_patch_expanded_it() -> None:
     try:
         original_dataframe = getattr(st, '_mapeiaai_original_dataframe', None)
         current_version = str(getattr(st, '_mapeiaai_full_table_preview_runtime_version', '') or '')
-        if callable(original_dataframe) and current_version:
+        if callable(original_dataframe) and current_version and current_version != 'removed_by_v7_no_table_expand':
             st.dataframe = original_dataframe
             st._mapeiaai_full_table_preview_runtime_version = 'removed_by_v7_no_table_expand'
             add_audit_event('full_table_preview_runtime_removed', area='UNIVERSAL', status='OK', details={'reason': 'Preview do anexo do modelo não deve ser expandido; preservação é regra de mesclagem final.', 'previous_version': current_version, 'responsible_file': RESPONSIBLE_FILE})
@@ -106,8 +106,6 @@ def _restore_dataframe_preview_if_previous_patch_expanded_it() -> None:
 
 
 def _source_column_state(column: str, limit: int = 2, source: Any | None = None) -> tuple[str, str, list[str]]:
-    # A origem precisa ser SEMPRE o DataFrame atual recebido pelo render.
-    # Não varrer st.session_state aqui: isso mistura capturas antigas e mostra produto de outra operação.
     frame = source if isinstance(source, pd.DataFrame) else _CONTEXT.get('source')
     return _column_state(frame, column, limit=limit)
 
@@ -144,9 +142,6 @@ def _model_samples(column: str, target_name: str = '', limit: int = 2) -> tuple[
 
 def _preview_label(column: str, current_label: object, target_name: str = '') -> str:
     icon = _icon(current_label)
-
-    # Cada opção do dropdown deve mostrar a prévia da própria coluna da origem.
-    # Ex.: opção IdProduto só pode ler origem['IdProduto']; nunca Nome/Código nem session antiga.
     source_status, source_column, source_values = _source_column_state(column, limit=2)
     if source_values:
         label = column if source_column == column else f'{column} -> origem {source_column}'
