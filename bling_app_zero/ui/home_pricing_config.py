@@ -98,6 +98,7 @@ def _config_from_global_result(*, source_df: pd.DataFrame | None = None) -> dict
     if raw:
         raw = dict(raw)
         raw['enabled'] = True
+        raw['promo_discount_percent'] = max(float(raw.get('promo_discount_percent') or 0.0), _promo_discount_from_state())
         return normalize_home_pricing_config(raw)
     current = get_home_pricing_config()
     current['enabled'] = _calculator_ready()
