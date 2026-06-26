@@ -169,7 +169,7 @@ def _preview_label(column: str, current_label: object, target_name: str = '') ->
     return f'{icon} {clean_column}: origem {_status_text(status, actual_column or clean_column)}; modelo {_status_text(m_status, m_column or target_name or clean_column)}'
 
 
-def _ranked_options(options: list[str], labels: dict[str, str], target_name: str) -> tuple[list[str], dict[str, str]]:
+def _ranked_options(options: list[str], labels: dict[str, str], target_name: str, current_value: str = '') -> tuple[list[str], dict[str, str]]:
     if not _dual_enabled():
         for option in list(labels):
             if option not in {EMPTY_OPTION, WRITE_OPTION}:
@@ -179,6 +179,10 @@ def _ranked_options(options: list[str], labels: dict[str, str], target_name: str
     model_columns = [str(column) for column in getattr(_model_frame(), 'columns', [])]
     new_options: list[str] = []
     new_labels: dict[str, str] = {EMPTY_OPTION: EMPTY_OPTION, WRITE_OPTION: WRITE_OPTION}
+    current_value = str(current_value or '').strip()
+    if current_value and not _is_ref(current_value) and current_value in source_columns:
+        new_options.append(current_value)
+        new_labels[current_value] = _preview_label(current_value, labels.get(current_value, '🟡 ' + current_value), target_name)
     for column in source_columns:
         token = _ref('origem', column)
         if token not in new_options:
@@ -216,7 +220,7 @@ def install_mapping_dropdown_preview_runtime() -> None:
     if not getattr(ranked_base, '_mapeiaai_dropdown_preview_ranked', False):
         def ranked_with_real_preview(target_name, current_value, source_columns, suggestions_index, source_profiles=None):
             options, labels = ranked_base(target_name, current_value, source_columns, suggestions_index, source_profiles)
-            return _ranked_options(list(options or []), dict(labels or {}), str(target_name or ''))
+            return _ranked_options(list(options or []), dict(labels or {}), str(target_name or ''), str(current_value or ''))
         ranked_with_real_preview._mapeiaai_dropdown_preview_ranked = True
         shared_mapping._ranked_source_options = ranked_with_real_preview
 
