@@ -61,6 +61,22 @@ def _mapped_targets(mapping, columns: list[str]) -> set[str]:
     return {column for column in columns if str(data.get(column, '') or '').strip()}
 
 
+def _preserve_model_value_when_source_empty(column: object) -> bool:
+    key = _plain_key(column)
+    protected = {
+        'idproduto',
+        'idnaloja',
+        'codigo',
+        'idfornecedor',
+        'iddofornecedor',
+        'idmarca',
+        'iddamarca',
+        'linkexterno',
+        'nomelojamultilojas',
+    }
+    return key in protected
+
+
 def _install_auto_green_mapping_default() -> None:
     try:
         import bling_app_zero.ui.shared_mapping as shared_mapping
@@ -252,7 +268,7 @@ def _install_auto_model_preserve_policy() -> None:
             if key and key not in index_by_key:
                 index_by_key[key] = idx
         out = base.copy().fillna('')
-        matched = appended = 0
+        matched = appended = skipped_blank_identity = 0
         for _, row in mapped.iterrows():
             key = _plain_key(row.get(key_column, ''))
             if not key:
@@ -261,13 +277,17 @@ def _install_auto_model_preserve_policy() -> None:
                 matched += 1
                 target_row = index_by_key[key]
                 for column in update_columns:
-                    out.at[target_row, column] = '' if row.get(column) is None else str(row.get(column))
+                    new_value = '' if row.get(column) is None else str(row.get(column))
+                    if _preserve_model_value_when_source_empty(column) and not new_value.strip():
+                        skipped_blank_identity += 1
+                        continue
+                    out.at[target_row, column] = new_value
             else:
                 new_row = {column: '' if row.get(column) is None else str(row.get(column)) for column in out.columns}
                 out = pd.concat([out, pd.DataFrame([new_row], columns=list(out.columns))], ignore_index=True)
                 index_by_key[key] = len(out) - 1
                 appended += 1
-        add_audit_event('model_preserve_by_toggle_applied', area='UNIVERSAL', status='OK', details={'matched_rows': matched, 'appended_rows': appended, 'key_column': key_column, 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('model_preserve_by_toggle_applied', area='UNIVERSAL', status='OK', details={'matched_rows': matched, 'appended_rows': appended, 'skipped_blank_identity_fields': skipped_blank_identity, 'key_column': key_column, 'responsible_file': RESPONSIBLE_FILE})
         return out
 
     def render_model_step_full_upload():
@@ -309,7 +329,7 @@ def _install_auto_model_preserve_policy() -> None:
         upload_patch._render_model_preservation_options = render_upload_toggle
     except Exception:
         pass
-    add_audit_event('model_preserve_toggle_policy_installed', area='UNIVERSAL', status='OK', details={'default_clean_model': True, 'toggle_default_off': True, 'toggle_visible_for_empty_model': True, 'full_model_rows_before_decision': True, 'multiple_model_uploads': True, 'columns_detection_fixed': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('model_preserve_toggle_policy_installed', area='UNIVERSAL', status='OK', details={'default_clean_model': True, 'toggle_default_off': True, 'toggle_visible_for_empty_model': True, 'full_model_rows_before_decision': True, 'multiple_model_uploads': True, 'columns_detection_fixed': True, 'identity_blank_protection': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 def _disable_connection_driven_auto_entry() -> None:
