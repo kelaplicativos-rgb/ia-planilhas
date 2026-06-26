@@ -9,7 +9,8 @@ from typing import Any
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/universal_model_upload_fast_patch.py'
 TARGET_MODULE = 'bling_app_zero.ui.universal_flow'
-PATCH_VERSION = 'fast_contract_first_20260624_light_v2_preservation_near_upload'
+TARGET_ROUTER_MODULE = 'bling_app_zero.ui.home_router_v2'
+PATCH_VERSION = 'fast_contract_first_20260624_light_v3_preservation_near_upload_and_reset_guard'
 MODEL_FILE_NAME_KEY = 'mapeiaai_universal_model_file_name'
 MODEL_FILE_BYTES_KEY = 'mapeiaai_universal_model_file_bytes'
 MODEL_LAST_READ_SIGNATURE_KEY = 'mapeiaai_universal_model_fast_patch_last_read_signature_v1'
@@ -125,7 +126,7 @@ def _model_signature(module: ModuleType, model: Any) -> str:
     return f'{len(model)}x{len(model.columns)}:' + '|'.join(map(str, model.columns))
 
 
-def _reset_preservation_state(module: ModuleType) -> None:
+def _reset_preservation_state(module: ModuleType | None = None) -> None:
     state = _state_from_module(module)
     if state is None:
         return
@@ -260,54 +261,104 @@ def _patch_model_step(module: ModuleType) -> None:
     _audit('universal_model_preservation_near_upload_patch_installed', module=module, important=True, target=getattr(module, '__name__', TARGET_MODULE))
 
 
-def _patch_module(module: ModuleType) -> None:
-    read_patch_installed = bool(getattr(module, '_mapeiaai_universal_model_fast_patch_installed', False))
-    if not read_patch_installed:
-        original = getattr(module, '_read_model_upload', None)
-        if callable(original):
-            st = getattr(module, 'st', None)
+def _patch_read_model_upload(module: ModuleType) -> None:
+    if getattr(module, '_mapeiaai_universal_model_fast_patch_installed', False):
+        return
+    original = getattr(module, '_read_model_upload', None)
+    if not callable(original):
+        return
+    st = getattr(module, 'st', None)
 
-            def read_model_upload_contract_first(uploaded_file: Any):
-                if uploaded_file is None:
-                    return original(uploaded_file)
-                name = _safe(getattr(uploaded_file, 'name', ''), 240)
-                try:
-                    data = bytes(uploaded_file.getvalue() or b'')
-                except Exception:
-                    data = b''
-                signature = f'{name}:{len(data)}:{_sha16(data)}'
-                should_log = _should_log_read(module, signature)
-                if st is not None and name and data:
-                    try:
-                        st.session_state[MODEL_FILE_NAME_KEY] = name
-                        st.session_state[MODEL_FILE_BYTES_KEY] = data
-                    except Exception:
-                        pass
-                if should_log:
-                    _audit('universal_model_contract_first_read_start', module=module, important=True, file_name=name, byte_size=len(data))
-                df = _read_contract_first(module, name, data)
-                if _valid_dataframe(module, df):
-                    if should_log:
-                        _audit('universal_model_contract_first_read_ok', module=module, important=True, file_name=name, columns=int(len(df.columns)))
-                    return df.fillna('')
-                _audit('universal_model_contract_first_fallback_original', module=module, important=should_log, file_name=name, status='AVISO')
-                try:
-                    df = original(uploaded_file)
-                except Exception as exc:
-                    _audit('universal_model_contract_first_original_failed', module=module, important=True, file_name=name, error_type=type(exc).__name__, error=_safe(exc, 400), status='ERRO')
-                    return None
-                if _valid_dataframe(module, df):
-                    if should_log:
-                        _audit('universal_model_contract_first_original_ok', module=module, important=True, file_name=name, columns=int(len(df.columns)))
-                else:
-                    _audit('universal_model_contract_first_no_columns', module=module, important=True, file_name=name, status='ERRO')
-                return df
+    def read_model_upload_contract_first(uploaded_file: Any):
+        if uploaded_file is None:
+            return original(uploaded_file)
+        name = _safe(getattr(uploaded_file, 'name', ''), 240)
+        try:
+            data = bytes(uploaded_file.getvalue() or b'')
+        except Exception:
+            data = b''
+        signature = f'{name}:{len(data)}:{_sha16(data)}'
+        should_log = _should_log_read(module, signature)
+        if st is not None and name and data:
+            try:
+                st.session_state[MODEL_FILE_NAME_KEY] = name
+                st.session_state[MODEL_FILE_BYTES_KEY] = data
+            except Exception:
+                pass
+        if should_log:
+            _audit('universal_model_contract_first_read_start', module=module, important=True, file_name=name, byte_size=len(data))
+        df = _read_contract_first(module, name, data)
+        if _valid_dataframe(module, df):
+            if should_log:
+                _audit('universal_model_contract_first_read_ok', module=module, important=True, file_name=name, columns=int(len(df.columns)))
+            return df.fillna('')
+        _audit('universal_model_contract_first_fallback_original', module=module, important=should_log, file_name=name, status='AVISO')
+        try:
+            df = original(uploaded_file)
+        except Exception as exc:
+            _audit('universal_model_contract_first_original_failed', module=module, important=True, file_name=name, error_type=type(exc).__name__, error=_safe(exc, 400), status='ERRO')
+            return None
+        if _valid_dataframe(module, df):
+            if should_log:
+                _audit('universal_model_contract_first_original_ok', module=module, important=True, file_name=name, columns=int(len(df.columns)))
+        else:
+            _audit('universal_model_contract_first_no_columns', module=module, important=True, file_name=name, status='ERRO')
+        return df
 
-            module._read_model_upload = read_model_upload_contract_first
-            module._mapeiaai_universal_model_fast_patch_installed = True
-            _audit('universal_model_contract_first_patch_installed', module=module, important=False, target=getattr(module, '__name__', TARGET_MODULE))
+    module._read_model_upload = read_model_upload_contract_first
+    module._mapeiaai_universal_model_fast_patch_installed = True
+    _audit('universal_model_contract_first_patch_installed', module=module, important=False, target=getattr(module, '__name__', TARGET_MODULE))
 
+
+def _patch_universal_flow_module(module: ModuleType) -> None:
+    _patch_read_model_upload(module)
     _patch_model_step(module)
+
+
+def _patch_home_router_module(module: ModuleType) -> None:
+    if getattr(module, '_mapeiaai_universal_preservation_clear_guard_installed', False):
+        return
+    original = getattr(module, '_clear_universal_operation_state', None)
+    if not callable(original):
+        return
+    state = _state_from_module(module)
+    if state is None:
+        return
+
+    def clear_universal_operation_state_with_preservation_guard(*, keep_model: bool = False) -> None:
+        current_state = _state_from_module(module)
+        preserved = {}
+        if keep_model and current_state is not None:
+            preserved = {key: current_state.get(key) for key in PRESERVE_KEYS if key in current_state}
+        original(keep_model=keep_model)
+        current_state = _state_from_module(module)
+        if current_state is None:
+            return
+        if keep_model:
+            for key, value in preserved.items():
+                current_state[key] = value
+        else:
+            for key in PRESERVE_KEYS:
+                current_state.pop(key, None)
+        _audit(
+            'universal_model_preservation_state_reset_guard_applied',
+            module=module,
+            important=True,
+            keep_model=bool(keep_model),
+            preserved_keys=len(preserved),
+        )
+
+    module._clear_universal_operation_state = clear_universal_operation_state_with_preservation_guard
+    module._mapeiaai_universal_preservation_clear_guard_installed = True
+    _audit('universal_model_preservation_clear_guard_installed', module=module, important=True, target=getattr(module, '__name__', TARGET_ROUTER_MODULE))
+
+
+def _patch_module(module: ModuleType) -> None:
+    name = getattr(module, '__name__', '')
+    if name == TARGET_MODULE:
+        _patch_universal_flow_module(module)
+    elif name == TARGET_ROUTER_MODULE:
+        _patch_home_router_module(module)
 
 
 class _Loader(importlib.abc.Loader):
@@ -326,8 +377,10 @@ class _Loader(importlib.abc.Loader):
 
 
 class _Finder(importlib.abc.MetaPathFinder):
+    TARGETS = {TARGET_MODULE, TARGET_ROUTER_MODULE}
+
     def find_spec(self, fullname: str, path=None, target=None):
-        if fullname != TARGET_MODULE:
+        if fullname not in self.TARGETS:
             return None
         spec = importlib.machinery.PathFinder.find_spec(fullname, path)
         if spec is None or spec.loader is None:
@@ -338,20 +391,27 @@ class _Finder(importlib.abc.MetaPathFinder):
         return spec
 
 
+def _loaded_module_needs_patch(module: ModuleType) -> bool:
+    name = getattr(module, '__name__', '')
+    if name == TARGET_MODULE:
+        return not getattr(module, '_mapeiaai_universal_model_fast_patch_installed', False) or not getattr(module, '_mapeiaai_universal_model_preservation_near_upload_installed', False)
+    if name == TARGET_ROUTER_MODULE:
+        return not getattr(module, '_mapeiaai_universal_preservation_clear_guard_installed', False)
+    return False
+
+
 def install_universal_model_upload_fast_patch() -> None:
     installed_now = False
-    loaded = sys.modules.get(TARGET_MODULE)
-    if loaded is not None and (
-        not getattr(loaded, '_mapeiaai_universal_model_fast_patch_installed', False)
-        or not getattr(loaded, '_mapeiaai_universal_model_preservation_near_upload_installed', False)
-    ):
-        _patch_module(loaded)
-        installed_now = True
+    for target in (TARGET_MODULE, TARGET_ROUTER_MODULE):
+        loaded = sys.modules.get(target)
+        if loaded is not None and _loaded_module_needs_patch(loaded):
+            _patch_module(loaded)
+            installed_now = True
     if not any(isinstance(finder, _Finder) for finder in sys.meta_path):
         sys.meta_path.insert(0, _Finder())
         installed_now = True
     if installed_now:
-        _audit('universal_model_contract_first_import_hook_installed', important=False, target=TARGET_MODULE)
+        _audit('universal_model_contract_first_import_hook_installed', important=False, targets=[TARGET_MODULE, TARGET_ROUTER_MODULE])
 
 
 __all__ = ['install_universal_model_upload_fast_patch']
