@@ -61,6 +61,34 @@ def _mapped_targets(mapping, columns: list[str]) -> set[str]:
     return {column for column in columns if str(data.get(column, '') or '').strip()}
 
 
+def _install_auto_green_mapping_default() -> None:
+    try:
+        import bling_app_zero.ui.shared_mapping as shared_mapping
+    except Exception as exc:
+        add_audit_event('mapping_auto_green_default_import_failed', area='MAPEAMENTO', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
+        return
+    if getattr(shared_mapping, '_mapeiaai_auto_green_default_patched', False):
+        return
+    original = getattr(shared_mapping, 'render_shared_contract_mapping', None)
+    key_builder = getattr(shared_mapping, '_auto_green_state_key', None)
+    if not callable(original) or not callable(key_builder):
+        return
+
+    def render_shared_contract_mapping_auto_green_default(source, target, *, signature: str, mapping_state_key: str, engine_state_key: str, key_prefix: str = 'mapeiaai_shared', ai_enabled: bool = True):
+        try:
+            auto_green_key = key_builder(mapping_state_key, signature)
+            if auto_green_key not in st.session_state:
+                st.session_state[auto_green_key] = True
+                add_audit_event('mapping_auto_green_default_seeded', area='MAPEAMENTO', status='OK', details={'mapping_state_key': mapping_state_key, 'auto_green_key': auto_green_key, 'responsible_file': RESPONSIBLE_FILE})
+        except Exception:
+            pass
+        return original(source, target, signature=signature, mapping_state_key=mapping_state_key, engine_state_key=engine_state_key, key_prefix=key_prefix, ai_enabled=ai_enabled)
+
+    shared_mapping.render_shared_contract_mapping = render_shared_contract_mapping_auto_green_default
+    shared_mapping._mapeiaai_auto_green_default_patched = True
+    add_audit_event('mapping_auto_green_default_installed', area='MAPEAMENTO', status='OK', details={'default_on_once': True, 'respects_user_toggle_after_seed': True, 'responsible_file': RESPONSIBLE_FILE})
+
+
 def _install_auto_model_preserve_policy() -> None:
     try:
         import pandas as pd
@@ -312,6 +340,7 @@ def _clear_inactive_api_session() -> None:
 
 
 def install_preventive_bootstrap() -> None:
+    _install_auto_green_mapping_default()
     _install_auto_model_preserve_policy()
     _disable_connection_driven_auto_entry()
     _clear_inactive_api_session()
