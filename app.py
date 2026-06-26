@@ -31,6 +31,7 @@ from bling_app_zero.ui.final_bling_operation_selector_runtime import install_fin
 from bling_app_zero.ui.home import render_home
 from bling_app_zero.ui.layout import inject_streamlit_toolbar_fix
 from bling_app_zero.ui.mapping_pagination_runtime import install_mapping_pagination_runtime
+from bling_app_zero.ui.model_preserve_merge_runtime import install_model_preserve_merge_runtime
 from bling_app_zero.ui.oauth_link_guard import install_oauth_link_guard
 from bling_app_zero.ui.preventive_bootstrap import install_preventive_bootstrap
 from bling_app_zero.ui.sidebar_tools import render_sidebar_tools
@@ -137,10 +138,12 @@ def main() -> None:
         return
 
     install_preventive_bootstrap()
+    install_model_preserve_merge_runtime()
     restore_mapping_widget_state_from_snapshot()
     _install_bling_api_verified_media_checkpoint('before_runtime_patches')
     _refresh_blingfix_runtime_patch_session()
     install_blingfix_runtime_patches()
+    install_model_preserve_merge_runtime()
     install_final_bling_operation_selector_runtime()
     install_site_checkpoint_finalizer_runtime()
     install_brand_runtime_patch()
@@ -150,6 +153,7 @@ def main() -> None:
     install_source_upload_recovery_runtime()
     install_mapping_pagination_runtime()
     install_oauth_link_guard()
+    install_model_preserve_merge_runtime()
     _install_bling_api_verified_media_checkpoint('after_runtime_patches')
     install_official_bling_oauth_patch()
     bling_oauth.process_oauth_callback()
