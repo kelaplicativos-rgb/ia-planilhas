@@ -89,11 +89,6 @@ def _icon(label: object) -> str:
 
 
 def _restore_dataframe_preview_if_previous_patch_expanded_it() -> None:
-    """Desfaz o patch v6 que aumentava preview de tabela no anexo do modelo.
-
-    O preview visual do modelo deve continuar compacto. O toggle de preservação
-    controla apenas a mesclagem modelo + origem na saída final.
-    """
     try:
         original_dataframe = getattr(st, '_mapeiaai_original_dataframe', None)
         current_version = str(getattr(st, '_mapeiaai_full_table_preview_runtime_version', '') or '')
