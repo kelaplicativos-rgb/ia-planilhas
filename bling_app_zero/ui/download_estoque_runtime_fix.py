@@ -7,6 +7,7 @@ from bling_app_zero.core.audit import add_audit_event
 RESPONSIBLE_FILE = 'bling_app_zero/ui/download_estoque_runtime_fix.py'
 _PATCH_ATTR = '_download_universal_runtime_fix_v9_no_template_runtime'
 _ORIGINAL_ATTR = '_download_universal_original_mismatch_error'
+_DOWNLOAD_SPLIT_FIRST_ATTR = '_mapeiaai_download_split_first_v1'
 DOWNLOAD_LABEL_TEXT = '⬇️ Download Modelo Mapeado'
 UNIVERSAL_OPERATION = 'universal'
 UNIVERSAL_STATE_KEYS = (
@@ -81,6 +82,48 @@ def _install_retry_result_visual_fix() -> None:
         add_audit_event('retry_result_visual_fix_install_failed', area='BLING_ENVIO', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
 
 
+def _install_split_first_download_fix() -> None:
+    try:
+        import bling_app_zero.ui as ui_root
+        from bling_app_zero.core.final_output_engine import build_final_output
+        from bling_app_zero.ui import shared_final_csv
+    except Exception:
+        return
+    if getattr(shared_final_csv, _DOWNLOAD_SPLIT_FIRST_ATTR, False):
+        return
+    render_split = getattr(ui_root, '_render_split_downloads', None)
+    if not callable(render_split):
+        return
+
+    original_shared = getattr(shared_final_csv, '_mapeiaai_original_render_shared_final_csv', None) or shared_final_csv.render_shared_final_csv
+    original_preview = getattr(shared_final_csv, '_mapeiaai_original_render_final_csv_preview', None) or shared_final_csv.render_final_csv_preview
+
+    def shared_split_first(source, contract, mapping, *args, **kwargs):
+        key_prefix = str(kwargs.get('key_prefix') or 'mapeiaai_shared_final')
+        file_name = str(kwargs.get('file_name') or 'mapeiaai_planilha_final_mapeada.csv')
+        try:
+            result = build_final_output(source, contract, mapping, operation='universal', file_name=file_name, run_smart_features=bool(kwargs.get('run_smart_features', True)), smart_rules_config=kwargs.get('smart_rules_config'))
+            render_split(result.output, key_prefix, file_name)
+        except Exception:
+            pass
+        return original_shared(source, contract, mapping, *args, **kwargs)
+
+    def preview_split_first(df_final, *args, **kwargs):
+        key_prefix = str(kwargs.get('key_prefix') or 'mapeiaai_final_csv')
+        render_split(df_final, key_prefix, 'mapeiaai_planilha_final_mapeada.csv')
+        return original_preview(df_final, *args, **kwargs)
+
+    shared_final_csv.render_shared_final_csv = shared_split_first
+    shared_final_csv.render_final_csv_preview = preview_split_first
+    try:
+        from bling_app_zero.ui import universal_flow
+        universal_flow.render_shared_final_csv = shared_split_first
+    except Exception:
+        pass
+    setattr(shared_final_csv, _DOWNLOAD_SPLIT_FIRST_ATTR, True)
+    add_audit_event('split_first_download_fix_installed', area='DOWNLOAD', status='OK', details={'responsible_file': RESPONSIBLE_FILE})
+
+
 def install_download_estoque_runtime_fix() -> bool:
     try:
         import streamlit as st
@@ -92,6 +135,7 @@ def install_download_estoque_runtime_fix() -> bool:
 
     _force_universal_state()
     _install_retry_result_visual_fix()
+    _install_split_first_download_fix()
 
     try:
         from bling_app_zero.ui.exact_model_download_runtime import install_exact_model_download_runtime
@@ -121,7 +165,7 @@ def install_download_estoque_runtime_fix() -> bool:
 
     home_download._operation_contract_mismatch_error = guarded_contract_mismatch
     setattr(home_download, _PATCH_ATTR, True)
-    add_audit_event('download_universal_runtime_fix_installed', area='DOWNLOAD', status='OK', details={'exact_model_runtime': True, 'exact_template_file_runtime': False, 'template_runtime_removed': True, 'download_label': DOWNLOAD_LABEL_TEXT, 'safe_state_write': True, 'retry_result_visual_fix': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('download_universal_runtime_fix_installed', area='DOWNLOAD', status='OK', details={'exact_model_runtime': True, 'exact_template_file_runtime': False, 'template_runtime_removed': True, 'download_label': DOWNLOAD_LABEL_TEXT, 'safe_state_write': True, 'retry_result_visual_fix': True, 'split_first_download': True, 'responsible_file': RESPONSIBLE_FILE})
     return True
 
 
