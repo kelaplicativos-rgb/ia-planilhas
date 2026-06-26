@@ -42,6 +42,13 @@ def _df_has_values(df) -> bool:
         return False
 
 
+def _df_has_columns(df) -> bool:
+    try:
+        return bool(getattr(df, 'columns', []))
+    except Exception:
+        return False
+
+
 def _key_options(df) -> list[str]:
     columns = [str(column) for column in getattr(df, 'columns', [])]
     terms = ('codigo', 'sku', 'idproduto', 'idnaloja', 'gtin', 'ean', 'referencia')
@@ -60,6 +67,8 @@ def _install_auto_model_preserve_policy() -> None:
         import bling_app_zero.ui as ui_root
         from bling_app_zero.core import final_output_engine
         from bling_app_zero.core import universal_model_upload_fast_patch as upload_patch
+        from bling_app_zero.core.files import read_uploaded_file
+        from bling_app_zero.ui import universal_flow as uf
     except Exception as exc:
         add_audit_event('model_preserve_toggle_policy_import_failed', area='UNIVERSAL', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
         return
@@ -67,6 +76,63 @@ def _install_auto_model_preserve_policy() -> None:
     enabled_key = getattr(ui_root, 'PRESERVE_MODEL_ENABLED_KEY', 'mapeiaai_preserve_model_data_enabled')
     key_column_key = getattr(ui_root, 'PRESERVE_MODEL_KEY_COLUMN_KEY', 'mapeiaai_preserve_model_data_key_column')
     original_builder = getattr(final_output_engine, '_mapeiaai_original_build_universal_output', None) or final_output_engine.build_universal_output
+
+    def _uploaded_list(uploaded) -> list:
+        if uploaded is None:
+            return []
+        if isinstance(uploaded, (list, tuple)):
+            return [item for item in uploaded if item is not None]
+        return [uploaded]
+
+    def _name_and_bytes(uploaded_file) -> tuple[str, bytes]:
+        name = str(getattr(uploaded_file, 'name', '') or '').strip()
+        try:
+            data = bytes(uploaded_file.getvalue() or b'')
+        except Exception:
+            data = b''
+        return name, data
+
+    def _read_model_files_full(uploaded) -> pd.DataFrame | None:
+        files = _uploaded_list(uploaded)
+        if not files:
+            return None
+        frames: list[pd.DataFrame] = []
+        names: list[str] = []
+        total_bytes = 0
+        for file in files:
+            name, data = _name_and_bytes(file)
+            if name:
+                names.append(name)
+            total_bytes += len(data)
+            try:
+                frame = read_uploaded_file(file).fillna('')
+            except Exception:
+                frame = pd.DataFrame()
+            if not _df_has_columns(frame):
+                try:
+                    frame = uf._model_contract_from_file(name, data).fillna('')
+                except Exception:
+                    frame = pd.DataFrame()
+            if _df_has_columns(frame):
+                frames.append(frame.fillna(''))
+        if not frames:
+            add_audit_event('model_full_read_no_columns', area='MODELO', status='ERRO', details={'file_names': names, 'responsible_file': RESPONSIBLE_FILE})
+            return None
+        try:
+            model = pd.concat(frames, ignore_index=True, sort=False).fillna('') if len(frames) > 1 else frames[0].copy().fillna('')
+        except Exception:
+            model = frames[0].copy().fillna('')
+        try:
+            st.session_state['mapeiaai_universal_model_file_names'] = names
+            st.session_state['mapeiaai_universal_model_file_count'] = len(files)
+            st.session_state['mapeiaai_universal_model_file_total_bytes'] = int(total_bytes)
+            if len(files) == 1:
+                st.session_state['mapeiaai_universal_model_file_name'] = names[0] if names else ''
+                st.session_state['mapeiaai_universal_model_file_bytes'] = _name_and_bytes(files[0])[1]
+        except Exception:
+            pass
+        add_audit_event('model_full_read_before_preserve_decision_ok', area='MODELO', status='OK', details={'rows': int(len(model)), 'columns': int(len(model.columns)), 'file_names': names, 'file_count': int(len(files)), 'responsible_file': RESPONSIBLE_FILE})
+        return model
 
     def _set_preserve_state(model, enabled: bool) -> None:
         has_values = _df_has_values(model)
@@ -85,29 +151,25 @@ def _install_auto_model_preserve_policy() -> None:
 
     def _render_toggle(contract, mapping=None, key_prefix: str = 'mapeiaai_model', *, show_toggle: bool = True) -> None:
         has_values = _df_has_values(contract)
-        has_columns = bool(list(getattr(contract, 'columns', [])))
+        has_columns = _df_has_columns(contract)
         if not has_columns:
             _set_preserve_state(contract, False)
             st.caption('Modelo sem colunas detectadas: anexe a planilha modelo antes de continuar.')
             return
-
         st.session_state.setdefault(MODEL_PRESERVE_TOGGLE_KEY, False)
         enabled = bool(st.session_state.get(MODEL_PRESERVE_TOGGLE_KEY, False))
         if show_toggle:
             enabled = bool(st.toggle('Preservar dados do modelo', key=MODEL_PRESERVE_TOGGLE_KEY, help='Desligado: limpa os dados do modelo. Ligado: mantém os dados do modelo e a origem atualiza por cima dos campos mapeados.'))
         _set_preserve_state(contract, enabled)
-
         if not has_values:
             if enabled:
                 st.caption('Ligado, mas este modelo não tem linhas preenchidas. Não há dados para preservar; a origem preencherá a estrutura normalmente.')
             else:
                 st.caption('Desligado: o próximo passo usa a planilha modelo limpinha, pronta para receber os dados da origem.')
             return
-
         if not enabled:
             st.caption('Desligado: o próximo passo usa a planilha modelo limpinha, pronta para receber os dados da origem.')
             return
-
         with st.expander('Preservação do modelo ativa', expanded=True):
             st.info('Todos os dados do modelo seguem preservados até a origem de dados sobrescrever, preencher ou limpar os campos mapeados.')
             options = _key_options(contract)
@@ -136,7 +198,6 @@ def _install_auto_model_preserve_policy() -> None:
         if not _df_has_values(df_model) or not bool(st.session_state.get(MODEL_PRESERVE_TOGGLE_KEY, False)):
             st.session_state[enabled_key] = False
             return mapped
-
         st.session_state[enabled_key] = True
         base = df_model.copy().fillna('')
         for column in mapped.columns:
@@ -145,7 +206,6 @@ def _install_auto_model_preserve_policy() -> None:
         base = base.loc[:, list(mapped.columns)].fillna('').reset_index(drop=True)
         if base.empty:
             return mapped
-
         key_column = str(st.session_state.get(key_column_key) or '').strip()
         if not key_column or key_column not in base.columns or key_column not in mapped.columns:
             for option in _key_options(base):
@@ -155,17 +215,14 @@ def _install_auto_model_preserve_policy() -> None:
                     break
         if not key_column:
             return base
-
         update_columns = _mapped_targets(mapping, list(mapped.columns))
         if not update_columns:
             return base
-
         index_by_key = {}
         for idx, value in enumerate(base[key_column].tolist()):
             key = _plain_key(value)
             if key and key not in index_by_key:
                 index_by_key[key] = idx
-
         out = base.copy().fillna('')
         matched = appended = 0
         for _, row in mapped.iterrows():
@@ -182,18 +239,49 @@ def _install_auto_model_preserve_policy() -> None:
                 out = pd.concat([out, pd.DataFrame([new_row], columns=list(out.columns))], ignore_index=True)
                 index_by_key[key] = len(out) - 1
                 appended += 1
-
         add_audit_event('model_preserve_by_toggle_applied', area='UNIVERSAL', status='OK', details={'matched_rows': matched, 'appended_rows': appended, 'key_column': key_column, 'responsible_file': RESPONSIBLE_FILE})
         return out
+
+    def render_model_step_full_upload():
+        st.markdown('### 1. Anexar Modelo / Mapear')
+        model = uf._current_df(uf.UNIVERSAL_MODEL_KEY)
+        uploaded = None
+        if not isinstance(model, pd.DataFrame):
+            st.caption('Anexe primeiro a planilha modelo exatamente no formato que voce quer receber no final.')
+            uploaded = st.file_uploader('Planilha modelo final', type=None, accept_multiple_files=True, key='mapeiaai_universal_model_upload_multi_v1')
+            df = _read_model_files_full(uploaded)
+            if isinstance(df, pd.DataFrame):
+                current_sig = uf._df_signature(uf._current_df(uf.UNIVERSAL_MODEL_KEY))
+                new_sig = uf._df_signature(df)
+                if current_sig != 'none' and current_sig != new_sig:
+                    uf._clear_after_model()
+                uf._store_df(uf.UNIVERSAL_MODEL_KEY, df)
+                st.session_state['home_modelo_universal_df'] = df.copy().fillna('')
+                st.session_state['df_modelo_universal'] = df.copy().fillna('')
+                st.session_state['modelo_universal_df'] = df.copy().fillna('')
+                uf._audit('mapear_planilha_modelo_anexado_primeiro', rows=int(len(df)), columns=int(len(df.columns)), original_file_name=', '.join(st.session_state.get('mapeiaai_universal_model_file_names') or []))
+            model = uf._current_df(uf.UNIVERSAL_MODEL_KEY)
+        if not isinstance(model, pd.DataFrame):
+            st.info('Envie a planilha modelo final para liberar a próxima etapa.')
+            return None
+        st.success('Modelo final carregado. A saída seguirá exatamente essas colunas e essa ordem.')
+        render_upload_toggle(uf, model)
+        st.dataframe(model.head(3).astype(str), use_container_width=True, height=145)
+        st.caption('Colunas finais: ' + ', '.join(map(str, model.columns)))
+        if st.button('Continuar para origem dos dados ➡️', use_container_width=True, key='mapeiaai_universal_go_source'):
+            uf._set_step(uf.STEP_SOURCE, 'model_confirmed')
+        return model
 
     ui_root._render_model_preserve_controls = render_preserve_controls
     ui_root._apply_model_preserve = apply_preserve_by_toggle
     final_output_engine.build_universal_output = lambda df_source, df_model, mapping=None: apply_preserve_by_toggle(df_source, df_model, mapping, original_builder)
+    uf._read_model_upload = _read_model_files_full
+    uf._render_model_step = render_model_step_full_upload
     try:
         upload_patch._render_model_preservation_options = render_upload_toggle
     except Exception:
         pass
-    add_audit_event('model_preserve_toggle_policy_installed', area='UNIVERSAL', status='OK', details={'default_clean_model': True, 'toggle_default_off': True, 'toggle_visible_for_empty_model': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('model_preserve_toggle_policy_installed', area='UNIVERSAL', status='OK', details={'default_clean_model': True, 'toggle_default_off': True, 'toggle_visible_for_empty_model': True, 'full_model_rows_before_decision': True, 'multiple_model_uploads': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 def _disable_connection_driven_auto_entry() -> None:
