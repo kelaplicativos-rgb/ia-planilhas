@@ -9,6 +9,7 @@ RESPONSIBLE_FILE = 'bling_app_zero/ui/preventive_bootstrap.py'
 MOBILE_CONNECTED_AUTO_ENTRY_KEY = 'mobile_connected_bling_auto_entry_done_v1'
 EXPLICIT_API_SEND_KEY = 'home_bling_connected_same_flow_api_send'
 FINISH_MODE_KEY = 'bling_finish_mode'
+MODEL_PRESERVE_TOGGLE_KEY = 'mapeiaai_model_preserve_data_toggle_v1'
 API_SESSION_KEYS = (
     'bling_connected_api_flow_active',
     'bling_connected_api_operation',
@@ -60,60 +61,79 @@ def _install_auto_model_preserve_policy() -> None:
         from bling_app_zero.core import final_output_engine
         from bling_app_zero.core import universal_model_upload_fast_patch as upload_patch
     except Exception as exc:
-        add_audit_event('auto_model_preserve_policy_import_failed', area='UNIVERSAL', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('model_preserve_toggle_policy_import_failed', area='UNIVERSAL', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
         return
 
     enabled_key = getattr(ui_root, 'PRESERVE_MODEL_ENABLED_KEY', 'mapeiaai_preserve_model_data_enabled')
     key_column_key = getattr(ui_root, 'PRESERVE_MODEL_KEY_COLUMN_KEY', 'mapeiaai_preserve_model_data_key_column')
     original_builder = getattr(final_output_engine, '_mapeiaai_original_build_universal_output', None) or final_output_engine.build_universal_output
 
-    def _set_auto_state(model) -> None:
-        if not _df_has_values(model):
+    def _set_preserve_state(model, enabled: bool) -> None:
+        has_values = _df_has_values(model)
+        if not has_values or not enabled:
             st.session_state[enabled_key] = False
-            st.session_state[key_column_key] = ''
             st.session_state['mapeiaai_universal_preserve_model_enabled'] = False
+            st.session_state['mapeiaai_universal_preserve_model_mode'] = 'modelo_limpo'
             st.session_state['mapeiaai_universal_preserve_model_columns'] = []
+            if not enabled:
+                st.session_state[key_column_key] = ''
             return
         st.session_state[enabled_key] = True
         st.session_state['mapeiaai_universal_preserve_model_enabled'] = True
-        st.session_state['mapeiaai_universal_preserve_model_mode'] = 'modelo_preenchido_automatico'
+        st.session_state['mapeiaai_universal_preserve_model_mode'] = 'modelo_preenchido_preservado_por_toggle'
         st.session_state['mapeiaai_universal_preserve_model_columns'] = [str(col) for col in getattr(model, 'columns', [])]
 
-    def render_auto_controls(contract, mapping=None, key_prefix: str = 'mapeiaai_model') -> None:
-        _set_auto_state(contract)
-        if not st.session_state.get(enabled_key):
+    def _render_toggle(contract, mapping=None, key_prefix: str = 'mapeiaai_model', *, show_toggle: bool = True) -> None:
+        has_values = _df_has_values(contract)
+        if not has_values:
+            _set_preserve_state(contract, False)
             st.caption('Modelo sem linhas preenchidas: usando somente estrutura, colunas e ordem.')
             return
-        with st.expander('Modelo preenchido detectado', expanded=True):
-            st.info('Os dados do modelo serao preservados automaticamente. A origem atualiza, preenche ou limpa somente os campos mapeados.')
+
+        st.session_state.setdefault(MODEL_PRESERVE_TOGGLE_KEY, False)
+        enabled = bool(st.session_state.get(MODEL_PRESERVE_TOGGLE_KEY, False))
+        if show_toggle:
+            enabled = bool(st.toggle('Preservar dados do modelo', key=MODEL_PRESERVE_TOGGLE_KEY, help='Desligado: limpa os dados do modelo. Ligado: mantém os dados do modelo e a origem atualiza por cima dos campos mapeados.'))
+        _set_preserve_state(contract, enabled)
+
+        if not enabled:
+            st.caption('Desligado: o próximo passo usa a planilha modelo limpinha, pronta para receber os dados da origem.')
+            return
+
+        with st.expander('Preservação do modelo ativa', expanded=True):
+            st.info('Todos os dados do modelo seguem preservados até a origem de dados sobrescrever, preencher ou limpar os campos mapeados.')
             options = _key_options(contract)
             if not options:
                 st.error('Nao encontrei coluna de chave no modelo.')
                 return
             current = str(st.session_state.get(key_column_key) or '').strip()
             index = options.index(current) if current in options else 0
-            selected = st.selectbox('Chave para cruzar modelo + origem', options, index=index, key=f'{key_prefix}_preserve_model_key_column_auto_v1')
+            selected = st.selectbox('Chave para cruzar modelo + origem', options, index=index, key=f'{key_prefix}_preserve_model_key_column_toggle_v1')
             st.session_state[key_column_key] = str(selected)
             if mapping is not None and not str(dict(mapping or {}).get(str(selected), '') or '').strip():
                 st.warning(f'Mapeie a coluna "{selected}" com a chave da origem antes de montar a saida final.')
             st.caption('Campo mapeado vindo da origem sobrescreve, preenche ou limpa. Campo nao mapeado permanece preservado.')
 
-    def render_upload_auto(module, model) -> None:
-        _set_auto_state(model)
+    def render_preserve_controls(contract, mapping=None, key_prefix: str = 'mapeiaai_model') -> None:
+        if mapping is None:
+            return
+        _render_toggle(contract, mapping=mapping, key_prefix=key_prefix, show_toggle=False)
+
+    def render_upload_toggle(module, model) -> None:
         st_obj = getattr(module, 'st', st)
-        if not st.session_state.get(enabled_key):
+        if not _df_has_values(model):
+            _set_preserve_state(model, False)
             st_obj.caption('Modelo sem linhas preenchidas: usando somente estrutura, colunas e ordem.')
             return
-        st_obj.markdown('### Modelo preenchido detectado')
-        st_obj.info('Os dados do modelo serao preservados automaticamente. A origem atualiza somente campos mapeados.')
-        st_obj.caption('Campo nao mapeado permanece preservado.')
+        _render_toggle(model, mapping=None, key_prefix='mapeiaai_universal_model', show_toggle=True)
 
-    def apply_auto_preserve(df_source, df_model, mapping=None, builder=None):
+    def apply_preserve_by_toggle(df_source, df_model, mapping=None, builder=None):
         build = builder or original_builder
         mapped = build(df_source, df_model, mapping).copy().fillna('')
-        if not _df_has_values(df_model):
+        if not _df_has_values(df_model) or not bool(st.session_state.get(MODEL_PRESERVE_TOGGLE_KEY, False)):
             st.session_state[enabled_key] = False
             return mapped
+
         st.session_state[enabled_key] = True
         base = df_model.copy().fillna('')
         for column in mapped.columns:
@@ -122,6 +142,7 @@ def _install_auto_model_preserve_policy() -> None:
         base = base.loc[:, list(mapped.columns)].fillna('').reset_index(drop=True)
         if base.empty:
             return mapped
+
         key_column = str(st.session_state.get(key_column_key) or '').strip()
         if not key_column or key_column not in base.columns or key_column not in mapped.columns:
             for option in _key_options(base):
@@ -131,14 +152,17 @@ def _install_auto_model_preserve_policy() -> None:
                     break
         if not key_column:
             return base
+
         update_columns = _mapped_targets(mapping, list(mapped.columns))
         if not update_columns:
             return base
+
         index_by_key = {}
         for idx, value in enumerate(base[key_column].tolist()):
             key = _plain_key(value)
             if key and key not in index_by_key:
                 index_by_key[key] = idx
+
         out = base.copy().fillna('')
         matched = appended = 0
         for _, row in mapped.iterrows():
@@ -155,17 +179,18 @@ def _install_auto_model_preserve_policy() -> None:
                 out = pd.concat([out, pd.DataFrame([new_row], columns=list(out.columns))], ignore_index=True)
                 index_by_key[key] = len(out) - 1
                 appended += 1
-        add_audit_event('auto_model_preserve_applied', area='UNIVERSAL', status='OK', details={'matched_rows': matched, 'appended_rows': appended, 'key_column': key_column, 'responsible_file': RESPONSIBLE_FILE})
+
+        add_audit_event('model_preserve_by_toggle_applied', area='UNIVERSAL', status='OK', details={'matched_rows': matched, 'appended_rows': appended, 'key_column': key_column, 'responsible_file': RESPONSIBLE_FILE})
         return out
 
-    ui_root._render_model_preserve_controls = render_auto_controls
-    ui_root._apply_model_preserve = apply_auto_preserve
-    final_output_engine.build_universal_output = lambda df_source, df_model, mapping=None: apply_auto_preserve(df_source, df_model, mapping, original_builder)
+    ui_root._render_model_preserve_controls = render_preserve_controls
+    ui_root._apply_model_preserve = apply_preserve_by_toggle
+    final_output_engine.build_universal_output = lambda df_source, df_model, mapping=None: apply_preserve_by_toggle(df_source, df_model, mapping, original_builder)
     try:
-        upload_patch._render_model_preservation_options = render_upload_auto
+        upload_patch._render_model_preservation_options = render_upload_toggle
     except Exception:
         pass
-    add_audit_event('auto_model_preserve_policy_installed', area='UNIVERSAL', status='OK', details={'toggle_removed': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('model_preserve_toggle_policy_installed', area='UNIVERSAL', status='OK', details={'default_clean_model': True, 'toggle_default_off': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 def _disable_connection_driven_auto_entry() -> None:
