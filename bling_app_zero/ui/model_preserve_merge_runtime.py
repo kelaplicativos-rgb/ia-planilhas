@@ -192,10 +192,10 @@ def _merge_preserving_model(df_source: pd.DataFrame, df_model: pd.DataFrame, map
 
 def _install_green_mapping_guard() -> None:
     try:
-        from bling_app_zero.ui.mapping_green_preserve_runtime import install_mapping_green_preserve_runtime
-        install_mapping_green_preserve_runtime()
+        from bling_app_zero.ui.mapping_dropdown_preview_runtime import install_mapping_dropdown_preview_runtime
+        install_mapping_dropdown_preview_runtime()
     except Exception as exc:
-        add_audit_event('model_preserve_green_mapping_guard_failed', area='MAPEAMENTO', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('model_preserve_preview_runtime_failed', area='MAPEAMENTO', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
 
 
 def install_model_preserve_merge_runtime() -> None:
@@ -209,7 +209,7 @@ def install_model_preserve_merge_runtime() -> None:
     final_output_engine.build_universal_output = lambda df_source, df_model, mapping=None: _merge_preserving_model(df_source, df_model, mapping)
     ui_root._apply_model_preserve = lambda df_source, df_model, mapping=None, original_builder=None: _merge_preserving_model(df_source, df_model, mapping)
     _install_green_mapping_guard()
-    add_audit_event('model_preserve_merge_runtime_installed', area='UNIVERSAL', status='OK', details={'preserve_all_against_blank_source': True, 'duplicate_key_update': True, 'best_key_selection': True, 'green_mapping_guard': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('model_preserve_merge_runtime_installed', area='UNIVERSAL', status='OK', details={'preserve_all_against_blank_source': True, 'duplicate_key_update': True, 'best_key_selection': True, 'dropdown_preview_runtime': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_model_preserve_merge_runtime']
