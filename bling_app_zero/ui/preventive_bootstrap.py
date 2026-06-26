@@ -85,9 +85,10 @@ def _install_auto_model_preserve_policy() -> None:
 
     def _render_toggle(contract, mapping=None, key_prefix: str = 'mapeiaai_model', *, show_toggle: bool = True) -> None:
         has_values = _df_has_values(contract)
-        if not has_values:
+        has_columns = bool(list(getattr(contract, 'columns', [])))
+        if not has_columns:
             _set_preserve_state(contract, False)
-            st.caption('Modelo sem linhas preenchidas: usando somente estrutura, colunas e ordem.')
+            st.caption('Modelo sem colunas detectadas: anexe a planilha modelo antes de continuar.')
             return
 
         st.session_state.setdefault(MODEL_PRESERVE_TOGGLE_KEY, False)
@@ -95,6 +96,13 @@ def _install_auto_model_preserve_policy() -> None:
         if show_toggle:
             enabled = bool(st.toggle('Preservar dados do modelo', key=MODEL_PRESERVE_TOGGLE_KEY, help='Desligado: limpa os dados do modelo. Ligado: mantém os dados do modelo e a origem atualiza por cima dos campos mapeados.'))
         _set_preserve_state(contract, enabled)
+
+        if not has_values:
+            if enabled:
+                st.caption('Ligado, mas este modelo não tem linhas preenchidas. Não há dados para preservar; a origem preencherá a estrutura normalmente.')
+            else:
+                st.caption('Desligado: o próximo passo usa a planilha modelo limpinha, pronta para receber os dados da origem.')
+            return
 
         if not enabled:
             st.caption('Desligado: o próximo passo usa a planilha modelo limpinha, pronta para receber os dados da origem.')
@@ -120,11 +128,6 @@ def _install_auto_model_preserve_policy() -> None:
         _render_toggle(contract, mapping=mapping, key_prefix=key_prefix, show_toggle=False)
 
     def render_upload_toggle(module, model) -> None:
-        st_obj = getattr(module, 'st', st)
-        if not _df_has_values(model):
-            _set_preserve_state(model, False)
-            st_obj.caption('Modelo sem linhas preenchidas: usando somente estrutura, colunas e ordem.')
-            return
         _render_toggle(model, mapping=None, key_prefix='mapeiaai_universal_model', show_toggle=True)
 
     def apply_preserve_by_toggle(df_source, df_model, mapping=None, builder=None):
@@ -190,7 +193,7 @@ def _install_auto_model_preserve_policy() -> None:
         upload_patch._render_model_preservation_options = render_upload_toggle
     except Exception:
         pass
-    add_audit_event('model_preserve_toggle_policy_installed', area='UNIVERSAL', status='OK', details={'default_clean_model': True, 'toggle_default_off': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('model_preserve_toggle_policy_installed', area='UNIVERSAL', status='OK', details={'default_clean_model': True, 'toggle_default_off': True, 'toggle_visible_for_empty_model': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 def _disable_connection_driven_auto_entry() -> None:
