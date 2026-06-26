@@ -44,7 +44,7 @@ def _df_has_values(df) -> bool:
 
 def _df_has_columns(df) -> bool:
     try:
-        return bool(getattr(df, 'columns', []))
+        return int(len(getattr(df, 'columns', []))) > 0
     except Exception:
         return False
 
@@ -281,7 +281,7 @@ def _install_auto_model_preserve_policy() -> None:
         upload_patch._render_model_preservation_options = render_upload_toggle
     except Exception:
         pass
-    add_audit_event('model_preserve_toggle_policy_installed', area='UNIVERSAL', status='OK', details={'default_clean_model': True, 'toggle_default_off': True, 'toggle_visible_for_empty_model': True, 'full_model_rows_before_decision': True, 'multiple_model_uploads': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('model_preserve_toggle_policy_installed', area='UNIVERSAL', status='OK', details={'default_clean_model': True, 'toggle_default_off': True, 'toggle_visible_for_empty_model': True, 'full_model_rows_before_decision': True, 'multiple_model_uploads': True, 'columns_detection_fixed': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 def _disable_connection_driven_auto_entry() -> None:
