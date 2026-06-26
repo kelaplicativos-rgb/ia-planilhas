@@ -25,6 +25,12 @@ PRICING_SELECTED_COST_COLUMN_KEY = 'price_calculator_source_cost_column'
 PRICING_SELECTED_COST_COLUMN_LEGACY_KEY = 'global_price_source_cost_column'
 CADASTRO_ORIGEM_PRICED_STATE_KEY = 'cadastro_wizard_df_para_mapear'
 
+PROMO_ACTION_KEEP = 'Não alterar promocional'
+PROMO_ACTION_CLEAR = 'Limpar promocional'
+PROMO_ACTION_DISCOUNT = 'Aplicar desconto promocional'
+PROMO_BASE_ADJUSTED = 'Preço ajustado'
+PROMO_BASE_ORIGINAL = 'Preço original'
+
 
 def apply_calculated_price_aliases(df: pd.DataFrame, calculated_column: str = 'Preço de venda') -> pd.DataFrame:
     out = apply_price_aliases(df, calculated_column, PRICE_TARGET_ALIASES)
@@ -77,12 +83,47 @@ def _promo_discount(config: dict) -> float:
         return 0.0
 
 
+def _promo_action(config: dict) -> str:
+    action = str(config.get('promo_action') or '').strip()
+    if action in {PROMO_ACTION_KEEP, PROMO_ACTION_CLEAR, PROMO_ACTION_DISCOUNT}:
+        return action
+    return PROMO_ACTION_DISCOUNT if _promo_discount(config) > 0 else PROMO_ACTION_KEEP
+
+
+def _promo_base(config: dict) -> str:
+    base = str(config.get('promo_base') or '').strip()
+    return base if base in {PROMO_BASE_ADJUSTED, PROMO_BASE_ORIGINAL} else PROMO_BASE_ADJUSTED
+
+
+def _promotional_alias_columns(df: pd.DataFrame) -> list[str]:
+    columns = list(dict.fromkeys(map(str, PROMO_PRICE_TARGET_ALIASES)))
+    try:
+        from bling_app_zero.core.product_pricing_center import promotional_price_columns
+        columns.extend(promotional_price_columns(df.columns))
+    except Exception:
+        pass
+    return list(dict.fromkeys(columns))
+
+
+def _clear_promotional_columns(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy().fillna('')
+    for column in _promotional_alias_columns(out):
+        out[str(column)] = ''
+    return out
+
+
 def _apply_simple_reprice_promotional_result(df: pd.DataFrame, selected_cost_column: str, config: dict) -> pd.DataFrame:
-    """Reajuste simples: Preco recebe o valor reajustado e Preco Promocional recebe o desconto."""
+    """Reajuste simples: ajusta Preco e trata Preco Promocional por ação separada."""
     if not isinstance(df, pd.DataFrame) or df.empty:
         return df
     if str(config.get('quick_reprice_mode') or '').strip().lower() != 'markup':
         return df
+    action = _promo_action(config)
+    if action == PROMO_ACTION_CLEAR:
+        return _clear_promotional_columns(df)
+    if action != PROMO_ACTION_DISCOUNT:
+        return df
+
     promo_percent = _promo_discount(config)
     if promo_percent <= 0:
         return df
@@ -95,7 +136,10 @@ def _apply_simple_reprice_promotional_result(df: pd.DataFrame, selected_cost_col
     base_config = dict(config)
     base_config['promo_discount_percent'] = 0.0
     sale_values = out[selected_cost_column].apply(lambda value: calc_easy_sale_price(value, base_config))
-    promo_values = sale_values.apply(lambda value: calc_easy_promo_price(value, promo_percent))
+    if _promo_base(config) == PROMO_BASE_ORIGINAL:
+        promo_values = out[selected_cost_column].apply(lambda value: calc_easy_promo_price(value, promo_percent))
+    else:
+        promo_values = sale_values.apply(lambda value: calc_easy_promo_price(value, promo_percent))
     out['Preço de venda'] = sale_values.apply(money_or_empty)
     out['Preço promocional'] = promo_values.apply(money_or_empty)
     out = apply_price_aliases(out, 'Preço de venda', PRICE_TARGET_ALIASES)
