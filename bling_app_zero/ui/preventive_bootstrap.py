@@ -62,19 +62,10 @@ def _mapped_targets(mapping, columns: list[str]) -> set[str]:
 
 
 def _preserve_model_value_when_source_empty(column: object) -> bool:
-    key = _plain_key(column)
-    protected = {
-        'idproduto',
-        'idnaloja',
-        'codigo',
-        'idfornecedor',
-        'iddofornecedor',
-        'idmarca',
-        'iddamarca',
-        'linkexterno',
-        'nomelojamultilojas',
-    }
-    return key in protected
+    # Toggle ligado significa preservar todos os dados existentes do modelo.
+    # A origem pode sobrescrever campos mapeados somente quando trouxer valor real.
+    # Valor vazio vindo da origem nao deve apagar dado preenchido do modelo.
+    return bool(str(column or '').strip())
 
 
 def _install_auto_green_mapping_default() -> None:
@@ -215,7 +206,7 @@ def _install_auto_model_preserve_policy() -> None:
             st.caption('Desligado: o próximo passo usa a planilha modelo limpinha, pronta para receber os dados da origem.')
             return
         with st.expander('Preservação do modelo ativa', expanded=True):
-            st.info('Todos os dados do modelo seguem preservados até a origem de dados sobrescrever, preencher ou limpar os campos mapeados.')
+            st.info('Todos os dados do modelo seguem preservados. A origem sobrescreve somente campos mapeados que trouxerem valor real; valor vazio da origem não apaga dado preenchido do modelo.')
             options = _key_options(contract)
             if not options:
                 st.error('Nao encontrei coluna de chave no modelo.')
@@ -226,7 +217,7 @@ def _install_auto_model_preserve_policy() -> None:
             st.session_state[key_column_key] = str(selected)
             if mapping is not None and not str(dict(mapping or {}).get(str(selected), '') or '').strip():
                 st.warning(f'Mapeie a coluna "{selected}" com a chave da origem antes de montar a saida final.')
-            st.caption('Campo mapeado vindo da origem sobrescreve, preenche ou limpa. Campo nao mapeado permanece preservado.')
+            st.caption('Campo mapeado com valor real vindo da origem sobrescreve. Campo mapeado vazio preserva o valor original do modelo.')
 
     def render_preserve_controls(contract, mapping=None, key_prefix: str = 'mapeiaai_model') -> None:
         if mapping is None:
@@ -268,7 +259,7 @@ def _install_auto_model_preserve_policy() -> None:
             if key and key not in index_by_key:
                 index_by_key[key] = idx
         out = base.copy().fillna('')
-        matched = appended = skipped_blank_identity = 0
+        matched = appended = skipped_blank_preserved = 0
         for _, row in mapped.iterrows():
             key = _plain_key(row.get(key_column, ''))
             if not key:
@@ -279,7 +270,7 @@ def _install_auto_model_preserve_policy() -> None:
                 for column in update_columns:
                     new_value = '' if row.get(column) is None else str(row.get(column))
                     if _preserve_model_value_when_source_empty(column) and not new_value.strip():
-                        skipped_blank_identity += 1
+                        skipped_blank_preserved += 1
                         continue
                     out.at[target_row, column] = new_value
             else:
@@ -287,7 +278,7 @@ def _install_auto_model_preserve_policy() -> None:
                 out = pd.concat([out, pd.DataFrame([new_row], columns=list(out.columns))], ignore_index=True)
                 index_by_key[key] = len(out) - 1
                 appended += 1
-        add_audit_event('model_preserve_by_toggle_applied', area='UNIVERSAL', status='OK', details={'matched_rows': matched, 'appended_rows': appended, 'skipped_blank_identity_fields': skipped_blank_identity, 'key_column': key_column, 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('model_preserve_by_toggle_applied', area='UNIVERSAL', status='OK', details={'matched_rows': matched, 'appended_rows': appended, 'skipped_blank_preserved_fields': skipped_blank_preserved, 'key_column': key_column, 'preserve_all_against_blank_source': True, 'responsible_file': RESPONSIBLE_FILE})
         return out
 
     def render_model_step_full_upload():
@@ -329,7 +320,7 @@ def _install_auto_model_preserve_policy() -> None:
         upload_patch._render_model_preservation_options = render_upload_toggle
     except Exception:
         pass
-    add_audit_event('model_preserve_toggle_policy_installed', area='UNIVERSAL', status='OK', details={'default_clean_model': True, 'toggle_default_off': True, 'toggle_visible_for_empty_model': True, 'full_model_rows_before_decision': True, 'multiple_model_uploads': True, 'columns_detection_fixed': True, 'identity_blank_protection': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('model_preserve_toggle_policy_installed', area='UNIVERSAL', status='OK', details={'default_clean_model': True, 'toggle_default_off': True, 'toggle_visible_for_empty_model': True, 'full_model_rows_before_decision': True, 'multiple_model_uploads': True, 'columns_detection_fixed': True, 'preserve_all_against_blank_source': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 def _disable_connection_driven_auto_entry() -> None:
