@@ -10,13 +10,11 @@ import streamlit as st
 from bling_app_zero.core.audit import add_audit_event
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/mapping_dropdown_preview_runtime.py'
-PATCH_VERSION = 'dropdown_preview_source_or_model_v7_no_table_expand'
+PATCH_VERSION = 'dropdown_preview_source_or_model_v8_context_fallback'
 BLANKS = {'', 'nan', 'none', 'null', '<na>'}
 _CONTEXT: dict[str, Any] = {'source': None, 'target': None}
-
-
-def _blank(value: object) -> bool:
-    return str(value or '').strip().casefold() in BLANKS
+SOURCE_KEYS = ('mapeiaai_universal_processed_df', 'mapeiaai_universal_source_df', 'df_origem_unificada', 'df_origem_site', 'df_source')
+MODEL_KEYS = ('mapeiaai_universal_model_df', 'home_modelo_universal_df', 'df_modelo_universal', 'modelo_universal_df')
 
 
 def _norm(value: object) -> str:
@@ -38,12 +36,18 @@ def _matching_column(df: Any, column: str) -> str:
     if column in df.columns:
         return column
     wanted = _norm(column)
-    if not wanted:
-        return ''
     for candidate in [str(c) for c in df.columns]:
-        if _norm(candidate) == wanted:
+        if wanted and _norm(candidate) == wanted:
             return candidate
     return ''
+
+
+def _first_session_frame(keys: tuple[str, ...], column: str) -> pd.DataFrame | None:
+    for key in keys:
+        frame = st.session_state.get(key)
+        if isinstance(frame, pd.DataFrame) and not frame.empty and _matching_column(frame, column):
+            return frame
+    return None
 
 
 def _samples(df: Any, column: str, limit: int = 2) -> list[str]:
@@ -54,7 +58,7 @@ def _samples(df: Any, column: str, limit: int = 2) -> list[str]:
     try:
         for value in df[actual_column].dropna().astype(str).tolist():
             text = _clean(value)
-            if _blank(text):
+            if text.casefold() in BLANKS:
                 continue
             if text not in out:
                 out.append(text)
@@ -70,9 +74,7 @@ def _column_state(df: Any, column: str, limit: int = 2) -> tuple[str, str, list[
     if not actual_column:
         return 'missing', '', []
     values = _samples(df, actual_column, limit=limit)
-    if values:
-        return 'values', actual_column, values
-    return 'empty', actual_column, []
+    return ('values', actual_column, values) if values else ('empty', actual_column, [])
 
 
 def _short(values: list[str], size: int = 72) -> str:
@@ -88,51 +90,29 @@ def _icon(label: object) -> str:
     return '🟡'
 
 
-def _restore_dataframe_preview_if_previous_patch_expanded_it() -> None:
-    try:
-        original_dataframe = getattr(st, '_mapeiaai_original_dataframe', None)
-        current_version = str(getattr(st, '_mapeiaai_full_table_preview_runtime_version', '') or '')
-        if callable(original_dataframe) and current_version and current_version != 'removed_by_v7_no_table_expand':
-            st.dataframe = original_dataframe
-            st._mapeiaai_full_table_preview_runtime_version = 'removed_by_v7_no_table_expand'
-            add_audit_event('full_table_preview_runtime_removed', area='UNIVERSAL', status='OK', details={'reason': 'Preview do anexo do modelo não deve ser expandido; preservação é regra de mesclagem final.', 'previous_version': current_version, 'responsible_file': RESPONSIBLE_FILE})
-    except Exception as exc:
-        add_audit_event('full_table_preview_runtime_remove_failed', area='UNIVERSAL', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
-
-
 def _source_column_state(column: str, limit: int = 2, source: Any | None = None) -> tuple[str, str, list[str]]:
     frame = source if isinstance(source, pd.DataFrame) else _CONTEXT.get('source')
+    if not isinstance(frame, pd.DataFrame) or not _matching_column(frame, column):
+        frame = _first_session_frame(SOURCE_KEYS, column)
     return _column_state(frame, column, limit=limit)
 
 
 def _model_column_state(column: str, target_name: str = '', limit: int = 2) -> tuple[str, str, list[str]]:
     model = _CONTEXT.get('target')
-    checked: list[str] = []
-    for candidate in (column, target_name):
-        candidate = str(candidate or '').strip()
-        if candidate and candidate not in checked:
-            checked.append(candidate)
-    first_empty: tuple[str, str, list[str]] | None = None
-    for candidate in checked:
-        state, actual_column, values = _column_state(model, candidate, limit=limit)
+    for candidate in [c for c in (column, target_name) if str(c or '').strip()]:
+        frame = model if isinstance(model, pd.DataFrame) and _matching_column(model, candidate) else _first_session_frame(MODEL_KEYS, candidate)
+        state, actual_column, values = _column_state(frame, str(candidate), limit=limit)
         if state == 'values':
             return state, actual_column, values
-        if state == 'empty' and first_empty is None:
-            first_empty = (state, actual_column, values)
-    return first_empty or ('missing', '', [])
+        if state == 'empty':
+            return state, actual_column, values
+    return 'missing', '', []
 
 
 def _status_text(status: str, column: str) -> str:
     if status == 'empty':
         return f'coluna {column} vazia' if column else 'coluna vazia'
-    if status == 'missing':
-        return 'não existe'
-    return ''
-
-
-def _model_samples(column: str, target_name: str = '', limit: int = 2) -> tuple[str, list[str]]:
-    _status, actual_column, values = _model_column_state(column, target_name, limit=limit)
-    return actual_column, values
+    return 'não existe' if status == 'missing' else ''
 
 
 def _preview_label(column: str, current_label: object, target_name: str = '') -> str:
@@ -141,15 +121,19 @@ def _preview_label(column: str, current_label: object, target_name: str = '') ->
     if source_values:
         label = column if source_column == column else f'{column} -> origem {source_column}'
         return f'{icon} {label}: origem {_short(source_values)}'
-
     model_status, model_column, model_values = _model_column_state(column, target_name, limit=2)
     if model_values:
         label = column if model_column == column else f'{column} -> modelo {model_column}'
         return f'{icon} {label}: modelo {_short(model_values)}'
+    return f'{icon} {column}: origem {_status_text(source_status, source_column or column)}; modelo {_status_text(model_status, model_column or target_name or column)}'
 
-    source_info = _status_text(source_status, source_column or column)
-    model_info = _status_text(model_status, model_column or target_name or column)
-    return f'{icon} {column}: origem {source_info}; modelo {model_info}'
+
+def _restore_dataframe_preview_if_previous_patch_expanded_it() -> None:
+    original_dataframe = getattr(st, '_mapeiaai_original_dataframe', None)
+    current_version = str(getattr(st, '_mapeiaai_full_table_preview_runtime_version', '') or '')
+    if callable(original_dataframe) and current_version and current_version != 'removed_by_v8_context_fallback':
+        st.dataframe = original_dataframe
+        st._mapeiaai_full_table_preview_runtime_version = 'removed_by_v8_context_fallback'
 
 
 def install_mapping_dropdown_preview_runtime() -> None:
@@ -160,23 +144,21 @@ def install_mapping_dropdown_preview_runtime() -> None:
         add_audit_event('mapping_dropdown_preview_runtime_import_failed', area='MAPEAMENTO', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
         return
 
-    if getattr(shared_mapping, '_mapeiaai_dropdown_preview_runtime_version', '') == PATCH_VERSION:
-        return
+    ranked_base = shared_mapping._ranked_source_options
+    if not getattr(ranked_base, '_mapeiaai_dropdown_preview_ranked', False):
+        def ranked_with_real_preview(target_name, current_value, source_columns, suggestions_index, source_profiles=None):
+            options, labels = ranked_base(target_name, current_value, source_columns, suggestions_index, source_profiles)
+            labels = dict(labels or {})
+            for column in list(source_columns or []):
+                if column in labels:
+                    labels[column] = _preview_label(str(column), labels[column], str(target_name or ''))
+            return options, labels
+        ranked_with_real_preview._mapeiaai_dropdown_preview_ranked = True
+        shared_mapping._ranked_source_options = ranked_with_real_preview
 
-    original_render = shared_mapping.render_shared_contract_mapping
-    original_ranked = shared_mapping._ranked_source_options
-    original_mapping_preview = shared_mapping._render_mapping_preview
-
-    def ranked_with_real_preview(target_name, current_value, source_columns, suggestions_index, source_profiles=None):
-        options, labels = original_ranked(target_name, current_value, source_columns, suggestions_index, source_profiles)
-        labels = dict(labels or {})
-        for column in list(source_columns or []):
-            if column in labels:
-                labels[column] = _preview_label(str(column), labels[column], str(target_name or ''))
-        return options, labels
-
-    def render_mapping_preview_with_model_fallback(target_name, selected_value, source):
-        try:
+    preview_base = shared_mapping._render_mapping_preview
+    if not getattr(preview_base, '_mapeiaai_dropdown_preview_caption', False):
+        def render_mapping_preview_with_model_fallback(target_name, selected_value, source):
             selected = str(selected_value or '').strip()
             if selected and not shared_mapping.is_fixed_value(selected):
                 source_status, source_column, source_samples = _source_column_state(selected, limit=3, source=source)
@@ -184,36 +166,30 @@ def install_mapping_dropdown_preview_runtime() -> None:
                 if source_samples:
                     shared_mapping.st.caption(f'{icon} **{target_name}**. Prévia da origem ({source_column}): {_short(source_samples, 150)}')
                     return
-
                 model_status, model_column, model_values = _model_column_state(selected, str(target_name or ''), limit=3)
                 if model_values:
                     shared_mapping.st.caption(f'{icon} **{target_name}**. Prévia do modelo anexado ({model_column}): {_short(model_values, 150)}')
                     return
-
-                source_info = _status_text(source_status, source_column or selected)
-                model_info = _status_text(model_status, model_column or str(target_name or selected))
-                shared_mapping.st.caption(f'{icon} **{target_name}**. Origem: {source_info}. Modelo: {model_info}.')
+                shared_mapping.st.caption(f'{icon} **{target_name}**. Origem: {_status_text(source_status, source_column or selected)}. Modelo: {_status_text(model_status, model_column or str(target_name or selected))}.')
                 return
-        except Exception:
-            pass
-        return original_mapping_preview(target_name, selected_value, source)
+            return preview_base(target_name, selected_value, source)
+        render_mapping_preview_with_model_fallback._mapeiaai_dropdown_preview_caption = True
+        shared_mapping._render_mapping_preview = render_mapping_preview_with_model_fallback
 
-    def render_with_context(source, target, *, signature: str, mapping_state_key: str, engine_state_key: str, key_prefix: str = 'mapeiaai_shared', ai_enabled: bool = True):
-        previous_source = _CONTEXT.get('source')
-        previous_target = _CONTEXT.get('target')
-        _CONTEXT['source'] = source
-        _CONTEXT['target'] = target
-        try:
-            return original_render(source, target, signature=signature, mapping_state_key=mapping_state_key, engine_state_key=engine_state_key, key_prefix=key_prefix, ai_enabled=ai_enabled)
-        finally:
-            _CONTEXT['source'] = previous_source
-            _CONTEXT['target'] = previous_target
+    render_base = shared_mapping.render_shared_contract_mapping
+    if not getattr(render_base, '_mapeiaai_dropdown_preview_render', False):
+        def render_with_context(source, target, *, signature: str, mapping_state_key: str, engine_state_key: str, key_prefix: str = 'mapeiaai_shared', ai_enabled: bool = True):
+            previous_source, previous_target = _CONTEXT.get('source'), _CONTEXT.get('target')
+            _CONTEXT['source'], _CONTEXT['target'] = source, target
+            try:
+                return render_base(source, target, signature=signature, mapping_state_key=mapping_state_key, engine_state_key=engine_state_key, key_prefix=key_prefix, ai_enabled=ai_enabled)
+            finally:
+                _CONTEXT['source'], _CONTEXT['target'] = previous_source, previous_target
+        render_with_context._mapeiaai_dropdown_preview_render = True
+        shared_mapping.render_shared_contract_mapping = render_with_context
 
-    shared_mapping._ranked_source_options = ranked_with_real_preview
-    shared_mapping._render_mapping_preview = render_mapping_preview_with_model_fallback
-    shared_mapping.render_shared_contract_mapping = render_with_context
     shared_mapping._mapeiaai_dropdown_preview_runtime_version = PATCH_VERSION
-    add_audit_event('mapping_dropdown_preview_runtime_installed', area='MAPEAMENTO', status='OK', details={'format': 'Dropdown mostra campo + conteúdo; preview do modelo continua compacto; preservação fica na mesclagem final', 'version': PATCH_VERSION, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('mapping_dropdown_preview_runtime_installed', area='MAPEAMENTO', status='OK', details={'version': PATCH_VERSION, 'fallback_session_keys': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_mapping_dropdown_preview_runtime']
