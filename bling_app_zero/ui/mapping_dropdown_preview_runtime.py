@@ -10,31 +10,9 @@ import streamlit as st
 from bling_app_zero.core.audit import add_audit_event
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/mapping_dropdown_preview_runtime.py'
-PATCH_VERSION = 'dropdown_preview_source_or_model_v6_full_table_preview'
-FULL_TABLE_PATCH_VERSION = 'full_table_preview_v1'
+PATCH_VERSION = 'dropdown_preview_source_or_model_v7_no_table_expand'
 BLANKS = {'', 'nan', 'none', 'null', '<na>'}
 _CONTEXT: dict[str, Any] = {'source': None, 'target': None}
-
-FULL_PREVIEW_STATE_KEYS = (
-    'mapeiaai_universal_model_df',
-    'home_modelo_universal_df',
-    'df_modelo_universal',
-    'modelo_universal_df',
-    'mapeiaai_universal_source_df',
-    'mapeiaai_universal_processed_df',
-    'df_origem_unificada',
-    'df_origem_site',
-    'df_origem_site_como_planilha',
-    'df_origem_site_como_planilha_universal',
-    'df_site_bruto_universal',
-    'df_site_bruto',
-    'df_produtos_origem',
-    'cadastro_wizard_df_para_mapear',
-    'df_origem_cadastro_precificada',
-    'mapeiaai_universal_output_df',
-    'neutral_final_output_state_v1',
-    'final_download_df_snapshot',
-)
 
 
 def _blank(value: object) -> bool:
@@ -110,6 +88,23 @@ def _icon(label: object) -> str:
     return '🟡'
 
 
+def _restore_dataframe_preview_if_previous_patch_expanded_it() -> None:
+    """Desfaz o patch v6 que aumentava preview de tabela no anexo do modelo.
+
+    O preview visual do modelo deve continuar compacto. O toggle de preservação
+    controla apenas a mesclagem modelo + origem na saída final.
+    """
+    try:
+        original_dataframe = getattr(st, '_mapeiaai_original_dataframe', None)
+        current_version = str(getattr(st, '_mapeiaai_full_table_preview_runtime_version', '') or '')
+        if callable(original_dataframe) and current_version:
+            st.dataframe = original_dataframe
+            st._mapeiaai_full_table_preview_runtime_version = 'removed_by_v7_no_table_expand'
+            add_audit_event('full_table_preview_runtime_removed', area='UNIVERSAL', status='OK', details={'reason': 'Preview do anexo do modelo não deve ser expandido; preservação é regra de mesclagem final.', 'previous_version': current_version, 'responsible_file': RESPONSIBLE_FILE})
+    except Exception as exc:
+        add_audit_event('full_table_preview_runtime_remove_failed', area='UNIVERSAL', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
+
+
 def _source_column_state(column: str, limit: int = 2, source: Any | None = None) -> tuple[str, str, list[str]]:
     # A origem precisa ser SEMPRE o DataFrame atual recebido pelo render.
     # Não varrer st.session_state aqui: isso mistura capturas antigas e mostra produto de outra operação.
@@ -167,82 +162,8 @@ def _preview_label(column: str, current_label: object, target_name: str = '') ->
     return f'{icon} {column}: origem {source_info}; modelo {model_info}'
 
 
-def _as_text_frame(df: pd.DataFrame) -> pd.DataFrame:
-    return df.copy().fillna('').astype(str)
-
-
-def _same_columns(left: pd.DataFrame, right: pd.DataFrame) -> bool:
-    return [str(column) for column in left.columns] == [str(column) for column in right.columns]
-
-
-def _is_head_preview(sample: pd.DataFrame, full: pd.DataFrame) -> bool:
-    if not isinstance(sample, pd.DataFrame) or not isinstance(full, pd.DataFrame):
-        return False
-    if sample.empty or full.empty:
-        return False
-    if len(sample) >= len(full):
-        return False
-    if not _same_columns(sample, full):
-        return False
-    try:
-        sample_text = _as_text_frame(sample).reset_index(drop=True)
-        full_head = _as_text_frame(full).head(len(sample_text)).reset_index(drop=True)
-        return bool(sample_text.equals(full_head))
-    except Exception:
-        return False
-
-
-def _full_preview_for(data: Any) -> pd.DataFrame | None:
-    if not isinstance(data, pd.DataFrame):
-        return None
-    for key in FULL_PREVIEW_STATE_KEYS:
-        full = st.session_state.get(key)
-        if isinstance(full, pd.DataFrame) and _is_head_preview(data, full):
-            return full.copy().fillna('')
-    return None
-
-
-def _table_height(df: pd.DataFrame) -> int:
-    rows = int(len(df)) if isinstance(df, pd.DataFrame) else 0
-    if rows <= 8:
-        return max(260, 42 * (rows + 2))
-    if rows <= 30:
-        return min(760, 36 * (rows + 2))
-    return 720
-
-
-def _install_full_table_preview_patch() -> None:
-    if getattr(st, '_mapeiaai_full_table_preview_runtime_version', '') == FULL_TABLE_PATCH_VERSION:
-        return
-    original_dataframe = getattr(st, '_mapeiaai_original_dataframe', None) or st.dataframe
-    st._mapeiaai_original_dataframe = original_dataframe
-
-    def dataframe_full_content(data=None, *args, **kwargs):
-        full = _full_preview_for(data)
-        if isinstance(full, pd.DataFrame):
-            data = _as_text_frame(full)
-            kwargs['use_container_width'] = True
-            kwargs['height'] = _table_height(full)
-            add_audit_event(
-                'full_table_preview_expanded_head_dataframe',
-                area='UNIVERSAL',
-                status='OK',
-                details={
-                    'rows': int(len(full)),
-                    'columns': int(len(full.columns)),
-                    'reason': 'Mostrar todos os conteúdos em vez de head(3), head(30) ou head(80).',
-                    'responsible_file': RESPONSIBLE_FILE,
-                },
-            )
-        return original_dataframe(data, *args, **kwargs)
-
-    st.dataframe = dataframe_full_content
-    st._mapeiaai_full_table_preview_runtime_version = FULL_TABLE_PATCH_VERSION
-    add_audit_event('full_table_preview_runtime_installed', area='UNIVERSAL', status='OK', details={'version': FULL_TABLE_PATCH_VERSION, 'responsible_file': RESPONSIBLE_FILE})
-
-
 def install_mapping_dropdown_preview_runtime() -> None:
-    _install_full_table_preview_patch()
+    _restore_dataframe_preview_if_previous_patch_expanded_it()
     try:
         from bling_app_zero.ui import shared_mapping
     except Exception as exc:
@@ -302,7 +223,7 @@ def install_mapping_dropdown_preview_runtime() -> None:
     shared_mapping._render_mapping_preview = render_mapping_preview_with_model_fallback
     shared_mapping.render_shared_contract_mapping = render_with_context
     shared_mapping._mapeiaai_dropdown_preview_runtime_version = PATCH_VERSION
-    add_audit_event('mapping_dropdown_preview_runtime_installed', area='MAPEAMENTO', status='OK', details={'format': 'Prévia presa ao DataFrame atual; dropdown correto; tabelas mostram conteúdo completo', 'version': PATCH_VERSION, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('mapping_dropdown_preview_runtime_installed', area='MAPEAMENTO', status='OK', details={'format': 'Dropdown mostra campo + conteúdo; preview do modelo continua compacto; preservação fica na mesclagem final', 'version': PATCH_VERSION, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_mapping_dropdown_preview_runtime']
