@@ -12,6 +12,9 @@ RESPONSIBLE_FILE = 'bling_app_zero/ui/model_preserve_merge_runtime.py'
 MODEL_PRESERVE_TOGGLE_KEY = 'mapeiaai_model_preserve_data_toggle_v1'
 PRESERVE_MODEL_ENABLED_KEY = 'mapeiaai_preserve_model_data_enabled'
 PRESERVE_MODEL_KEY_COLUMN_KEY = 'mapeiaai_preserve_model_data_key_column'
+ORIGIN_REF_PREFIX = 'origem::'
+MODEL_REF_PREFIX = 'modelo::'
+FIXED_VALUE_PREFIX = '__mapeiaai_fixed_value__:'
 _BLANK_MARKERS = {'', 'nan', 'none', 'null', '<na>'}
 
 
@@ -34,9 +37,50 @@ def _df_has_values(df: Any) -> bool:
         return False
 
 
-def _mapped_targets(mapping: Mapping[str, str] | None, columns: list[str]) -> set[str]:
+def _split_ref(value: object) -> tuple[str, str]:
+    text = str(value or '').strip()
+    if text.startswith(ORIGIN_REF_PREFIX):
+        return 'origem', text[len(ORIGIN_REF_PREFIX):].strip()
+    if text.startswith(MODEL_REF_PREFIX):
+        return 'modelo', text[len(MODEL_REF_PREFIX):].strip()
+    if text.startswith(FIXED_VALUE_PREFIX):
+        return 'fixo', text
+    if text:
+        return 'origem', text
+    return 'vazio', ''
+
+
+def _mapping_for_origin_builder(mapping: Mapping[str, str] | None) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for target, selected in dict(mapping or {}).items():
+        kind, column = _split_ref(selected)
+        if kind == 'origem':
+            out[str(target)] = column
+        elif kind == 'fixo':
+            out[str(target)] = column
+        else:
+            out[str(target)] = ''
+    return out
+
+
+def _origin_update_targets(mapping: Mapping[str, str] | None, columns: list[str]) -> set[str]:
+    out: set[str] = set()
     data = dict(mapping or {})
-    return {column for column in columns if str(data.get(column, '') or '').strip()}
+    for column in columns:
+        kind, selected = _split_ref(data.get(column, ''))
+        if kind in {'origem', 'fixo'} and str(selected or '').strip():
+            out.add(column)
+    return out
+
+
+def _model_copy_targets(mapping: Mapping[str, str] | None, columns: list[str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    data = dict(mapping or {})
+    for target in columns:
+        kind, selected = _split_ref(data.get(target, ''))
+        if kind == 'modelo' and selected:
+            out[target] = selected
+    return out
 
 
 def _column_keys(df: pd.DataFrame, column: str) -> list[str]:
@@ -90,7 +134,6 @@ def _best_merge_key(base: pd.DataFrame, mapped: pd.DataFrame, current_key: str) 
         overlap, usable, _priority, _pos = stats(current_key)
         if overlap > 0:
             return current_key
-
     ranked = sorted(common, key=stats, reverse=True)
     if not ranked:
         return current_key if current_key in common else ''
@@ -111,14 +154,25 @@ def _append_missing_columns(base: pd.DataFrame, mapped: pd.DataFrame) -> pd.Data
     return out.loc[:, list(mapped.columns)].fillna('').reset_index(drop=True)
 
 
+def _apply_model_choices_to_base(base: pd.DataFrame, mapping: Mapping[str, str] | None) -> pd.DataFrame:
+    out = base.copy().fillna('')
+    for target, model_column in _model_copy_targets(mapping, list(out.columns)).items():
+        if model_column in out.columns and target in out.columns:
+            out[target] = out[model_column].fillna('').astype(str).values
+    return out
+
+
 def _merge_preserving_model(df_source: pd.DataFrame, df_model: pd.DataFrame, mapping: Mapping[str, str] | None) -> pd.DataFrame:
-    mapped = _raw_build_universal_output(df_source, df_model, mapping).copy().fillna('')
-    if not _df_has_values(df_model) or not bool(st.session_state.get(MODEL_PRESERVE_TOGGLE_KEY, False)):
+    origin_mapping = _mapping_for_origin_builder(mapping)
+    mapped = _raw_build_universal_output(df_source, df_model, origin_mapping).copy().fillna('')
+    preserve_enabled = bool(st.session_state.get(MODEL_PRESERVE_TOGGLE_KEY, False)) and _df_has_values(df_model)
+    if not preserve_enabled:
         st.session_state[PRESERVE_MODEL_ENABLED_KEY] = False
         return mapped
 
     st.session_state[PRESERVE_MODEL_ENABLED_KEY] = True
     base = _append_missing_columns(df_model.copy().fillna(''), mapped)
+    base = _apply_model_choices_to_base(base, mapping)
     if base.empty:
         return mapped
 
@@ -131,7 +185,7 @@ def _merge_preserving_model(df_source: pd.DataFrame, df_model: pd.DataFrame, map
         st.session_state[PRESERVE_MODEL_KEY_COLUMN_KEY] = key_column
         add_audit_event('model_preserve_merge_key_auto_adjusted', area='UNIVERSAL', status='OK', details={'selected_key': selected_key, 'chosen_key': key_column, 'reason': 'melhor_chave_com_sobreposicao_real', 'responsible_file': RESPONSIBLE_FILE})
 
-    update_columns = _mapped_targets(mapping, list(mapped.columns))
+    update_columns = _origin_update_targets(mapping, list(mapped.columns))
     if not update_columns:
         return base
 
@@ -164,29 +218,12 @@ def _merge_preserving_model(df_source: pd.DataFrame, df_model: pd.DataFrame, map
                         continue
                     out.at[target_row, column] = new_value
             continue
-
         new_row = {column: '' if row.get(column) is None else str(row.get(column)) for column in out.columns}
         out = pd.concat([out, pd.DataFrame([new_row], columns=list(out.columns))], ignore_index=True)
         index_by_key[key] = [len(out) - 1]
         appended_rows += 1
 
-    add_audit_event(
-        'model_preserve_merge_runtime_applied',
-        area='UNIVERSAL',
-        status='OK',
-        details={
-            'rows_model': int(len(base)),
-            'rows_origin_mapped': int(len(mapped)),
-            'rows_output': int(len(out)),
-            'key_column': key_column,
-            'matched_rows': int(matched_rows),
-            'appended_rows': int(appended_rows),
-            'duplicate_key_updates': int(duplicate_key_updates),
-            'skipped_blank_preserved_fields': int(skipped_blank_preserved),
-            'preserve_all_against_blank_source': True,
-            'responsible_file': RESPONSIBLE_FILE,
-        },
-    )
+    add_audit_event('model_preserve_merge_runtime_applied', area='UNIVERSAL', status='OK', details={'rows_model': int(len(base)), 'rows_origin_mapped': int(len(mapped)), 'rows_output': int(len(out)), 'key_column': key_column, 'matched_rows': int(matched_rows), 'appended_rows': int(appended_rows), 'duplicate_key_updates': int(duplicate_key_updates), 'skipped_blank_preserved_fields': int(skipped_blank_preserved), 'dual_source_mapping': True, 'responsible_file': RESPONSIBLE_FILE})
     return out
 
 
@@ -209,7 +246,7 @@ def install_model_preserve_merge_runtime() -> None:
     final_output_engine.build_universal_output = lambda df_source, df_model, mapping=None: _merge_preserving_model(df_source, df_model, mapping)
     ui_root._apply_model_preserve = lambda df_source, df_model, mapping=None, original_builder=None: _merge_preserving_model(df_source, df_model, mapping)
     _install_green_mapping_guard()
-    add_audit_event('model_preserve_merge_runtime_installed', area='UNIVERSAL', status='OK', details={'preserve_all_against_blank_source': True, 'duplicate_key_update': True, 'best_key_selection': True, 'dropdown_preview_runtime': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('model_preserve_merge_runtime_installed', area='UNIVERSAL', status='OK', details={'preserve_all_against_blank_source': True, 'duplicate_key_update': True, 'best_key_selection': True, 'dual_source_mapping': True, 'dropdown_preview_runtime': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_model_preserve_merge_runtime']
