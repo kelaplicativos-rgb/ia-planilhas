@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Callable, Mapping
 
 import pandas as pd
@@ -9,6 +10,8 @@ import streamlit as st
 
 PRESERVE_MODEL_ENABLED_KEY = 'mapeiaai_preserve_model_data_enabled'
 PRESERVE_MODEL_KEY_COLUMN_KEY = 'mapeiaai_preserve_model_data_key_column'
+SPLIT_DOWNLOAD_LIMIT_KEY = 'mapeiaai_final_split_download_limit'
+SPLIT_LIMITS = (200, 1000, 10000)
 
 
 def _plain_key(value: object) -> str:
@@ -143,6 +146,46 @@ def _render_model_preserve_controls(contract: pd.DataFrame, mapping: Mapping[str
         st.warning('Com preservacao ligada, campos nao mapeados ficam como estao no modelo. Campos mapeados sao sobrescritos pela origem/calculadora.')
 
 
+def _safe_stem(file_name: str | None) -> str:
+    stem = Path(str(file_name or 'mapeiaai_planilha_final_mapeada.csv')).stem or 'mapeiaai_planilha_final_mapeada'
+    return ''.join(ch if ch.isalnum() or ch in ('-', '_') else '_' for ch in stem).strip('_') or 'mapeiaai_planilha_final_mapeada'
+
+
+def _csv_bytes(df: pd.DataFrame) -> bytes:
+    return df.fillna('').to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+
+
+def _render_split_downloads(output: pd.DataFrame | None, key_prefix: str, file_name: str | None = None) -> None:
+    if not isinstance(output, pd.DataFrame) or output.empty:
+        return
+    rows = int(len(output))
+    with st.expander('Dividir download final para o Bling', expanded=rows > 200):
+        st.caption('Opcional. Escolha um limite por arquivo quando precisar importar em partes.')
+        labels = ['Nao dividir', '200 linhas', '1000 linhas', '10000 linhas']
+        choice = st.radio('Particionar arquivo final', labels, index=0, key=f'{key_prefix}_split_download_limit_v1')
+        limit = 0 if choice == labels[0] else int(choice.split()[0])
+        st.session_state[SPLIT_DOWNLOAD_LIMIT_KEY] = limit
+        if limit <= 0:
+            st.info(f'Sem divisao: {rows} linha(s) no arquivo unico.')
+            return
+        if rows <= limit:
+            st.success(f'{rows} linha(s): nao precisa dividir para o limite de {limit}.')
+            return
+        parts = [output.iloc[start:start + limit].copy() for start in range(0, rows, limit)]
+        stem = _safe_stem(file_name)
+        st.warning(f'{rows} linha(s): gerando {len(parts)} arquivo(s) com ate {limit} linhas.')
+        for index, part in enumerate(parts, start=1):
+            name = f'{stem}_parte_{index:02d}_de_{len(parts):02d}_limite_{limit}.csv'
+            st.download_button(
+                f'Baixar parte {index}/{len(parts)} - {len(part)} linhas',
+                data=_csv_bytes(part),
+                file_name=name,
+                mime='text/csv; charset=utf-8',
+                use_container_width=True,
+                key=f'{key_prefix}_split_part_{limit}_{index}',
+            )
+
+
 def _install_model_data_preserve_patch() -> None:
     try:
         from bling_app_zero.core import final_output_engine
@@ -165,10 +208,27 @@ def _install_model_data_preserve_patch() -> None:
 
     def render_shared_final_csv_with_preserve(source: pd.DataFrame, contract: pd.DataFrame, mapping: dict[str, str], *args, **kwargs):
         key_prefix = str(kwargs.get('key_prefix') or 'mapeiaai_shared_final')
+        file_name = str(kwargs.get('file_name') or 'mapeiaai_planilha_final_mapeada.csv')
         _render_model_preserve_controls(contract, mapping, key_prefix)
-        return original_render(source, contract, mapping, *args, **kwargs)
+        result = original_render(source, contract, mapping, *args, **kwargs)
+        _render_split_downloads(result, key_prefix, file_name)
+        return result
 
     shared_final_csv.render_shared_final_csv = render_shared_final_csv_with_preserve
+    try:
+        original_preview = getattr(shared_final_csv, '_mapeiaai_original_render_final_csv_preview', None) or shared_final_csv.render_final_csv_preview
+        setattr(shared_final_csv, '_mapeiaai_original_render_final_csv_preview', original_preview)
+
+        def render_final_csv_preview_with_split(df_final: pd.DataFrame, *args, **kwargs):
+            key_prefix = str(kwargs.get('key_prefix') or 'mapeiaai_final_csv')
+            result = original_preview(df_final, *args, **kwargs)
+            _render_split_downloads(result, key_prefix, 'mapeiaai_planilha_final_mapeada.csv')
+            return result
+
+        shared_final_csv.render_final_csv_preview = render_final_csv_preview_with_split
+    except Exception:
+        pass
+
     try:
         from bling_app_zero.ui import universal_flow
         universal_flow.render_shared_final_csv = render_shared_final_csv_with_preserve
