@@ -7,9 +7,9 @@ import pandas as pd
 from bling_app_zero.core.audit import add_audit_event
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/mapping_dropdown_preview_runtime.py'
-PATCH_VERSION = 'dropdown_preview_campo_valor_v1'
+PATCH_VERSION = 'dropdown_preview_source_or_model_v3'
 BLANKS = {'', 'nan', 'none', 'null', '<na>'}
-_CONTEXT: dict[str, Any] = {'source': None}
+_CONTEXT: dict[str, Any] = {'source': None, 'target': None}
 
 
 def _blank(value: object) -> bool:
@@ -49,12 +49,30 @@ def _icon(label: object) -> str:
     return '🟡'
 
 
-def _preview_label(column: str, current_label: object) -> str:
+def _model_samples(column: str, target_name: str = '', limit: int = 2) -> tuple[str, list[str]]:
+    model = _CONTEXT.get('target')
+    checked: list[str] = []
+    for candidate in (column, target_name):
+        candidate = str(candidate or '').strip()
+        if candidate and candidate not in checked:
+            checked.append(candidate)
+    for candidate in checked:
+        values = _samples(model, candidate, limit=limit)
+        if values:
+            return candidate, values
+    return '', []
+
+
+def _preview_label(column: str, current_label: object, target_name: str = '') -> str:
     preview = _short(_samples(_CONTEXT.get('source'), column))
     icon = _icon(current_label)
     if preview:
         return f'{icon} {column}: {preview}'
-    return f'🟡 {column}: sem previa na origem'
+    model_column, model_values = _model_samples(column, target_name)
+    if model_values:
+        label = column if model_column == column else f'{column} -> modelo {model_column}'
+        return f'{icon} {label}: modelo {_short(model_values)}'
+    return f'🟡 {column}: sem previa na origem/modelo'
 
 
 def install_mapping_dropdown_preview_runtime() -> None:
@@ -69,27 +87,47 @@ def install_mapping_dropdown_preview_runtime() -> None:
 
     original_render = shared_mapping.render_shared_contract_mapping
     original_ranked = shared_mapping._ranked_source_options
+    original_mapping_preview = shared_mapping._render_mapping_preview
 
     def ranked_with_real_preview(target_name, current_value, source_columns, suggestions_index, source_profiles=None):
         options, labels = original_ranked(target_name, current_value, source_columns, suggestions_index, source_profiles)
         labels = dict(labels or {})
         for column in list(source_columns or []):
             if column in labels:
-                labels[column] = _preview_label(str(column), labels[column])
+                labels[column] = _preview_label(str(column), labels[column], str(target_name or ''))
         return options, labels
 
+    def render_mapping_preview_with_model_fallback(target_name, selected_value, source):
+        try:
+            selected = str(selected_value or '').strip()
+            if selected and not shared_mapping.is_fixed_value(selected):
+                source_samples = _samples(source, selected, limit=3)
+                if not source_samples:
+                    model_column, model_values = _model_samples(selected, str(target_name or ''), limit=3)
+                    if model_values:
+                        icon = shared_mapping.confidence_flag(str(target_name or ''), selected, source).split()[0]
+                        shared_mapping.st.caption(f'{icon} **{target_name}**. Previa do modelo anexado ({model_column}): {_short(model_values, 150)}')
+                        return
+        except Exception:
+            pass
+        return original_mapping_preview(target_name, selected_value, source)
+
     def render_with_context(source, target, *, signature: str, mapping_state_key: str, engine_state_key: str, key_prefix: str = 'mapeiaai_shared', ai_enabled: bool = True):
-        previous = _CONTEXT.get('source')
+        previous_source = _CONTEXT.get('source')
+        previous_target = _CONTEXT.get('target')
         _CONTEXT['source'] = source
+        _CONTEXT['target'] = target
         try:
             return original_render(source, target, signature=signature, mapping_state_key=mapping_state_key, engine_state_key=engine_state_key, key_prefix=key_prefix, ai_enabled=ai_enabled)
         finally:
-            _CONTEXT['source'] = previous
+            _CONTEXT['source'] = previous_source
+            _CONTEXT['target'] = previous_target
 
     shared_mapping._ranked_source_options = ranked_with_real_preview
+    shared_mapping._render_mapping_preview = render_mapping_preview_with_model_fallback
     shared_mapping.render_shared_contract_mapping = render_with_context
     shared_mapping._mapeiaai_dropdown_preview_runtime_version = PATCH_VERSION
-    add_audit_event('mapping_dropdown_preview_runtime_installed', area='MAPEAMENTO', status='OK', details={'format': 'Campo: valor real', 'version': PATCH_VERSION, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('mapping_dropdown_preview_runtime_installed', area='MAPEAMENTO', status='OK', details={'format': 'Campo: valor real da origem; fallback para modelo anexado', 'version': PATCH_VERSION, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_mapping_dropdown_preview_runtime']
