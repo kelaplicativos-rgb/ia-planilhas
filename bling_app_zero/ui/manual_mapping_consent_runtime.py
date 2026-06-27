@@ -58,6 +58,11 @@ def _manual_spreadsheet_mapping_active(operation: object = '') -> bool:
     return not _api_flow_active()
 
 
+def manual_mapping_should_start_blank(operation: object = '') -> bool:
+    """Regra pública: planilha anexada em modo manual começa sempre sem automapeamento."""
+    return _manual_spreadsheet_mapping_active(operation)
+
+
 def _clear_auto_green_default_once() -> None:
     try:
         import streamlit as st
@@ -119,7 +124,7 @@ def _patch_shared_mapping() -> None:
 
     def suggest_metadata_without_auto_apply(source: pd.DataFrame, target: pd.DataFrame, *, operation: str = 'universal'):
         mapping, engine, metadata = original_suggest(source, target, operation=operation)
-        if _manual_spreadsheet_mapping_active(operation):
+        if manual_mapping_should_start_blank(operation):
             return _blank_mapping(target), 'manual_sugestoes_sem_autoaplicar', metadata
         return mapping, engine, metadata
 
@@ -147,12 +152,12 @@ def _patch_mapping_auto_suggestions() -> None:
     setattr(mapping_auto_suggestions, '_mapeiaai_original_build_stock_auto_mapping', original_stock)
 
     def build_super_mapping_blank_until_user_choice(df_source: pd.DataFrame, model: pd.DataFrame, source_columns: list[str]) -> dict[str, str]:
-        if _manual_spreadsheet_mapping_active('universal'):
+        if manual_mapping_should_start_blank('universal'):
             return _blank_mapping(model)
         return original_super(df_source, model, source_columns)
 
     def build_stock_auto_mapping_blank_until_user_choice(df_source: pd.DataFrame, model: pd.DataFrame) -> dict[str, str]:
-        if _manual_spreadsheet_mapping_active('estoque'):
+        if manual_mapping_should_start_blank('estoque'):
             return _blank_mapping(model)
         return original_stock(df_source, model)
 
@@ -175,12 +180,12 @@ def _patch_cadastro_tools() -> None:
     setattr(cadastro_tools, '_mapeiaai_original_force_price_suggestion', original_force_price)
 
     def super_auto_map_columns_blank_until_user_choice(df_source: pd.DataFrame, model: pd.DataFrame) -> dict[str, str]:
-        if _manual_spreadsheet_mapping_active('cadastro'):
+        if manual_mapping_should_start_blank('cadastro'):
             return _blank_mapping(model)
         return original_super(df_source, model)
 
     def force_price_suggestion_only_when_not_manual(target: str, source_columns: list[str], suggested: str) -> str:
-        if _manual_spreadsheet_mapping_active('cadastro'):
+        if manual_mapping_should_start_blank('cadastro'):
             return suggested
         return original_force_price(target, source_columns, suggested)
 
@@ -203,7 +208,7 @@ def _patch_spreadsheet_mapping_center() -> None:
     setattr(center, '_mapeiaai_original_auto_map_columns', original_auto_map)
 
     def build_full_mapping_result_blank_until_user_choice(df_source: pd.DataFrame, df_model: pd.DataFrame, *, operation: str = 'universal', signature: str = '', engine: str = 'local'):
-        if _manual_spreadsheet_mapping_active(operation):
+        if manual_mapping_should_start_blank(operation):
             mapping = _blank_mapping(df_model)
             request = center.build_request_from_frames(df_source, df_model, operation=operation, signature=signature)
             return center.build_mapping_state(
@@ -216,7 +221,7 @@ def _patch_spreadsheet_mapping_center() -> None:
         return original_build_full(df_source, df_model, operation=operation, signature=signature, engine=engine)
 
     def auto_map_columns_blank_until_user_choice(df_source: pd.DataFrame, df_model: pd.DataFrame) -> dict[str, str]:
-        if _manual_spreadsheet_mapping_active('universal'):
+        if manual_mapping_should_start_blank('universal'):
             return _blank_mapping(df_model)
         return original_auto_map(df_source, df_model)
 
@@ -253,4 +258,4 @@ def install_manual_mapping_consent_runtime() -> bool:
     return True
 
 
-__all__ = ['install_manual_mapping_consent_runtime']
+__all__ = ['install_manual_mapping_consent_runtime', 'manual_mapping_should_start_blank']
