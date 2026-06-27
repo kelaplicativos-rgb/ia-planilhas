@@ -133,15 +133,15 @@ def _install_split_first_download_fix() -> None:
 
 
 def install_download_estoque_runtime_fix() -> bool:
+    _install_manual_mapping_consent_runtime()
     try:
         import streamlit as st
         if _api_flow_active(st):
-            add_audit_event('download_universal_runtime_fix_not_installed_for_api', area='DOWNLOAD', status='OK', details={'reason': 'api_flow_active', 'responsible_file': RESPONSIBLE_FILE})
+            add_audit_event('download_universal_runtime_fix_skipped_for_api_after_consent_install', area='DOWNLOAD', status='OK', details={'reason': 'api_flow_active', 'manual_mapping_consent_runtime': True, 'responsible_file': RESPONSIBLE_FILE})
             return False
     except Exception:
         pass
 
-    _install_manual_mapping_consent_runtime()
     _force_universal_state()
     _install_retry_result_visual_fix()
     _install_split_first_download_fix()
