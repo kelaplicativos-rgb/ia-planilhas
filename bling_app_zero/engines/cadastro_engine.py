@@ -5,6 +5,7 @@ import pandas as pd
 from bling_app_zero.core.bling_models import cadastro_default_model, enforce_model_contract
 from bling_app_zero.core.exporter import sanitize_for_bling
 from bling_app_zero.core.mapping import apply_mapping, auto_map_columns
+from bling_app_zero.ui.manual_mapping_consent_runtime import manual_mapping_should_start_blank
 
 DEFAULT_CADASTRO_COLUMNS = list(cadastro_default_model().columns)
 
@@ -13,10 +14,14 @@ def default_model() -> pd.DataFrame:
     return cadastro_default_model()
 
 
+def _blank_mapping(model: pd.DataFrame) -> dict[str, str]:
+    return {str(column): '' for column in getattr(model, 'columns', [])}
+
+
 def run_cadastro_engine(df_source: pd.DataFrame, df_model: pd.DataFrame | None = None) -> tuple[pd.DataFrame, dict[str, str]]:
     model = df_model.copy().fillna('') if isinstance(df_model, pd.DataFrame) and len(df_model.columns) else default_model()
     source = df_source.copy().fillna('') if isinstance(df_source, pd.DataFrame) else pd.DataFrame()
-    mapping = auto_map_columns(source, model)
+    mapping = _blank_mapping(model) if manual_mapping_should_start_blank('cadastro') else auto_map_columns(source, model)
     final = apply_mapping(source, model, mapping)
     final = enforce_model_contract(final, 'cadastro', model)
     return sanitize_for_bling(final, operation='cadastro'), mapping
