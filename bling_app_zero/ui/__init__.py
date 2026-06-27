@@ -185,10 +185,10 @@ def _render_split_downloads(output: pd.DataFrame | None, key_prefix: str, file_n
             )
 
 
-def _install_price_loss_trace_patch() -> None:
+def _install_data_lineage_integrity_patch() -> None:
     try:
-        from bling_app_zero.ui.price_loss_trace_runtime import install_price_loss_trace_runtime
-        install_price_loss_trace_runtime()
+        from bling_app_zero.ui.data_lineage_integrity_runtime import install_data_lineage_integrity_runtime
+        install_data_lineage_integrity_runtime()
     except Exception:
         pass
 
@@ -200,7 +200,7 @@ def _install_model_data_preserve_patch() -> None:
     except Exception:
         return
     if getattr(shared_final_csv, '_mapeiaai_model_data_preserve_patched', False):
-        _install_price_loss_trace_patch()
+        _install_data_lineage_integrity_patch()
         return
 
     original_builder = getattr(final_output_engine, '_mapeiaai_original_build_universal_output', None) or final_output_engine.build_universal_output
@@ -253,7 +253,7 @@ def _install_model_data_preserve_patch() -> None:
     except Exception:
         pass
     shared_final_csv._mapeiaai_model_data_preserve_patched = True
-    _install_price_loss_trace_patch()
+    _install_data_lineage_integrity_patch()
 
 
 try:
@@ -268,7 +268,7 @@ except Exception:
     pass
 
 try:
-    _install_price_loss_trace_patch()
+    _install_data_lineage_integrity_patch()
 except Exception:
     pass
 
