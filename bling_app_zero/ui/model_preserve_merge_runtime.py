@@ -150,12 +150,32 @@ def _best_merge_key(base: pd.DataFrame, mapped: pd.DataFrame, current_key: str) 
     return best if best_usable > 0 else ''
 
 
-def _append_missing_columns(base: pd.DataFrame, mapped: pd.DataFrame) -> pd.DataFrame:
-    out = base.copy().fillna('')
-    for column in mapped.columns:
+def _ordered_union_columns(*frames: pd.DataFrame) -> list[str]:
+    columns: list[str] = []
+    seen: set[str] = set()
+    for frame in frames:
+        if not isinstance(frame, pd.DataFrame):
+            continue
+        for column in [str(col) for col in frame.columns]:
+            key = _plain_key(column)
+            if key in seen:
+                continue
+            seen.add(key)
+            columns.append(column)
+    return columns
+
+
+def _align_to_columns(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    out = frame.copy().fillna('') if isinstance(frame, pd.DataFrame) else pd.DataFrame()
+    for column in columns:
         if column not in out.columns:
             out[column] = ''
-    return out.loc[:, list(mapped.columns)].fillna('').reset_index(drop=True)
+    return out.loc[:, columns].fillna('').reset_index(drop=True)
+
+
+def _append_missing_columns(base: pd.DataFrame, mapped: pd.DataFrame) -> pd.DataFrame:
+    output_columns = _ordered_union_columns(base, mapped)
+    return _align_to_columns(base, output_columns)
 
 
 def _apply_model_choices_to_base(base: pd.DataFrame, mapping: Mapping[str, str] | None) -> pd.DataFrame:
@@ -177,15 +197,17 @@ def _merge_preserving_model(df_source: pd.DataFrame, df_model: pd.DataFrame, map
         return mapped
 
     st.session_state[PRESERVE_MODEL_ENABLED_KEY] = True
-    base = _append_missing_columns(df_model.copy().fillna(''), mapped)
+    output_columns = _ordered_union_columns(df_model.copy().fillna(''), mapped)
+    base = _align_to_columns(df_model.copy().fillna(''), output_columns)
+    mapped_aligned = _align_to_columns(mapped, output_columns)
     base = _apply_model_choices_to_base(base, mapping)
     if base.empty:
-        return mapped
+        return mapped_aligned
 
     selected_key = str(st.session_state.get(PRESERVE_MODEL_KEY_COLUMN_KEY) or '').strip()
-    key_column = _best_merge_key(base, mapped, selected_key)
+    key_column = _best_merge_key(base, mapped_aligned, selected_key)
     if not key_column:
-        add_audit_event('model_preserve_merge_no_key', area='UNIVERSAL', status='AVISO', details={'selected_key': selected_key, 'model_choice_enabled': bool(model_choice_enabled), 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('model_preserve_merge_no_key', area='UNIVERSAL', status='AVISO', details={'selected_key': selected_key, 'model_choice_enabled': bool(model_choice_enabled), 'columns_output': output_columns, 'reason': 'sem_chave_comum_segura; modelo_preservado_sem_cortar_colunas', 'responsible_file': RESPONSIBLE_FILE})
         return base
     if key_column != selected_key:
         st.session_state[PRESERVE_MODEL_KEY_COLUMN_KEY] = key_column
@@ -205,11 +227,13 @@ def _merge_preserving_model(df_source: pd.DataFrame, df_model: pd.DataFrame, map
     matched_rows = 0
     appended_rows = 0
     skipped_blank_preserved = 0
+    skipped_without_key = 0
     duplicate_key_updates = 0
 
-    for _, row in mapped.iterrows():
+    for _, row in mapped_aligned.iterrows():
         key = _plain_key(row.get(key_column, ''))
         if not key:
+            skipped_without_key += 1
             continue
         target_rows = index_by_key.get(key) or []
         if target_rows:
@@ -222,15 +246,41 @@ def _merge_preserving_model(df_source: pd.DataFrame, df_model: pd.DataFrame, map
                     if _is_blank(new_value):
                         skipped_blank_preserved += 1
                         continue
-                    out.at[target_row, column] = new_value
+                    if column in out.columns:
+                        out.at[target_row, column] = new_value
             continue
         new_row = {column: '' if row.get(column) is None else str(row.get(column)) for column in out.columns}
         out = pd.concat([out, pd.DataFrame([new_row], columns=list(out.columns))], ignore_index=True)
         index_by_key[key] = [len(out) - 1]
         appended_rows += 1
 
-    add_audit_event('model_preserve_merge_runtime_applied', area='UNIVERSAL', status='OK', details={'rows_model': int(len(base)), 'rows_origin_mapped': int(len(mapped)), 'rows_output': int(len(out)), 'key_column': key_column, 'matched_rows': int(matched_rows), 'appended_rows': int(appended_rows), 'duplicate_key_updates': int(duplicate_key_updates), 'skipped_blank_preserved_fields': int(skipped_blank_preserved), 'model_choice_enabled': bool(model_choice_enabled), 'dual_source_mapping': True, 'responsible_file': RESPONSIBLE_FILE})
-    return out
+    mapped_columns = [str(column) for column in getattr(mapped, 'columns', [])]
+    extra_model_columns = [column for column in model_columns if _plain_key(column) not in {_plain_key(mapped_column) for mapped_column in mapped_columns}]
+    add_audit_event(
+        'model_preserve_merge_runtime_applied',
+        area='UNIVERSAL',
+        status='OK',
+        details={
+            'rows_model': int(len(base)),
+            'rows_origin_mapped': int(len(mapped)),
+            'rows_output': int(len(out)),
+            'key_column': key_column,
+            'matched_rows': int(matched_rows),
+            'appended_rows': int(appended_rows),
+            'skipped_source_rows_without_key': int(skipped_without_key),
+            'duplicate_key_updates': int(duplicate_key_updates),
+            'skipped_blank_preserved_fields': int(skipped_blank_preserved),
+            'model_choice_enabled': bool(model_choice_enabled),
+            'dual_source_mapping': True,
+            'columns_model': model_columns,
+            'columns_mapped': mapped_columns,
+            'columns_output': output_columns,
+            'extra_model_columns_preserved': extra_model_columns,
+            'preserve_union_model_and_mapped_columns': True,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+    return out.fillna('')
 
 
 def _install_green_mapping_guard() -> None:
@@ -252,7 +302,7 @@ def install_model_preserve_merge_runtime() -> None:
     final_output_engine.build_universal_output = lambda df_source, df_model, mapping=None: _merge_preserving_model(df_source, df_model, mapping)
     ui_root._apply_model_preserve = lambda df_source, df_model, mapping=None, original_builder=None: _merge_preserving_model(df_source, df_model, mapping)
     _install_green_mapping_guard()
-    add_audit_event('model_preserve_merge_runtime_installed', area='UNIVERSAL', status='OK', details={'preserve_all_against_blank_source': True, 'duplicate_key_update': True, 'best_key_selection': True, 'model_choice_enables_preserve': True, 'dual_source_mapping': True, 'dropdown_preview_runtime': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('model_preserve_merge_runtime_installed', area='UNIVERSAL', status='OK', details={'preserve_all_against_blank_source': True, 'duplicate_key_update': True, 'best_key_selection': True, 'model_choice_enables_preserve': True, 'dual_source_mapping': True, 'dropdown_preview_runtime': True, 'preserve_union_model_and_mapped_columns': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_model_preserve_merge_runtime']
