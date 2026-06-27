@@ -4,7 +4,7 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 
-AUTO_MAPPING_LABEL = 'Ativar mapeamento automático'
+AUTO_MAPPING_LABEL = 'Mostrar sugestões de mapeamento'
 GLOBAL_AUTO_MAPPING_KEY = 'home_mapping_auto_enabled'
 GLOBAL_AUTO_MAPPING_DECIDED_KEY = 'home_mapping_auto_user_decided'
 GLOBAL_AUTO_MAPPING_SOURCE_KEY = 'home_mapping_auto_decision_source'
@@ -22,6 +22,7 @@ def _audit_mapping_toggle(*, value: bool, source: str, widget_key: str) -> None:
                 'source': source,
                 'widget_key': widget_key,
                 'manual_mode_means_blank_mapping': True,
+                'suggestions_are_visual_only': True,
                 'responsible_file': RESPONSIBLE_FILE,
             },
         )
@@ -45,7 +46,7 @@ def set_mapping_auto_decision(enabled: bool, *, source: str = '') -> None:
 
 
 def seed_mapping_toggle_from_global(widget_key: str, *, default: bool = False) -> bool:
-    """Entrega a decisão global para o toggle real do mapeamento sem sobrescrever escolha local já feita."""
+    """Entrega a decisão global para o toggle real do mapeamento sem trocar escolha local já feita."""
     if widget_key not in st.session_state and mapping_auto_decision_is_set():
         st.session_state[widget_key] = mapping_auto_decision(default=default)
     return bool(st.session_state.get(widget_key, mapping_auto_decision(default=default)))
@@ -58,22 +59,22 @@ def render_mapping_auto_decision_toggle(
     default: bool = False,
     label: str = AUTO_MAPPING_LABEL,
 ) -> bool:
-    """Mostra a decisão do usuário antes do mapeamento e persiste para cadastro/estoque."""
+    """Mostra sugestões sem aplicar colunas sozinho no modo manual."""
     enabled = st.toggle(
         label,
         value=mapping_auto_decision(default=default),
         key=widget_key,
         help=(
             'Desligado: os campos começam vazios e você escolhe manualmente. '
-            'Ligado: o sistema tenta sugerir as colunas automaticamente, mas você ainda revisa e confirma antes de enviar.'
+            'Ligado: o sistema mostra e ordena sugestões, mas cada campo continua dependendo da sua escolha.'
         ),
     )
     set_mapping_auto_decision(bool(enabled), source=source)
     _audit_mapping_toggle(value=bool(enabled), source=source, widget_key=widget_key)
     if enabled:
-        st.caption('Mapeamento automático ligado: o próximo passo já abrirá com sugestões para revisão.')
+        st.caption('Sugestões ligadas: o sistema destaca opções prováveis, mas só usa o campo que você selecionar.')
     else:
-        st.caption('Mapeamento automático desligado: o próximo passo abrirá sem ligar colunas sozinho.')
+        st.caption('Sugestões desligadas: os campos continuam vazios até você escolher manualmente.')
     return bool(enabled)
 
 
