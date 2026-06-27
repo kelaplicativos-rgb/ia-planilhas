@@ -83,6 +83,10 @@ def _model_copy_targets(mapping: Mapping[str, str] | None, columns: list[str]) -
     return out
 
 
+def _has_model_copy_choice(mapping: Mapping[str, str] | None, columns: list[str]) -> bool:
+    return bool(_model_copy_targets(mapping, columns))
+
+
 def _column_keys(df: pd.DataFrame, column: str) -> list[str]:
     if column not in df.columns:
         return []
@@ -165,7 +169,9 @@ def _apply_model_choices_to_base(base: pd.DataFrame, mapping: Mapping[str, str] 
 def _merge_preserving_model(df_source: pd.DataFrame, df_model: pd.DataFrame, mapping: Mapping[str, str] | None) -> pd.DataFrame:
     origin_mapping = _mapping_for_origin_builder(mapping)
     mapped = _raw_build_universal_output(df_source, df_model, origin_mapping).copy().fillna('')
-    preserve_enabled = bool(st.session_state.get(MODEL_PRESERVE_TOGGLE_KEY, False)) and _df_has_values(df_model)
+    model_columns = [str(column) for column in getattr(df_model, 'columns', [])]
+    model_choice_enabled = _has_model_copy_choice(mapping, model_columns)
+    preserve_enabled = (bool(st.session_state.get(MODEL_PRESERVE_TOGGLE_KEY, False)) and _df_has_values(df_model)) or model_choice_enabled
     if not preserve_enabled:
         st.session_state[PRESERVE_MODEL_ENABLED_KEY] = False
         return mapped
@@ -179,7 +185,7 @@ def _merge_preserving_model(df_source: pd.DataFrame, df_model: pd.DataFrame, map
     selected_key = str(st.session_state.get(PRESERVE_MODEL_KEY_COLUMN_KEY) or '').strip()
     key_column = _best_merge_key(base, mapped, selected_key)
     if not key_column:
-        add_audit_event('model_preserve_merge_no_key', area='UNIVERSAL', status='AVISO', details={'selected_key': selected_key, 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('model_preserve_merge_no_key', area='UNIVERSAL', status='AVISO', details={'selected_key': selected_key, 'model_choice_enabled': bool(model_choice_enabled), 'responsible_file': RESPONSIBLE_FILE})
         return base
     if key_column != selected_key:
         st.session_state[PRESERVE_MODEL_KEY_COLUMN_KEY] = key_column
@@ -223,7 +229,7 @@ def _merge_preserving_model(df_source: pd.DataFrame, df_model: pd.DataFrame, map
         index_by_key[key] = [len(out) - 1]
         appended_rows += 1
 
-    add_audit_event('model_preserve_merge_runtime_applied', area='UNIVERSAL', status='OK', details={'rows_model': int(len(base)), 'rows_origin_mapped': int(len(mapped)), 'rows_output': int(len(out)), 'key_column': key_column, 'matched_rows': int(matched_rows), 'appended_rows': int(appended_rows), 'duplicate_key_updates': int(duplicate_key_updates), 'skipped_blank_preserved_fields': int(skipped_blank_preserved), 'dual_source_mapping': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('model_preserve_merge_runtime_applied', area='UNIVERSAL', status='OK', details={'rows_model': int(len(base)), 'rows_origin_mapped': int(len(mapped)), 'rows_output': int(len(out)), 'key_column': key_column, 'matched_rows': int(matched_rows), 'appended_rows': int(appended_rows), 'duplicate_key_updates': int(duplicate_key_updates), 'skipped_blank_preserved_fields': int(skipped_blank_preserved), 'model_choice_enabled': bool(model_choice_enabled), 'dual_source_mapping': True, 'responsible_file': RESPONSIBLE_FILE})
     return out
 
 
@@ -246,7 +252,7 @@ def install_model_preserve_merge_runtime() -> None:
     final_output_engine.build_universal_output = lambda df_source, df_model, mapping=None: _merge_preserving_model(df_source, df_model, mapping)
     ui_root._apply_model_preserve = lambda df_source, df_model, mapping=None, original_builder=None: _merge_preserving_model(df_source, df_model, mapping)
     _install_green_mapping_guard()
-    add_audit_event('model_preserve_merge_runtime_installed', area='UNIVERSAL', status='OK', details={'preserve_all_against_blank_source': True, 'duplicate_key_update': True, 'best_key_selection': True, 'dual_source_mapping': True, 'dropdown_preview_runtime': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('model_preserve_merge_runtime_installed', area='UNIVERSAL', status='OK', details={'preserve_all_against_blank_source': True, 'duplicate_key_update': True, 'best_key_selection': True, 'model_choice_enables_preserve': True, 'dual_source_mapping': True, 'dropdown_preview_runtime': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_model_preserve_merge_runtime']
