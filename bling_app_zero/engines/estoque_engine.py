@@ -8,6 +8,7 @@ from bling_app_zero.core.mapping import apply_mapping
 from bling_app_zero.core.mapping_super_assistant import super_auto_map_columns
 from bling_app_zero.core.text import clean_cell, normalize_key
 from bling_app_zero.core.user_rules import get_user_rules, stock_defaults_from_rules
+from bling_app_zero.ui.manual_mapping_consent_runtime import manual_mapping_should_start_blank
 
 
 class MissingEstoqueModelError(ValueError):
@@ -69,6 +70,10 @@ def _model_or_internal(df_model: pd.DataFrame | None) -> pd.DataFrame:
     if _valid_model(df_model):
         return df_model.copy().fillna('')
     return estoque_default_model()
+
+
+def _blank_mapping(model: pd.DataFrame) -> dict[str, str]:
+    return {str(column): '' for column in getattr(model, 'columns', [])}
 
 
 def _is_forbidden_stock_column(column: str) -> bool:
@@ -150,7 +155,7 @@ def run_estoque_engine(df_source: pd.DataFrame, df_model: pd.DataFrame | None = 
 
     source = df_source.copy().fillna('') if isinstance(df_source, pd.DataFrame) else pd.DataFrame()
     source = _normalize_stock_status_columns(source)
-    raw_mapping = super_auto_map_columns(source, model)
+    raw_mapping = _blank_mapping(model) if manual_mapping_should_start_blank('estoque') else super_auto_map_columns(source, model)
     mapping = _protect_stock_mapping(raw_mapping, model)
     final = apply_mapping(source, model, mapping)
     final = enforce_model_contract(final, 'estoque', model)
