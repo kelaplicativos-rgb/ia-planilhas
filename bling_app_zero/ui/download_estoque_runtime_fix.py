@@ -82,6 +82,14 @@ def _install_retry_result_visual_fix() -> None:
         add_audit_event('retry_result_visual_fix_install_failed', area='BLING_ENVIO', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
 
 
+def _install_manual_mapping_consent_runtime() -> None:
+    try:
+        from bling_app_zero.ui.manual_mapping_consent_runtime import install_manual_mapping_consent_runtime
+        install_manual_mapping_consent_runtime()
+    except Exception as exc:
+        add_audit_event('manual_mapping_consent_runtime_install_failed', area='MAPEAMENTO', status='AVISO', details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE})
+
+
 def _install_split_first_download_fix() -> None:
     try:
         import bling_app_zero.ui as ui_root
@@ -133,6 +141,7 @@ def install_download_estoque_runtime_fix() -> bool:
     except Exception:
         pass
 
+    _install_manual_mapping_consent_runtime()
     _force_universal_state()
     _install_retry_result_visual_fix()
     _install_split_first_download_fix()
@@ -165,7 +174,7 @@ def install_download_estoque_runtime_fix() -> bool:
 
     home_download._operation_contract_mismatch_error = guarded_contract_mismatch
     setattr(home_download, _PATCH_ATTR, True)
-    add_audit_event('download_universal_runtime_fix_installed', area='DOWNLOAD', status='OK', details={'exact_model_runtime': True, 'exact_template_file_runtime': False, 'template_runtime_removed': True, 'download_label': DOWNLOAD_LABEL_TEXT, 'safe_state_write': True, 'retry_result_visual_fix': True, 'split_first_download': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('download_universal_runtime_fix_installed', area='DOWNLOAD', status='OK', details={'exact_model_runtime': True, 'exact_template_file_runtime': False, 'template_runtime_removed': True, 'download_label': DOWNLOAD_LABEL_TEXT, 'safe_state_write': True, 'retry_result_visual_fix': True, 'split_first_download': True, 'manual_mapping_consent_runtime': True, 'responsible_file': RESPONSIBLE_FILE})
     return True
 
 
