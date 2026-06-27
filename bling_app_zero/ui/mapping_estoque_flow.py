@@ -17,6 +17,7 @@ from bling_app_zero.ui.home_autofluxo import pause_home_autofluxo_for_manual_rev
 from bling_app_zero.ui.home_shared import df_signature, download_final, preview_df
 from bling_app_zero.ui.home_wizard_scroll import render_mapping_fields_anchor
 from bling_app_zero.ui.layout import inject_mapping_css
+from bling_app_zero.ui.manual_mapping_consent_runtime import manual_mapping_should_start_blank
 from bling_app_zero.ui.mapping_auto_suggestions import build_stock_auto_mapping
 from bling_app_zero.ui.mapping_confidence_state import current_confidence_from_widgets, ordered_targets_once, required_targets
 from bling_app_zero.ui.mapping_constants import EMPTY_CHOOSE_OPTION, EMPTY_LEAVE_OPTION, MANUAL_WRITE_OPTION
@@ -28,7 +29,7 @@ from bling_app_zero.ui.mapping_preview_builder import build_estoque_preview
 from bling_app_zero.ui.mapping_sidebar_rule_badge import sidebar_rule_targets_from_columns
 from bling_app_zero.ui.mapping_widget_state import clear_stale_mapping_widgets, is_manual_value, mapping_base
 
-AUTO_MAPPING_LABEL = 'Ativar mapeamento automático'
+AUTO_MAPPING_LABEL = 'Mostrar sugestoes de mapeamento'
 
 
 def _auto_toggle_key(mapping_key: str) -> str:
@@ -44,7 +45,7 @@ def _blank_mapping(target_columns: list[str]) -> dict[str, str]:
 
 
 def _clear_current_mapping_widgets(mapping_key: str) -> None:
-    """Limpa apenas widgets dos campos, preservando o toggle de decisão do usuário."""
+    """Limpa apenas widgets dos campos, preservando o toggle de decisao do usuario."""
     for key in list(st.session_state.keys()):
         text = str(key)
         if text.startswith(f'{mapping_key}_f') or text.startswith(f'{mapping_key}_manual_fixed_'):
@@ -87,11 +88,18 @@ def _clear_stock_output() -> None:
         st.session_state.pop(key, None)
 
 
+def _seed_stock_mapping(df_source: pd.DataFrame, model: pd.DataFrame, target_columns: list[str]) -> dict[str, str]:
+    if manual_mapping_should_start_blank('estoque'):
+        return _blank_mapping(target_columns)
+    return build_stock_auto_mapping(df_source, model)
+
+
 def _reset_stock_mapping(mapping_key: str, order_key: str, df_source: pd.DataFrame, model: pd.DataFrame) -> None:
-    st.session_state[mapping_key] = build_stock_auto_mapping(df_source, model)
+    target_columns = target_columns_from_model(model)
+    st.session_state[mapping_key] = _seed_stock_mapping(df_source, model, target_columns)
     _clear_stock_output()
     st.session_state.pop(order_key, None)
-    st.session_state[_auto_mode_key(mapping_key)] = 'auto'
+    st.session_state[_auto_mode_key(mapping_key)] = 'sugestoes' if manual_mapping_should_start_blank('estoque') else 'auto'
     _clear_current_mapping_widgets(mapping_key)
     pause_home_autofluxo_for_manual_review('gerar_estoque', reason='stock_mapping_reset_by_user')
     st.rerun()
@@ -103,14 +111,14 @@ def _render_auto_mapping_toggle(mapping_key: str) -> bool:
         value=False,
         key=_auto_toggle_key(mapping_key),
         help=(
-            'Desligado: os campos de estoque começam vazios e você escolhe manualmente. '
-            'Ligado: o sistema tenta sugerir as colunas automaticamente, mas você ainda precisa revisar.'
+            'Desligado: os campos de estoque começam vazios e voce escolhe manualmente. '
+            'Ligado: o sistema mostra sugestoes, mas cada campo continua dependendo da sua selecao.'
         ),
     )
     if enabled:
-        st.caption('Mapeamento automático ligado: sugestões serão preenchidas para revisão do estoque.')
+        st.caption('Sugestoes ligadas: opcoes provaveis podem aparecer em destaque, mas o campo so entra quando for selecionado no dropdown.')
     else:
-        st.caption('Mapeamento automático desligado: nenhuma coluna de estoque será ligada sem escolha manual do usuário.')
+        st.caption('Sugestoes desligadas: nenhuma coluna de estoque sera ligada sem escolha manual do usuario.')
     return bool(enabled)
 
 
@@ -122,12 +130,13 @@ def _apply_mapping_mode_if_needed(
     target_columns: list[str],
     auto_enabled: bool,
 ) -> None:
-    desired_mode = 'auto' if auto_enabled else 'manual'
+    manual_blank = manual_mapping_should_start_blank('estoque')
+    desired_mode = 'sugestoes' if auto_enabled and manual_blank else ('auto' if auto_enabled else 'manual')
     current_mode = str(st.session_state.get(_auto_mode_key(mapping_key)) or '')
     if mapping_key in st.session_state and current_mode == desired_mode:
         return
 
-    if auto_enabled:
+    if auto_enabled and not manual_blank:
         st.session_state[mapping_key] = build_stock_auto_mapping(df_source, model)
     else:
         st.session_state[mapping_key] = _blank_mapping(target_columns)
@@ -155,8 +164,7 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
 
     st.markdown('##### Ligar colunas do estoque')
     st.caption(
-        'Você decide se quer ligar as colunas de estoque manualmente ou ativar sugestões automáticas. '
-        'Confira principalmente quantidade, balanço e depósito antes de continuar.'
+        'Voce decide cada campo de estoque. As sugestoes servem apenas para orientar; confira principalmente quantidade, balanco e deposito antes de continuar.'
     )
     with st.expander('Ver planilha enviada', expanded=False):
         preview_df('Planilha enviada', df_source)
@@ -209,25 +217,27 @@ def render_manual_stock_mapping(df_source: pd.DataFrame, df_modelo_estoque: pd.D
             st.rerun()
     with col_b:
         if st.button(
-            'Tentar ligar colunas de novo',
+            'Reabrir sugestoes' if manual_mapping_should_start_blank('estoque') else 'Tentar ligar colunas de novo',
             use_container_width=True,
             key=f'{mapping_key}_reset',
             disabled=not auto_enabled,
         ):
             _reset_stock_mapping(mapping_key, order_key, df_source, model)
     if not auto_enabled:
-        st.caption('Para tentar ligar colunas automaticamente, ative primeiro o toggle “Ativar mapeamento automático”.')
+        st.caption('Para ver sugestoes, ative primeiro o toggle “Mostrar sugestoes de mapeamento”.')
+    elif manual_mapping_should_start_blank('estoque'):
+        st.caption('Sugestoes nao vinculam campos sozinhas. A escolha continua nos dropdowns.')
 
 
 def render_dual_stock_output(df_source: pd.DataFrame, df_modelo_estoque: pd.DataFrame | None) -> None:
     st.markdown('#### Estoque')
     if not isinstance(df_modelo_estoque, pd.DataFrame) or not len(df_modelo_estoque.columns):
-        st.info('Envie o modelo de estoque no passo inicial para gerar também a planilha de estoque.')
+        st.info('Envie o modelo de estoque no passo inicial para gerar tambem a planilha de estoque.')
         return
     render_manual_stock_mapping(df_source, df_modelo_estoque, '')
     df_stock = stock_final_df()
     if isinstance(df_stock, pd.DataFrame) and not df_stock.empty:
-        preview_df('Prévia do estoque', df_stock)
+        preview_df('Previa do estoque', df_stock)
         download_final(df_stock, 'estoque')
 
 
