@@ -10,7 +10,7 @@ import streamlit as st
 from bling_app_zero.core.audit import add_audit_event
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/mapping_dropdown_preview_runtime.py'
-PATCH_VERSION = 'dropdown_preview_source_or_model_v11_color_rank_unique_green_autobind'
+PATCH_VERSION = 'dropdown_preview_source_or_model_v12_color_rank_unique_origin_green_autobind'
 MODEL_PRESERVE_TOGGLE_KEY = 'mapeiaai_model_preserve_data_toggle_v1'
 ORIGIN_REF_PREFIX = 'origem::'
 MODEL_REF_PREFIX = 'modelo::'
@@ -256,7 +256,7 @@ def _ranked_options(options: list[str], labels: dict[str, str], target_name: str
     return _sort_dropdown_options_by_color(new_options, new_labels), new_labels
 
 
-def _green_candidates_for_target(target_name: str, source_columns: list[str]) -> list[str]:
+def _origin_green_candidates_for_target(target_name: str, source_columns: list[str]) -> list[str]:
     target_key = _norm(target_name)
     if not target_key:
         return []
@@ -264,30 +264,31 @@ def _green_candidates_for_target(target_name: str, source_columns: list[str]) ->
     for column in [str(column) for column in source_columns]:
         if _norm(column) == target_key:
             out.append(_ref('origem', column))
-    for column in [str(column) for column in getattr(_model_frame(), 'columns', [])]:
-        if _norm(column) == target_key:
-            out.append(_ref('modelo', column))
     return list(dict.fromkeys(out))
 
 
-def _auto_bind_unique_green_matches(current: dict[str, str], target_columns: list[str], source_columns: list[str]) -> tuple[dict[str, str], int]:
+def _auto_bind_unique_origin_green_matches(current: dict[str, str], target_columns: list[str], source_columns: list[str]) -> tuple[dict[str, str], int]:
     updated = dict(current or {})
     applied = 0
     ambiguous = 0
+    model_green_only = 0
     preserved = 0
     for target_name in [str(column) for column in target_columns]:
         current_value = str(updated.get(target_name, '') or '').strip()
         if current_value:
             preserved += 1
             continue
-        green_candidates = _green_candidates_for_target(target_name, source_columns)
-        if len(green_candidates) == 1:
-            updated[target_name] = green_candidates[0]
+        origin_candidates = _origin_green_candidates_for_target(target_name, source_columns)
+        model_has_same_name = any(_norm(column) == _norm(target_name) for column in [str(column) for column in getattr(_model_frame(), 'columns', [])])
+        if len(origin_candidates) == 1:
+            updated[target_name] = origin_candidates[0]
             applied += 1
-        elif len(green_candidates) > 1:
+        elif len(origin_candidates) > 1:
             ambiguous += 1
+        elif model_has_same_name:
+            model_green_only += 1
     try:
-        add_audit_event('mapping_auto_bind_unique_green_applied', area='MAPEAMENTO', status='OK', details={'applied': int(applied), 'ambiguous_green_fields': int(ambiguous), 'preserved_existing_choices': int(preserved), 'rule': 'apenas_um_candidato_verde_autovincula', 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('mapping_auto_bind_unique_origin_green_applied', area='MAPEAMENTO', status='OK', details={'applied': int(applied), 'ambiguous_origin_green_fields': int(ambiguous), 'model_green_only_not_autobound': int(model_green_only), 'preserved_existing_choices': int(preserved), 'rule': 'apenas_um_candidato_verde_da_origem_autovincula', 'responsible_file': RESPONSIBLE_FILE})
     except Exception:
         pass
     return updated, applied
@@ -296,9 +297,9 @@ def _auto_bind_unique_green_matches(current: dict[str, str], target_columns: lis
 def _restore_dataframe_preview_if_previous_patch_expanded_it() -> None:
     original_dataframe = getattr(st, '_mapeiaai_original_dataframe', None)
     current_version = str(getattr(st, '_mapeiaai_full_table_preview_runtime_version', '') or '')
-    if callable(original_dataframe) and current_version and current_version != 'removed_by_v11_color_rank_unique_green_autobind':
+    if callable(original_dataframe) and current_version and current_version != 'removed_by_v12_color_rank_unique_origin_green_autobind':
         st.dataframe = original_dataframe
-        st._mapeiaai_full_table_preview_runtime_version = 'removed_by_v11_color_rank_unique_green_autobind'
+        st._mapeiaai_full_table_preview_runtime_version = 'removed_by_v12_color_rank_unique_origin_green_autobind'
 
 
 def _clear_legacy_unscoped_mapping_values(mapping_state_key: str) -> int:
@@ -339,8 +340,8 @@ def install_mapping_dropdown_preview_runtime() -> None:
     if hasattr(shared_mapping, '_auto_bind_exact_green_matches'):
         original_auto_bind = getattr(shared_mapping, '_mapeiaai_original_auto_bind_exact_green_matches', None) or shared_mapping._auto_bind_exact_green_matches
         setattr(shared_mapping, '_mapeiaai_original_auto_bind_exact_green_matches', original_auto_bind)
-        _auto_bind_unique_green_matches._mapeiaai_auto_bind_unique_green = True
-        shared_mapping._auto_bind_exact_green_matches = _auto_bind_unique_green_matches
+        _auto_bind_unique_origin_green_matches._mapeiaai_auto_bind_unique_origin_green = True
+        shared_mapping._auto_bind_exact_green_matches = _auto_bind_unique_origin_green_matches
 
     if hasattr(shared_mapping, '_apply_price_calculator_mapping_hint'):
         original_price_hint = getattr(shared_mapping, '_mapeiaai_original_apply_price_calculator_mapping_hint', None) or shared_mapping._apply_price_calculator_mapping_hint
@@ -396,7 +397,7 @@ def install_mapping_dropdown_preview_runtime() -> None:
             try:
                 if _dual_enabled():
                     _clear_legacy_unscoped_mapping_values(mapping_state_key)
-                    st.caption('Modelo anexado preservado: dropdown ordenado por cor. Auto vinculo so aplica quando existir uma unica opcao 🟢.')
+                    st.caption('Modelo anexado preservado: dropdown ordenado por cor. Auto vinculo so aplica quando existir uma unica opcao 🟢 da Origem.')
                 return render_base(source, target, signature=signature, mapping_state_key=mapping_state_key, engine_state_key=engine_state_key, key_prefix=key_prefix, ai_enabled=ai_enabled)
             finally:
                 _CONTEXT['source'], _CONTEXT['target'] = previous_source, previous_target
@@ -404,7 +405,7 @@ def install_mapping_dropdown_preview_runtime() -> None:
         shared_mapping.render_shared_contract_mapping = render_with_context
 
     shared_mapping._mapeiaai_dropdown_preview_runtime_version = PATCH_VERSION
-    add_audit_event('mapping_dropdown_preview_runtime_installed', area='MAPEAMENTO', status='OK', details={'version': PATCH_VERSION, 'dual_source_always_when_model_present': True, 'dropdown_color_rank': True, 'auto_green_unique_only': True, 'ambiguous_green_requires_user_choice': True, 'unscoped_legacy_mapping_cleared': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('mapping_dropdown_preview_runtime_installed', area='MAPEAMENTO', status='OK', details={'version': PATCH_VERSION, 'dual_source_always_when_model_present': True, 'dropdown_color_rank': True, 'auto_green_unique_origin_only': True, 'model_green_visual_only': True, 'ambiguous_origin_green_requires_user_choice': True, 'unscoped_legacy_mapping_cleared': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_mapping_dropdown_preview_runtime']
