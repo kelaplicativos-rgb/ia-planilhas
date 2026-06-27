@@ -138,7 +138,6 @@ def _render_model_preserve_controls(contract: pd.DataFrame, mapping: Mapping[str
             st.session_state[PRESERVE_MODEL_KEY_COLUMN_KEY] = ''
             st.error('Preservacao bloqueada: nenhuma coluna de chave foi encontrada no modelo.')
             return
-
         selected = st.selectbox('Chave para juntar modelo + origem', options, index=0, key=f'{key_prefix}_preserve_model_key_column_v1')
         st.session_state[PRESERVE_MODEL_KEY_COLUMN_KEY] = str(selected)
         if not str((mapping or {}).get(str(selected), '') or '').strip():
@@ -186,6 +185,14 @@ def _render_split_downloads(output: pd.DataFrame | None, key_prefix: str, file_n
             )
 
 
+def _install_price_loss_trace_patch() -> None:
+    try:
+        from bling_app_zero.ui.price_loss_trace_runtime import install_price_loss_trace_runtime
+        install_price_loss_trace_runtime()
+    except Exception:
+        pass
+
+
 def _install_model_data_preserve_patch() -> None:
     try:
         from bling_app_zero.core import final_output_engine
@@ -193,6 +200,7 @@ def _install_model_data_preserve_patch() -> None:
     except Exception:
         return
     if getattr(shared_final_csv, '_mapeiaai_model_data_preserve_patched', False):
+        _install_price_loss_trace_patch()
         return
 
     original_builder = getattr(final_output_engine, '_mapeiaai_original_build_universal_output', None) or final_output_engine.build_universal_output
@@ -245,6 +253,7 @@ def _install_model_data_preserve_patch() -> None:
     except Exception:
         pass
     shared_final_csv._mapeiaai_model_data_preserve_patched = True
+    _install_price_loss_trace_patch()
 
 
 try:
@@ -255,6 +264,11 @@ except Exception:
 
 try:
     _install_model_data_preserve_patch()
+except Exception:
+    pass
+
+try:
+    _install_price_loss_trace_patch()
 except Exception:
     pass
 
