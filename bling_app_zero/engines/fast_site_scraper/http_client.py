@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urlparse
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -20,7 +21,26 @@ ALT_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/121.0 Safari/537.36',
 }
 
+DESKTOP_HEADERS = {
+    **HEADERS,
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'Connection': 'keep-alive',
+    'DNT': '1',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'same-origin',
+    'Sec-Fetch-User': '?1',
+    'Upgrade-Insecure-Requests': '1',
+}
+
 _TEXT_CONTENT_HINTS = ('text/', 'html', 'xml', 'json', 'javascript')
+_BLOCKED_TEXT_HINTS = (
+    'access denied',
+    'attention required',
+    'enable javascript',
+    'checking your browser',
+    'cf-browser-verification',
+)
 _THREAD_LOCAL = threading.local()
 
 
@@ -30,12 +50,12 @@ def _session() -> requests.Session:
         return session
 
     retry = Retry(
-        total=1,
-        connect=1,
-        read=0,
-        status=1,
-        backoff_factor=0.15,
-        status_forcelist=(429, 500, 502, 503, 504),
+        total=2,
+        connect=2,
+        read=1,
+        status=2,
+        backoff_factor=0.25,
+        status_forcelist=(403, 406, 408, 425, 429, 500, 502, 503, 504),
         allowed_methods=('GET', 'HEAD'),
         raise_on_status=False,
     )
@@ -45,6 +65,18 @@ def _session() -> requests.Session:
     session.mount('https://', adapter)
     _THREAD_LOCAL.session = session
     return session
+
+
+def _origin(url: str) -> str:
+    parsed = urlparse(str(url or ''))
+    return f'{parsed.scheme}://{parsed.netloc}' if parsed.scheme and parsed.netloc else ''
+
+
+def _with_navigation_headers(url: str, headers: dict[str, str]) -> dict[str, str]:
+    origin = _origin(url)
+    if not origin:
+        return dict(headers)
+    return {**headers, 'Referer': origin + '/', 'Origin': origin}
 
 
 def _looks_text_response(response: requests.Response) -> bool:
@@ -62,19 +94,40 @@ def _response_text(response: requests.Response) -> str:
     return response.text or ''
 
 
+def _looks_blocked_or_empty(text: str) -> bool:
+    clean = str(text or '').strip()
+    if not clean:
+        return True
+    low = clean[:5000].lower()
+    return len(clean) < 300 and any(hint in low for hint in _BLOCKED_TEXT_HINTS)
+
+
+def _fetch_once(session: requests.Session, url: str, headers: dict[str, str], timeout: int) -> tuple[int, str]:
+    response = session.get(url, headers=headers, timeout=(4, max(4, int(timeout))), allow_redirects=True)
+    if response.status_code >= 400:
+        return response.status_code, ''
+    return response.status_code, _response_text(response)
+
+
 def fetch_live(url: str, timeout: int = 8) -> str:
     if not url:
         return ''
     try:
         session = _session()
-        response = session.get(url, headers=HEADERS, timeout=(3, timeout), allow_redirects=True)
-        if response.status_code in {403, 406, 429}:
-            response = session.get(url, headers=ALT_HEADERS, timeout=(3, timeout), allow_redirects=True)
-        if response.status_code >= 400:
-            return ''
-        return _response_text(response)
+        attempts = [
+            (HEADERS, timeout),
+            (_with_navigation_headers(url, DESKTOP_HEADERS), max(timeout, 12)),
+            (_with_navigation_headers(url, ALT_HEADERS), max(timeout, 12)),
+        ]
+        for headers, attempt_timeout in attempts:
+            status_code, text = _fetch_once(session, url, headers, attempt_timeout)
+            if text and not _looks_blocked_or_empty(text):
+                return text
+            if status_code not in {403, 406, 408, 425, 429, 500, 502, 503, 504} and text:
+                return text
     except Exception:
         return ''
+    return ''
 
 
 def fetch_many_live(urls: list[str], timeout: int = 8, workers: int = 48) -> dict[str, str]:
