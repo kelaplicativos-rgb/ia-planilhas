@@ -7,6 +7,7 @@ from bs4 import BeautifulSoup
 
 from bling_app_zero.engines.fast_site_scraper.catalog_api_discovery import discover_from_public_catalog_apis
 from bling_app_zero.engines.fast_site_scraper.http_client import fetch_live, fetch_many_live
+from bling_app_zero.engines.fast_site_scraper.wbuy_parser import html_has_wbuy_product, wbuy_product_links
 
 COMMON_FEEDS = [
     'robots.txt',
@@ -154,11 +155,19 @@ def discover_from_feeds(starts: list[str], max_products: int) -> list[str]:
 def _links_from_html(url: str, html: str) -> list[str]:
     soup = BeautifulSoup(html or '', 'html.parser')
     links: list[str] = []
+    for href in wbuy_product_links(url, html):
+        if href not in links:
+            links.append(href)
     for node in soup.find_all('a', href=True):
         href = norm_url(urljoin(url, str(node.get('href') or '')))
         if href and allowed_url(href, url) and href not in links:
             links.append(href)
-    return sorted(links, key=lambda item: 0 if productish_url(item) else 1)
+    return sorted(links, key=lambda item: 0 if item in links[: len(wbuy_product_links(url, html))] or productish_url(item) else 1)
+
+
+def _add_product_url(products: list[str], url: str, max_products: int) -> None:
+    if url and url not in products and len(products) < max_products:
+        products.append(url)
 
 
 def discover_from_html(starts: list[str], max_pages: int, max_products: int) -> list[str]:
@@ -178,10 +187,10 @@ def discover_from_html(starts: list[str], max_pages: int, max_products: int) -> 
         for url, html in fetched.items():
             if not html:
                 continue
-            if productish_url(url) and url not in products:
-                products.append(url)
+            if productish_url(url) or html_has_wbuy_product(html):
+                _add_product_url(products, url, max_products)
             for link in _links_from_html(url, html):
-                if productish_url(link) and link not in products:
+                if (productish_url(link) or link in wbuy_product_links(url, html)) and link not in products:
                     products.append(link)
                     if len(products) >= max_products:
                         break
