@@ -21,12 +21,14 @@ from bling_app_zero.engines.fast_site_scraper.constants import (
     normalize_capture_limits,
 )
 from bling_app_zero.engines.fast_site_scraper.contract_rules import default_columns, important_kinds, needed_kinds
+from bling_app_zero.engines.fast_site_scraper.http_client import fetch_many_live
 from bling_app_zero.engines.fast_site_scraper.models import FastProductData
 from bling_app_zero.engines.fast_site_scraper.output_builder import ensure_columns, to_contract_row
 from bling_app_zero.engines.fast_site_scraper.progress import emit
 from bling_app_zero.engines.fast_site_scraper.rendered_fallback import enhance_products_sequentially
 from bling_app_zero.engines.fast_site_scraper.scrape_worker import has_useful_data, scrape_one, url_only_row
-from bling_app_zero.engines.fast_site_scraper.url_discovery import discover_product_urls
+from bling_app_zero.engines.fast_site_scraper.url_discovery import discover_product_urls, norm_url, split_urls
+from bling_app_zero.engines.fast_site_scraper.wbuy_parser import wbuy_listing_products
 
 
 def _normalize_operation(operation: str) -> str:
@@ -328,6 +330,61 @@ def _audit_finished(
     return rich_ok, rich_empty
 
 
+def _wbuy_listing_fallback_products(
+    *,
+    raw_urls: str,
+    max_products: int,
+    progress_callback: Callable[[dict], None] | None,
+) -> list[FastProductData]:
+    starts = [norm_url(url) for url in split_urls(raw_urls) if norm_url(url)]
+    starts = list(dict.fromkeys(starts))[:8]
+    if not starts:
+        return []
+
+    emit(progress_callback, {
+        'stage': 'Fallback wBuy',
+        'message': 'Tentando aproveitar os cards da vitrine wBuy para não devolver lote vazio.',
+        'progress': 0.88,
+        'starts': len(starts),
+    })
+    fetched = fetch_many_live(starts, timeout=9, workers=min(6, len(starts)))
+    products: list[FastProductData] = []
+    seen: set[str] = set()
+    for url, html in fetched.items():
+        remaining = max(0, int(max_products) - len(products))
+        if remaining <= 0:
+            break
+        for product in wbuy_listing_products(url, html, limit=remaining):
+            key = product.codigo or product.url
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            products.append(product)
+            if len(products) >= max_products:
+                break
+
+    add_audit_event(
+        'site_scraper_wbuy_listing_fallback',
+        area='SITE',
+        step='entrada',
+        status='OK' if products else 'INFO',
+        details={
+            'starts': len(starts),
+            'html_pages': sum(1 for raw in fetched.values() if raw),
+            'products': len(products),
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+    if products:
+        emit(progress_callback, {
+            'stage': 'Fallback wBuy aplicado',
+            'message': f'{len(products)} produto(s) recuperado(s) pelos cards da vitrine.',
+            'progress': 0.90,
+            'found': len(products),
+        })
+    return products
+
+
 def run_fast_site_scraper(
     raw_urls: str,
     requested_columns: Iterable[str] | None = None,
@@ -399,6 +456,30 @@ def run_fast_site_scraper(
         'partial_checkpoint_enabled': True,
     })
     if not urls:
+        fallback_products = _wbuy_listing_fallback_products(raw_urls=raw_urls, max_products=max_products, progress_callback=progress_callback)
+        if fallback_products:
+            rows = [to_contract_row(product, contract) for product in fallback_products]
+            emit(progress_callback, {
+                'stage': 'Montando origem',
+                'message': f'Montando origem com {len(rows)} produto(s) recuperado(s) dos cards wBuy.',
+                'progress': 0.91,
+                'found': len(rows),
+                'urls_found': 0,
+                'total_seconds': round(time.perf_counter() - total_started, 2),
+                'partial_checkpoint_enabled': True,
+                'partial_checkpoint_rows': rows,
+                'partial_checkpoint_columns': columns,
+                'partial_checkpoint_operation': normalized_operation,
+                'partial_checkpoint_found': len(rows),
+            })
+            _audit_finished(
+                normalized_operation=normalized_operation,
+                products=fallback_products,
+                rendered_fallbacks=0,
+                errors=0,
+                needed=needed,
+            )
+            return ensure_columns(pd.DataFrame(rows).fillna(''), columns)
         emit(progress_callback, {'stage': 'Nada encontrado', 'message': 'Não encontrei produtos nos links informados. Confira se o link abre produtos ou categorias.', 'progress': 1.0, 'urls_found': 0})
         return pd.DataFrame(columns=columns)
 
@@ -436,6 +517,8 @@ def run_fast_site_scraper(
     )
 
     products, rendered_fallbacks = enhance_products_sequentially(products_by_url, needed, progress_callback)
+    if not products:
+        products = _wbuy_listing_fallback_products(raw_urls=raw_urls, max_products=max_products, progress_callback=progress_callback)
     rich_ok, rich_empty = _audit_finished(
         normalized_operation=normalized_operation,
         products=products,
