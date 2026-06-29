@@ -47,6 +47,14 @@ BLOCKED_TERMS = (
     '/carrinho',
     '/blog',
 )
+ROOT_PRODUCT_BLOCKLIST = {
+    'busca', 'ofertas', 'login', 'carrinho', 'checkout', 'conta', 'blog', 'marca',
+    'm', 'politica', 'termos', 'atendimento', 'dropshipping', 'revenda', 'smartwatch',
+    'acessorios', 'mais-produtos', 'celulares-smartphone',
+}
+WBUY_SEARCH_TERMS = (
+    'smartwatch', 'peje', 'microwear', 'fone', 'caixa', 'camera', 'xiaomi', 'iphone', 'produto'
+)
 
 
 def norm_url(url: str) -> str:
@@ -72,6 +80,19 @@ def same_domain(url: str, base: str) -> bool:
     return host == root or host.endswith('.' + root)
 
 
+def _root_slug_productish(url: str) -> bool:
+    parsed = urlparse(str(url or ''))
+    path = (parsed.path or '').strip('/')
+    if not path or '/' in path or len(path) < 8 or len(path) > 180:
+        return False
+    slug = path.lower()
+    if slug in ROOT_PRODUCT_BLOCKLIST or slug.startswith(('m/', 'marca/')):
+        return False
+    if re.search(r'\.(html?|php|xml|json|jpg|jpeg|png|webp|gif|svg|css|js)$', slug):
+        return False
+    return slug.count('-') >= 2 and bool(re.search(r'[a-z0-9]-[a-z0-9]', slug))
+
+
 def productish_url(url: str) -> bool:
     parsed = urlparse(str(url or ''))
     low_path = (parsed.path or '').lower()
@@ -83,6 +104,8 @@ def productish_url(url: str) -> bool:
     if re.search(r'/(p|item)/[a-z0-9][a-z0-9._-]{2,}', low_path):
         return True
     if re.search(r'/[a-z0-9][a-z0-9._-]{2,}/p/?$', low_path):
+        return True
+    if _root_slug_productish(url):
         return True
     return any(hint in low_url for hint in ('produto-', 'product-'))
 
@@ -136,8 +159,8 @@ def _slug_to_urls(value: str, base: str, key: str) -> list[str]:
     if key_low == 'handle':
         return [f'{root}/products/{slug}']
     if key_low in {'linktext', 'urlkey', 'url_key'}:
-        return [f'{root}/{slug}/p', f'{root}/produto/{slug}']
-    return [f'{root}/produto/{slug}', f'{root}/products/{slug}', f'{root}/{slug}/p']
+        return [f'{root}/{slug}/p', f'{root}/produto/{slug}', f'{root}/{slug}']
+    return [f'{root}/produto/{slug}', f'{root}/products/{slug}', f'{root}/{slug}/p', f'{root}/{slug}']
 
 
 def _string_to_urls(value: str, base: str, key: str = '') -> list[str]:
@@ -207,7 +230,7 @@ def urls_from_embedded_text(raw: str, base: str, max_items: int) -> list[str]:
         _append_unique(found, match, base, max_items)
         if len(found) >= max_items:
             return found
-    for match in re.findall(r'["\'](/(?:produto|produtos|product|products|p|item)/[^"\']+)["\']', text, flags=re.I):
+    for match in re.findall(r'["\'](/[^"\']+)["\']', text, flags=re.I):
         _append_unique(found, urljoin(root_url(base), match), base, max_items)
         if len(found) >= max_items:
             return found
@@ -224,6 +247,10 @@ def _api_candidates_for_root(root: str) -> list[str]:
         candidates.append(f'{root}/wp-json/wp/v2/product?{urlencode({"per_page": 100, "page": page})}')
         start = (page - 1) * 100
         candidates.append(f'{root}/api/catalog_system/pub/products/search?{urlencode({"_from": start, "_to": start + 99})}')
+    for term in WBUY_SEARCH_TERMS:
+        for query_key in ('q', 'term', 'query', 'keyword'):
+            candidates.append(f'{root}/produtos_autocomplete.php?{urlencode({query_key: term})}')
+        candidates.append(f'{root}/busca/?{urlencode({"q": term})}')
     candidates.append(f'{root}/api/catalog_system/pub/category/tree/10')
     candidates.append(f'{root}/catalog/products.json')
     candidates.append(f'{root}/catalogo.json')
@@ -233,9 +260,9 @@ def _api_candidates_for_root(root: str) -> list[str]:
 def discover_from_public_catalog_apis(starts: list[str], max_products: int) -> list[str]:
     """Descobre URLs por APIs/catálogos públicos e cai para vazio se não existir.
 
-    Cobre Shopify, WooCommerce/Store API, WordPress Product API, VTEX e
-    catálogos JSON simples. A função só devolve URLs públicas; a extração do
-    produto segue pelo scraper central para manter validação única.
+    Cobre Shopify, WooCommerce/Store API, WordPress Product API, VTEX, wBuy
+    busca/autocomplete e catálogos JSON simples. A função só devolve URLs
+    públicas; a extração do produto segue pelo scraper central.
     """
     products: list[str] = []
     candidates: list[str] = []
@@ -247,12 +274,19 @@ def discover_from_public_catalog_apis(starts: list[str], max_products: int) -> l
         if len(products) >= max_products:
             break
         batch = candidates[offset:offset + API_BATCH]
-        fetched = fetch_many_live(batch, timeout=7, workers=14)
+        fetched = fetch_many_live(batch, timeout=8, workers=14)
         for url, raw in fetched.items():
             if not raw:
                 continue
             base = root_url(url)
             for product_url in urls_from_json_text(raw, base, max_products - len(products)):
+                if product_url not in products:
+                    products.append(product_url)
+                    if len(products) >= max_products:
+                        break
+            if len(products) >= max_products:
+                break
+            for product_url in urls_from_embedded_text(raw, base, max_products - len(products)):
                 if product_url not in products:
                     products.append(product_url)
                     if len(products) >= max_products:
