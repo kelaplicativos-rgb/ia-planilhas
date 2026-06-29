@@ -167,10 +167,10 @@ def _product_from_card(base_url: str, card) -> FastProductData | None:
     return FastProductData(url=url, codigo=code, descricao=name, preco=price, imagem=image)
 
 
-def _api_key_from_streamlit() -> str:
+def _streamlit_openai_secret(name: str) -> str:
     try:
         import streamlit as st  # type: ignore
-        value = st.secrets.get('openai', {}).get('api_key') if hasattr(st, 'secrets') else ''
+        value = st.secrets.get('openai', {}).get(name) if hasattr(st, 'secrets') else ''
         return str(value or '').strip()
     except Exception:
         return ''
@@ -180,7 +180,15 @@ def _openai_api_key() -> str:
     return (
         os.getenv('MAPEIAAI_OPENAI_API_KEY', '').strip()
         or os.getenv('OPENAI_API_KEY', '').strip()
-        or _api_key_from_streamlit()
+        or _streamlit_openai_secret('api_key')
+    )
+
+
+def _openai_model() -> str:
+    return (
+        os.getenv('MAPEIAAI_OPENAI_MODEL', '').strip()
+        or _streamlit_openai_secret('model')
+        or DEFAULT_OPENAI_MODEL
     )
 
 
@@ -272,7 +280,7 @@ def _openai_listing_products(base_url: str, html: str, limit: int) -> list[FastP
         f'{int(limit)} produtos. Base URL: {base_url}\n\nSNIPPETS:\n{compact}'
     )
     request_payload = {
-        'model': os.getenv('MAPEIAAI_OPENAI_MODEL', DEFAULT_OPENAI_MODEL).strip() or DEFAULT_OPENAI_MODEL,
+        'model': _openai_model(),
         'instructions': 'Você é um extrator de catálogo. Responda somente no JSON schema solicitado, sem comentários.',
         'input': prompt,
         'text': {
