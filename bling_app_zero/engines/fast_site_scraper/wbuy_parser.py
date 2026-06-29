@@ -6,7 +6,7 @@ from urllib.parse import urljoin, urlparse, urlunparse
 from bs4 import BeautifulSoup
 
 from bling_app_zero.core.text import clean_cell, normalize_key
-from bling_app_zero.engines.fast_site_scraper.models import FastProductPage
+from bling_app_zero.engines.fast_site_scraper.models import FastProductData, FastProductPage
 
 WBUY_HINTS = (
     'sistemawbuy.com.br',
@@ -62,6 +62,27 @@ def _append_unique(values: list[str], value: str, limit: int = 0) -> None:
         values.append(text)
 
 
+def _clean_price(value: object) -> str:
+    text = clean_cell(value or '')
+    if not text:
+        return ''
+    matches = re.findall(r'(?:R\$\s*)?([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}|[0-9]+(?:[\.,][0-9]{2})?)', text)
+    return matches[-1] if matches else text[:40]
+
+
+def _card_nodes(soup: BeautifulSoup) -> list:
+    nodes: list = []
+    for selector in [
+        '.prod .item[data-id][data-sku]',
+        '.produtos .item[data-id][data-sku]',
+        '.item[data-id][data-sku]',
+    ]:
+        for card in soup.select(selector):
+            if card not in nodes:
+                nodes.append(card)
+    return nodes
+
+
 def wbuy_product_links(base_url: str, html: str, limit: int = 1200) -> list[str]:
     if not is_wbuy_html(html) and 'data-sku=' not in str(html or '').lower():
         return []
@@ -73,21 +94,66 @@ def wbuy_product_links(base_url: str, html: str, limit: int = 1200) -> list[str]
         if url and _allowed_product_url(url, base_url) and url not in links and len(links) < limit:
             links.append(url)
 
-    card_selectors = [
-        '.prod .item[data-id][data-sku]',
-        '.produtos .item[data-id][data-sku]',
-        '.item[data-id][data-sku]',
-    ]
-    for selector in card_selectors:
-        for card in soup.select(selector):
-            action = card.select_one('a.b_acao[href]') or card.select_one('a[href]')
-            if action:
-                add(action.get('href'))
+    for card in _card_nodes(soup):
+        action = card.select_one('a.b_acao[href]') or card.select_one('a[href]')
+        if action:
+            add(action.get('href'))
 
     for node in soup.select('a.b_acao[href]'):
         add(node.get('href'))
 
     return links[:limit]
+
+
+def wbuy_listing_products(base_url: str, html: str, limit: int = 1200) -> list[FastProductData]:
+    """Extrai dados mínimos dos cards wBuy quando os detalhes falham.
+
+    A página de vitrine wBuy costuma trazer URL, SKU, nome, preço e imagem nos
+    cards. Isso evita lote vazio quando a leitura das páginas de detalhe é
+    bloqueada ou fica lenta demais.
+    """
+    if not is_wbuy_html(html) and 'data-sku=' not in str(html or '').lower():
+        return []
+    soup = _soup(html)
+    products: list[FastProductData] = []
+    seen: set[str] = set()
+
+    for card in _card_nodes(soup):
+        action = card.select_one('a.b_acao[href]') or card.select_one('a[href]')
+        href = action.get('href') if action else ''
+        url = _norm_url(urljoin(base_url, str(href or '').strip()))
+        if not url or not _allowed_product_url(url, base_url):
+            continue
+
+        sku = clean_cell(card.get('data-sku') or '')
+        code = sku or clean_cell(card.get('data-id') or '')
+        key = sku or url
+        if key in seen:
+            continue
+        seen.add(key)
+
+        name_node = card.select_one('h3.produto, .produto, [itemprop="name"]')
+        image_node = card.select_one('img[data-src], img[src]')
+        price_node = card.select_one('.valor_final') or card.select_one('.valor')
+        name = clean_cell(
+            (name_node.get('title') if name_node else '')
+            or (name_node.get_text(' ', strip=True) if name_node else '')
+            or (image_node.get('alt') if image_node else '')
+        )[:240]
+        image = clean_cell(urljoin(base_url, str((image_node.get('data-src') or image_node.get('src') or '') if image_node else '').strip()))
+        price = _clean_price(price_node.get_text(' ', strip=True) if price_node else '')
+
+        products.append(FastProductData(
+            url=url,
+            codigo=code,
+            descricao=name,
+            preco=price,
+            imagem=image,
+        ))
+        if len(products) >= limit:
+            break
+
+    return products[:limit]
 
 
 def html_has_wbuy_product(html: str) -> bool:
@@ -267,6 +333,7 @@ def wbuy_product_description(page: FastProductPage) -> str:
 __all__ = [
     'html_has_wbuy_product',
     'is_wbuy_html',
+    'wbuy_listing_products',
     'wbuy_product_brand',
     'wbuy_product_category',
     'wbuy_product_code',
