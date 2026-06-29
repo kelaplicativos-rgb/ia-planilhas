@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import io
-import json
 import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
 import pandas as pd
@@ -16,7 +15,8 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.html_product_extractor import clean_text, normalize_key, read_html_product_text
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/mobile_protected_capture.py'
-USER_AGENT = 'Mozilla/5.0 (Linux; Android 12; MapeiaAI Mobile Capture) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36'
+USER_AGENT = 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36'
+BLOCKED_STATUS_CODES = {401, 403, 407, 423, 429}
 LOGIN_WORD_RE = re.compile(r'\b(login|entrar|acessar|senha|password|usuario|usuário|e-mail|email)\b', re.I)
 NEXT_TEXT_RE = re.compile(r'\b(proxima|próxima|proximo|próximo|next|avancar|avançar)\b|[›»]', re.I)
 PRODUCT_HINT_RE = re.compile(r'\b(produto|produtos|sku|estoque|preço|preco|valor|marca|modelo)\b', re.I)
@@ -35,6 +35,10 @@ class MobileCaptureResult:
     @property
     def ok(self) -> bool:
         return self.status == 'ok' and isinstance(self.df, pd.DataFrame) and not self.df.empty
+
+    @property
+    def should_try_public_engine(self) -> bool:
+        return self.status in {'blocked_direct_capture', 'http_error', 'empty'}
 
 
 def _valid_url(url: str) -> bool:
@@ -61,6 +65,21 @@ def _remote_token() -> str:
     return _get_secret('MAPEIAAI_MOBILE_CAPTURE_TOKEN') or _get_secret('MAPEIAAI_REMOTE_BROWSER_TOKEN')
 
 
+def _default_headers(*, accept_json: bool = False) -> dict[str, str]:
+    return {
+        'User-Agent': USER_AGENT,
+        'Accept': 'application/json' if accept_json else 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Upgrade-Insecure-Requests': '1',
+    }
+
+
+def _host(url: str) -> str:
+    return urlparse(str(url or '')).netloc or 'site informado'
+
+
 def _looks_like_login_html(html: str) -> bool:
     text = clean_text(BeautifulSoup(html or '', 'html.parser').get_text(' ', strip=True))
     low = str(html or '').lower()
@@ -68,6 +87,35 @@ def _looks_like_login_html(html: str) -> bool:
     has_form = '<form' in low
     has_product_hint = bool(PRODUCT_HINT_RE.search(text))
     return bool(has_password or (has_form and LOGIN_WORD_RE.search(text) and not has_product_hint))
+
+
+def _blocked_message(url: str, status_code: int | str) -> str:
+    return f'O site {_host(url)} bloqueou a captura direta ({status_code}). Vou tentar a busca pública inteligente do MapeiaAI automaticamente.'
+
+
+def _http_error_message(url: str, status_code: int | str) -> str:
+    return f'O site {_host(url)} respondeu HTTP {status_code}. Vou encaminhar para a busca pública inteligente do MapeiaAI.'
+
+
+def _start_url_variants(url: str) -> list[str]:
+    parsed = urlparse(str(url or '').strip())
+    if not parsed.scheme or not parsed.netloc:
+        return []
+    variants: list[str] = []
+
+    def add(candidate) -> None:
+        text = str(candidate or '').strip()
+        if text and text not in variants:
+            variants.append(text)
+
+    add(urlunparse(parsed))
+    host = parsed.netloc
+    alt_host = host[4:] if host.startswith('www.') else f'www.{host}'
+    add(urlunparse(parsed._replace(netloc=alt_host)))
+    if not parsed.path or parsed.path == '':
+        add(urlunparse(parsed._replace(path='/')))
+        add(urlunparse(parsed._replace(netloc=alt_host, path='/')))
+    return variants[:4]
 
 
 def _key_column(df: pd.DataFrame) -> str:
@@ -174,13 +222,15 @@ def _remote_capture(url: str, max_pages: int) -> MobileCaptureResult | None:
     endpoint = _remote_endpoint()
     if not endpoint:
         return None
-    headers = {'User-Agent': USER_AGENT, 'Accept': 'application/json'}
+    headers = _default_headers(accept_json=True)
     token = _remote_token()
     if token:
         headers['Authorization'] = f'Bearer {token}'
     try:
         with httpx.Client(timeout=180, follow_redirects=True, headers=headers) as client:
             response = client.post(endpoint, json={'url': url, 'max_pages': max_pages, 'format': 'mhtml'})
+            if response.status_code in BLOCKED_STATUS_CODES:
+                return MobileCaptureResult('remote_blocked', 'O navegador seguro remoto não conseguiu abrir esse site agora.', details={'status_code': response.status_code, 'remote': True})
             response.raise_for_status()
             payload = response.json()
     except Exception as exc:
@@ -190,7 +240,7 @@ def _remote_capture(url: str, max_pages: int) -> MobileCaptureResult | None:
             status='AVISO',
             details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE},
         )
-        return MobileCaptureResult('remote_error', 'O navegador seguro não respondeu. Tente a captura direta ou gere diagnóstico.', details={'error': str(exc)[:220]})
+        return MobileCaptureResult('remote_error', 'O navegador seguro não respondeu. Vou tentar outro caminho de captura.', details={'error': str(exc)[:220]})
     df = _frame_from_remote_payload(payload)
     if isinstance(df, pd.DataFrame) and not df.empty:
         return MobileCaptureResult('ok', 'Captura mobile concluída pelo navegador seguro.', df=df, details={'remote': True, 'rows': int(len(df))})
@@ -200,28 +250,37 @@ def _remote_capture(url: str, max_pages: int) -> MobileCaptureResult | None:
 def _direct_public_capture(url: str, max_pages: int) -> MobileCaptureResult:
     frames: list[pd.DataFrame] = []
     seen_urls: set[str] = set()
-    queue: list[str] = [url]
+    queue: list[str] = _start_url_variants(url) or [url]
     fetched = 0
+    attempts = 0
+    blocked: list[dict[str, object]] = []
     try:
-        with httpx.Client(
-            timeout=35,
-            follow_redirects=True,
-            headers={'User-Agent': USER_AGENT, 'Accept': 'text/html,application/xhtml+xml'},
-        ) as client:
+        with httpx.Client(timeout=35, follow_redirects=True, headers=_default_headers()) as client:
             while queue and fetched < max(1, min(int(max_pages or 1), 500)):
                 current = queue.pop(0)
                 if current in seen_urls:
                     continue
                 seen_urls.add(current)
+                attempts += 1
                 response = client.get(current)
-                response.raise_for_status()
+                if response.status_code in BLOCKED_STATUS_CODES:
+                    blocked.append({'url': current, 'status_code': response.status_code})
+                    add_audit_event(
+                        'mobile_capture_direct_blocked_by_site',
+                        area='ORIGEM',
+                        status='AVISO',
+                        details={'url_host': _host(current), 'status_code': int(response.status_code), 'attempts': attempts, 'responsible_file': RESPONSIBLE_FILE},
+                    )
+                    continue
+                if response.status_code >= 400:
+                    return MobileCaptureResult('http_error', _http_error_message(current, response.status_code), details={'status_code': response.status_code, 'pages_checked': fetched, 'attempts': attempts})
                 html = response.text or ''
                 fetched += 1
                 if fetched == 1 and _looks_like_login_html(html):
                     return MobileCaptureResult(
                         'needs_secure_browser',
-                        'Este site parece exigir login. Para celular, precisa do navegador seguro do MapeiaAI configurado no servidor.',
-                        details={'pages_checked': fetched, 'requires_login': True},
+                        'Este site parece exigir login. Vou tentar o navegador seguro ou a busca pública inteligente.',
+                        details={'pages_checked': fetched, 'requires_login': True, 'attempts': attempts},
                     )
                 frame = _read_html_to_frame(html)
                 if isinstance(frame, pd.DataFrame) and not frame.empty:
@@ -234,13 +293,22 @@ def _direct_public_capture(url: str, max_pages: int) -> MobileCaptureResult:
                 for candidate in _candidate_page_urls(html, current):
                     if candidate not in seen_urls and candidate not in queue:
                         queue.append(candidate)
+    except httpx.HTTPError as exc:
+        return MobileCaptureResult('network_error', f'Não consegui acessar o site pelo modo mobile. Vou tentar a busca pública inteligente.', details={'error': str(exc)[:220], 'pages_checked': fetched, 'attempts': attempts})
     except Exception as exc:
-        return MobileCaptureResult('error', f'Não consegui capturar esse site no modo mobile: {exc}', details={'error': str(exc)[:220], 'pages_checked': fetched})
+        return MobileCaptureResult('error', 'Não consegui capturar direto no modo mobile. Vou tentar a busca pública inteligente.', details={'error': str(exc)[:220], 'pages_checked': fetched, 'attempts': attempts})
 
     merged = _merge_frames(frames)
     if isinstance(merged, pd.DataFrame) and not merged.empty:
-        return MobileCaptureResult('ok', 'Captura mobile concluída dentro do sistema.', df=merged, details={'pages_checked': fetched, 'rows': int(len(merged)), 'remote': False})
-    return MobileCaptureResult('empty', 'O site foi acessado, mas não encontrei uma tabela/lista de produtos aproveitável.', details={'pages_checked': fetched})
+        return MobileCaptureResult('ok', 'Captura mobile concluída dentro do sistema.', df=merged, details={'pages_checked': fetched, 'rows': int(len(merged)), 'remote': False, 'attempts': attempts})
+    if blocked:
+        first = blocked[0]
+        return MobileCaptureResult(
+            'blocked_direct_capture',
+            _blocked_message(str(first.get('url') or url), first.get('status_code') or 'bloqueio'),
+            details={'blocked': blocked[:5], 'pages_checked': fetched, 'attempts': attempts, 'fallback': 'public_site_engine'},
+        )
+    return MobileCaptureResult('empty', 'O site foi acessado, mas não encontrei uma tabela/lista de produtos aproveitável. Vou tentar a busca pública inteligente.', details={'pages_checked': fetched, 'attempts': attempts, 'fallback': 'public_site_engine'})
 
 
 def capture_url_on_mobile(url: str, max_pages: int = 80) -> MobileCaptureResult:
@@ -260,7 +328,7 @@ def capture_url_on_mobile(url: str, max_pages: int = 80) -> MobileCaptureResult:
 
     if direct.status == 'needs_secure_browser' and not _remote_endpoint():
         add_audit_event('mobile_capture_secure_browser_missing', area='ORIGEM', status='AVISO', details={'url_host': urlparse(clean_url).netloc, 'responsible_file': RESPONSIBLE_FILE})
-    return remote if remote is not None and remote.status not in {'remote_error'} else direct
+    return remote if remote is not None and remote.status not in {'remote_error', 'remote_blocked'} and not direct.should_try_public_engine else direct
 
 
 __all__ = ['MobileCaptureResult', 'capture_url_on_mobile']
