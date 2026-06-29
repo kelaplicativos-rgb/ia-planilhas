@@ -10,7 +10,10 @@ from bling_app_zero.core.audit import add_audit_event
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/site_checkpoint_finalizer_runtime.py'
 _PATCH_KEY = 'site_checkpoint_finalizer_runtime_installed_v2'
+_BLOCKED_DECISION_SKIP_PREFIX = 'site_checkpoint_finalizer_blocked_decision_v1_'
 MIN_ROWS_TO_FINALIZE_WITHOUT_EXACT_TOTAL = 1
+BLOCKING_DECISION_ACTIONS = {'BLOQUEAR', 'RECAPTURAR'}
+BLOCKING_DECISION_STATUSES = {'BLOQUEADO'}
 
 
 @dataclass(frozen=True)
@@ -65,6 +68,34 @@ def _list_len(value: object) -> int:
     if isinstance(value, list | tuple | set):
         return len([item for item in value if str(item or '').strip()])
     return 0
+
+
+def _blocked_decision_skip_key(operation: str) -> str:
+    return f'{_BLOCKED_DECISION_SKIP_PREFIX}{_normalize_operation(operation)}'
+
+
+def _decision_payloads(operation: str) -> list[dict[str, Any]]:
+    operation = _normalize_operation(operation)
+    keys = [f'blingsmartscan_decision_{operation}', 'blingsmartscan_last_decision']
+    if operation != 'universal':
+        keys.append('blingsmartscan_decision_universal')
+    payloads: list[dict[str, Any]] = []
+    for key in keys:
+        payload = _as_dict(st.session_state.get(key))
+        if payload:
+            payloads.append(payload)
+    return payloads
+
+
+def _blocking_capture_decision(operation: str) -> dict[str, Any]:
+    for payload in _decision_payloads(operation):
+        action = str(payload.get('action') or '').strip().upper()
+        status = str(payload.get('status') or '').strip().upper()
+        if action in BLOCKING_DECISION_ACTIONS or status in BLOCKING_DECISION_STATUSES:
+            return payload
+        if bool(payload.get('should_block')) or bool(payload.get('should_recapture')):
+            return payload
+    return {}
 
 
 def _payload_expected_total(payload: Mapping[str, object], rows: int) -> int:
@@ -183,6 +214,30 @@ def finalize_checkpoint_as_site_origin(
     existe; ele só orienta o mapeamento final.
     """
     operation = _normalize_operation(operation)
+    blocked_decision = _blocking_capture_decision(operation)
+    if blocked_decision:
+        st.session_state[_blocked_decision_skip_key(operation)] = True
+        st.session_state['site_capture_running'] = False
+        st.session_state['site_capture_finished'] = False
+        st.session_state['site_capture_result_ready'] = False
+        st.session_state['site_capture_error'] = str(blocked_decision.get('message') or 'Decisão inteligente bloqueou a captura.')
+        add_audit_event(
+            'site_checkpoint_finalizer_blocked_by_smartscan_decision',
+            area='SITE',
+            step='entrada',
+            status='BLOQUEADO',
+            details={
+                'operation': operation,
+                'decision': blocked_decision,
+                'reason': reason,
+                'checkpoint_not_promoted': True,
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+        if show_message:
+            st.warning('A origem do checkpoint não foi montada porque a captura anterior foi bloqueada pela validação inteligente.')
+        return None
+
     completion, df = analyze_checkpoint_completion(operation, requested_columns=requested_columns)
     st.session_state[f'site_checkpoint_completion_{operation}'] = completion.to_dict()
 
@@ -301,6 +356,9 @@ def finalize_checkpoint_as_site_origin(
 
 
 def _should_try_finalize_before_render(operation: str) -> bool:
+    operation = _normalize_operation(operation)
+    if st.session_state.get(_blocked_decision_skip_key(operation)):
+        return False
     try:
         from bling_app_zero.ui.site_panel_state import get_site_df
         current = get_site_df(operation)
