@@ -30,6 +30,11 @@ COMMON_FEEDS = [
 ]
 PRODUCT_PATH_HINTS = ['/produto/', '/produtos/', '/product/', '/products/', '/p/', '/item/', 'produto-', 'product-']
 PRODUCT_QUERY_HINTS = {'sku', 'cod', 'codigo', 'ref', 'idproduto', 'product_id', 'variant'}
+ROOT_PRODUCT_BLOCKLIST = {
+    'busca', 'ofertas', 'login', 'carrinho', 'checkout', 'conta', 'blog', 'marca',
+    'm', 'politica', 'termos', 'atendimento', 'dropshipping', 'revenda', 'smartwatch',
+    'acessorios', 'mais-produtos', 'celulares-smartphone',
+}
 BLOCKED_TERMS = ['facebook', 'instagram', 'youtube', 'whatsapp', 'mailto:', 'tel:', '/login', '/conta', '/checkout', '/cart', '/carrinho', '/blog', '/politica', '/termos']
 HTML_DISCOVERY_PAGE_CAP = 350
 HTML_DISCOVERY_BATCH = 36
@@ -65,6 +70,19 @@ def same_domain(url: str, base: str) -> bool:
     return host == root or host.endswith('.' + root)
 
 
+def _root_slug_productish(url: str) -> bool:
+    parsed = urlparse(str(url or ''))
+    path = (parsed.path or '').strip('/')
+    if not path or '/' in path or len(path) < 8 or len(path) > 180:
+        return False
+    slug = path.lower()
+    if slug in ROOT_PRODUCT_BLOCKLIST or slug.startswith(('m/', 'marca/')):
+        return False
+    if re.search(r'\.(html?|php|xml|json|jpg|jpeg|png|webp|gif|svg|css|js)$', slug):
+        return False
+    return slug.count('-') >= 2 and bool(re.search(r'[a-z0-9]-[a-z0-9]', slug))
+
+
 def productish_url(url: str) -> bool:
     parsed = urlparse(str(url or ''))
     low_path = (parsed.path or '').lower()
@@ -82,6 +100,8 @@ def productish_url(url: str) -> bool:
     if re.search(r'/(p|item)/[a-z0-9][a-z0-9._-]{2,}', low_path):
         return True
     if re.search(r'/[a-z0-9][a-z0-9._-]{2,}/p/?$', low_path):
+        return True
+    if _root_slug_productish(url):
         return True
 
     return any(hint in low_url for hint in ['produto-', 'product-'])
