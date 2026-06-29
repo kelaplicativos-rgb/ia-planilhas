@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
+import os
 import re
 from urllib.parse import urljoin, urlparse, urlunparse
 
+import requests
 from bs4 import BeautifulSoup
 
+from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.text import clean_cell, normalize_key
 from bling_app_zero.engines.fast_site_scraper.models import FastProductData, FastProductPage
 
@@ -21,6 +25,25 @@ WBUY_BLOCKED_URL_TERMS = (
     '/login', '/conta', '/checkout', '/cart', '/carrinho', '/blog', '/politica', '/termos',
     'facebook', 'instagram', 'youtube', 'whatsapp', 'mailto:', 'tel:', '#',
 )
+
+GENERIC_CARD_SELECTORS = (
+    '[data-sku]',
+    '[data-product-id]',
+    '[data-produtoid]',
+    '[data-id]',
+    '[itemtype*="schema.org/Product"]',
+    '.product',
+    '.produto',
+    '.prod',
+    '.item-produto',
+    '.product-item',
+    '.produto-item',
+    'article',
+)
+
+RESPONSIBLE_FILE = 'bling_app_zero/engines/fast_site_scraper/wbuy_parser.py'
+OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses'
+DEFAULT_OPENAI_MODEL = 'gpt-4.1'
 
 
 def is_wbuy_html(html: str) -> bool:
@@ -83,6 +106,248 @@ def _card_nodes(soup: BeautifulSoup) -> list:
     return nodes
 
 
+def _generic_card_nodes(soup: BeautifulSoup) -> list:
+    nodes: list = []
+    for selector in GENERIC_CARD_SELECTORS:
+        for card in soup.select(selector):
+            if card not in nodes:
+                nodes.append(card)
+            if len(nodes) >= 900:
+                return nodes
+    return nodes
+
+
+def _first_href(card, base_url: str) -> str:
+    for selector in ['a.b_acao[href]', 'a[href*="produto"]', 'a[href*="product"]', 'a[href]']:
+        node = card.select_one(selector)
+        if not node:
+            continue
+        url = _norm_url(urljoin(base_url, str(node.get('href') or '').strip()))
+        if url and _allowed_product_url(url, base_url):
+            return url
+    return ''
+
+
+def _image_url(card, base_url: str) -> str:
+    node = card.select_one('img[data-src], img[data-original], img[data-lazy], img[src], source[srcset]')
+    if not node:
+        return ''
+    raw = node.get('data-src') or node.get('data-original') or node.get('data-lazy') or node.get('src') or node.get('srcset') or ''
+    raw = str(raw).split(',')[0].split()[0].strip()
+    url = clean_cell(urljoin(base_url, raw))
+    low = url.lower()
+    if any(term in low for term in ['logo', 'sprite', 'placeholder', 'icon', 'whatsapp', 'facebook.com/tr', 'blank.gif']):
+        return ''
+    return url
+
+
+def _product_from_card(base_url: str, card) -> FastProductData | None:
+    url = _first_href(card, base_url)
+    if not url:
+        return None
+
+    sku = clean_cell(card.get('data-sku') or card.get('data-codigo') or card.get('data-code') or '')
+    code = sku or clean_cell(card.get('data-id') or card.get('data-product-id') or card.get('data-produtoid') or '')
+    image = _image_url(card, base_url)
+    name_node = card.select_one('h3.produto, h2, h3, [itemprop="name"], .product-name, .produto, .name, .title')
+    image_node = card.select_one('img[alt]')
+    name = clean_cell(
+        (name_node.get('title') if name_node else '')
+        or (name_node.get_text(' ', strip=True) if name_node else '')
+        or (image_node.get('alt') if image_node else '')
+    )[:240]
+    price_node = card.select_one('.valor_final, .price, .preco, .preço, [class*="price"], [class*="preco"], [class*="valor"]')
+    price = _clean_price(price_node.get_text(' ', strip=True) if price_node else card.get_text(' ', strip=True))
+
+    if not name or not (price or image or code):
+        return None
+    return FastProductData(url=url, codigo=code, descricao=name, preco=price, imagem=image)
+
+
+def _api_key_from_streamlit() -> str:
+    try:
+        import streamlit as st  # type: ignore
+        value = st.secrets.get('openai', {}).get('api_key') if hasattr(st, 'secrets') else ''
+        return str(value or '').strip()
+    except Exception:
+        return ''
+
+
+def _openai_api_key() -> str:
+    return (
+        os.getenv('MAPEIAAI_OPENAI_API_KEY', '').strip()
+        or os.getenv('OPENAI_API_KEY', '').strip()
+        or _api_key_from_streamlit()
+    )
+
+
+def _response_text(payload: dict) -> str:
+    text = payload.get('output_text')
+    if isinstance(text, str) and text.strip():
+        return text
+    chunks: list[str] = []
+    for item in payload.get('output') or []:
+        if not isinstance(item, dict):
+            continue
+        for content in item.get('content') or []:
+            if isinstance(content, dict) and isinstance(content.get('text'), str):
+                chunks.append(content['text'])
+    return ''.join(chunks).strip()
+
+
+def _compact_html_for_ai(base_url: str, html: str, limit: int) -> str:
+    soup = _soup(html)
+    snippets: list[str] = []
+    for card in _generic_card_nodes(soup):
+        text = clean_cell(card.get_text(' ', strip=True))[:700]
+        hrefs = []
+        for node in card.select('a[href]')[:4]:
+            href = _norm_url(urljoin(base_url, str(node.get('href') or '').strip()))
+            if href and _allowed_product_url(href, base_url):
+                _append_unique(hrefs, href, 4)
+        images = []
+        for node in card.select('img[data-src], img[src]')[:3]:
+            _append_unique(images, _image_url(node, base_url), 3)
+        attrs = {
+            key: clean_cell(card.get(key) or '')
+            for key in ['data-id', 'data-sku', 'data-product-id', 'data-produtoid']
+            if clean_cell(card.get(key) or '')
+        }
+        if text or hrefs or images or attrs:
+            snippets.append(json.dumps({'attrs': attrs, 'hrefs': hrefs, 'images': images, 'text': text}, ensure_ascii=False))
+        if len(snippets) >= min(limit * 2, 80):
+            break
+
+    if not snippets:
+        for node in soup.select('a[href]')[:160]:
+            href = _norm_url(urljoin(base_url, str(node.get('href') or '').strip()))
+            text = clean_cell(node.get_text(' ', strip=True))[:180]
+            if href and text:
+                snippets.append(json.dumps({'hrefs': [href], 'text': text}, ensure_ascii=False))
+    return '\n'.join(snippets)[:55000]
+
+
+def _openai_listing_products(base_url: str, html: str, limit: int) -> list[FastProductData]:
+    key = _openai_api_key()
+    if not key:
+        return []
+
+    compact = _compact_html_for_ai(base_url, html, limit)
+    if not compact:
+        return []
+
+    schema = {
+        'type': 'object',
+        'additionalProperties': False,
+        'properties': {
+            'products': {
+                'type': 'array',
+                'items': {
+                    'type': 'object',
+                    'additionalProperties': False,
+                    'properties': {
+                        'url': {'type': 'string'},
+                        'codigo': {'type': 'string'},
+                        'gtin': {'type': 'string'},
+                        'descricao': {'type': 'string'},
+                        'preco': {'type': 'string'},
+                        'estoque': {'type': 'string'},
+                        'imagem': {'type': 'string'},
+                        'marca': {'type': 'string'},
+                        'categoria': {'type': 'string'},
+                    },
+                    'required': ['url', 'codigo', 'gtin', 'descricao', 'preco', 'estoque', 'imagem', 'marca', 'categoria'],
+                },
+            },
+        },
+        'required': ['products'],
+    }
+    prompt = (
+        'Extraia produtos reais de uma página de fornecedor/e-commerce. '
+        'Use apenas dados presentes nos snippets. Ignore menus, banners, login, carrinho e links sociais. '
+        'Prefira preço final/promocional em vez de preço antigo. Retorne no máximo '
+        f'{int(limit)} produtos. Base URL: {base_url}\n\nSNIPPETS:\n{compact}'
+    )
+    request_payload = {
+        'model': os.getenv('MAPEIAAI_OPENAI_MODEL', DEFAULT_OPENAI_MODEL).strip() or DEFAULT_OPENAI_MODEL,
+        'instructions': 'Você é um extrator de catálogo. Responda somente no JSON schema solicitado, sem comentários.',
+        'input': prompt,
+        'text': {
+            'format': {
+                'type': 'json_schema',
+                'name': 'product_listing_extraction',
+                'schema': schema,
+                'strict': False,
+            },
+        },
+        'temperature': 0,
+    }
+
+    try:
+        response = requests.post(
+            OPENAI_RESPONSES_URL,
+            headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'},
+            json=request_payload,
+            timeout=28,
+        )
+        if response.status_code >= 400:
+            add_audit_event(
+                'site_scraper_openai_listing_fallback',
+                area='SITE',
+                step='entrada',
+                status='AVISO',
+                details={'status_code': response.status_code, 'products': 0, 'responsible_file': RESPONSIBLE_FILE},
+            )
+            return []
+        raw_text = _response_text(response.json())
+        data = json.loads(raw_text) if raw_text else {}
+    except Exception as exc:
+        add_audit_event(
+            'site_scraper_openai_listing_fallback',
+            area='SITE',
+            step='entrada',
+            status='AVISO',
+            details={'error': type(exc).__name__, 'products': 0, 'responsible_file': RESPONSIBLE_FILE},
+        )
+        return []
+
+    products: list[FastProductData] = []
+    seen: set[str] = set()
+    for item in data.get('products') or []:
+        if not isinstance(item, dict):
+            continue
+        url = _norm_url(urljoin(base_url, clean_cell(item.get('url') or '')))
+        if not url or not _allowed_product_url(url, base_url):
+            continue
+        descricao = clean_cell(item.get('descricao') or '')[:240]
+        key_value = clean_cell(item.get('codigo') or '') or url
+        if not descricao or key_value in seen:
+            continue
+        seen.add(key_value)
+        products.append(FastProductData(
+            url=url,
+            codigo=clean_cell(item.get('codigo') or ''),
+            gtin=clean_cell(item.get('gtin') or ''),
+            descricao=descricao,
+            preco=_clean_price(item.get('preco') or ''),
+            estoque=clean_cell(item.get('estoque') or ''),
+            imagem=clean_cell(urljoin(base_url, clean_cell(item.get('imagem') or ''))),
+            marca=clean_cell(item.get('marca') or ''),
+            categoria=clean_cell(item.get('categoria') or ''),
+        ))
+        if len(products) >= limit:
+            break
+
+    add_audit_event(
+        'site_scraper_openai_listing_fallback',
+        area='SITE',
+        step='entrada',
+        status='OK' if products else 'INFO',
+        details={'products': len(products), 'responsible_file': RESPONSIBLE_FILE},
+    )
+    return products[:limit]
+
+
 def wbuy_product_links(base_url: str, html: str, limit: int = 1200) -> list[str]:
     if not is_wbuy_html(html) and 'data-sku=' not in str(html or '').lower():
         return []
@@ -106,54 +371,28 @@ def wbuy_product_links(base_url: str, html: str, limit: int = 1200) -> list[str]
 
 
 def wbuy_listing_products(base_url: str, html: str, limit: int = 1200) -> list[FastProductData]:
-    """Extrai dados mínimos dos cards wBuy quando os detalhes falham.
-
-    A página de vitrine wBuy costuma trazer URL, SKU, nome, preço e imagem nos
-    cards. Isso evita lote vazio quando a leitura das páginas de detalhe é
-    bloqueada ou fica lenta demais.
-    """
-    if not is_wbuy_html(html) and 'data-sku=' not in str(html or '').lower():
-        return []
+    """Extrai dados de cards de vitrine; usa IA opcional se o HTML variar."""
     soup = _soup(html)
     products: list[FastProductData] = []
     seen: set[str] = set()
+    preferred_cards = _card_nodes(soup) if is_wbuy_html(html) or 'data-sku=' in str(html or '').lower() else []
+    cards = preferred_cards or _generic_card_nodes(soup)
 
-    for card in _card_nodes(soup):
-        action = card.select_one('a.b_acao[href]') or card.select_one('a[href]')
-        href = action.get('href') if action else ''
-        url = _norm_url(urljoin(base_url, str(href or '').strip()))
-        if not url or not _allowed_product_url(url, base_url):
+    for card in cards:
+        product = _product_from_card(base_url, card)
+        if not product:
             continue
-
-        sku = clean_cell(card.get('data-sku') or '')
-        code = sku or clean_cell(card.get('data-id') or '')
-        key = sku or url
-        if key in seen:
+        key = product.codigo or product.url
+        if not key or key in seen:
             continue
         seen.add(key)
-
-        name_node = card.select_one('h3.produto, .produto, [itemprop="name"]')
-        image_node = card.select_one('img[data-src], img[src]')
-        price_node = card.select_one('.valor_final') or card.select_one('.valor')
-        name = clean_cell(
-            (name_node.get('title') if name_node else '')
-            or (name_node.get_text(' ', strip=True) if name_node else '')
-            or (image_node.get('alt') if image_node else '')
-        )[:240]
-        image = clean_cell(urljoin(base_url, str((image_node.get('data-src') or image_node.get('src') or '') if image_node else '').strip()))
-        price = _clean_price(price_node.get_text(' ', strip=True) if price_node else '')
-
-        products.append(FastProductData(
-            url=url,
-            codigo=code,
-            descricao=name,
-            preco=price,
-            imagem=image,
-        ))
+        products.append(product)
         if len(products) >= limit:
             break
 
-    return products[:limit]
+    if products:
+        return products[:limit]
+    return _openai_listing_products(base_url, html, limit)
 
 
 def html_has_wbuy_product(html: str) -> bool:
