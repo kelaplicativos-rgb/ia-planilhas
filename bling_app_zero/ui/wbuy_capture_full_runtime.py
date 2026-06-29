@@ -19,14 +19,29 @@ def _safe_int(value: object, fallback: int) -> int:
     return parsed if parsed > 0 else fallback
 
 
-def install_wbuy_capture_full_runtime() -> bool:
-    """Evita que categoria WBuy/Atacadum encerre com 2 ou 5 produtos.
+def _install_wbuy_live_runtime_from_ui() -> bool:
+    try:
+        from bling_app_zero.engines.fast_site_scraper.wbuy_live_runtime import install as install_wbuy_live_runtime
+        return bool(install_wbuy_live_runtime())
+    except Exception as exc:
+        add_audit_event(
+            'wbuy_live_runtime_install_from_ui_failed',
+            area='SITE',
+            step='boot',
+            status='AVISO',
+            details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE},
+        )
+        return False
 
-    O diagnóstico de 2026-06-29 mostrou fluxo WBuy com produtos nomeados, porém
-    apenas 2/5 linhas, enquanto as categorias públicas têm dezenas de cards.
-    Como a referência do SmartScan é importada diretamente no painel, patchamos o
-    agente e também o alias já carregado em ``site_panel_capture``.
+
+def install_wbuy_capture_full_runtime() -> bool:
+    """Evita que categoria WBuy/Atacadum encerre vazia ou com poucos produtos.
+
+    O diagnóstico de 2026-06-29 mostrou que o app estava em 3.9.15, mas não
+    registrou ``wbuy_live_runtime_installed`` e ainda caiu no fallback OpenAI.
+    Por isso este instalador de UI também força o runtime de paginação/dataLayer.
     """
+    live_runtime_installed = _install_wbuy_live_runtime_from_ui()
     try:
         from bling_app_zero.agents import site_capture_agent as agent
     except Exception as exc:
@@ -35,11 +50,11 @@ def install_wbuy_capture_full_runtime() -> bool:
             area='SITE',
             step='boot',
             status='AVISO',
-            details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE},
+            details={'error': str(exc)[:220], 'live_runtime_installed': live_runtime_installed, 'responsible_file': RESPONSIBLE_FILE},
         )
-        return False
+        return live_runtime_installed
 
-    installed_any = False
+    installed_any = bool(live_runtime_installed)
 
     original_reason = getattr(agent, '_wbuy_weak_capture_reason', None)
     if callable(original_reason) and not getattr(original_reason, '_wbuy_full_runtime_patch', False):
@@ -116,6 +131,7 @@ def install_wbuy_capture_full_runtime() -> bool:
         status='OK' if installed_any else 'INFO',
         details={
             'installed_any': installed_any,
+            'live_runtime_installed': live_runtime_installed,
             'min_products': WBUY_MIN_PRODUCTS_FOR_CATEGORY,
             'patches_agent_alias_and_panel_alias': True,
             'responsible_file': RESPONSIBLE_FILE,
