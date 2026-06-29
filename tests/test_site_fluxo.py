@@ -180,6 +180,38 @@ class TestSiteFluxo(unittest.TestCase):
         self.assertEqual(len(df), 1)
         self.assertEqual(report.platform.platform, 'wbuy')
 
+    def test_smartscan_wbuy_fraco_forca_retry_wbuy(self) -> None:
+        def weak_engine_runner(**_kwargs) -> pd.DataFrame:
+            return pd.DataFrame([
+                {
+                    'URL': 'https://www.atacadum.com.br/smartphone-xiaomi-redmi-15-8-256gb',
+                    'Nome do Produto': '',
+                }
+            ])
+
+        retry_df = pd.DataFrame([
+            {'URL': 'https://www.atacadum.com.br/produto/a', 'Nome do Produto': 'Produto A'},
+            {'URL': 'https://www.atacadum.com.br/produto/b', 'Nome do Produto': 'Produto B'},
+        ])
+
+        with patch(
+            'bling_app_zero.agents.site_capture_agent.find_site_api',
+            return_value=ApiFinderResult(found=False, platform='wbuy', candidates=[], message='sem api'),
+        ), patch('bling_app_zero.agents.site_capture_agent.run_fast_site_scraper', return_value=retry_df) as retry:
+            df, report = run_bling_smartscan(
+                raw_urls='https://www.atacadum.com.br/',
+                operation='universal',
+                requested_columns=['URL', 'Nome do Produto'],
+                engine_runner=weak_engine_runner,
+                all_products=True,
+                max_pages=5,
+                max_products=10,
+            )
+
+        retry.assert_called_once()
+        self.assertEqual(len(df), 2)
+        self.assertEqual(report.platform.platform, 'wbuy')
+
     def test_motor_cadastro_independente_respeita_contrato_de_cadastro(self) -> None:
         with patch('bling_app_zero.engines.fast_site_scraper.engine.fetch_live', return_value=''):
             df = run_site_operation_engine(
