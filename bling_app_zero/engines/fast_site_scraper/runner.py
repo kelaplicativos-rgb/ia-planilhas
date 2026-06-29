@@ -123,19 +123,21 @@ def _wbuy_candidate_pages(raw_urls: str, max_products: int) -> list[str]:
     for start in starts:
         _append_unique_url(pages, start)
 
-    page_count = max(2, min(6, int(max_products or WBUY_FALLBACK_MIN_PRODUCTS) // 24 + 2))
     for root in roots:
         for path in WBUY_FALLBACK_BROWSE_PATHS:
             _append_unique_url(pages, f'{root}{path}')
-            separator = '&' if '?' in path else '?'
-            for page in range(2, page_count + 1):
-                for page_key in ('pg', 'page', 'pagina'):
-                    _append_unique_url(pages, f'{root}{path}{separator}{urlencode({page_key: page})}')
 
         for term in WBUY_FALLBACK_SEARCH_TERMS:
             for endpoint in WBUY_FALLBACK_SEARCH_ENDPOINTS:
                 for query_key in WBUY_FALLBACK_QUERY_KEYS:
                     _append_unique_url(pages, f'{root}{endpoint}?{urlencode({query_key: term})}')
+
+        page_count = max(2, min(6, int(max_products or WBUY_FALLBACK_MIN_PRODUCTS) // 24 + 2))
+        for path in WBUY_FALLBACK_BROWSE_PATHS:
+            separator = '&' if '?' in path else '?'
+            for page in range(2, page_count + 1):
+                for page_key in ('pg', 'page', 'pagina'):
+                    _append_unique_url(pages, f'{root}{path}{separator}{urlencode({page_key: page})}')
 
     return pages[:WBUY_FALLBACK_PAGE_LIMIT]
 
