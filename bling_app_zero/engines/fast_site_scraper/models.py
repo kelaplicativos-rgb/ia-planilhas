@@ -14,6 +14,7 @@ class FastProductPage:
 @dataclass(frozen=True)
 class FastProductData:
     url: str = ''
+    id_produto: str = ''
     codigo: str = ''
     gtin: str = ''
     descricao: str = ''
