@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import json
-import textwrap
 import zipfile
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from io import BytesIO
 
 
@@ -47,6 +46,7 @@ import argparse
 import json
 import sys
 import time
+import traceback
 import zipfile
 from pathlib import Path
 
@@ -58,12 +58,21 @@ except Exception:
     print('Depois:   python -m playwright install chromium')
     raise
 
+ERROR_LOG = 'ERRO_COLETOR.txt'
+
 
 def load_config(path: str) -> dict:
     try:
         return json.loads(Path(path).read_text(encoding='utf-8'))
     except Exception:
         return {}
+
+
+def write_error_log(exc: BaseException) -> None:
+    try:
+        Path(ERROR_LOG).write_text(traceback.format_exc(), encoding='utf-8')
+    except Exception:
+        pass
 
 
 def wait_for_datatable(page, timeout_ms: int = 120000) -> bool:
@@ -87,13 +96,38 @@ def wait_for_datatable(page, timeout_ms: int = 120000) -> bool:
 
 
 def datatable_info(page) -> dict:
-    return page.evaluate(
-        """() => {
-            const tables = window.jQuery.fn.dataTable.tables();
-            const dt = window.jQuery(tables[0]).DataTable();
-            return dt.page.info();
-        }"""
-    )
+    try:
+        return page.evaluate(
+            """() => {
+                const tables = window.jQuery.fn.dataTable.tables();
+                if (!tables.length) return {page: 0, pages: 0, recordsTotal: 0, recordsDisplay: 0};
+                const dt = window.jQuery(tables[0]).DataTable();
+                return dt.page.info();
+            }"""
+        ) or {}
+    except Exception:
+        return {'page': 0, 'pages': 0, 'recordsTotal': 0, 'recordsDisplay': 0}
+
+
+def visible_table_rows(page) -> int:
+    try:
+        return int(page.evaluate("""() => document.querySelectorAll('table tbody tr').length""") or 0)
+    except Exception:
+        return 0
+
+
+def wait_for_products_loaded(page, timeout_ms: int = 90000) -> dict:
+    deadline = time.time() + timeout_ms / 1000
+    last_info: dict = {}
+    while time.time() < deadline:
+        info = datatable_info(page)
+        last_info = info
+        total = int(info.get('recordsTotal') or info.get('recordsDisplay') or 0)
+        rows = visible_table_rows(page)
+        if total > 0 or rows > 1:
+            return info
+        time.sleep(1)
+    return last_info
 
 
 def goto_datatable_page(page, page_index: int) -> None:
@@ -116,10 +150,13 @@ def goto_datatable_page(page, page_index: int) -> None:
             const isProcessing = processing && getComputedStyle(processing).display !== 'none';
             return info.page === pageIndex && !isProcessing;
         }""",
-        page_index,
+        arg=page_index,
         timeout=90000,
     )
-    page.wait_for_load_state('networkidle', timeout=90000)
+    try:
+        page.wait_for_load_state('networkidle', timeout=90000)
+    except Exception:
+        pass
     page.wait_for_timeout(900)
 
 
@@ -140,17 +177,16 @@ def write_capture(context, page, out_dir: Path, page_number: int, capture_format
         saved.append(mhtml_path)
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description='Coletor universal MapeiaAI para fornecedores protegidos por login.')
-    parser.add_argument('--config', default='provider_config.json')
-    parser.add_argument('--url', default='')
-    parser.add_argument('--pages', type=int, default=0)
-    parser.add_argument('--format', choices=['html', 'mhtml', 'both'], default='')
-    parser.add_argument('--out', default='capturas_fornecedor')
-    parser.add_argument('--profile', default='_mapeiaai_fornecedor_profile')
-    args = parser.parse_args()
+def make_zip(out_dir: Path, saved_files: list[Path]) -> Path:
+    zip_path = out_dir / 'mapeiaai_capturas_fornecedor.zip'
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for file in saved_files:
+            if file.exists():
+                zf.write(file, file.name)
+    return zip_path
 
-    config = load_config(args.config)
+
+def run_capture(args: argparse.Namespace, config: dict) -> int:
     url = args.url or config.get('start_url') or ''
     pages_requested = int(args.pages or config.get('pages') or 0)
     capture_format = args.format or config.get('format') or 'mhtml'
@@ -164,6 +200,8 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     profile_dir = Path(args.profile).resolve()
     profile_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_files: list[Path] = []
 
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
@@ -179,46 +217,58 @@ def main() -> int:
             print('\nFaca login no navegador aberto e deixe a tabela de produtos carregada.')
             input('Quando a tabela aparecer, pressione ENTER aqui no terminal... ')
             if not wait_for_datatable(page, timeout_ms=180000):
-                print('Nao encontrei DataTables. Este coletor automatico usa tabelas paginadas DataTables.')
-                print('Mesmo assim vou salvar a pagina atual para diagnostico.')
-                saved: list[Path] = []
-                write_capture(context, page, out_dir, 1, capture_format, saved)
-                zip_path = out_dir / 'mapeiaai_capturas_fornecedor.zip'
-                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-                    for file in saved:
-                        zf.write(file, file.name)
+                print('Nao encontrei DataTables. Vou salvar a pagina atual para diagnostico.')
+                write_capture(context, page, out_dir, 1, capture_format, saved_files)
+                zip_path = make_zip(out_dir, saved_files)
                 print(f'ZIP gerado: {zip_path}')
                 context.close()
                 return 0
 
-        info = datatable_info(page)
+        info = wait_for_products_loaded(page, timeout_ms=90000)
         detected_pages = int(info.get('pages') or 0)
         total = int(info.get('recordsTotal') or info.get('recordsDisplay') or 0)
+
+        if total <= 0 and visible_table_rows(page) <= 1:
+            print('\nA tabela foi encontrada, mas ainda mostra 0 registros.')
+            print('Verifique se voce esta logado, sem filtro ativo, e na tela correta de produtos.')
+            input('Quando os produtos aparecerem na tela, pressione ENTER aqui no terminal... ')
+            info = wait_for_products_loaded(page, timeout_ms=120000)
+            detected_pages = int(info.get('pages') or 0)
+            total = int(info.get('recordsTotal') or info.get('recordsDisplay') or 0)
+
         pages = pages_requested if pages_requested > 0 else detected_pages
         pages = min(pages, detected_pages or pages)
         if pages <= 0:
             pages = 1
 
         print(f'{provider_name}: {total} registro(s) detectado(s) | {pages} pagina(s) para capturar')
-        saved_files: list[Path] = []
-        meta = {'provider': provider_name, 'url': url, 'records_total': total, 'pages_detected': detected_pages, 'pages_captured': pages}
-        (out_dir / 'mapeiaai_capture_manifest.json').write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8')
-        saved_files.append(out_dir / 'mapeiaai_capture_manifest.json')
+        meta = {
+            'provider': provider_name,
+            'url': url,
+            'records_total': total,
+            'pages_detected': detected_pages,
+            'pages_captured': pages,
+        }
+        manifest = out_dir / 'mapeiaai_capture_manifest.json'
+        manifest.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8')
+        saved_files.append(manifest)
 
         for page_index in range(pages):
             page_number = page_index + 1
             print(f'Capturando pagina {page_number}/{pages}...')
-            goto_datatable_page(page, page_index)
+            try:
+                goto_datatable_page(page, page_index)
+            except Exception as exc:
+                print(f'Aviso: nao consegui confirmar a pagina {page_number}. Vou salvar o HTML atual e continuar.')
+                error_page = out_dir / f'erro_pagina_{page_number:03d}.txt'
+                error_page.write_text(traceback.format_exc(), encoding='utf-8')
+                saved_files.append(error_page)
             write_capture(context, page, out_dir, page_number, capture_format, saved_files)
-            (out_dir / f'fornecedor_pagina_{page_number:03d}.json').write_text(json.dumps(datatable_info(page), ensure_ascii=False, indent=2), encoding='utf-8')
-            saved_files.append(out_dir / f'fornecedor_pagina_{page_number:03d}.json')
+            info_path = out_dir / f'fornecedor_pagina_{page_number:03d}.json'
+            info_path.write_text(json.dumps(datatable_info(page), ensure_ascii=False, indent=2), encoding='utf-8')
+            saved_files.append(info_path)
 
-        zip_path = out_dir / 'mapeiaai_capturas_fornecedor.zip'
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-            for file in saved_files:
-                if file.exists():
-                    zf.write(file, file.name)
-
+        zip_path = make_zip(out_dir, saved_files)
         context.close()
         print('\nPronto.')
         print(f'ZIP gerado: {zip_path}')
@@ -226,8 +276,29 @@ def main() -> int:
         return 0
 
 
+def main() -> int:
+    parser = argparse.ArgumentParser(description='Coletor universal MapeiaAI para fornecedores protegidos por login.')
+    parser.add_argument('--config', default='provider_config.json')
+    parser.add_argument('--url', default='')
+    parser.add_argument('--pages', type=int, default=0)
+    parser.add_argument('--format', choices=['html', 'mhtml', 'both'], default='')
+    parser.add_argument('--out', default='capturas_fornecedor')
+    parser.add_argument('--profile', default='_mapeiaai_fornecedor_profile')
+    args = parser.parse_args()
+    config = load_config(args.config)
+    return run_capture(args, config)
+
+
 if __name__ == '__main__':
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except Exception as exc:
+        write_error_log(exc)
+        print('\nERRO NO COLETOR:')
+        print(str(exc))
+        print(f'\nDetalhes salvos em: {ERROR_LOG}')
+        input('Pressione ENTER para fechar...')
+        raise
 '''.strip() + '\n'
 
 
@@ -259,6 +330,7 @@ echo.
 py coletor_fornecedor_protegido.py --config provider_config.json
 
 echo.
+echo Se houve erro, procure o arquivo ERRO_COLETOR.txt nesta mesma pasta.
 pause
 '''.strip() + '\n'
 
@@ -285,6 +357,10 @@ Segurança:
 - Não pede senha no terminal.
 - Não envia cookie/token para o MapeiaAI.
 - O MapeiaAI recebe apenas HTML/MHTML das páginas capturadas.
+
+Observação:
+- Se a tela mostrar 0 registros, o coletor vai pedir para você confirmar o login/tabela antes de continuar.
+- Se houver erro, ele deixa o arquivo ERRO_COLETOR.txt na pasta do coletor.
 
 Para outros fornecedores:
 - Escolha Genérico com paginação DataTables no MapeiaAI.
