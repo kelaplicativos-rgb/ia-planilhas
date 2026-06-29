@@ -5,6 +5,7 @@ from email import message_from_bytes
 from email.message import Message
 from email.policy import default as email_default_policy
 from typing import Iterable
+from urllib.parse import urljoin
 
 import pandas as pd
 from bs4 import BeautifulSoup
@@ -26,27 +27,12 @@ PRODUCT_CARD_SELECTORS = [
 ]
 
 NAME_ALIASES = (
-    'descricao produto',
-    'descricao',
-    'descrição produto',
-    'descrição',
-    'titulo',
-    'título',
-    'nome',
-    'produto',
-    'product name',
-    'name',
+    'descricao produto', 'descricao', 'descrição produto', 'descrição', 'titulo',
+    'título', 'nome', 'produto', 'product name', 'name',
 )
 CODE_ALIASES = (
-    'codigo produto',
-    'código produto',
-    'codigo',
-    'código',
-    'sku',
-    'referencia',
-    'referência',
-    'modelo',
-    'id produto',
+    'codigo produto', 'código produto', 'codigo', 'código', 'sku', 'referencia',
+    'referência', 'modelo', 'id produto',
 )
 PRICE_ALIASES = ('preco unitario', 'preço unitário', 'preco', 'preço', 'valor', 'price')
 STOCK_ALIASES = ('balanco', 'balanço', 'estoque', 'saldo', 'quantidade', 'qtd', 'stock')
@@ -64,19 +50,41 @@ CANONICAL_COLUMNS = [
     'Título',
     'Nome',
     'Produto',
+    'Descrição complementar',
+    'Características',
+    'Ficha técnica',
+    'Medidas',
+    'Dimensões',
+    'Peso',
     'Balanço (OBRIGATÓRIO)',
     'Estoque',
     'Quantidade extraída do estoque',
+    'Status Estoque',
     'Preço unitário (OBRIGATÓRIO)',
     'Preço',
     'Preço antigo',
     'Marca',
+    'Categoria',
     'GTIN **',
     'GTIN',
     'URL',
     'Imagem',
+    'Fotos',
     'Texto bruto',
 ]
+
+IMAGE_EXT_RE = re.compile(r'\.(?:jpg|jpeg|png|webp|gif)(?:\?|$)', re.I)
+URL_RE = re.compile(r'https?://[^\s"\'<>]+', re.I)
+BAD_URL_PREFIXES = ('javascript:', 'mailto:', 'tel:', '#')
+STOCK_ZERO_RE = re.compile(r'\b(sem\s+previs[aã]o|esgotado|indispon[ií]vel|fora\s+de\s+estoque)\b', re.I)
+STOCK_UNIT_RE = re.compile(r'(\d+(?:[\.,]\d+)?)\s*(?:unidades?|unids?|unds?|pcs?|pe[cç]as?|itens?)\b', re.I)
+PURE_NUMBER_RE = re.compile(r'^\d+(?:[\.,]\d+)?$')
+MEASURE_RE = re.compile(
+    r'\b(?:dimens(?:a|ã)o(?:es)?|medidas?|altura|largura|comprimento|profundidade|peso)?\s*[:\-]?\s*'
+    r'(\d+(?:[\.,]\d+)?\s*(?:cm|mm|m|g|kg|ml|l)'
+    r'(?:\s*[x×]\s*\d+(?:[\.,]\d+)?\s*(?:cm|mm|m|g|kg|ml|l)){0,3})',
+    re.I,
+)
 
 
 def clean_text(value: object) -> str:
@@ -166,6 +174,12 @@ def _first_value(row: pd.Series, columns: Iterable[str]) -> str:
     return ''
 
 
+def _append_unique(values: list[str], value: object, limit: int = 0) -> None:
+    text = clean_text(value)
+    if text and text not in values and (not limit or len(values) < limit):
+        values.append(text)
+
+
 def _money_values(text: str) -> list[str]:
     return [clean_text(value) for value in re.findall(r'R\$\s*\d{1,3}(?:\.\d{3})*,\d{2}|R\$\s*\d+,\d{2}', text or '')]
 
@@ -180,26 +194,179 @@ def _choose_price(text: str) -> tuple[str, str]:
     values = _money_values(text)
     if not values:
         return '', ''
-    old_price = values[0] if len(values) > 1 and re.search(r'\bde\b', text, re.I) else ''
     preferred = _money_after_word(text, 'por')
     if preferred:
-        return preferred, old_price if old_price != preferred else ''
-    if len(values) > 1 and old_price:
-        return values[1], old_price
-    return values[-1], old_price if old_price != values[-1] else ''
+        old = values[0] if values and values[0] != preferred else ''
+        return preferred, old
+    if len(values) > 1:
+        return values[-1], values[0] if values[0] != values[-1] else ''
+    return values[-1], ''
 
 
 def _clean_title(title: str) -> str:
     title = clean_text(title)
     title = re.split(r'\s+R\$\s*\d', title, maxsplit=1)[0]
     title = re.sub(r'\b(olhar|comprar|no boleto|com pix|com picpay|ver produto)\b.*$', '', title, flags=re.I)
+    title = re.sub(r'(?:\s+\b(?:QE|ER|ME)\b)+$', '', title, flags=re.I)
     return clean_text(title)
 
 
 def _stock_quantity(value: str) -> str:
     text = clean_text(value)
-    match = re.search(r'(\d+(?:[\.,]\d+)?)\s*(?:unidades?|unds?|pcs?|peças?)', text, flags=re.I)
-    return clean_text(match.group(1)) if match else ''
+    if not text:
+        return ''
+    if STOCK_ZERO_RE.search(text):
+        return '0'
+    match = STOCK_UNIT_RE.search(text)
+    if match:
+        return clean_text(match.group(1)).replace(',', '.')
+    if PURE_NUMBER_RE.match(text):
+        return text.replace(',', '.')
+    return ''
+
+
+def _stock_value_from_text(value: str) -> str:
+    qty = _stock_quantity(value)
+    return qty if qty != '' else ''
+
+
+def _is_stock_column(column: object) -> bool:
+    key = normalize_key(column)
+    return any(alias in key for alias in STOCK_ALIASES)
+
+
+def _is_image_column(column: object) -> bool:
+    key = normalize_key(column)
+    return any(alias in key for alias in IMAGE_ALIASES)
+
+
+def _is_url_column(column: object) -> bool:
+    key = normalize_key(column)
+    return any(alias in key for alias in URL_ALIASES)
+
+
+def _raw_attr_values(node: Tag, attrs: Iterable[str]) -> list[str]:
+    values: list[str] = []
+    for attr in attrs:
+        raw = node.get(attr)
+        if isinstance(raw, (list, tuple)):
+            for item in raw:
+                _append_unique(values, item)
+        else:
+            _append_unique(values, raw)
+    return values
+
+
+def _descendant_attr_text(root: Tag, attrs: Iterable[str]) -> str:
+    values: list[str] = []
+    for node in [root, *root.find_all(True)]:
+        if not isinstance(node, Tag):
+            continue
+        for value in _raw_attr_values(node, attrs):
+            _append_unique(values, value, limit=80)
+    return ' '.join(values)
+
+
+def _urls_from_text(text: object) -> list[str]:
+    return [clean_text(match.group(0).rstrip(').,;')) for match in URL_RE.finditer(str(text or ''))]
+
+
+def _looks_like_image_url(value: str) -> bool:
+    low = value.lower()
+    return bool(IMAGE_EXT_RE.search(low) or 'media.obaobamix.com.br' in low or '/produtos/' in low or '/products/' in low)
+
+
+def _cell_urls(cell: Tag, *, images_only: bool = False) -> list[str]:
+    urls: list[str] = []
+    for node in [cell, *cell.find_all(True)]:
+        if not isinstance(node, Tag):
+            continue
+        for attr in ('href', 'src', 'data-src', 'data-original', 'data-lazy', 'data-zoom-image', 'data-url', 'title', 'data-original-title'):
+            raw = node.get(attr)
+            values = raw if isinstance(raw, (list, tuple)) else [raw]
+            for value in values:
+                text = str(value or '').strip()
+                if not text:
+                    continue
+                candidates = _urls_from_text(text) if 'http' in text else [text]
+                for candidate in candidates:
+                    candidate = clean_text(urljoin('', candidate))
+                    low = candidate.lower()
+                    if not candidate or low.startswith(BAD_URL_PREFIXES):
+                        continue
+                    if images_only and not _looks_like_image_url(candidate):
+                        continue
+                    if not images_only and _looks_like_image_url(candidate):
+                        pass
+                    _append_unique(urls, candidate, limit=12)
+    return urls
+
+
+def _stock_value_from_cell(cell: Tag) -> tuple[str, str]:
+    visible = clean_text(cell.get_text(' ', strip=True))
+    attrs = _descendant_attr_text(cell, ('data-original-title', 'title', 'aria-label', 'data-title', 'data-content', 'data-value'))
+    combined = clean_text(f'{visible} {attrs}')
+    qty = _stock_quantity(combined)
+    return qty, visible
+
+
+def _product_id_from_cells(cells: list[Tag]) -> str:
+    for cell in cells:
+        for node in [cell, *cell.find_all(True)]:
+            if not isinstance(node, Tag):
+                continue
+            value = clean_text(node.get('data-id') or node.get('data-product-id') or node.get('data-produtoid'))
+            if value and value.isdigit():
+                return value
+    return ''
+
+
+def _cell_value_for_column(cell: Tag, column: str) -> tuple[str, dict[str, str]]:
+    visible = clean_text(cell.get_text(' ', strip=True))
+    extras: dict[str, str] = {}
+    if _is_stock_column(column):
+        qty, status = _stock_value_from_cell(cell)
+        extras['Status Estoque'] = status
+        extras['Quantidade extraída do estoque'] = qty
+        return qty or visible, extras
+    if _is_image_column(column):
+        images = _cell_urls(cell, images_only=True)
+        return '|'.join(images) or visible, extras
+    if _is_url_column(column):
+        urls = _cell_urls(cell, images_only=False)
+        return '|'.join(urls) or visible, extras
+    return visible, extras
+
+
+def _row_image_urls(cells: list[Tag]) -> str:
+    images: list[str] = []
+    for cell in cells:
+        for url in _cell_urls(cell, images_only=True):
+            _append_unique(images, url, limit=12)
+    return '|'.join(images)
+
+
+def _row_links(cells: list[Tag]) -> str:
+    links: list[str] = []
+    for cell in cells:
+        for url in _cell_urls(cell, images_only=False):
+            if not _looks_like_image_url(url):
+                _append_unique(links, url, limit=8)
+    return '|'.join(links)
+
+
+def _extract_measures(text: str) -> tuple[str, str]:
+    values: list[str] = []
+    for match in MEASURE_RE.finditer(text or ''):
+        value = clean_text(match.group(1))
+        if value and not re.fullmatch(r'\d+\s*(?:ml|l)', value, flags=re.I):
+            _append_unique(values, value, limit=8)
+    measures = ' | '.join(values)
+    peso = ''
+    weight = re.search(r'\b(?:peso|weight)\s*[:\-]?\s*(\d+(?:[\.,]\d+)?\s*(?:g|kg))\b', text or '', flags=re.I)
+    if weight:
+        peso = clean_text(weight.group(1))
+    return measures, peso
 
 
 def _candidate_identity(card: Tag) -> str:
@@ -214,13 +381,6 @@ def _candidate_identity(card: Tag) -> str:
 
 
 def _is_probably_product_container(card: Tag) -> bool:
-    """Evita capturar container geral e título solto como se fossem produtos.
-
-    Exemplo real dos MHTML testados:
-    - `.item[data-sku]` é o card correto;
-    - `h3.produto` é apenas o título dentro do card;
-    - `.produtos` é o container da lista inteira.
-    """
     if not isinstance(card, Tag):
         return False
 
@@ -259,33 +419,60 @@ def normalize_product_frame(df: pd.DataFrame) -> pd.DataFrame:
     original_columns = [str(column) for column in out.columns]
     rows: list[dict[str, str]] = []
     for _, row in out.iterrows():
-        name = _first_value(row, [name_col, 'Descrição Produto', 'Título', 'Titulo', 'Nome', 'Produto', 'Descrição', 'Descricao'])
+        name = _clean_title(_first_value(row, [name_col, 'Descrição Produto', 'Título', 'Titulo', 'Nome', 'Produto', 'Descrição', 'Descricao']))
         code = _first_value(row, [code_col, 'Codigo produto *', 'Código produto', 'Codigo produto', 'SKU', 'Código', 'Codigo'])
-        price = _first_value(row, [price_col, 'Preço unitário (OBRIGATÓRIO)', 'Preço unitário', 'Preco unitario', 'Preço', 'Preco'])
-        stock = _first_value(row, [stock_col, 'Balanço (OBRIGATÓRIO)', 'Balanço', 'Balanco', 'Estoque', 'Saldo', 'Quantidade'])
+        product_id = _first_value(row, ['ID Produto', 'Id Produto', 'id produto'])
+        price_raw = _first_value(row, [price_col, 'Preço unitário (OBRIGATÓRIO)', 'Preço unitário', 'Preco unitario', 'Preço', 'Preco'])
+        price, old_price = _choose_price(price_raw)
+        price = price or price_raw
+        old_price = _first_value(row, ['Preço antigo', 'Preco antigo', 'Preço de', 'Preco de']) or old_price
+        stock_raw = _first_value(row, [stock_col, 'Balanço (OBRIGATÓRIO)', 'Balanço', 'Balanco', 'Quantidade extraída do estoque', 'Quantidade', 'Estoque', 'Saldo'])
+        stock_status = _first_value(row, ['Status Estoque', 'Estoque original', 'Status'])
+        real_stock = _stock_quantity(stock_raw) or _stock_quantity(stock_status)
+        if not real_stock and STOCK_ZERO_RE.search(f'{stock_raw} {stock_status}'):
+            real_stock = '0'
+        stock_value = real_stock
         brand = _first_value(row, [brand_col, 'Marca'])
         gtin = _first_value(row, [gtin_col, 'GTIN', 'GTIN **', 'EAN'])
         url = _first_value(row, [url_col, 'URL', 'Link'])
-        image = _first_value(row, [image_col, 'Imagem', 'Foto'])
+        image = _first_value(row, [image_col, 'Imagem', 'Foto', 'Fotos'])
+        raw_text = _first_value(row, ['Texto bruto'])
+        measures, peso = _extract_measures(clean_text(f'{name} {raw_text}'))
+        description_extra = _first_value(row, ['Descrição complementar', 'Descricao complementar', 'Descrição Curta', 'Descricao Curta'])
+        characteristics = _first_value(row, ['Características', 'Caracteristicas'])
+        ficha = _first_value(row, ['Ficha técnica', 'Ficha tecnica'])
+        category = _first_value(row, ['Categoria', 'Category'])
 
         normalized: dict[str, str] = {
             'Codigo produto *': code,
             'Código produto': code,
             'SKU': code,
+            'ID Produto': product_id,
             'Descrição Produto': name,
             'Título': name,
             'Nome': name,
             'Produto': name,
-            'Balanço (OBRIGATÓRIO)': stock,
-            'Estoque': stock,
-            'Quantidade extraída do estoque': _stock_quantity(stock),
+            'Descrição complementar': description_extra,
+            'Características': characteristics,
+            'Ficha técnica': ficha,
+            'Medidas': _first_value(row, ['Medidas', 'Dimensões', 'Dimensoes']) or measures,
+            'Dimensões': _first_value(row, ['Dimensões', 'Dimensoes']) or measures,
+            'Peso': _first_value(row, ['Peso']) or peso,
+            'Balanço (OBRIGATÓRIO)': stock_value,
+            'Estoque': stock_value,
+            'Quantidade extraída do estoque': stock_value,
+            'Status Estoque': stock_status or stock_raw,
             'Preço unitário (OBRIGATÓRIO)': price,
             'Preço': price,
+            'Preço antigo': old_price,
             'Marca': brand,
+            'Categoria': category,
             'GTIN **': gtin,
             'GTIN': gtin,
             'URL': url,
             'Imagem': image,
+            'Fotos': image,
+            'Texto bruto': raw_text,
         }
         for column in original_columns:
             normalized[column] = clean_text(row.get(column))
@@ -301,21 +488,59 @@ def extract_tables_from_html(html_text: str) -> list[pd.DataFrame]:
     soup = BeautifulSoup(html_text or '', 'html.parser')
     frames: list[pd.DataFrame] = []
     for table in soup.find_all('table'):
-        rows: list[list[str]] = []
-        for tr in table.find_all('tr'):
-            cells = tr.find_all(['th', 'td'])
-            row = [clean_text(cell.get_text(' ', strip=True)) for cell in cells]
-            if any(row):
-                rows.append(row)
-        if len(rows) < 2:
+        tr_nodes = table.find_all('tr')
+        if len(tr_nodes) < 2:
             continue
-        width = max(len(row) for row in rows)
-        normalized_rows = [row + [''] * (width - len(row)) for row in rows]
-        columns = [clean_text(value) or f'Coluna {idx + 1}' for idx, value in enumerate(normalized_rows[0])]
-        frame = pd.DataFrame(normalized_rows[1:], columns=columns).fillna('').astype(str)
-        if not frame.empty:
+        header_cells = tr_nodes[0].find_all(['th', 'td'])
+        if len(header_cells) < 2:
+            continue
+        columns = [clean_text(cell.get_text(' ', strip=True)) or f'Coluna {idx + 1}' for idx, cell in enumerate(header_cells)]
+        rows: list[dict[str, str]] = []
+        width = len(columns)
+        for tr in tr_nodes[1:]:
+            cells = tr.find_all('td')
+            if not cells:
+                continue
+            row: dict[str, str] = {}
+            status_values: list[str] = []
+            quantity_values: list[str] = []
+            for idx in range(width):
+                column = columns[idx]
+                cell = cells[idx] if idx < len(cells) else BeautifulSoup('', 'html.parser').new_tag('td')
+                value, extras = _cell_value_for_column(cell, column)
+                row[column] = value
+                if extras.get('Status Estoque'):
+                    status_values.append(extras['Status Estoque'])
+                if extras.get('Quantidade extraída do estoque'):
+                    quantity_values.append(extras['Quantidade extraída do estoque'])
+            product_id = _product_id_from_cells(cells)
+            if product_id:
+                row.setdefault('ID Produto', product_id)
+            images = _row_image_urls(cells)
+            if images:
+                row.setdefault('Imagem', images)
+                row.setdefault('Fotos', images)
+            links = _row_links(cells)
+            if links:
+                row.setdefault('URL', links)
+            if status_values:
+                row.setdefault('Status Estoque', ' | '.join(dict.fromkeys(status_values)))
+            if quantity_values:
+                row.setdefault('Quantidade extraída do estoque', quantity_values[0])
+                row.setdefault('Balanço (OBRIGATÓRIO)', quantity_values[0])
+                row.setdefault('Estoque', quantity_values[0])
+            row.setdefault('Texto bruto', clean_text(tr.get_text(' ', strip=True))[:1600])
+            if any(clean_text(value) for value in row.values()):
+                rows.append(row)
+        if rows:
+            frame = pd.DataFrame(rows).fillna('').astype(str)
             frames.append(normalize_product_frame(frame))
     return frames
+
+
+def _images_from_card(card: Tag) -> str:
+    images = _cell_urls(card, images_only=True)
+    return '|'.join(images[:12])
 
 
 def extract_product_cards_from_html(html_text: str) -> pd.DataFrame:
@@ -358,7 +583,9 @@ def extract_product_cards_from_html(html_text: str) -> pd.DataFrame:
         sku = clean_text(card.get('data-sku')) or clean_text(card.get('data-id'))
         product_id = clean_text(card.get('data-id'))
         url = clean_text(link.get('href')) if link else ''
-        image_url = clean_text(img.get('src') or img.get('data-src') or '') if img else ''
+        images = _images_from_card(card)
+        stock, stock_status = _stock_value_from_cell(card)
+        measures, peso = _extract_measures(text)
 
         if not title and not sku:
             continue
@@ -375,12 +602,22 @@ def extract_product_cards_from_html(html_text: str) -> pd.DataFrame:
             'Título': title,
             'Nome': title,
             'Produto': title,
+            'Descrição complementar': text[:1600] if text and text != title else '',
+            'Características': text[:1600],
+            'Medidas': measures,
+            'Dimensões': measures,
+            'Peso': peso,
+            'Balanço (OBRIGATÓRIO)': stock,
+            'Estoque': stock,
+            'Quantidade extraída do estoque': stock,
+            'Status Estoque': stock_status,
             'Preço unitário (OBRIGATÓRIO)': price,
             'Preço': price,
             'Preço antigo': old_price,
             'URL': url,
-            'Imagem': image_url,
-            'Texto bruto': text[:1200],
+            'Imagem': images,
+            'Fotos': images,
+            'Texto bruto': text[:1600],
         })
     return normalize_product_frame(pd.DataFrame(rows).fillna('')) if rows else pd.DataFrame()
 
