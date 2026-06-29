@@ -262,15 +262,17 @@ def urls_from_embedded_text(raw: str, base: str, max_items: int) -> list[str]:
 def _append_wbuy_candidates(candidates: list[str], root: str) -> None:
     for path in WBUY_BROWSE_PATHS:
         candidates.append(f'{root}{path}')
-        for page in range(2, 7):
-            for page_key in ('pg', 'page', 'pagina'):
-                separator = '&' if '?' in path else '?'
-                candidates.append(f'{root}{path}{separator}{urlencode({page_key: page})}')
 
     for term in WBUY_SEARCH_TERMS:
         for endpoint in WBUY_SEARCH_ENDPOINTS:
             for query_key in WBUY_QUERY_KEYS:
                 candidates.append(f'{root}{endpoint}?{urlencode({query_key: term})}')
+
+    for path in WBUY_BROWSE_PATHS:
+        for page in range(2, 7):
+            for page_key in ('pg', 'page', 'pagina'):
+                separator = '&' if '?' in path else '?'
+                candidates.append(f'{root}{path}{separator}{urlencode({page_key: page})}')
 
 
 def _api_candidates_for_root(root: str) -> list[str]:
