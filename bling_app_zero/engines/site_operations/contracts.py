@@ -23,6 +23,7 @@ CADASTRO_DEFAULT_COLUMNS = [
     # e deixá-lo disponível no mapeamento posterior.
     'Estoque',
 ]
+URL_COLUMN_KEYS = {'url', 'link', 'produto_url', 'url_produto', 'link_produto'}
 
 
 def unique_columns(columns: Iterable[str] | None) -> list[str]:
@@ -37,9 +38,31 @@ def unique_columns(columns: Iterable[str] | None) -> list[str]:
     return cleaned
 
 
+def _column_key(column: object) -> str:
+    text = str(column or '').strip().lower()
+    for old, new in (
+        ('ã', 'a'), ('á', 'a'), ('à', 'a'), ('â', 'a'),
+        ('é', 'e'), ('ê', 'e'), ('í', 'i'),
+        ('ó', 'o'), ('ô', 'o'), ('õ', 'o'), ('ú', 'u'), ('ç', 'c'),
+    ):
+        text = text.replace(old, new)
+    return '_'.join(part for part in text.replace('-', ' ').replace('/', ' ').split() if part)
+
+
+def _has_url_column(columns: Iterable[str]) -> bool:
+    return any(_column_key(column) in URL_COLUMN_KEYS for column in columns)
+
+
+def _with_site_url_column(columns: list[str]) -> list[str]:
+    if not columns or _has_url_column(columns):
+        return columns
+    return ['URL', *columns]
+
+
 def cadastro_columns(columns: Iterable[str] | None) -> list[str]:
-    return unique_columns(columns) or CADASTRO_DEFAULT_COLUMNS.copy()
+    cleaned = unique_columns(columns)
+    return _with_site_url_column(cleaned) or CADASTRO_DEFAULT_COLUMNS.copy()
 
 
 def estoque_columns(columns: Iterable[str] | None) -> list[str]:
-    return unique_columns(columns)
+    return _with_site_url_column(unique_columns(columns))
