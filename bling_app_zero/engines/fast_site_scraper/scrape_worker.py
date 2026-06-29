@@ -31,7 +31,7 @@ def url_only_row(url: str) -> FastProductData:
 
 def has_useful_data(product: FastProductData, needed: set[str]) -> bool:
     if any([
-        product.codigo, product.gtin, product.descricao, product.descricao_complementar,
+        product.id_produto, product.codigo, product.gtin, product.descricao, product.descricao_complementar,
         product.ficha_tecnica, product.caracteristicas, product.preco, product.estoque,
         product.imagem, product.marca, product.categoria,
     ]):
@@ -78,6 +78,7 @@ def scrape_one(url: str, needed: set[str]) -> tuple[str, FastProductData, float,
     page = parse_product_page(url, html)
     data = {
         'url': url,
+        'id_produto': '',
         'codigo': '',
         'gtin': '',
         'descricao': '',
@@ -95,6 +96,7 @@ def scrape_one(url: str, needed: set[str]) -> tuple[str, FastProductData, float,
         data['url'] = extract_url(page)
     if 'codigo' in needed or 'id_produto' in needed:
         data['codigo'] = extract_code(page)
+        data['id_produto'] = data['codigo']
     if 'gtin' in needed:
         data['gtin'] = extract_gtin(page)
     if needed.intersection(DESCRIPTION_TRIGGER_KINDS):
