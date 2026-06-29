@@ -9,7 +9,7 @@ import pandas as pd
 from bling_app_zero.engines.fast_site_scraper.engine import run_fast_site_scraper
 from bling_app_zero.engines.site_operations import run_site_operation_engine
 from bling_app_zero.engines.site_operations.submotors import build_submotor_plan
-from bling_app_zero.pipelines.site_pipeline import _clean_site_description_columns
+from bling_app_zero.pipelines.site_pipeline import _clean_site_description_columns, _infer_operation_from_columns
 from bling_app_zero.ui.site_models import choose_site_cadastro_model_df, choose_site_estoque_model_df, requested_columns_for_site_capture
 
 
@@ -148,6 +148,32 @@ class TestSiteFluxo(unittest.TestCase):
 
         self.assertEqual(list(df.columns), ['URL', 'Descrição', 'Preço unitário (OBRIGATÓRIO)', 'Balanço (OBRIGATÓRIO)'])
         self.assertEqual(df.loc[0, 'URL'], 'https://fornecedor.com/p/1')
+
+    def test_site_pipeline_modelo_universal_misto_nao_vira_estoque(self) -> None:
+        columns = [
+            'URL',
+            'ID Produto',
+            'Código SKU*',
+            'GTIN/EAN**',
+            'Nome do Produto',
+            'Depósito*',
+            'Movimentação de Estoque*',
+            'Tipo de lançamento*',
+            'Preço de Compra*',
+            'Preço de Custo',
+            'Observação',
+        ]
+
+        selected = _infer_operation_from_columns('universal', columns)
+
+        self.assertEqual(selected, 'universal')
+
+    def test_site_pipeline_modelo_universal_estoque_puro_ainda_usa_estoque(self) -> None:
+        columns = ['Código SKU*', 'Depósito*', 'Movimentação de Estoque*']
+
+        selected = _infer_operation_from_columns('universal', columns)
+
+        self.assertEqual(selected, 'estoque')
 
     def test_motor_estoque_sem_contrato_nao_cai_no_cadastro(self) -> None:
         df = run_site_operation_engine(
