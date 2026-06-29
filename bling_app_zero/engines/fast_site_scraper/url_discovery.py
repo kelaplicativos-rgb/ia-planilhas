@@ -5,6 +5,7 @@ from urllib.parse import parse_qs, urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
 
+from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.engines.fast_site_scraper.catalog_api_discovery import discover_from_public_catalog_apis
 from bling_app_zero.engines.fast_site_scraper.http_client import fetch_live, fetch_many_live
 from bling_app_zero.engines.fast_site_scraper.wbuy_parser import html_has_wbuy_product, wbuy_product_links
@@ -35,16 +36,109 @@ ROOT_PRODUCT_BLOCKLIST = {
     'm', 'politica', 'termos', 'atendimento', 'dropshipping', 'revenda', 'smartwatch',
     'acessorios', 'mais-produtos', 'celulares-smartphone',
 }
-BLOCKED_TERMS = ['facebook', 'instagram', 'youtube', 'whatsapp', 'mailto:', 'tel:', '/login', '/conta', '/checkout', '/cart', '/carrinho', '/blog', '/politica', '/termos']
+BLOCKED_TERMS = [
+    'facebook', 'instagram', 'youtube', 'whatsapp', 'mailto:', 'tel:', '/login', '/conta',
+    '/checkout', '/cart', '/carrinho', '/blog', '/politica', '/termos', '/action.php',
+    '/global.php', '/loadcomponents', '/anti-bot-check', '/recaptcha/', '/service_worker',
+    '/webworker',
+]
+NON_CAPTURE_HOSTS = {
+    'cdn.sistemawbuy.com.br',
+    'fonts.googleapis.com',
+    'fonts.gstatic.com',
+    'www.google-analytics.com',
+    'google-analytics.com',
+    'www.googletagmanager.com',
+    'googletagmanager.com',
+    'www.google.com',
+    'google.com',
+    'www.gstatic.com',
+    'gstatic.com',
+    'www.mercadopago.com',
+    'mercadopago.com',
+}
+NON_CAPTURE_ASSET_RE = re.compile(r'\.(jpg|jpeg|png|webp|gif|svg|css|js|pdf|zip|rar|woff2?|ttf|eot|map)(\?|$)', re.I)
+RAW_URL_RE = re.compile(r'https?://[^\s\'"<>\\]+', re.I)
 HTML_DISCOVERY_PAGE_CAP = 350
 HTML_DISCOVERY_BATCH = 36
 FEED_BATCH = 36
 SMART_URL_TARGET = 220
 FULL_SCAN_URL_TARGET = 2500
+RESPONSIBLE_FILE = 'bling_app_zero/engines/fast_site_scraper/url_discovery.py'
+
+
+def _clean_raw_url(value: str) -> str:
+    return str(value or '').strip().strip('"\'`').rstrip(');,')
+
+
+def _raw_url_candidates(raw: str) -> list[str]:
+    text = str(raw or '')
+    candidates: list[str] = []
+    for item in re.split(r'[\n,;]+', text):
+        clean = _clean_raw_url(item)
+        if clean.startswith(('http://', 'https://')):
+            candidates.append(clean)
+    candidates.extend(_clean_raw_url(match) for match in RAW_URL_RE.findall(text))
+    return list(dict.fromkeys(candidate for candidate in candidates if candidate))
+
+
+def _is_non_capture_url(url: str) -> bool:
+    parsed = urlparse(str(url or ''))
+    host = parsed.netloc.lower().replace('www.', '')
+    low = str(url or '').lower()
+    if host in {item.replace('www.', '') for item in NON_CAPTURE_HOSTS}:
+        return True
+    if any(term in low for term in BLOCKED_TERMS):
+        return True
+    if NON_CAPTURE_ASSET_RE.search(low):
+        return True
+    return False
+
+
+def _audit_raw_url_filter(raw_urls: str, starts: list[str]) -> None:
+    raw_candidates = [norm_url(url) for url in _raw_url_candidates(raw_urls) if norm_url(url)]
+    if not raw_candidates:
+        return
+    ignored = [url for url in raw_candidates if _is_non_capture_url(url)]
+    wbuy_assets = [url for url in raw_candidates if 'cdn.sistemawbuy.com.br' in url.lower() or 'produtos_categorias.css' in url.lower()]
+    if ignored:
+        add_audit_event(
+            'site_scraper_non_product_urls_ignored',
+            area='SITE',
+            step='entrada',
+            status='INFO',
+            details={
+                'raw_urls_found': len(raw_candidates),
+                'ignored': len(ignored),
+                'accepted': len(starts),
+                'examples': ignored[:8],
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+    if wbuy_assets:
+        add_audit_event(
+            'site_scraper_wbuy_css_detected',
+            area='SITE',
+            step='entrada',
+            status='INFO',
+            details={
+                'assets': len(wbuy_assets),
+                'accepted_starts': len(starts),
+                'wbuy_platform_confirmed_by_cdn': True,
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
 
 
 def split_urls(raw: str) -> list[str]:
-    return [item.strip() for item in re.split(r'[\n,;]+', str(raw or '')) if item.strip().startswith(('http://', 'https://'))]
+    urls: list[str] = []
+    for candidate in _raw_url_candidates(raw):
+        clean = norm_url(candidate)
+        if not clean or _is_non_capture_url(clean):
+            continue
+        if clean not in urls:
+            urls.append(clean)
+    return urls
 
 
 def norm_url(url: str) -> str:
@@ -113,7 +207,7 @@ def allowed_url(url: str, base: str) -> bool:
         url.startswith(('http://', 'https://'))
         and same_domain(url, base)
         and not any(term in low for term in BLOCKED_TERMS)
-        and not re.search(r'\.(jpg|jpeg|png|webp|gif|svg|css|js|pdf|zip|rar)(\?|$)', low)
+        and not NON_CAPTURE_ASSET_RE.search(low)
     )
 
 
@@ -253,6 +347,7 @@ def _remaining_target(urls: list[str], smart_target: int) -> int:
 
 def discover_product_urls(raw_urls: str, max_pages: int, max_products: int) -> list[str]:
     starts = [norm_url(url) for url in split_urls(raw_urls) if norm_url(url)]
+    _audit_raw_url_filter(raw_urls, starts)
     if not starts:
         return []
 
