@@ -189,9 +189,12 @@ def discover_from_html(starts: list[str], max_pages: int, max_products: int) -> 
         for url, html in fetched.items():
             if not html:
                 continue
-            page_wbuy_links = set(wbuy_product_links(url, html))
-            if productish_url(url) or html_has_wbuy_product(html):
+            is_wbuy_product_page = html_has_wbuy_product(html)
+            if productish_url(url) or is_wbuy_product_page:
                 _add_product_url(products, url, max_products)
+            if is_wbuy_product_page:
+                continue
+            page_wbuy_links = set(wbuy_product_links(url, html))
             for link in _links_from_html(url, html):
                 if (productish_url(link) or link in page_wbuy_links) and link not in products:
                     products.append(link)
