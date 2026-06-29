@@ -40,6 +40,17 @@ ESTOQUE_COLUMN_SIGNALS = (
     'deposito',
     'depósito',
 )
+STOCK_QUANTITY_COLUMN_SIGNALS = (
+    'estoque',
+    'saldo',
+    'quantidade',
+    'balanco',
+    'balanço',
+    'movimentacao_estoque',
+    'movimentação_estoque',
+    'movimentacao de estoque',
+    'movimentação de estoque',
+)
 PRICE_UPDATE_COLUMN_SIGNALS = (
     'preco',
     'preço',
@@ -174,18 +185,31 @@ def _has_any_signal(key: str, signals: tuple[str, ...]) -> bool:
 
 
 def _infer_operation_from_columns(operation: str, requested_columns: list[str] | None) -> str:
-    """Preserva o fluxo universal, mas escolhe o motor correto pelo modelo anexado."""
+    """Preserva o universal quando o modelo mistura campos de produto e estoque.
+
+    O fluxo universal/modelo pode conter colunas como deposito ou movimentacao de
+    estoque apenas porque o usuario anexou um modelo amplo. Antes isso derrubava
+    o motor para estoque, e a validacao posterior continuava como universal,
+    gerando bloqueio por preco/descricao ausentes. So tratamos como estoque
+    inferido quando o contrato parece estoque puro.
+    """
     normalized = _normalize_operation(operation)
     if normalized != 'universal':
         return normalized
 
     keys = [_column_key(column) for column in (requested_columns or [])]
     has_estoque_signal = any(_has_any_signal(key, ESTOQUE_COLUMN_SIGNALS) for key in keys)
+    has_stock_quantity_signal = any(_has_any_signal(key, STOCK_QUANTITY_COLUMN_SIGNALS) for key in keys)
     has_cadastro_only_signal = any(_has_any_signal(key, CADASTRO_ONLY_COLUMN_SIGNALS) for key in keys)
     has_price_signal = any(_has_any_signal(key, PRICE_UPDATE_COLUMN_SIGNALS) for key in keys)
     has_id_signal = any(_has_any_signal(key, ID_COLUMN_SIGNALS) for key in keys)
+    has_title_signal = any(
+        _has_any_signal(key, TITLE_COLUMN_SIGNALS) or _has_any_signal(key, FALLBACK_TITLE_COLUMN_SIGNALS)
+        for key in keys
+    )
 
-    if has_estoque_signal and not has_cadastro_only_signal:
+    has_product_data_signal = has_cadastro_only_signal or has_price_signal or has_title_signal
+    if has_estoque_signal and has_stock_quantity_signal and not has_product_data_signal:
         return 'estoque'
     if has_price_signal and has_id_signal and not has_estoque_signal and not has_cadastro_only_signal:
         return 'atualizacao_preco'
@@ -522,6 +546,7 @@ def run_pipeline(
             'message': 'Preparando motor por modelo de destino em modo completo...' if capture_all else 'Preparando motor por modelo de destino com limite seguro...',
             'progress': 0.02,
             'operation': selected_operation,
+            'requested_operation': _normalize_operation(operation),
             'max_pages': selected_max_pages,
             'max_products': selected_max_products,
             'all_products': capture_all,
