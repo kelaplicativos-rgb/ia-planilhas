@@ -134,7 +134,11 @@ class TestSiteFluxo(unittest.TestCase):
         self.assertTrue(any('produtos_autocomplete.php' in url for url in pages))
         self.assertTrue(any('/busca' in url for url in pages))
         self.assertTrue(any('/produtos' in url for url in pages))
-        self.assertGreater(len(pages), 8)
+        self.assertGreater(len(pages), 48)
+
+        deep_pages = _wbuy_candidate_pages('https://www.atacadum.com.br/', 1200)
+        self.assertGreaterEqual(len(deep_pages), 200)
+        self.assertTrue(any('pg=2' in url or 'page=2' in url or 'pagina=2' in url for url in deep_pages))
 
     def test_wbuy_merge_preserva_primarios_e_adiciona_extras(self) -> None:
         primary = [FastProductData(url='https://loja.com/produto/a', codigo='SKU-A')]
