@@ -53,7 +53,29 @@ ROOT_PRODUCT_BLOCKLIST = {
     'acessorios', 'mais-produtos', 'celulares-smartphone',
 }
 WBUY_SEARCH_TERMS = (
-    'smartwatch', 'peje', 'microwear', 'fone', 'caixa', 'camera', 'xiaomi', 'iphone', 'produto'
+    'smartwatch', 'relogio', 'relógio', 'peje', 'microwear', 'fone', 'fone bluetooth',
+    'caixa', 'caixa som', 'camera', 'câmera', 'xiaomi', 'iphone', 'celular',
+    'carregador', 'cabo', 'usb', 'tipo c', 'pelicula', 'película', 'capinha',
+    'suporte', 'power bank', 'controle', 'teclado', 'mouse', 'microfone', 'lanterna',
+    'produto',
+)
+WBUY_QUERY_KEYS = ('q', 'term', 'query', 'keyword', 'palavra', 'palavra_busca', 'busca')
+WBUY_SEARCH_ENDPOINTS = (
+    '/produtos_autocomplete.php',
+    '/busca/',
+    '/busca',
+    '/buscar',
+    '/pesquisa',
+)
+WBUY_BROWSE_PATHS = (
+    '/',
+    '/produtos',
+    '/produtos/',
+    '/mais-produtos',
+    '/categoria/mais-produtos',
+    '/smartwatch',
+    '/acessorios',
+    '/celulares-smartphone',
 )
 
 
@@ -237,6 +259,20 @@ def urls_from_embedded_text(raw: str, base: str, max_items: int) -> list[str]:
     return found[:max_items]
 
 
+def _append_wbuy_candidates(candidates: list[str], root: str) -> None:
+    for path in WBUY_BROWSE_PATHS:
+        candidates.append(f'{root}{path}')
+        for page in range(2, 7):
+            for page_key in ('pg', 'page', 'pagina'):
+                separator = '&' if '?' in path else '?'
+                candidates.append(f'{root}{path}{separator}{urlencode({page_key: page})}')
+
+    for term in WBUY_SEARCH_TERMS:
+        for endpoint in WBUY_SEARCH_ENDPOINTS:
+            for query_key in WBUY_QUERY_KEYS:
+                candidates.append(f'{root}{endpoint}?{urlencode({query_key: term})}')
+
+
 def _api_candidates_for_root(root: str) -> list[str]:
     root = root.rstrip('/')
     candidates: list[str] = []
@@ -247,10 +283,7 @@ def _api_candidates_for_root(root: str) -> list[str]:
         candidates.append(f'{root}/wp-json/wp/v2/product?{urlencode({"per_page": 100, "page": page})}')
         start = (page - 1) * 100
         candidates.append(f'{root}/api/catalog_system/pub/products/search?{urlencode({"_from": start, "_to": start + 99})}')
-    for term in WBUY_SEARCH_TERMS:
-        for query_key in ('q', 'term', 'query', 'keyword'):
-            candidates.append(f'{root}/produtos_autocomplete.php?{urlencode({query_key: term})}')
-        candidates.append(f'{root}/busca/?{urlencode({"q": term})}')
+    _append_wbuy_candidates(candidates, root)
     candidates.append(f'{root}/api/catalog_system/pub/category/tree/10')
     candidates.append(f'{root}/catalog/products.json')
     candidates.append(f'{root}/catalogo.json')
