@@ -4,7 +4,6 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
-from bling_app_zero.core.files import read_uploaded_file
 from bling_app_zero.core.protected_supplier_collectors import build_collector_zip, get_supplier, supplier_options
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/protected_supplier_panel.py'
@@ -28,6 +27,11 @@ def _provider_key_from_label(label: str) -> str:
 
 def _valid_frame(df: object) -> bool:
     return isinstance(df, pd.DataFrame) and len(df.columns) > 0 and not df.empty
+
+
+def _read_uploaded_capture(uploaded) -> pd.DataFrame:
+    from bling_app_zero.core import files as files_module
+    return files_module.read_uploaded_file(uploaded).fillna('')
 
 
 def render_protected_supplier_source_panel() -> pd.DataFrame | None:
@@ -79,7 +83,7 @@ def render_protected_supplier_source_panel() -> pd.DataFrame | None:
         return None
 
     try:
-        df = read_uploaded_file(uploaded).fillna('')
+        df = _read_uploaded_capture(uploaded)
     except Exception as exc:
         st.error(f'Não consegui ler o arquivo capturado: {exc}')
         add_audit_event('protected_supplier_upload_read_failed', area='ORIGEM', status='ERRO', details={'error': str(exc)[:220], 'provider_key': provider_key, 'responsible_file': RESPONSIBLE_FILE})
