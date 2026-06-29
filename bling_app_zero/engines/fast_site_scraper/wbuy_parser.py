@@ -17,27 +17,40 @@ WBUY_HINTS = (
     'wbuy lojas virtuais',
     'produtos_autocomplete.php',
     'data-produtoid=',
+    'data-sku=',
+    'data-id=',
     'id="inc_sku"',
     'class="codigo_produto"',
+    'valor_final',
 )
 
 WBUY_BLOCKED_URL_TERMS = (
     '/login', '/conta', '/checkout', '/cart', '/carrinho', '/blog', '/politica', '/termos',
-    'facebook', 'instagram', 'youtube', 'whatsapp', 'mailto:', 'tel:', '#',
+    '/action.php', '/global.php', '/loadcomponents', '/anti-bot-check',
+    'facebook', 'instagram', 'youtube', 'whatsapp', 'mailto:', 'tel:', '#', 'javascript:',
+    'google-analytics.com', 'mercadolibre.com/jms/', 'fingerprint',
 )
 
+WBUY_NOISE_TERMS = (
+    'slide', 'slider', 'banner', 'carousel', 'owl-carousel', 'slick', 'swiper',
+    'menu', 'header', 'footer', 'breadcrumb', 'avaliacao', 'avaliações', 'depoimento',
+    'social', 'newsletter', 'loading', 'logo', 'facebook', 'instagram', 'whatsapp',
+)
+
+BAD_NAME_TERMS = {
+    'grupos', 'banner', 'slide', 'menu', 'logo', 'imagem', 'loading', 'facebook', 'instagram',
+}
+
 GENERIC_CARD_SELECTORS = (
+    'div.item[data-id][data-sku]',
+    '.item[data-id][data-sku]',
     '[data-sku]',
     '[data-product-id]',
     '[data-produtoid]',
-    '[data-id]',
     '[itemtype*="schema.org/Product"]',
-    '.product',
-    '.produto',
-    '.prod',
-    '.item-produto',
     '.product-item',
     '.produto-item',
+    '.item-produto',
     'article',
 )
 
@@ -71,12 +84,15 @@ def _same_domain(url: str, base: str) -> bool:
 
 def _allowed_product_url(url: str, base_url: str) -> bool:
     low = str(url or '').lower()
-    return (
-        url.startswith(('http://', 'https://'))
-        and _same_domain(url, base_url)
-        and not any(term in low for term in WBUY_BLOCKED_URL_TERMS)
-        and not re.search(r'\.(jpg|jpeg|png|webp|gif|svg|css|js|pdf|zip|rar)(\?|$)', low)
-    )
+    if not url.startswith(('http://', 'https://')):
+        return False
+    if not _same_domain(url, base_url):
+        return False
+    if any(term in low for term in WBUY_BLOCKED_URL_TERMS):
+        return False
+    if re.search(r'\.(jpg|jpeg|png|webp|gif|svg|css|js|pdf|zip|rar|woff|ttf)(\?|$)', low):
+        return False
+    return True
 
 
 def _append_unique(values: list[str], value: str, limit: int = 0) -> None:
@@ -90,18 +106,53 @@ def _clean_price(value: object) -> str:
     if not text:
         return ''
     matches = re.findall(r'(?:R\$\s*)?([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}|[0-9]+(?:[\.,][0-9]{2})?)', text)
-    return matches[-1] if matches else text[:40]
+    return matches[-1] if matches else ''
+
+
+def _node_marker(node) -> str:
+    values: list[str] = []
+    for key in ('id', 'class', 'role', 'aria-label'):
+        raw = node.get(key) if hasattr(node, 'get') else ''
+        if isinstance(raw, (list, tuple)):
+            raw = ' '.join(str(item) for item in raw)
+        values.append(str(raw or ''))
+    return normalize_key(' '.join(values))
+
+
+def _has_product_signature(card) -> bool:
+    return bool(
+        clean_cell(card.get('data-sku') or '')
+        or clean_cell(card.get('data-id') or '')
+        or card.select_one('h3.produto, .valor_final, [itemprop="name"], [itemprop="price"]')
+    )
+
+
+def _is_noise_node(card) -> bool:
+    if _has_product_signature(card):
+        return False
+    node = card
+    depth = 0
+    while node is not None and depth < 5:
+        marker = _node_marker(node)
+        if any(term in marker for term in WBUY_NOISE_TERMS):
+            return True
+        node = getattr(node, 'parent', None)
+        depth += 1
+    return False
 
 
 def _card_nodes(soup: BeautifulSoup) -> list:
     nodes: list = []
-    for selector in [
-        '.prod .item[data-id][data-sku]',
-        '.produtos .item[data-id][data-sku]',
-        '.item[data-id][data-sku]',
-    ]:
+    selectors = [
+        'div.item[data-id][data-sku]',
+        '.prod div.item[data-id][data-sku]',
+        '.produtos div.item[data-id][data-sku]',
+        '.vitrine div.item[data-id][data-sku]',
+        '[itemtype*="schema.org/Product"]',
+    ]
+    for selector in selectors:
         for card in soup.select(selector):
-            if card not in nodes:
+            if card not in nodes and not _is_noise_node(card):
                 nodes.append(card)
     return nodes
 
@@ -110,6 +161,8 @@ def _generic_card_nodes(soup: BeautifulSoup) -> list:
     nodes: list = []
     for selector in GENERIC_CARD_SELECTORS:
         for card in soup.select(selector):
+            if _is_noise_node(card):
+                continue
             if card not in nodes:
                 nodes.append(card)
             if len(nodes) >= 900:
@@ -118,53 +171,131 @@ def _generic_card_nodes(soup: BeautifulSoup) -> list:
 
 
 def _first_href(card, base_url: str) -> str:
-    for selector in ['a.b_acao[href]', 'a[href*="produto"]', 'a[href*="product"]', 'a[href]']:
-        node = card.select_one(selector)
-        if not node:
-            continue
-        url = _norm_url(urljoin(base_url, str(node.get('href') or '').strip()))
-        if url and _allowed_product_url(url, base_url):
-            return url
+    selectors = [
+        'a.b_acao[href]',
+        'a[href*="produto"]',
+        'a[href*="product"]',
+        'a[href]',
+    ]
+    for selector in selectors:
+        for node in card.select(selector):
+            href = str(node.get('href') or '').strip()
+            if not href:
+                continue
+            url = _norm_url(urljoin(base_url, href))
+            if url and _allowed_product_url(url, base_url):
+                return url
     return ''
 
 
 def _image_value(node, base_url: str) -> str:
     if not node:
         return ''
-    raw = node.get('data-src') or node.get('data-original') or node.get('data-lazy') or node.get('src') or node.get('srcset') or ''
+    raw = (
+        node.get('data-src')
+        or node.get('data-original')
+        or node.get('data-lazy')
+        or node.get('data-srcset')
+        or node.get('srcset')
+        or node.get('src')
+        or ''
+    )
     raw = str(raw).split(',')[0].split()[0].strip()
     url = clean_cell(urljoin(base_url, raw))
     low = url.lower()
-    if any(term in low for term in ['logo', 'sprite', 'placeholder', 'icon', 'whatsapp', 'facebook.com/tr', 'blank.gif']):
+    if any(term in low for term in ['logo', 'sprite', 'placeholder', 'icon', 'whatsapp', 'facebook.com/tr', 'blank.gif', '/slide/', '/banner']):
         return ''
     return url
 
 
 def _image_url(card, base_url: str) -> str:
-    return _image_value(card.select_one('img[data-src], img[data-original], img[data-lazy], img[src], source[srcset]'), base_url)
+    node = card.select_one('img[data-src], img[data-original], img[data-lazy], img[data-srcset], img[srcset], img[src], source[srcset]')
+    return _image_value(node, base_url)
 
 
-def _product_from_card(base_url: str, card) -> FastProductData | None:
+def _name_from_card(card) -> str:
+    selectors = [
+        'h3.produto',
+        '.produto h3',
+        '[itemprop="name"]',
+        '.product-name',
+        '.nome_produto',
+        '.nome-produto',
+        '.name',
+        '.title',
+        'h2',
+        'h3',
+    ]
+    for selector in selectors:
+        node = card.select_one(selector)
+        if not node:
+            continue
+        value = clean_cell(node.get('title') or node.get_text(' ', strip=True))[:240]
+        if value and normalize_key(value) not in BAD_NAME_TERMS:
+            return value
+    image = card.select_one('img[alt]')
+    value = clean_cell(image.get('alt') if image else '')[:240]
+    return '' if normalize_key(value) in BAD_NAME_TERMS else value
+
+
+def _price_from_card(card) -> str:
+    selectors = [
+        '.valor_final span',
+        '.valor_final',
+        '[itemprop="price"]',
+        'meta[itemprop="price"]',
+        '.price',
+        '.preco',
+        '.preço',
+        '[class*="price"]',
+        '[class*="preco"]',
+        '[class*="valor"]',
+    ]
+    for selector in selectors:
+        node = card.select_one(selector)
+        if not node:
+            continue
+        value = _clean_price(node.get('content') or node.get_text(' ', strip=True))
+        if value:
+            return value
+    return _clean_price(card.get_text(' ', strip=True))
+
+
+def _category_from_listing(base_url: str, soup: BeautifulSoup) -> str:
+    crumbs: list[str] = []
+    for node in soup.select('.breadcrumb [itemprop="name"], .breadcrumb a, [aria-label*=breadcrumb] a'):
+        text = clean_cell(node.get_text(' ', strip=True))
+        key = normalize_key(text)
+        if key and key not in {'home', 'inicio', 'pagina inicial'} and text not in crumbs:
+            crumbs.append(text)
+    if crumbs:
+        return crumbs[-1]
+    title = clean_cell((soup.title.get_text(' ', strip=True) if soup.title else ''))
+    title = re.sub(r'^comprar\s+', '', title, flags=re.I).strip()
+    if title and 'atacadum' not in normalize_key(title):
+        return title[:120]
+    path = urlparse(base_url).path.strip('/')
+    if path:
+        return clean_cell(path.replace('-', ' ').title())[:120]
+    return ''
+
+
+def _product_from_card(base_url: str, card, category: str = '') -> FastProductData | None:
     url = _first_href(card, base_url)
     if not url:
         return None
 
     sku = clean_cell(card.get('data-sku') or card.get('data-codigo') or card.get('data-code') or '')
     code = sku or clean_cell(card.get('data-id') or card.get('data-product-id') or card.get('data-produtoid') or '')
+    name = _name_from_card(card)
+    price = _price_from_card(card)
     image = _image_url(card, base_url)
-    name_node = card.select_one('h3.produto, h2, h3, [itemprop="name"], .product-name, .produto, .name, .title')
-    image_node = card.select_one('img[alt]')
-    name = clean_cell(
-        (name_node.get('title') if name_node else '')
-        or (name_node.get_text(' ', strip=True) if name_node else '')
-        or (image_node.get('alt') if image_node else '')
-    )[:240]
-    price_node = card.select_one('.valor_final, .price, .preco, .preço, [class*="price"], [class*="preco"], [class*="valor"]')
-    price = _clean_price(price_node.get_text(' ', strip=True) if price_node else card.get_text(' ', strip=True))
 
-    if not name or not (price or image or code):
+    if not name:
         return None
-    return FastProductData(url=url, codigo=code, descricao=name, preco=price, imagem=image)
+    if not (price or image or code):
+        return None
+    return FastProductData(url=url, codigo=code, descricao=name, preco=price, imagem=image, categoria=category)
 
 
 def _streamlit_openai_secret(name: str) -> str:
@@ -211,40 +342,30 @@ def _compact_html_for_ai(base_url: str, html: str, limit: int) -> str:
     snippets: list[str] = []
     for card in _generic_card_nodes(soup):
         text = clean_cell(card.get_text(' ', strip=True))[:700]
-        hrefs = []
-        for node in card.select('a[href]')[:4]:
-            href = _norm_url(urljoin(base_url, str(node.get('href') or '').strip()))
-            if href and _allowed_product_url(href, base_url):
-                _append_unique(hrefs, href, 4)
-        images = []
-        for node in card.select('img[data-src], img[data-original], img[data-lazy], img[src], source[srcset]')[:3]:
-            _append_unique(images, _image_value(node, base_url), 3)
+        hrefs: list[str] = []
+        images: list[str] = []
         attrs = {
             key: clean_cell(card.get(key) or '')
             for key in ['data-id', 'data-sku', 'data-product-id', 'data-produtoid']
             if clean_cell(card.get(key) or '')
         }
+        for node in card.select('a[href]')[:5]:
+            href = _norm_url(urljoin(base_url, str(node.get('href') or '').strip()))
+            if href and _allowed_product_url(href, base_url):
+                _append_unique(hrefs, href, 5)
+        for node in card.select('img[data-src], img[data-original], img[data-lazy], img[src], source[srcset]')[:4]:
+            _append_unique(images, _image_value(node, base_url), 4)
         if text or hrefs or images or attrs:
             snippets.append(json.dumps({'attrs': attrs, 'hrefs': hrefs, 'images': images, 'text': text}, ensure_ascii=False))
         if len(snippets) >= min(limit * 2, 80):
             break
-
-    if not snippets:
-        for node in soup.select('a[href]')[:160]:
-            href = _norm_url(urljoin(base_url, str(node.get('href') or '').strip()))
-            text = clean_cell(node.get_text(' ', strip=True))[:180]
-            if href and text:
-                snippets.append(json.dumps({'hrefs': [href], 'text': text}, ensure_ascii=False))
     return '\n'.join(snippets)[:55000]
 
 
 def _openai_listing_products(base_url: str, html: str, limit: int) -> list[FastProductData]:
     key = _openai_api_key()
-    if not key:
-        return []
-
     compact = _compact_html_for_ai(base_url, html, limit)
-    if not compact:
+    if not key or not compact:
         return []
 
     schema = {
@@ -273,53 +394,30 @@ def _openai_listing_products(base_url: str, html: str, limit: int) -> list[FastP
         },
         'required': ['products'],
     }
-    prompt = (
-        'Extraia produtos reais de uma página de fornecedor/e-commerce. '
-        'Use apenas dados presentes nos snippets. Ignore menus, banners, login, carrinho e links sociais. '
-        'Prefira preço final/promocional em vez de preço antigo. Retorne no máximo '
-        f'{int(limit)} produtos. Base URL: {base_url}\n\nSNIPPETS:\n{compact}'
-    )
-    request_payload = {
+    payload = {
         'model': _openai_model(),
-        'instructions': 'Você é um extrator de catálogo. Responda somente no JSON schema solicitado, sem comentários.',
-        'input': prompt,
-        'text': {
-            'format': {
-                'type': 'json_schema',
-                'name': 'product_listing_extraction',
-                'schema': schema,
-                'strict': False,
-            },
-        },
+        'instructions': 'Você é um extrator de catálogo. Responda somente no JSON schema solicitado.',
+        'input': (
+            'Extraia produtos reais de uma página WBuy/e-commerce. Ignore menus, banners, sliders, analytics, '
+            'carrinho e endpoints técnicos como action.php/global.php/loadcomponents. Prefira preço final. '
+            f'Retorne no máximo {int(limit)} produtos. Base URL: {base_url}\n\nSNIPPETS:\n{compact}'
+        ),
+        'text': {'format': {'type': 'json_schema', 'name': 'product_listing_extraction', 'schema': schema, 'strict': False}},
         'temperature': 0,
     }
-
     try:
         response = requests.post(
             OPENAI_RESPONSES_URL,
             headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'},
-            json=request_payload,
+            json=payload,
             timeout=28,
         )
         if response.status_code >= 400:
-            add_audit_event(
-                'site_scraper_openai_listing_fallback',
-                area='SITE',
-                step='entrada',
-                status='AVISO',
-                details={'status_code': response.status_code, 'products': 0, 'responsible_file': RESPONSIBLE_FILE},
-            )
+            add_audit_event('site_scraper_openai_listing_fallback', area='SITE', step='entrada', status='AVISO', details={'status_code': response.status_code, 'products': 0, 'responsible_file': RESPONSIBLE_FILE})
             return []
-        raw_text = _response_text(response.json())
-        data = json.loads(raw_text) if raw_text else {}
+        data = json.loads(_response_text(response.json()) or '{}')
     except Exception as exc:
-        add_audit_event(
-            'site_scraper_openai_listing_fallback',
-            area='SITE',
-            step='entrada',
-            status='AVISO',
-            details={'error': type(exc).__name__, 'products': 0, 'responsible_file': RESPONSIBLE_FILE},
-        )
+        add_audit_event('site_scraper_openai_listing_fallback', area='SITE', step='entrada', status='AVISO', details={'error': type(exc).__name__, 'products': 0, 'responsible_file': RESPONSIBLE_FILE})
         return []
 
     products: list[FastProductData] = []
@@ -349,13 +447,7 @@ def _openai_listing_products(base_url: str, html: str, limit: int) -> list[FastP
         if len(products) >= limit:
             break
 
-    add_audit_event(
-        'site_scraper_openai_listing_fallback',
-        area='SITE',
-        step='entrada',
-        status='OK' if products else 'INFO',
-        details={'products': len(products), 'responsible_file': RESPONSIBLE_FILE},
-    )
+    add_audit_event('site_scraper_openai_listing_fallback', area='SITE', step='entrada', status='OK' if products else 'INFO', details={'products': len(products), 'responsible_file': RESPONSIBLE_FILE})
     return products[:limit]
 
 
@@ -371,29 +463,28 @@ def wbuy_product_links(base_url: str, html: str, limit: int = 1200) -> list[str]
             links.append(url)
 
     for card in _card_nodes(soup):
-        action = card.select_one('a.b_acao[href]') or card.select_one('a[href]')
-        if action:
-            add(action.get('href'))
-
-    for node in soup.select('a.b_acao[href]'):
+        href = _first_href(card, base_url)
+        if href:
+            add(href)
+    for node in soup.select('a.b_acao[href], a[href*="produto"], a[href*="product"]'):
         add(node.get('href'))
-
     return links[:limit]
 
 
 def wbuy_listing_products(base_url: str, html: str, limit: int = 1200) -> list[FastProductData]:
-    """Extrai dados de cards de vitrine; usa IA opcional se o HTML variar."""
+    """Extrai cards reais de categorias WBuy, inclusive Atacadum."""
     soup = _soup(html)
     products: list[FastProductData] = []
     seen: set[str] = set()
     preferred_cards = _card_nodes(soup) if is_wbuy_html(html) or 'data-sku=' in str(html or '').lower() else []
     cards = preferred_cards or _generic_card_nodes(soup)
+    category = _category_from_listing(base_url, soup)
 
     for card in cards:
-        product = _product_from_card(base_url, card)
+        product = _product_from_card(base_url, card, category=category)
         if not product:
             continue
-        key = product.codigo or product.url
+        key = product.codigo or product.url or product.descricao
         if not key or key in seen:
             continue
         seen.add(key)
@@ -402,6 +493,13 @@ def wbuy_listing_products(base_url: str, html: str, limit: int = 1200) -> list[F
             break
 
     if products:
+        add_audit_event(
+            'site_scraper_wbuy_category_cards',
+            area='SITE',
+            step='entrada',
+            status='OK',
+            details={'products': len(products), 'cards': len(cards), 'category': category, 'responsible_file': RESPONSIBLE_FILE},
+        )
         return products[:limit]
     return _openai_listing_products(base_url, html, limit)
 
@@ -415,6 +513,7 @@ def html_has_wbuy_product(html: str) -> bool:
         or soup.select_one('#produto .nome_produto')
         or soup.select_one('meta[itemprop="sku"]')
         or soup.select_one('.codigo_produto')
+        or soup.select_one('div.item[data-id][data-sku]')
     )
 
 
@@ -449,6 +548,7 @@ def wbuy_product_name(page: FastProductPage) -> str:
         _content(soup, '#produto .nome_produto')
         or _content(soup, '.nome_produto')
         or _content(soup, '[itemtype*="schema.org/Product"] [itemprop="name"]')
+        or _content(soup, 'h1')
         or _content(soup, 'meta[property="og:title"]')
     )
     value = re.sub(r'^comprar\s+', '', value, flags=re.I).strip()
@@ -462,6 +562,7 @@ def wbuy_product_sku(page: FastProductPage) -> str:
     soup = _page_soup(page)
     return clean_cell(
         _content(soup, 'meta[itemprop="sku"]')
+        or _content(soup, '#inc_sku')
         or _content(soup, '.cor_primaria.active[data-sku]', 'data-sku')
         or _content(soup, '.cor_primaria[data-sku]', 'data-sku')
         or _content(soup, '[data-sku]', 'data-sku')
@@ -501,13 +602,13 @@ def wbuy_product_price(page: FastProductPage) -> str:
     value = clean_cell(
         _content(soup, '.valores meta[itemprop="price"]')
         or _content(soup, 'meta[itemprop="price"]')
+        or _content(soup, '.valores .valor_final span')
+        or _content(soup, '.valores .valor_final')
         or _content(soup, '.valores .valor span')
         or _content(soup, '.valores .valor')
+        or _content(soup, '.valor_final')
     )
-    if not value:
-        return ''
-    match = re.search(r'(?:R\$\s*)?([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}|[0-9]+(?:[\.,][0-9]{2})?)', value)
-    return match.group(1) if match else value[:40]
+    return _clean_price(value)
 
 
 def wbuy_product_stock(page: FastProductPage) -> str:
@@ -532,18 +633,18 @@ def wbuy_product_images(page: FastProductPage, limit: int = 12) -> list[str]:
     urls: list[str] = []
 
     def add(value: object) -> None:
-        url = clean_cell(urljoin(page.url, str(value or '').strip()))
+        url = clean_cell(urljoin(page.url, str(value or '').split(',')[0].split()[0].strip()))
         if not url:
             return
         low = url.lower()
-        if any(term in low for term in ['logo', 'sprite', 'placeholder', 'icon', 'whatsapp', 'facebook.com/tr', 'blank.gif']):
+        if any(term in low for term in ['logo', 'sprite', 'placeholder', 'icon', 'whatsapp', 'facebook.com/tr', 'blank.gif', '/slide/', '/banner']):
             return
         _append_unique(urls, url, limit)
 
     for node in soup.select('link[itemprop="image"][href]'):
         add(node.get('href'))
-    for node in soup.select('#produto .fotos img, #produto img[data-src], #produto img[src]'):
-        add(node.get('data-src') or node.get('src') or node.get('data-zoom-image'))
+    for node in soup.select('#produto .fotos img, #produto img[data-src], #produto img[src], #produto source[srcset]'):
+        add(node.get('data-zoom-image') or node.get('data-src') or node.get('src') or node.get('srcset'))
     node = soup.select_one('meta[property="og:image"]')
     if node:
         add(node.get('content'))
@@ -563,7 +664,7 @@ def wbuy_product_category(page: FastProductPage) -> str:
             continue
         if text not in crumbs:
             crumbs.append(text)
-    return crumbs[0] if crumbs else ''
+    return crumbs[-1] if crumbs else ''
 
 
 def wbuy_product_description(page: FastProductPage) -> str:
