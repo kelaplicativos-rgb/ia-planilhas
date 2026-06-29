@@ -22,7 +22,7 @@ PROTECTED_SUPPLIERS: dict[str, ProtectedSupplierSpec] = {
         key='obaobamix',
         name='Oba Oba Mix',
         start_url='https://app.obaobamix.com.br/admin/products',
-        default_pages=25,
+        default_pages=500,
         strategy='datatables',
         default_format='mhtml',
         description='Painel autenticado com DataTables. Captura produtos, estoque real em tooltip, fotos, marca, modelo e preço.',
@@ -31,7 +31,7 @@ PROTECTED_SUPPLIERS: dict[str, ProtectedSupplierSpec] = {
         key='datatables_generic',
         name='Genérico com paginação DataTables',
         start_url='',
-        default_pages=25,
+        default_pages=100,
         strategy='datatables',
         default_format='mhtml',
         description='Fornecedor protegido que usa tabela paginada DataTables dentro do navegador logado.',
@@ -44,7 +44,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 import traceback
 import zipfile
@@ -73,6 +72,10 @@ def write_error_log(exc: BaseException) -> None:
         Path(ERROR_LOG).write_text(traceback.format_exc(), encoding='utf-8')
     except Exception:
         pass
+
+
+def normalize_mhtml(text: str) -> str:
+    return str(text or '').replace('\r\r\n', '\r\n').replace('\r\r', '\r')
 
 
 def wait_for_datatable(page, timeout_ms: int = 120000) -> bool:
@@ -116,6 +119,19 @@ def visible_table_rows(page) -> int:
         return 0
 
 
+def table_signature(page) -> str:
+    try:
+        return str(page.evaluate(
+            """() => Array.from(document.querySelectorAll('table tbody tr'))
+                .map(row => row.innerText.trim())
+                .filter(Boolean)
+                .join('|')
+                .slice(0, 4000)"""
+        ) or '')
+    except Exception:
+        return ''
+
+
 def wait_for_products_loaded(page, timeout_ms: int = 90000) -> dict:
     deadline = time.time() + timeout_ms / 1000
     last_info: dict = {}
@@ -130,7 +146,7 @@ def wait_for_products_loaded(page, timeout_ms: int = 90000) -> dict:
     return last_info
 
 
-def goto_datatable_page(page, page_index: int) -> None:
+def goto_datatable_page(page, page_index: int, previous_signature: str = '') -> None:
     page.evaluate(
         """(pageIndex) => {
             const tables = window.jQuery.fn.dataTable.tables();
@@ -140,7 +156,7 @@ def goto_datatable_page(page, page_index: int) -> None:
         page_index,
     )
     page.wait_for_function(
-        """(pageIndex) => {
+        """({pageIndex, previousSignature}) => {
             if (!(window.jQuery && window.jQuery.fn && window.jQuery.fn.dataTable)) return false;
             const tables = window.jQuery.fn.dataTable.tables();
             if (!tables.length) return false;
@@ -148,22 +164,27 @@ def goto_datatable_page(page, page_index: int) -> None:
             const info = dt.page.info();
             const processing = document.querySelector('.dataTables_processing');
             const isProcessing = processing && getComputedStyle(processing).display !== 'none';
-            return info.page === pageIndex && !isProcessing;
+            const rows = Array.from(document.querySelectorAll('table tbody tr'))
+                .map(row => row.innerText.trim())
+                .filter(Boolean);
+            const signature = rows.join('|').slice(0, 4000);
+            const changed = !previousSignature || signature !== previousSignature;
+            return info.page === pageIndex && !isProcessing && rows.length > 0 && changed;
         }""",
-        arg=page_index,
+        arg={'pageIndex': page_index, 'previousSignature': previous_signature or ''},
         timeout=90000,
     )
     try:
         page.wait_for_load_state('networkidle', timeout=90000)
     except Exception:
         pass
-    page.wait_for_timeout(900)
+    page.wait_for_timeout(1200)
 
 
 def capture_mhtml(context, page) -> str:
     client = context.new_cdp_session(page)
     result = client.send('Page.captureSnapshot', {'format': 'mhtml'})
-    return result.get('data', '')
+    return normalize_mhtml(result.get('data', ''))
 
 
 def write_capture(context, page, out_dir: Path, page_number: int, capture_format: str, saved: list[Path]) -> None:
@@ -253,17 +274,24 @@ def run_capture(args: argparse.Namespace, config: dict) -> int:
         manifest.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8')
         saved_files.append(manifest)
 
+        last_signature = ''
         for page_index in range(pages):
             page_number = page_index + 1
             print(f'Capturando pagina {page_number}/{pages}...')
             try:
-                goto_datatable_page(page, page_index)
-            except Exception as exc:
+                goto_datatable_page(page, page_index, previous_signature=last_signature if page_index > 0 else '')
+                current_signature = table_signature(page)
+                if page_index > 0 and current_signature and current_signature == last_signature:
+                    print('Aviso: a tabela ainda parece igual à página anterior. Aguardando nova atualização...')
+                    page.wait_for_timeout(2500)
+                    goto_datatable_page(page, page_index, previous_signature=last_signature)
+            except Exception:
                 print(f'Aviso: nao consegui confirmar a pagina {page_number}. Vou salvar o HTML atual e continuar.')
                 error_page = out_dir / f'erro_pagina_{page_number:03d}.txt'
                 error_page.write_text(traceback.format_exc(), encoding='utf-8')
                 saved_files.append(error_page)
             write_capture(context, page, out_dir, page_number, capture_format, saved_files)
+            last_signature = table_signature(page) or last_signature
             info_path = out_dir / f'fornecedor_pagina_{page_number:03d}.json'
             info_path.write_text(json.dumps(datatable_info(page), ensure_ascii=False, indent=2), encoding='utf-8')
             saved_files.append(info_path)
@@ -340,7 +368,7 @@ COLETOR MAPEIAAI - FORNECEDOR PROTEGIDO
 
 Fornecedor configurado: {provider_name}
 URL inicial: {start_url}
-Paginas: {pages}
+Páginas máximas: {pages}
 Formato: {format}
 
 Como usar no Windows:
@@ -361,6 +389,7 @@ Segurança:
 Observação:
 - Se a tela mostrar 0 registros, o coletor vai pedir para você confirmar o login/tabela antes de continuar.
 - Se houver erro, ele deixa o arquivo ERRO_COLETOR.txt na pasta do coletor.
+- O número de páginas é um máximo: se o painel detectar menos páginas, ele captura só as existentes.
 
 Para outros fornecedores:
 - Escolha Genérico com paginação DataTables no MapeiaAI.
