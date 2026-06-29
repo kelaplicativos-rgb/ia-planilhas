@@ -15,6 +15,7 @@ from bling_app_zero.core.audit import add_audit_event
 
 RESPONSIBLE_FILE = 'bling_app_zero/agents/site_capture_agent.py'
 SMARTSCAN_SAFE_URL_BATCH = 1200
+PLATFORM_HINT_SCRAPER = {'shopify', 'woocommerce', 'loja_integrada', 'nuvemshop', 'tray', 'wbuy'}
 
 
 @dataclass(frozen=True)
@@ -40,13 +41,13 @@ def _emit(progress_callback: Callable[[dict], None] | None, payload: dict) -> No
 def _strategy_for(platform: SitePlatformSignal, operation: str) -> str:
     if platform.platform in {'stoqui', 'mega_center'}:
         return 'api_first_then_fast_scraper'
-    if platform.platform in {'shopify', 'woocommerce', 'loja_integrada', 'nuvemshop', 'tray'}:
+    if platform.platform in PLATFORM_HINT_SCRAPER:
         return 'platform_hints_then_fast_scraper'
     return 'generic_safe_batch_with_ai_validation'
 
 
 def _should_try_api(strategy: str, platform: SitePlatformSignal) -> bool:
-    return strategy.startswith('api_first') or platform.platform in {'stoqui', 'mega_center', 'shopify', 'woocommerce', 'loja_integrada', 'nuvemshop', 'tray'}
+    return strategy.startswith('api_first') or platform.platform in {'stoqui', 'mega_center', *PLATFORM_HINT_SCRAPER}
 
 
 def _url_lines(raw_urls: str) -> list[str]:
