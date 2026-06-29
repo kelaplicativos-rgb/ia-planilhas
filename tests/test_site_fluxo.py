@@ -6,6 +6,8 @@ from unittest.mock import patch
 
 import pandas as pd
 
+from bling_app_zero.agents.api_finder import ApiFinderResult
+from bling_app_zero.agents.site_capture_agent import run_bling_smartscan
 from bling_app_zero.engines.fast_site_scraper.engine import run_fast_site_scraper
 from bling_app_zero.engines.fast_site_scraper.models import FastProductData
 from bling_app_zero.engines.fast_site_scraper.runner import _merge_products_by_identity, _wbuy_candidate_pages
@@ -144,6 +146,35 @@ class TestSiteFluxo(unittest.TestCase):
         merged = _merge_products_by_identity(primary, extra, max_products=10)
 
         self.assertEqual([product.codigo for product in merged], ['SKU-A', 'SKU-B'])
+
+    def test_smartscan_wbuy_vazio_forca_retry_wbuy(self) -> None:
+        def empty_engine_runner(**_kwargs) -> pd.DataFrame:
+            return pd.DataFrame()
+
+        retry_df = pd.DataFrame([
+            {
+                'URL': 'https://www.atacadum.com.br/produto/a',
+                'Nome do Produto': 'Produto A',
+            }
+        ])
+
+        with patch(
+            'bling_app_zero.agents.site_capture_agent.find_site_api',
+            return_value=ApiFinderResult(found=False, platform='wbuy', candidates=[], message='sem api'),
+        ), patch('bling_app_zero.agents.site_capture_agent.run_fast_site_scraper', return_value=retry_df) as retry:
+            df, report = run_bling_smartscan(
+                raw_urls='https://www.atacadum.com.br/',
+                operation='universal',
+                requested_columns=['URL', 'Nome do Produto'],
+                engine_runner=empty_engine_runner,
+                all_products=True,
+                max_pages=5,
+                max_products=10,
+            )
+
+        retry.assert_called_once()
+        self.assertEqual(len(df), 1)
+        self.assertEqual(report.platform.platform, 'wbuy')
 
     def test_motor_cadastro_independente_respeita_contrato_de_cadastro(self) -> None:
         with patch('bling_app_zero.engines.fast_site_scraper.engine.fetch_live', return_value=''):
