@@ -10,6 +10,17 @@ from bling_app_zero.engines.fast_site_scraper.block_scraper import scrape_produc
 from bling_app_zero.engines.fast_site_scraper.models import FastProductPage
 from bling_app_zero.engines.fast_site_scraper.page_parser import soup_from_page
 from bling_app_zero.engines.fast_site_scraper.text_cleaner import clean_product_description
+from bling_app_zero.engines.fast_site_scraper.wbuy_parser import (
+    wbuy_product_brand,
+    wbuy_product_category,
+    wbuy_product_code,
+    wbuy_product_description,
+    wbuy_product_images,
+    wbuy_product_name,
+    wbuy_product_price,
+    wbuy_product_stock,
+    wbuy_product_url,
+)
 from bling_app_zero.engines.real_stock_detector import OUT_STOCK_TERMS, detect_real_stock
 
 
@@ -61,11 +72,17 @@ def _join_unique(values: list[str], limit: int = 5000) -> str:
 
 
 def extract_url(page: FastProductPage) -> str:
+    value = wbuy_product_url(page)
+    if value:
+        return value
     product = _first_product(page)
     return clean_cell(product.get('url') or page.url) if product else page.url
 
 
 def extract_description(page: FastProductPage) -> str:
+    value = wbuy_product_name(page)
+    if value:
+        return value[:240]
     product = _first_product(page)
     if product:
         value = clean_cell(product.get('name') or '')
@@ -93,7 +110,7 @@ def extract_description_complementar(page: FastProductPage) -> str:
     title_key = normalize_key(title)
     blocks = scrape_product_blocks(page)
     values: list[str] = []
-    for value in [blocks.complementary_description, blocks.attributes, blocks.technical_sheet, jsonld_description]:
+    for value in [wbuy_product_description(page), blocks.complementary_description, blocks.attributes, blocks.technical_sheet, jsonld_description]:
         text = clean_cell(value)
         if text and normalize_key(text) != title_key:
             values.append(text)
@@ -111,13 +128,16 @@ def extract_ficha_tecnica(page: FastProductPage) -> str:
 def extract_caracteristicas(page: FastProductPage) -> str:
     title = extract_description(page)
     blocks = scrape_product_blocks(page)
-    raw = clean_cell(blocks.attributes or blocks.complementary_description or blocks.all_blocks)[:3500]
+    raw = clean_cell(blocks.attributes or wbuy_product_description(page) or blocks.complementary_description or blocks.all_blocks)[:3500]
     return clean_product_description(raw, title=title, limit=1400)
 
 
 def extract_brand(page: FastProductPage) -> str:
     product = _first_product(page)
     title = extract_description(page)
+    value = wbuy_product_brand(page)
+    if value:
+        return detect_brand_from_title(title, fallback=value)
     brand = product.get('brand') if product else None
 
     if isinstance(brand, dict):
@@ -141,6 +161,9 @@ def extract_brand(page: FastProductPage) -> str:
 
 
 def extract_price(page: FastProductPage) -> str:
+    value = wbuy_product_price(page)
+    if value:
+        return value
     product = _first_product(page)
     offer = _offer(product)
     value = _clean_price(offer.get('price') or '')
@@ -171,6 +194,9 @@ def extract_price(page: FastProductPage) -> str:
 
 
 def extract_stock(page: FastProductPage) -> str:
+    value = wbuy_product_stock(page)
+    if value != '':
+        return value
     product = _first_product(page)
     offer = _offer(product)
     availability = normalize_key(offer.get('availability', '')) if offer else ''
@@ -188,6 +214,9 @@ def extract_stock(page: FastProductPage) -> str:
 
 
 def extract_images(page: FastProductPage, limit: int = 12) -> str:
+    wbuy_images = wbuy_product_images(page, limit=limit)
+    if wbuy_images:
+        return '|'.join(wbuy_images[:limit])
     product = _first_product(page)
     image = product.get('image') if product else None
     urls: list[str] = []
@@ -235,6 +264,9 @@ def extract_images(page: FastProductPage, limit: int = 12) -> str:
 
 
 def extract_code(page: FastProductPage) -> str:
+    value = wbuy_product_code(page)
+    if value:
+        return value
     product = _first_product(page)
     if product:
         value = clean_cell(product.get('sku') or product.get('mpn') or product.get('productID') or '')
@@ -259,6 +291,9 @@ def extract_gtin(page: FastProductPage) -> str:
 
 
 def extract_category(page: FastProductPage) -> str:
+    value = wbuy_product_category(page)
+    if value:
+        return value
     product = _first_product(page)
     value = clean_cell(product.get('category') or '') if product else ''
     if value:
