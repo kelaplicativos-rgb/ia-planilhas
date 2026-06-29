@@ -35,8 +35,10 @@ def important_kinds(contract: list[RequestedField]) -> set[str]:
 def value_for_kind(product: FastProductData, kind: str) -> str:
     if kind == 'url':
         return product.url
-    if kind in {'codigo', 'id_produto'}:
-        return product.codigo or product.gtin
+    if kind == 'id_produto':
+        return product.id_produto or product.codigo or product.gtin
+    if kind == 'codigo':
+        return product.codigo or product.gtin or product.id_produto
     if kind == 'gtin':
         return product.gtin
     if kind in {'descricao', 'descricao_curta', 'nome_apoio'}:
