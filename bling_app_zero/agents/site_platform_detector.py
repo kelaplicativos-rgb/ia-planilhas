@@ -22,6 +22,7 @@ def detect_site_platform(raw_urls: str) -> SitePlatformSignal:
     checks = [
         ('stoqui', ['stoqui.shop', 'stoqui', '/api/', 'product_id'], 0.92),
         ('mega_center', ['megacentereletronicos.com.br', 'mega-center-eletronicos'], 0.90),
+        ('wbuy', ['atacadum.com.br', 'sistemawbuy.com.br', 'wbuy lojas virtuais', 'produtos_autocomplete.php', 'data-produtoid', 'inc_sku'], 0.88),
         ('shopify', ['myshopify.com', '/products/', 'cdn.shopify.com'], 0.88),
         ('woocommerce', ['wp-content', 'woocommerce', '?add-to-cart='], 0.84),
         ('loja_integrada', ['lojaintegrada', 'cdn.awsli.com.br'], 0.84),
