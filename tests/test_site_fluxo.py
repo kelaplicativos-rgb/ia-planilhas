@@ -7,6 +7,8 @@ from unittest.mock import patch
 import pandas as pd
 
 from bling_app_zero.engines.fast_site_scraper.engine import run_fast_site_scraper
+from bling_app_zero.engines.fast_site_scraper.models import FastProductData
+from bling_app_zero.engines.fast_site_scraper.runner import _merge_products_by_identity, _wbuy_candidate_pages
 from bling_app_zero.engines.site_operations import run_site_operation_engine
 from bling_app_zero.engines.site_operations.submotors import build_submotor_plan
 from bling_app_zero.pipelines.site_pipeline import _clean_site_description_columns, _infer_operation_from_columns
@@ -122,6 +124,26 @@ class TestSiteFluxo(unittest.TestCase):
         self.assertEqual(len(df), 2)
         self.assertEqual(df.loc[0, 'URL'], 'https://fornecedor.com/p/1')
         self.assertEqual(df.loc[1, 'URL'], 'https://fornecedor.com/p/2')
+
+    def test_wbuy_candidate_pages_expandem_atacadum(self) -> None:
+        pages = _wbuy_candidate_pages('https://www.atacadum.com.br/', 120)
+
+        self.assertEqual(pages[0], 'https://www.atacadum.com.br')
+        self.assertTrue(any('produtos_autocomplete.php' in url for url in pages))
+        self.assertTrue(any('/busca' in url for url in pages))
+        self.assertTrue(any('/produtos' in url for url in pages))
+        self.assertGreater(len(pages), 8)
+
+    def test_wbuy_merge_preserva_primarios_e_adiciona_extras(self) -> None:
+        primary = [FastProductData(url='https://loja.com/produto/a', codigo='SKU-A')]
+        extra = [
+            FastProductData(url='https://loja.com/produto/a-duplicado', codigo='SKU-A'),
+            FastProductData(url='https://loja.com/produto/b', codigo='SKU-B'),
+        ]
+
+        merged = _merge_products_by_identity(primary, extra, max_products=10)
+
+        self.assertEqual([product.codigo for product in merged], ['SKU-A', 'SKU-B'])
 
     def test_motor_cadastro_independente_respeita_contrato_de_cadastro(self) -> None:
         with patch('bling_app_zero.engines.fast_site_scraper.engine.fetch_live', return_value=''):
