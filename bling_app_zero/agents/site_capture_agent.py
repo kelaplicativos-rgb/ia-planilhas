@@ -12,6 +12,7 @@ from bling_app_zero.agents.blingsmartcore import apply_blingsmartcore
 from bling_app_zero.agents.site_ai_validator import SmartScanQuality
 from bling_app_zero.agents.site_platform_detector import SitePlatformSignal, detect_site_platform
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.engines.fast_site_scraper import run_fast_site_scraper
 
 RESPONSIBLE_FILE = 'bling_app_zero/agents/site_capture_agent.py'
 SMARTSCAN_SAFE_URL_BATCH = 1200
@@ -178,6 +179,89 @@ def _run_engine(
     )
 
 
+def _empty_df(df: pd.DataFrame) -> bool:
+    return not isinstance(df, pd.DataFrame) or df.empty
+
+
+def _force_wbuy_empty_retry(
+    *,
+    raw_urls: str,
+    operation: str,
+    requested_columns: list[str] | None,
+    all_products: bool,
+    max_pages: int,
+    max_products: int,
+    progress_callback: Callable[[dict], None] | None,
+) -> pd.DataFrame:
+    _emit(progress_callback, {
+        'stage': 'Fallback wBuy obrigatório',
+        'message': 'A captura principal voltou vazia em plataforma wBuy. Tentando vitrines, buscas e cards públicos antes de encerrar.',
+        'progress': 0.875,
+        'platform': 'wbuy',
+    })
+    add_audit_event(
+        'blingsmartscan_wbuy_empty_retry_started',
+        area='SITE',
+        step='entrada',
+        status='AVISO',
+        details={
+            'operation': operation,
+            'requested_columns_count': len(requested_columns or []),
+            'all_products': bool(all_products),
+            'max_pages': int(max_pages),
+            'max_products': int(max_products),
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+    try:
+        retry_df = run_fast_site_scraper(
+            raw_urls=raw_urls,
+            requested_columns=requested_columns,
+            operation=operation,
+            max_pages=max_pages,
+            max_products=max_products,
+            stop_early=not bool(all_products),
+            progress_callback=progress_callback,
+        )
+    except Exception as exc:
+        add_audit_event(
+            'blingsmartscan_wbuy_empty_retry_failed',
+            area='SITE',
+            step='entrada',
+            status='ERRO',
+            details={
+                'operation': operation,
+                'error': str(exc),
+                'error_type': exc.__class__.__name__,
+                'responsible_file': RESPONSIBLE_FILE,
+            },
+        )
+        return pd.DataFrame()
+
+    rows = len(retry_df) if isinstance(retry_df, pd.DataFrame) else 0
+    add_audit_event(
+        'blingsmartscan_wbuy_empty_retry_finished',
+        area='SITE',
+        step='entrada',
+        status='OK' if rows else 'AVISO',
+        details={
+            'operation': operation,
+            'rows': rows,
+            'columns': len(retry_df.columns) if isinstance(retry_df, pd.DataFrame) else 0,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+    if rows:
+        _emit(progress_callback, {
+            'stage': 'Fallback wBuy recuperou produtos',
+            'message': f'{rows} produto(s) recuperado(s) depois da captura principal vazia.',
+            'progress': 0.91,
+            'found': rows,
+            'platform': 'wbuy',
+        })
+    return retry_df if isinstance(retry_df, pd.DataFrame) else pd.DataFrame()
+
+
 def run_bling_smartscan(
     *,
     raw_urls: str,
@@ -283,6 +367,16 @@ def run_bling_smartscan(
             max_products=max_products,
             progress_callback=progress_callback,
         )
+        if platform.platform == 'wbuy' and _empty_df(df):
+            df = _force_wbuy_empty_retry(
+                raw_urls=raw_urls,
+                operation=operation,
+                requested_columns=requested_columns,
+                all_products=all_products,
+                max_pages=max_pages,
+                max_products=max_products,
+                progress_callback=progress_callback,
+            )
         _checkpoint_and_resume_if_partial(
             raw_urls=raw_urls,
             df=df,
