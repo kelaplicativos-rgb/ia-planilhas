@@ -10,6 +10,7 @@ RESPONSIBLE_FILE = 'bling_app_zero/ui/protected_supplier_panel.py'
 PROTECTED_UPLOAD_KEY = 'mapeiaai_protected_supplier_upload_v1'
 PROTECTED_URL_KEY = 'mapeiaai_protected_supplier_url_v2'
 UNIVERSAL_PROVIDER_KEY = 'datatables_generic'
+INTERNAL_MAX_CAPTURE_PAGES = 500
 
 
 def _valid_frame(df: object) -> bool:
@@ -37,7 +38,7 @@ def render_protected_supplier_source_panel() -> pd.DataFrame | None:
         build_collector_zip(
             UNIVERSAL_PROVIDER_KEY,
             start_url=start_url,
-            pages=0,
+            pages=INTERNAL_MAX_CAPTURE_PAGES,
             capture_format='mhtml',
         )
         if site_ok
