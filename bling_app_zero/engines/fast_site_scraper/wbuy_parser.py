@@ -128,8 +128,7 @@ def _first_href(card, base_url: str) -> str:
     return ''
 
 
-def _image_url(card, base_url: str) -> str:
-    node = card.select_one('img[data-src], img[data-original], img[data-lazy], img[src], source[srcset]')
+def _image_value(node, base_url: str) -> str:
     if not node:
         return ''
     raw = node.get('data-src') or node.get('data-original') or node.get('data-lazy') or node.get('src') or node.get('srcset') or ''
@@ -139,6 +138,10 @@ def _image_url(card, base_url: str) -> str:
     if any(term in low for term in ['logo', 'sprite', 'placeholder', 'icon', 'whatsapp', 'facebook.com/tr', 'blank.gif']):
         return ''
     return url
+
+
+def _image_url(card, base_url: str) -> str:
+    return _image_value(card.select_one('img[data-src], img[data-original], img[data-lazy], img[src], source[srcset]'), base_url)
 
 
 def _product_from_card(base_url: str, card) -> FastProductData | None:
@@ -206,8 +209,8 @@ def _compact_html_for_ai(base_url: str, html: str, limit: int) -> str:
             if href and _allowed_product_url(href, base_url):
                 _append_unique(hrefs, href, 4)
         images = []
-        for node in card.select('img[data-src], img[src]')[:3]:
-            _append_unique(images, _image_url(node, base_url), 3)
+        for node in card.select('img[data-src], img[data-original], img[data-lazy], img[src], source[srcset]')[:3]:
+            _append_unique(images, _image_value(node, base_url), 3)
         attrs = {
             key: clean_cell(card.get(key) or '')
             for key in ['data-id', 'data-sku', 'data-product-id', 'data-produtoid']
