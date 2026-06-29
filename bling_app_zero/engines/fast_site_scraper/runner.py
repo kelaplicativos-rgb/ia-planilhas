@@ -33,13 +33,14 @@ from bling_app_zero.engines.fast_site_scraper.url_discovery import discover_prod
 from bling_app_zero.engines.fast_site_scraper.wbuy_parser import wbuy_listing_products
 
 WBUY_FALLBACK_MIN_PRODUCTS = 24
-WBUY_FALLBACK_PAGE_LIMIT = 48
+WBUY_FALLBACK_PAGE_LIMIT = 220
 WBUY_FALLBACK_SEARCH_TERMS = (
-    'smartwatch', 'relogio', 'relógio', 'peje', 'microwear', 'fone', 'fone bluetooth',
-    'caixa', 'caixa som', 'camera', 'câmera', 'xiaomi', 'iphone', 'celular',
-    'carregador', 'cabo', 'usb', 'tipo c', 'pelicula', 'película', 'capinha',
-    'suporte', 'power bank', 'controle', 'teclado', 'mouse', 'microfone', 'lanterna',
-    'produto',
+    'smartwatch', 'relogio', 'relógio', 'peje', 'microwear', 'haylou', 'amazfit',
+    'fone', 'fone bluetooth', 'fone ouvido', 'caixa', 'caixa som', 'camera', 'câmera',
+    'camera ip', 'câmera ip', 'xiaomi', 'iphone', 'realme', 'samsung', 'motorola',
+    'celular', 'carregador', 'fonte', 'cabo', 'usb', 'tipo c', 'pelicula', 'película',
+    'capinha', 'case', 'suporte', 'power bank', 'controle', 'teclado', 'mouse',
+    'microfone', 'lanterna', 'receptor', 'produto',
 )
 WBUY_FALLBACK_QUERY_KEYS = ('q', 'term', 'query', 'keyword', 'palavra', 'palavra_busca', 'busca')
 WBUY_FALLBACK_BROWSE_PATHS = (
@@ -48,12 +49,27 @@ WBUY_FALLBACK_BROWSE_PATHS = (
     '/produtos/',
     '/mais-produtos',
     '/categoria/mais-produtos',
+    '/lancamentos',
+    '/lançamentos',
+    '/ofertas',
+    '/mais-vendidos',
     '/smartwatch',
+    '/categoria/smartwatch',
     '/acessorios',
+    '/categoria/acessorios',
     '/celulares-smartphone',
+    '/categoria/celulares-smartphone',
+    '/eletronicos',
+    '/categoria/eletronicos',
 )
 WBUY_FALLBACK_SEARCH_ENDPOINTS = (
     '/produtos_autocomplete.php',
+    '/busca/',
+    '/busca',
+    '/buscar',
+    '/pesquisa',
+)
+WBUY_FALLBACK_PAGINATED_ENDPOINTS = (
     '/busca/',
     '/busca',
     '/buscar',
@@ -114,6 +130,32 @@ def _append_unique_url(target: list[str], url: str) -> None:
         target.append(clean)
 
 
+def _wbuy_page_limit(max_products: int) -> int:
+    try:
+        requested = int(max_products or 0)
+    except Exception:
+        requested = 0
+    if requested >= 800:
+        return WBUY_FALLBACK_PAGE_LIMIT
+    if requested >= 300:
+        return 180
+    if requested >= 120:
+        return 120
+    return 64
+
+
+def _wbuy_page_count(max_products: int) -> int:
+    try:
+        requested = int(max_products or 0)
+    except Exception:
+        requested = 0
+    if requested >= 800:
+        return 10
+    if requested >= 300:
+        return 8
+    return 6
+
+
 def _wbuy_candidate_pages(raw_urls: str, max_products: int) -> list[str]:
     starts = [norm_url(url) for url in split_urls(raw_urls) if norm_url(url)]
     starts = list(dict.fromkeys(starts))
@@ -132,14 +174,21 @@ def _wbuy_candidate_pages(raw_urls: str, max_products: int) -> list[str]:
                 for query_key in WBUY_FALLBACK_QUERY_KEYS:
                     _append_unique_url(pages, f'{root}{endpoint}?{urlencode({query_key: term})}')
 
-        page_count = max(2, min(6, int(max_products or WBUY_FALLBACK_MIN_PRODUCTS) // 24 + 2))
+        page_count = _wbuy_page_count(max_products)
         for path in WBUY_FALLBACK_BROWSE_PATHS:
             separator = '&' if '?' in path else '?'
             for page in range(2, page_count + 1):
                 for page_key in ('pg', 'page', 'pagina'):
                     _append_unique_url(pages, f'{root}{path}{separator}{urlencode({page_key: page})}')
 
-    return pages[:WBUY_FALLBACK_PAGE_LIMIT]
+        for term in WBUY_FALLBACK_SEARCH_TERMS:
+            for endpoint in WBUY_FALLBACK_PAGINATED_ENDPOINTS:
+                for page in range(2, min(page_count, 6) + 1):
+                    for page_key in ('pg', 'page', 'pagina'):
+                        params = {'busca': term, page_key: page}
+                        _append_unique_url(pages, f'{root}{endpoint}?{urlencode(params)}')
+
+    return pages[:_wbuy_page_limit(max_products)]
 
 
 def _product_identity(product: FastProductData) -> str:
@@ -445,22 +494,32 @@ def _wbuy_listing_fallback_products(
         'message': 'Tentando complementar a captura com vitrines, buscas e cards públicos wBuy.',
         'progress': 0.88,
         'starts': len(starts),
+        'candidate_pages': len(starts),
+        'page_limit': _wbuy_page_limit(max_products),
     })
-    fetched = fetch_many_live(starts, timeout=9, workers=min(12, len(starts)))
+    fetched = fetch_many_live(starts, timeout=9, workers=min(14, len(starts)))
     products: list[FastProductData] = []
     seen: set[str] = set()
+    html_pages = 0
+    pages_with_products = 0
     for url, html in fetched.items():
+        if html:
+            html_pages += 1
         remaining = max(0, int(max_products) - len(products))
         if remaining <= 0:
             break
+        page_products = 0
         for product in wbuy_listing_products(url, html, limit=remaining):
             key = _product_identity(product)
             if not key or key in seen:
                 continue
             seen.add(key)
             products.append(product)
+            page_products += 1
             if len(products) >= max_products:
                 break
+        if page_products:
+            pages_with_products += 1
 
     if not products and starts and allow_catalog_fallback:
         emit(progress_callback, {
@@ -479,7 +538,10 @@ def _wbuy_listing_fallback_products(
         status='OK' if products else 'INFO',
         details={
             'starts': len(starts),
-            'html_pages': sum(1 for raw in fetched.values() if raw),
+            'candidate_pages': len(starts),
+            'page_limit': _wbuy_page_limit(max_products),
+            'html_pages': html_pages,
+            'pages_with_products': pages_with_products,
             'products': len(products),
             'catalog_fallback_allowed': bool(allow_catalog_fallback),
             'responsible_file': RESPONSIBLE_FILE,
@@ -491,6 +553,8 @@ def _wbuy_listing_fallback_products(
             'message': f'{len(products)} produto(s) recuperado(s) por fallback wBuy/catálogo.',
             'progress': 0.90,
             'found': len(products),
+            'candidate_pages': len(starts),
+            'pages_with_products': pages_with_products,
         })
     return products
 
@@ -633,7 +697,7 @@ def run_fast_site_scraper(
 
     products, rendered_fallbacks = enhance_products_sequentially(products_by_url, needed, progress_callback)
     fallback_products: list[FastProductData] = []
-    min_target = min(WBUY_FALLBACK_MIN_PRODUCTS, max(1, int(max_products or WBUY_FALLBACK_MIN_PRODUCTS)))
+    min_target = min(max_products, max(WBUY_FALLBACK_MIN_PRODUCTS, min(160, max_products)))
     if len(products) < min_target:
         fallback_products = _wbuy_listing_fallback_products(
             raw_urls=raw_urls,
