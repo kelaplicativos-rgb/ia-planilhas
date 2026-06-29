@@ -21,6 +21,7 @@ from bling_app_zero.core.brand_runtime_patch import install_brand_runtime_patch
 from bling_app_zero.core.cache_control import clear_cache_once_per_version
 from bling_app_zero.core.cache_schema_guard import enforce_cache_schema_guard, render_cache_schema_notice
 from bling_app_zero.core.mapping_widget_state import restore_mapping_widget_state_from_snapshot
+from bling_app_zero.core.mhtml_capture_runtime import install_mhtml_capture_runtime
 from bling_app_zero.core.official_bling_oauth_patch import install_official_bling_oauth_patch
 from bling_app_zero.core.xml_nfe_runtime_patch import install_xml_nfe_runtime_patch
 from bling_app_zero.core.zip_multi_source_runtime import install_zip_multi_source_runtime
@@ -45,7 +46,7 @@ from bling_app_zero.ui.wbuy_capture_full_runtime import install_wbuy_capture_ful
 
 RUNTIME_PATCH_KEYS_TO_REFRESH = ('blingfix_runtime_patches_installed_v7', 'blingfix_runtime_patches_installed_v8', 'final_bling_operation_selector_runtime_installed_v1', 'final_bling_operation_selector_runtime_installed_v2')
 RUNTIME_PATCH_REFRESH_MARKER_KEY = 'blingfix_runtime_patch_refresh_marker_v1'
-RUNTIME_PATCH_REFRESH_POLICY_VERSION = f'{APP_VERSION}:runtime_v15_protected_supplier_collectors'
+RUNTIME_PATCH_REFRESH_POLICY_VERSION = f'{APP_VERSION}:runtime_v16_mhtml_capture_and_protected_supplier'
 MOBILE_AUTO_ENTRY_KEY = 'mobile_connected_bling_auto_entry_done_v1'
 DEVICE_HINT_KEY = 'app_device_hint_v1'
 MOBILE_QUERY_VALUES = {'1', 'true', 'sim', 'yes', 'mobile', 'android', 'ios', 'phone', 'celular'}
@@ -68,7 +69,7 @@ def _refresh_blingfix_runtime_patch_session() -> None:
         details={
             'removed_keys': removed,
             'policy_version': RUNTIME_PATCH_REFRESH_POLICY_VERSION,
-            'reason': 'Atualizar runtime para coletor universal de fornecedores protegidos e ZIP multipágina.',
+            'reason': 'Atualizar runtime para MHTML normalizado, coletor protegido estável e ZIP multipágina.',
             'responsible_file': 'app.py',
         },
     )
@@ -147,6 +148,7 @@ def main() -> None:
     _install_bling_api_verified_media_checkpoint('before_runtime_patches')
     _refresh_blingfix_runtime_patch_session()
     install_blingfix_runtime_patches()
+    install_mhtml_capture_runtime()
     install_zip_multi_source_runtime()
     install_protected_supplier_runtime()
     install_wbuy_live_runtime()
