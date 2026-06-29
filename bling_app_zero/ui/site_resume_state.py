@@ -99,17 +99,27 @@ def _payload_candidates() -> list[dict]:
     return candidates
 
 
-def _payload_score(payload: dict) -> int:
-    rows = _as_rows(payload.get('partial_checkpoint_rows'))
-    count = len(rows)
+def _declared_checkpoint_count(payload: Mapping[str, object]) -> int:
+    count = 0
     for key in ('partial_checkpoint_found', 'found', 'rows'):
         try:
             count = max(count, int(float(payload.get(key) or 0)))
         except Exception:
             pass
+    return count
+
+
+def _payload_score(payload: dict) -> int:
+    rows = _as_rows(payload.get('partial_checkpoint_rows'))
+    row_count = len(rows)
+    declared_count = _declared_checkpoint_count(payload)
     pending = _as_string_list(payload.get('partial_checkpoint_pending_urls') or payload.get('pending_urls'))
     processed = _as_string_list(payload.get('partial_checkpoint_processed_urls') or payload.get('processed_urls'))
-    return count * 10 + len(pending) + len(processed)
+    if row_count > 0:
+        return 100_000 + (row_count * 100) + min(declared_count, MAX_CHECKPOINT_ROWS) + len(pending) + len(processed)
+    if pending or processed:
+        return len(pending) + len(processed)
+    return 0
 
 
 def checkpoint_payload(operation: str | None = None) -> dict:
@@ -140,14 +150,13 @@ def checkpoint_count(operation: str | None = None) -> int:
     payload = checkpoint_payload(operation)
     if not payload:
         return 0
-    count = 0
-    for key in ('partial_checkpoint_found', 'found', 'rows'):
-        try:
-            count = max(count, int(float(payload.get(key) or 0)))
-        except Exception:
-            pass
     rows = _as_rows(payload.get('partial_checkpoint_rows'))
-    return max(count, len(rows))
+    if rows:
+        return len(rows)
+    pending = checkpoint_pending_urls(operation)
+    if pending:
+        return len(pending)
+    return 0
 
 
 def checkpoint_df(operation: str | None = None, requested_columns: list[str] | None = None) -> pd.DataFrame:
