@@ -14,6 +14,26 @@ STORE_BRAND_TERMS = {
     'stoqui',
     'loja',
 }
+DESCRIPTION_BLOCKED_COLUMN_TERMS = {
+    'id',
+    'id produto',
+    'produto id',
+    'codigo',
+    'código',
+    'sku',
+    'gtin',
+    'ean',
+    'preco',
+    'preço',
+    'valor',
+    'estoque',
+    'quantidade',
+    'saldo',
+    'balanco',
+    'balanço',
+    'deposito',
+    'depósito',
+}
 
 
 @dataclass(frozen=True)
@@ -35,6 +55,10 @@ def _clean_text(value: object) -> str:
     text = str(value or '').strip()
     text = re.sub(r'\s+', ' ', text)
     return text
+
+
+def _column_key(value: object) -> str:
+    return re.sub(r'[^a-z0-9áàâãéêíóôõúüç]+', ' ', str(value or '').strip().lower()).strip()
 
 
 def _find_column(columns: Iterable[str], *needles: str) -> str | None:
@@ -81,6 +105,65 @@ def _duplicate_non_empty_count(series: pd.Series | None) -> int:
     return int(cleaned.duplicated(keep=False).sum())
 
 
+def _non_empty_count(df: pd.DataFrame, column: str) -> int:
+    if not isinstance(df, pd.DataFrame) or column not in df.columns:
+        return 0
+    return int(df[column].fillna('').astype(str).map(_clean_text).ne('').sum())
+
+
+def _blocked_description_column(column: object) -> bool:
+    key = _column_key(column)
+    if key in DESCRIPTION_BLOCKED_COLUMN_TERMS:
+        return True
+    if key.startswith(('id ', 'codigo ', 'código ', 'sku ', 'gtin ', 'ean ')):
+        return True
+    if any(token in key for token in ('preco', 'preço', 'valor', 'estoque', 'saldo', 'balanco', 'balanço', 'deposito', 'depósito')):
+        return True
+    return False
+
+
+def _find_description_column(df: pd.DataFrame) -> str | None:
+    """Escolhe a melhor coluna textual, não a primeira que contém 'produto'.
+
+    O diagnóstico do Atacadum/WBuy mostrou origem com ``Nome do Produto`` preenchido e
+    ``descricao`` vazia. O validador antigo encontrava ``descricao`` primeiro e marcava
+    todos os produtos como sem título. Aqui priorizamos coluna com conteúdo real e
+    bloqueamos colunas de identidade como ``ID Produto``.
+    """
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return None
+
+    priority_terms = (
+        'descrição',
+        'descricao',
+        'nome do produto',
+        'nome produto',
+        'produto nome',
+        'nome',
+        'titulo',
+        'título',
+        'title',
+        'produto',
+        'name',
+    )
+    candidates: list[tuple[int, int, int, str]] = []
+    for column in df.columns:
+        key = _column_key(column)
+        if not key or _blocked_description_column(column):
+            continue
+        priority = next((idx for idx, term in enumerate(priority_terms) if term in key), None)
+        if priority is None:
+            continue
+        non_empty = _non_empty_count(df, str(column))
+        exact_bonus = 1 if key in {'descrição', 'descricao', 'nome do produto', 'nome produto', 'titulo', 'título', 'title', 'nome'} else 0
+        candidates.append((non_empty, exact_bonus, -priority, str(column)))
+
+    if not candidates:
+        return None
+    # Maior conteúdo preenchido primeiro; depois match mais exato; depois prioridade semântica.
+    return sorted(candidates, reverse=True)[0][3]
+
+
 def normalize_site_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame() if not isinstance(df, pd.DataFrame) else df.copy()
@@ -119,7 +202,7 @@ def evaluate_site_dataframe(df: pd.DataFrame, operation: str = 'cadastro') -> Sm
         return SmartScanQuality(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ['Nenhum produto válido foi capturado.'])
 
     is_stock = _is_stock_operation(operation)
-    desc_col = _find_column(df.columns, 'descrição', 'descricao', 'nome', 'produto')
+    desc_col = None if is_stock else _find_description_column(df)
     price_col = _find_column(df.columns, 'preço', 'preco', 'valor')
     stock_col = _find_column(df.columns, 'estoque', 'quantidade', 'saldo', 'balanço', 'balanco')
     brand_col = _find_column(df.columns, 'marca')
