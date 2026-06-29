@@ -183,6 +183,69 @@ def _empty_df(df: pd.DataFrame) -> bool:
     return not isinstance(df, pd.DataFrame) or df.empty
 
 
+def _column_key(column: object) -> str:
+    return re.sub(r'[^a-z0-9]+', ' ', str(column or '').strip().lower()).strip()
+
+
+def _wbuy_content_columns(df: pd.DataFrame) -> list[str]:
+    if not isinstance(df, pd.DataFrame):
+        return []
+    columns: list[str] = []
+    blocked = ('url', 'link', 'id', 'codigo', 'sku', 'gtin', 'ean', 'preco', 'price', 'estoque', 'deposito', 'balanco')
+    for column in df.columns:
+        key = _column_key(column)
+        if not key or any(token in key for token in blocked):
+            continue
+        if key in {'produto', 'nome', 'nome produto', 'nome do produto', 'titulo', 'title', 'name', 'descricao', 'description'}:
+            columns.append(str(column))
+            continue
+        if ('nome' in key and 'produto' in key) or 'descri' in key or 'titulo' in key or key == 'title':
+            columns.append(str(column))
+    return list(dict.fromkeys(columns))
+
+
+def _nonempty_rows(df: pd.DataFrame, columns: list[str]) -> int:
+    if not isinstance(df, pd.DataFrame) or df.empty or not columns:
+        return 0
+    count = 0
+    for _idx, row in df[columns].fillna('').iterrows():
+        if any(str(value or '').strip() for value in row.tolist()):
+            count += 1
+    return count
+
+
+def _wbuy_capture_stats(df: pd.DataFrame) -> tuple[int, int]:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return 0, 0
+    rows = len(df)
+    named_rows = _nonempty_rows(df, _wbuy_content_columns(df))
+    return rows, named_rows
+
+
+def _wbuy_weak_capture_reason(df: pd.DataFrame, *, max_products: int) -> str:
+    rows, named_rows = _wbuy_capture_stats(df)
+    if rows <= 0:
+        return ''
+    try:
+        requested = max(1, int(max_products or SMARTSCAN_SAFE_URL_BATCH))
+    except Exception:
+        requested = SMARTSCAN_SAFE_URL_BATCH
+    min_target = min(24, max(3, requested))
+    if rows < min_target and named_rows == 0:
+        return f'{rows} linha(s) sem nome/descricao em captura WBuy'
+    if rows <= 3 and named_rows < rows:
+        return f'{rows} linha(s) com apenas {named_rows} nome(s)/descricao(oes) em captura WBuy'
+    if rows < min_target and named_rows <= max(1, rows // 2):
+        return f'{rows} linha(s) abaixo do alvo WBuy com poucos nomes/descricoes'
+    return ''
+
+
+def _prefer_wbuy_retry(current_df: pd.DataFrame, retry_df: pd.DataFrame) -> bool:
+    current_rows, current_named = _wbuy_capture_stats(current_df)
+    retry_rows, retry_named = _wbuy_capture_stats(retry_df)
+    return retry_rows > current_rows or retry_named > current_named
+
+
 def _force_wbuy_empty_retry(
     *,
     raw_urls: str,
@@ -192,15 +255,22 @@ def _force_wbuy_empty_retry(
     max_pages: int,
     max_products: int,
     progress_callback: Callable[[dict], None] | None,
+    retry_reason: str = 'captura_vazia',
 ) -> pd.DataFrame:
+    is_empty_retry = retry_reason == 'captura_vazia'
+    started_action = 'blingsmartscan_wbuy_empty_retry_started' if is_empty_retry else 'blingsmartscan_wbuy_quality_retry_started'
+    failed_action = 'blingsmartscan_wbuy_empty_retry_failed' if is_empty_retry else 'blingsmartscan_wbuy_quality_retry_failed'
+    finished_action = 'blingsmartscan_wbuy_empty_retry_finished' if is_empty_retry else 'blingsmartscan_wbuy_quality_retry_finished'
+    reason_message = 'A captura principal voltou vazia em plataforma wBuy.' if is_empty_retry else f'A captura principal WBuy voltou fraca: {retry_reason}.'
     _emit(progress_callback, {
         'stage': 'Fallback wBuy obrigatório',
-        'message': 'A captura principal voltou vazia em plataforma wBuy. Tentando vitrines, buscas e cards públicos antes de encerrar.',
+        'message': f'{reason_message} Tentando vitrines, buscas e cards públicos antes de encerrar.',
         'progress': 0.875,
         'platform': 'wbuy',
+        'retry_reason': retry_reason,
     })
     add_audit_event(
-        'blingsmartscan_wbuy_empty_retry_started',
+        started_action,
         area='SITE',
         step='entrada',
         status='AVISO',
@@ -210,6 +280,7 @@ def _force_wbuy_empty_retry(
             'all_products': bool(all_products),
             'max_pages': int(max_pages),
             'max_products': int(max_products),
+            'retry_reason': retry_reason,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -225,12 +296,13 @@ def _force_wbuy_empty_retry(
         )
     except Exception as exc:
         add_audit_event(
-            'blingsmartscan_wbuy_empty_retry_failed',
+            failed_action,
             area='SITE',
             step='entrada',
             status='ERRO',
             details={
                 'operation': operation,
+                'retry_reason': retry_reason,
                 'error': str(exc),
                 'error_type': exc.__class__.__name__,
                 'responsible_file': RESPONSIBLE_FILE,
@@ -240,24 +312,27 @@ def _force_wbuy_empty_retry(
 
     rows = len(retry_df) if isinstance(retry_df, pd.DataFrame) else 0
     add_audit_event(
-        'blingsmartscan_wbuy_empty_retry_finished',
+        finished_action,
         area='SITE',
         step='entrada',
         status='OK' if rows else 'AVISO',
         details={
             'operation': operation,
+            'retry_reason': retry_reason,
             'rows': rows,
             'columns': len(retry_df.columns) if isinstance(retry_df, pd.DataFrame) else 0,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
     if rows:
+        suffix = 'depois da captura principal vazia' if is_empty_retry else 'depois da captura principal fraca'
         _emit(progress_callback, {
             'stage': 'Fallback wBuy recuperou produtos',
-            'message': f'{rows} produto(s) recuperado(s) depois da captura principal vazia.',
+            'message': f'{rows} produto(s) recuperado(s) {suffix}.',
             'progress': 0.91,
             'found': rows,
             'platform': 'wbuy',
+            'retry_reason': retry_reason,
         })
     return retry_df if isinstance(retry_df, pd.DataFrame) else pd.DataFrame()
 
@@ -377,6 +452,46 @@ def run_bling_smartscan(
                 max_products=max_products,
                 progress_callback=progress_callback,
             )
+        elif platform.platform == 'wbuy':
+            weak_reason = _wbuy_weak_capture_reason(df, max_products=max_products)
+            if weak_reason:
+                retry_df = _force_wbuy_empty_retry(
+                    raw_urls=raw_urls,
+                    operation=operation,
+                    requested_columns=requested_columns,
+                    all_products=all_products,
+                    max_pages=max_pages,
+                    max_products=max_products,
+                    progress_callback=progress_callback,
+                    retry_reason=weak_reason,
+                )
+                if _prefer_wbuy_retry(df, retry_df):
+                    add_audit_event(
+                        'blingsmartscan_wbuy_quality_retry_adopted',
+                        area='SITE',
+                        step='entrada',
+                        status='OK',
+                        details={
+                            'reason': weak_reason,
+                            'before_rows': len(df) if isinstance(df, pd.DataFrame) else 0,
+                            'after_rows': len(retry_df) if isinstance(retry_df, pd.DataFrame) else 0,
+                            'responsible_file': RESPONSIBLE_FILE,
+                        },
+                    )
+                    df = retry_df
+                else:
+                    add_audit_event(
+                        'blingsmartscan_wbuy_quality_retry_kept_original',
+                        area='SITE',
+                        step='entrada',
+                        status='AVISO',
+                        details={
+                            'reason': weak_reason,
+                            'original_rows': len(df) if isinstance(df, pd.DataFrame) else 0,
+                            'retry_rows': len(retry_df) if isinstance(retry_df, pd.DataFrame) else 0,
+                            'responsible_file': RESPONSIBLE_FILE,
+                        },
+                    )
         _checkpoint_and_resume_if_partial(
             raw_urls=raw_urls,
             df=df,
