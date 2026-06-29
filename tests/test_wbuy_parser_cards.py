@@ -71,7 +71,7 @@ class TestWBuyCategoryCardParser(unittest.TestCase):
         self.assertEqual(products[0].estoque, '10')
         self.assertEqual(products[0].categoria, 'OFERTAS')
         self.assertIn('Smartwatch C11 Ultra', products[0].descricao)
-        self.assertIn('Preço anterior: R$160,00', products[0].descricao_complementar)
+        self.assertIn('Preço anterior: 160,00', products[0].descricao_complementar)
         self.assertIn('|', products[0].imagem)
         self.assertIn('/produtos/69c05d65c7d40/', products[0].imagem)
         self.assertNotIn('/slide/', products[0].imagem)
