@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-APP_VERSION = '3.9.13'
+APP_VERSION = '3.9.14'
 
 PAGE_CONFIG = {
     'page_title': 'MapeiaAI',
-    'page_icon': '🧭',
+    'page_icon': ':compass:',
     'layout': 'wide',
     'initial_sidebar_state': 'collapsed',
 }
