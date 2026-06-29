@@ -23,6 +23,7 @@ from bling_app_zero.engines.fast_site_scraper.constants import (
 from bling_app_zero.engines.fast_site_scraper.contract_rules import default_columns, important_kinds, needed_kinds
 from bling_app_zero.engines.fast_site_scraper.http_client import fetch_many_live
 from bling_app_zero.engines.fast_site_scraper.models import FastProductData
+from bling_app_zero.engines.fast_site_scraper.openai_catalog_fallback import openai_catalog_products
 from bling_app_zero.engines.fast_site_scraper.output_builder import ensure_columns, to_contract_row
 from bling_app_zero.engines.fast_site_scraper.progress import emit
 from bling_app_zero.engines.fast_site_scraper.rendered_fallback import enhance_products_sequentially
@@ -363,6 +364,16 @@ def _wbuy_listing_fallback_products(
             if len(products) >= max_products:
                 break
 
+    if not products and starts:
+        emit(progress_callback, {
+            'stage': 'Fallback OpenAI catálogo',
+            'message': 'Tentando localizar produtos públicos do domínio porque o HTML wBuy não trouxe cards úteis.',
+            'progress': 0.895,
+            'starts': len(starts),
+        })
+        openai_limit = max(1, min(int(max_products or 40), 80))
+        products = openai_catalog_products(starts[0], limit=openai_limit)
+
     add_audit_event(
         'site_scraper_wbuy_listing_fallback',
         area='SITE',
@@ -378,7 +389,7 @@ def _wbuy_listing_fallback_products(
     if products:
         emit(progress_callback, {
             'stage': 'Fallback wBuy aplicado',
-            'message': f'{len(products)} produto(s) recuperado(s) pelos cards da vitrine.',
+            'message': f'{len(products)} produto(s) recuperado(s) por fallback wBuy/catálogo.',
             'progress': 0.90,
             'found': len(products),
         })
