@@ -37,6 +37,10 @@ def _df_has_values(df: Any) -> bool:
         return False
 
 
+def _preserve_toggle_enabled() -> bool:
+    return bool(st.session_state.get(MODEL_PRESERVE_TOGGLE_KEY, False))
+
+
 def _split_ref(value: object) -> tuple[str, str]:
     text = str(value or '').strip()
     if text.startswith(ORIGIN_REF_PREFIX):
@@ -75,6 +79,8 @@ def _origin_update_targets(mapping: Mapping[str, str] | None, columns: list[str]
 
 def _model_copy_targets(mapping: Mapping[str, str] | None, columns: list[str]) -> dict[str, str]:
     out: dict[str, str] = {}
+    if not _preserve_toggle_enabled():
+        return out
     data = dict(mapping or {})
     for target in columns:
         kind, selected = _split_ref(data.get(target, ''))
@@ -190,10 +196,14 @@ def _merge_preserving_model(df_source: pd.DataFrame, df_model: pd.DataFrame, map
     origin_mapping = _mapping_for_origin_builder(mapping)
     mapped = _raw_build_universal_output(df_source, df_model, origin_mapping).copy().fillna('')
     model_columns = [str(column) for column in getattr(df_model, 'columns', [])]
-    model_choice_enabled = _has_model_copy_choice(mapping, model_columns)
-    preserve_enabled = (bool(st.session_state.get(MODEL_PRESERVE_TOGGLE_KEY, False)) and _df_has_values(df_model)) or model_choice_enabled
+    toggle_enabled = _preserve_toggle_enabled()
+    stale_model_choice = any(_split_ref(value)[0] == 'modelo' for value in dict(mapping or {}).values())
+    model_choice_enabled = bool(toggle_enabled and _has_model_copy_choice(mapping, model_columns))
+    preserve_enabled = bool(toggle_enabled and _df_has_values(df_model))
     if not preserve_enabled:
         st.session_state[PRESERVE_MODEL_ENABLED_KEY] = False
+        if stale_model_choice and not toggle_enabled:
+            add_audit_event('model_preserve_ignored_stale_model_choice_toggle_off', area='UNIVERSAL', status='OK', details={'reason': 'toggle_preservar_dados_modelo_desligado', 'model_choice_ignored': True, 'responsible_file': RESPONSIBLE_FILE})
         return mapped
 
     st.session_state[PRESERVE_MODEL_ENABLED_KEY] = True
@@ -271,6 +281,7 @@ def _merge_preserving_model(df_source: pd.DataFrame, df_model: pd.DataFrame, map
             'duplicate_key_updates': int(duplicate_key_updates),
             'skipped_blank_preserved_fields': int(skipped_blank_preserved),
             'model_choice_enabled': bool(model_choice_enabled),
+            'model_choice_requires_preserve_toggle': True,
             'dual_source_mapping': True,
             'columns_model': model_columns,
             'columns_mapped': mapped_columns,
@@ -302,7 +313,7 @@ def install_model_preserve_merge_runtime() -> None:
     final_output_engine.build_universal_output = lambda df_source, df_model, mapping=None: _merge_preserving_model(df_source, df_model, mapping)
     ui_root._apply_model_preserve = lambda df_source, df_model, mapping=None, original_builder=None: _merge_preserving_model(df_source, df_model, mapping)
     _install_green_mapping_guard()
-    add_audit_event('model_preserve_merge_runtime_installed', area='UNIVERSAL', status='OK', details={'preserve_all_against_blank_source': True, 'duplicate_key_update': True, 'best_key_selection': True, 'model_choice_enables_preserve': True, 'dual_source_mapping': True, 'dropdown_preview_runtime': True, 'preserve_union_model_and_mapped_columns': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('model_preserve_merge_runtime_installed', area='UNIVERSAL', status='OK', details={'preserve_all_against_blank_source': True, 'duplicate_key_update': True, 'best_key_selection': True, 'model_choice_requires_preserve_toggle': True, 'dual_source_mapping': True, 'dropdown_preview_runtime': True, 'preserve_union_model_and_mapped_columns': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_model_preserve_merge_runtime']
