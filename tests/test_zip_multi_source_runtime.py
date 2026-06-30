@@ -19,6 +19,8 @@ HTML_PAGE_2 = '''
 </tbody></table></body></html>
 '''
 
+MODEL_CSV = 'ID Produto,Código SKU*,GTIN/EAN**,Nome do Produto,Depósito*,Movimentação de Estoque*,Tipo de lançamento*,Preço de Compra*,Preço de Custo,Observação\nLinha de exemplo,FL458,1234567891023,Bolsa pequena,Depósito Geral,250,Entrada,760,850,\n'
+
 
 class TestZipMultiSourceRuntime(unittest.TestCase):
     def test_zip_with_multiple_html_pages_is_concatenated(self) -> None:
@@ -37,6 +39,21 @@ class TestZipMultiSourceRuntime(unittest.TestCase):
         self.assertEqual(df.loc[df['SKU'] == 'OOM-0002', 'Balanço (OBRIGATÓRIO)'].iloc[0], '50')
         self.assertIn('Arquivo origem', df.columns)
         self.assertIn('Página origem', df.columns)
+
+    def test_zip_with_same_model_in_multiple_files_does_not_generate_columns(self) -> None:
+        install_zip_multi_source_runtime()
+        from bling_app_zero.core import files as files_module
+
+        buffer = BytesIO()
+        with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr('saldo_estoque.csv', MODEL_CSV.encode('utf-8-sig'))
+            zf.writestr('saldo_estoque_backup.csv', MODEL_CSV.encode('utf-8-sig'))
+        df = files_module._read_zip_bytes(buffer.getvalue(), 'saldo_estoque.csv.zip')
+
+        self.assertEqual(list(df.columns), ['ID Produto', 'Código SKU*', 'GTIN/EAN**', 'Nome do Produto', 'Depósito*', 'Movimentação de Estoque*', 'Tipo de lançamento*', 'Preço de Compra*', 'Preço de Custo', 'Observação'])
+        self.assertNotIn('Arquivo origem', df.columns)
+        self.assertNotIn('Página origem', df.columns)
+        self.assertEqual(len(df), 1)
 
 
 if __name__ == '__main__':
