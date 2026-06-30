@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+import re
+import zipfile
+from io import BytesIO
+
 import pandas as pd
 import streamlit as st
 
@@ -25,8 +30,209 @@ def _valid_frame(df: object) -> bool:
     return isinstance(df, pd.DataFrame) and len(df.columns) > 0 and not df.empty
 
 
+def _clean_text(value: object) -> str:
+    text = str(value or '').replace('\xa0', ' ')
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
+
+def _norm_column(value: object) -> str:
+    text = _clean_text(value).casefold()
+    text = re.sub(r'[^0-9a-záàâãéêíóôõúçñ]+', ' ', text)
+    return ' '.join(text.split()).strip()
+
+
+def _is_numeric_stock(value: object) -> bool:
+    return bool(re.fullmatch(r'-?\d+(?:[,.]\d+)?', _clean_text(value)))
+
+
+def _first_column(df: pd.DataFrame, names: tuple[str, ...]) -> str:
+    normalized = {_norm_column(column): str(column) for column in df.columns}
+    for name in names:
+        wanted = _norm_column(name)
+        if wanted in normalized:
+            return normalized[wanted]
+    for column in df.columns:
+        norm = _norm_column(column)
+        if any(_norm_column(name) in norm for name in names):
+            return str(column)
+    return ''
+
+
+def _row_key(row: pd.Series, *, sku_col: str = '', id_col: str = '') -> str:
+    candidates = []
+    if sku_col:
+        candidates.append(row.get(sku_col, ''))
+    if id_col:
+        candidates.append(row.get(id_col, ''))
+    for column in ('SKU', 'sku', 'Codigo produto *', 'Código produto', 'product_id', 'ID Produto', 'id'):
+        if column in row.index:
+            candidates.append(row.get(column, ''))
+    for value in candidates:
+        text = _clean_text(value)
+        if text:
+            return text.casefold()
+    return ''
+
+
+def _clean_image_urls(value: object) -> str:
+    urls: list[str] = []
+    seen: set[str] = set()
+    for raw in re.split(r'[|\n,]+', str(value or '')):
+        url = _clean_text(raw)
+        if not url or url.startswith('#') or url.lower().startswith(('javascript:', 'data:', 'blob:')):
+            continue
+        if not re.match(r'^https?://', url, flags=re.I):
+            continue
+        if not re.search(r'\.(jpg|jpeg|png|webp|gif)(\?|$)', url, flags=re.I):
+            continue
+        if re.search(r'(logo|favicon|sprite|placeholder|icon|mercado-livre|\.svg)', url, flags=re.I):
+            continue
+        if url not in seen:
+            seen.add(url)
+            urls.append(url)
+    return '|'.join(urls[:20])
+
+
+def _read_inner_capture_frame(name: str, data: bytes) -> pd.DataFrame:
+    lower = str(name or '').lower()
+    try:
+        from bling_app_zero.core.html_product_extractor import read_html_product_bytes, read_mhtml_product_bytes
+        if lower.endswith(('.html', '.htm')):
+            return read_html_product_bytes(data).fillna('').astype(str)
+        if lower.endswith(('.mht', '.mhtml')):
+            return read_mhtml_product_bytes(data).fillna('').astype(str)
+    except Exception:
+        return pd.DataFrame()
+    return pd.DataFrame()
+
+
+def _read_full_capture_zip(data: bytes) -> pd.DataFrame:
+    """Lê o ZIP do coletor completo e corrige estoque/imagens.
+
+    O coletor de computador gera dois tipos de dados:
+    - arquivos `_mapeiaai_completo.json/html`, com descrição, EAN, NCM, peso etc.;
+    - páginas normais da listagem, onde fica o estoque numérico real no tooltip.
+
+    Este leitor prioriza os detalhes completos, mas cruza a listagem por SKU/ID para
+    nunca perder o estoque numérico e remove links internos do campo Imagens.
+    """
+    complete_rows: list[dict[str, object]] = []
+    listing_frames: list[pd.DataFrame] = []
+    with zipfile.ZipFile(BytesIO(data)) as archive:
+        for info in archive.infolist():
+            if info.is_dir():
+                continue
+            name = str(info.filename or '')
+            lower = name.lower()
+            payload = archive.read(info)
+            if lower.endswith('_mapeiaai_completo.json'):
+                try:
+                    parsed = json.loads(payload.decode('utf-8'))
+                    if isinstance(parsed, list):
+                        complete_rows.extend(row for row in parsed if isinstance(row, dict))
+                    elif isinstance(parsed, dict):
+                        rows = parsed.get('records') or parsed.get('data') or parsed.get('rows') or []
+                        if isinstance(rows, list):
+                            complete_rows.extend(row for row in rows if isinstance(row, dict))
+                except Exception:
+                    continue
+            elif '_mapeiaai_completo' not in lower and lower.endswith(('.html', '.htm', '.mht', '.mhtml')):
+                frame = _read_inner_capture_frame(name, payload)
+                if _valid_frame(frame):
+                    listing_frames.append(frame)
+
+    if not complete_rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(complete_rows).fillna('').astype(str)
+    if df.empty:
+        return pd.DataFrame()
+
+    stock_lookup: dict[str, dict[str, str]] = {}
+    image_lookup: dict[str, str] = {}
+    for frame in listing_frames:
+        clean = frame.fillna('').astype(str)
+        sku_col = _first_column(clean, ('SKU', 'Codigo produto', 'Código produto', 'sku'))
+        id_col = _first_column(clean, ('product_id', 'ID Produto', 'id'))
+        stock_col = _first_column(clean, ('Estoque Numérico', 'Estoque', 'Quantidade', 'Saldo'))
+        status_col = _first_column(clean, ('Disponibilidade', 'Estoque Status', 'Status', 'Situação'))
+        image_col = _first_column(clean, ('Imagens', 'Imagem URL', 'Imagem', 'Foto', 'URL Imagem'))
+        if not sku_col and not id_col:
+            continue
+        for _, row in clean.iterrows():
+            key = _row_key(row, sku_col=sku_col, id_col=id_col)
+            if not key:
+                continue
+            stock_value = _clean_text(row.get(stock_col, '')) if stock_col else ''
+            if stock_value and not _is_numeric_stock(stock_value):
+                match = re.search(r'(-?\d+(?:[,.]\d+)?)\s*(?:unid|unidade|unidades|pcs)?', stock_value, flags=re.I)
+                stock_value = match.group(1).replace(',', '.') if match else ''
+            status_value = _clean_text(row.get(status_col, '')) if status_col else ''
+            if stock_value or status_value:
+                stock_lookup[key] = {'stock': stock_value, 'status': status_value}
+            if image_col:
+                cleaned_images = _clean_image_urls(row.get(image_col, ''))
+                if cleaned_images:
+                    image_lookup[key] = cleaned_images
+
+    sku_col = _first_column(df, ('SKU', 'Codigo produto', 'Código produto', 'sku'))
+    id_col = _first_column(df, ('product_id', 'ID Produto', 'id'))
+    for column in ('Estoque', 'Estoque Numérico', 'Estoque Status', 'Disponibilidade', 'Imagens', 'Imagem URL'):
+        if column not in df.columns:
+            df[column] = ''
+
+    for idx, row in df.iterrows():
+        key = _row_key(row, sku_col=sku_col, id_col=id_col)
+        stock_data = stock_lookup.get(key) if key else None
+        if stock_data:
+            stock = _clean_text(stock_data.get('stock'))
+            status = _clean_text(stock_data.get('status'))
+            if stock:
+                df.at[idx, 'Estoque'] = stock
+                df.at[idx, 'Estoque Numérico'] = stock
+            if status:
+                df.at[idx, 'Estoque Status'] = status
+                df.at[idx, 'Disponibilidade'] = status
+        merged_images = _clean_image_urls(df.at[idx, 'Imagens'])
+        if not merged_images and key:
+            merged_images = image_lookup.get(key, '')
+        if not merged_images:
+            merged_images = _clean_image_urls(df.at[idx, 'Imagem URL'])
+        df.at[idx, 'Imagens'] = merged_images
+        df.at[idx, 'Imagem URL'] = merged_images.split('|', 1)[0] if merged_images else _clean_image_urls(df.at[idx, 'Imagem URL']).split('|', 1)[0] if _clean_image_urls(df.at[idx, 'Imagem URL']) else ''
+
+    add_audit_event(
+        'protected_supplier_full_capture_zip_enriched',
+        area='ORIGEM',
+        status='OK',
+        details={
+            'rows': int(len(df)),
+            'columns': int(len(df.columns)),
+            'numeric_stock_rows': int(df['Estoque Numérico'].map(_is_numeric_stock).sum()) if 'Estoque Numérico' in df.columns else 0,
+            'image_rows': int(df['Imagens'].astype(str).str.contains(r'^https?://', regex=True).sum()) if 'Imagens' in df.columns else 0,
+            'responsible_file': RESPONSIBLE_FILE,
+        },
+    )
+    return df.fillna('').astype(str)
+
+
 def _read_uploaded_capture(uploaded) -> pd.DataFrame:
     from bling_app_zero.core import files as files_module
+    name = str(getattr(uploaded, 'name', '') or '').lower()
+    data = uploaded.getvalue()
+    if name.endswith('.zip'):
+        try:
+            full = _read_full_capture_zip(data)
+            if _valid_frame(full):
+                return full.fillna('')
+        except Exception as exc:
+            add_audit_event(
+                'protected_supplier_full_capture_zip_failed',
+                area='ORIGEM',
+                status='AVISO',
+                details={'error': str(exc)[:220], 'responsible_file': RESPONSIBLE_FILE},
+            )
     return files_module.read_uploaded_file(uploaded).fillna('')
 
 
