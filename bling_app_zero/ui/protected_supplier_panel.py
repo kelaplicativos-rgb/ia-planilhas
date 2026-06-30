@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from bling_app_zero.core.android_collector_link import android_collector_apk_source, android_collector_apk_url
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.mobile_protected_capture import capture_url_on_mobile
 from bling_app_zero.core.protected_supplier_collectors import build_collector_zip
@@ -117,6 +118,19 @@ def _try_public_site_engine(start_url: str, reason: str) -> pd.DataFrame | None:
     return None
 
 
+def _render_android_apk_link(*, compact: bool = False) -> None:
+    url = android_collector_apk_url()
+    source = android_collector_apk_source()
+    st.link_button('📲 Baixar coletor Android (APK)', url, use_container_width=True)
+    st.caption('Use no Android quando precisar capturar painel protegido sem computador.')
+    add_audit_event(
+        'protected_supplier_android_apk_link_rendered',
+        area='ORIGEM',
+        status='INFO',
+        details={'source': source, 'compact': compact, 'responsible_file': RESPONSIBLE_FILE},
+    )
+
+
 def _return_loaded_capture(df: pd.DataFrame, *, source: str, file_name: str = '') -> pd.DataFrame:
     clean = df.copy().fillna('').astype(str)
     add_audit_event(
@@ -133,7 +147,9 @@ def _return_loaded_capture(df: pd.DataFrame, *, source: str, file_name: str = ''
 
 def render_protected_supplier_source_panel() -> pd.DataFrame | None:
     st.markdown('#### 🔐 Painel protegido com login')
-    st.caption('Informe apenas o site. No celular, use “Coletar no sistema”. No computador, o coletor local fica como plano B.')
+    st.caption('Informe apenas o site. No celular, use “Coletar no sistema” ou baixe o coletor Android em APK.')
+
+    _render_android_apk_link()
 
     start_url = st.text_input('Site do painel de produtos', value=str(st.session_state.get(PROTECTED_URL_KEY) or '').strip(), placeholder='https://fornecedor.com.br/admin/produtos', key=PROTECTED_URL_KEY)
     site_ok = bool(str(start_url or '').strip())
@@ -171,6 +187,7 @@ def render_protected_supplier_source_panel() -> pd.DataFrame | None:
         zip_bytes = build_collector_zip(UNIVERSAL_PROVIDER_KEY, start_url=start_url, pages=INTERNAL_MAX_CAPTURE_PAGES, capture_format='mhtml') if site_ok else b''
         st.download_button('⬇️ Baixar coletor automático', data=zip_bytes, file_name='mapeiaai_coletor_painel_protegido.zip', mime='application/zip', disabled=not site_ok, use_container_width=True, key='mapeiaai_download_protected_supplier_collector_v2')
         st.caption('Use apenas quando não conseguir capturar pelo celular ou quando o fornecedor bloquear o navegador seguro.')
+        _render_android_apk_link(compact=True)
 
     uploaded = st.file_uploader('Anexar captura gerada pelo coletor', type=None, key=PROTECTED_UPLOAD_KEY)
     if uploaded is None:
