@@ -15,7 +15,7 @@ on:
 
 jobs:
   build-apk:
-    name: Build Android collector APK
+    name: Build MapeiaAI Android Collector APK
     runs-on: ubuntu-latest
 
     steps:
@@ -31,13 +31,14 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Make Gradle wrapper executable
-        working-directory: android_collector
-        run: chmod +x ./gradlew
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
 
       - name: Build debug APK
         working-directory: android_collector
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        run: gradle assembleDebug --no-daemon --stacktrace
 
       - name: Rename APK
         run: |
