@@ -34,6 +34,43 @@ window.MapeiaAIStockCapture.escapeHtml = function (value) {
 window.MapeiaAIStockCapture.numericPattern = /^-?\d+([,.]\d+)?$/;
 window.MapeiaAIStockCapture.moneyPattern = /R\$\s*\d|^\d{1,6}([,.]\d{2})$/;
 window.MapeiaAIStockCapture.statusPattern = /^(disponivel|disponível|indisponivel|indisponível|baixo|esgotado|sem estoque|em estoque|ativo|inativo)$/i;
+window.MapeiaAIStockCapture.stockKeyPattern = /estoque|stock|saldo|quantidade|quantity|qtd|qty|inventory|inventario|inventário|balance|balanco|balanço|available|availability/i;
+window.MapeiaAIStockCapture.extractHiddenStock = function (value) {
+    var raw = this.decodeEntities(value);
+    var visible = this.normalize(raw.replace(/<[^>]*>/g, ' '));
+    if (/\b(esgotado|sem estoque|indisponivel|indisponível)\b/.test(visible)) return '0';
+
+    var numericOnly = this.clean(raw);
+    if (this.numericPattern.test(numericOnly)) return numericOnly.replace(',', '.');
+
+    var attrRe = /(?:title|data-original-title|data-bs-original-title|data-title|data-stock|data-estoque|data-quantity|data-quantidade|data-qtd|data-qty|data-saldo|data-inventory|data-balance|aria-label)\s*=\s*(["'])(.*?)\1/gi;
+    var match;
+    while ((match = attrRe.exec(raw)) !== null) {
+        var attrValue = this.clean(match[2]);
+        var attrNorm = this.normalize(attrValue);
+        if (/\b(esgotado|sem estoque|indisponivel|indisponível)\b/.test(attrNorm)) return '0';
+        var attrNumber = attrValue.match(/-?\d+([,.]\d+)?/);
+        if (attrNumber) return attrNumber[0].replace(',', '.');
+    }
+
+    var patterns = [
+        /(?:estoque|saldo|stock|quantity|quantidade|qtd|inventory|invent[aá]rio|balance|dispon[ií]vel|available)[^0-9-]{0,50}(-?\d+([,.]\d+)?)/i,
+        /(-?\d+([,.]\d+)?)\s*(?:unid|unidade|unidades|pe[cç]as|pcs|em estoque|dispon[ií]veis)/i,
+        /(?:stockQuantity|inventoryLevel|availableQuantity|quantityAvailable|saldoAtual|estoqueAtual)\s*[:=]\s*["']?(-?\d+([,.]\d+)?)/i
+    ];
+    for (var i = 0; i < patterns.length; i++) {
+        var found = raw.match(patterns[i]);
+        if (found && found[1] != null) return String(found[1]).replace(',', '.');
+    }
+    return '';
+};
+window.MapeiaAIStockCapture.cleanForKey = function (key, value) {
+    if (this.stockKeyPattern.test(String(key || ''))) {
+        var hidden = this.extractHiddenStock(value);
+        if (hidden !== '') return hidden;
+    }
+    return this.clean(value);
+};
 window.MapeiaAIStockCapture.getByPath = function (obj, path) {
     if (!obj || !path || typeof path !== 'string') return '';
     if (path === '_' || path === 'function') return '';
@@ -51,12 +88,12 @@ window.MapeiaAIStockCapture.flatten = function (value, prefix, out) {
     out = out || {};
     if (value == null) return out;
     if (typeof value !== 'object') {
-        if (prefix) out[prefix] = this.clean(value);
+        if (prefix) out[prefix] = this.cleanForKey(prefix, value);
         return out;
     }
     if (Array.isArray(value)) {
         out[prefix || 'valor'] = value.map(function (item) {
-            return window.MapeiaAIStockCapture.clean(typeof item === 'object' ? JSON.stringify(item) : item);
+            return window.MapeiaAIStockCapture.cleanForKey(prefix || 'valor', typeof item === 'object' ? JSON.stringify(item) : item);
         }).filter(Boolean).join(' | ');
         return out;
     }
@@ -66,7 +103,7 @@ window.MapeiaAIStockCapture.flatten = function (value, prefix, out) {
         if (item != null && typeof item === 'object' && !Array.isArray(item)) {
             window.MapeiaAIStockCapture.flatten(item, next, out);
         } else {
-            out[next] = window.MapeiaAIStockCapture.clean(Array.isArray(item) ? item.join(' | ') : item);
+            out[next] = window.MapeiaAIStockCapture.cleanForKey(next, Array.isArray(item) ? item.join(' | ') : item);
         }
     });
     return out;
@@ -82,8 +119,8 @@ window.MapeiaAIStockCapture.domRows = function (table, headers) {
     });
     return rows.map(function (row) {
         var cells = Array.prototype.slice.call(row.children || []);
-        return headers.map(function (_, idx) {
-            return window.MapeiaAIStockCapture.clean(cells[idx] ? cells[idx].textContent : '');
+        return headers.map(function (header, idx) {
+            return window.MapeiaAIStockCapture.cleanForKey(header, cells[idx] ? cells[idx].innerHTML || cells[idx].textContent : '');
         });
     }).filter(function (values) {
         return values.some(function (value) { return value.length > 0; });
@@ -247,14 +284,14 @@ window.MapeiaAIStockCapture.rowsToValues = function (rawRows, headers, columns) 
     var rows = rawRows.map(function (row) {
         if (Array.isArray(row)) {
             if (!headers.length) headers = row.map(function (_, idx) { return 'Coluna ' + (idx + 1); });
-            return headers.map(function (_, idx) { return window.MapeiaAIStockCapture.clean(row[idx]); });
+            return headers.map(function (header, idx) { return window.MapeiaAIStockCapture.cleanForKey(header, row[idx]); });
         }
         if (row && typeof row === 'object') {
             var flat = window.MapeiaAIStockCapture.flatten(row, '', {});
             if (!headers.length) headers = Object.keys(flat);
             return headers.map(function (header, idx) {
                 var columnKey = columns[idx] && typeof columns[idx] === 'string' ? columns[idx] : '';
-                return window.MapeiaAIStockCapture.clean(window.MapeiaAIStockCapture.valueFromObject(row, flat, header, columnKey));
+                return window.MapeiaAIStockCapture.cleanForKey(header, window.MapeiaAIStockCapture.valueFromObject(row, flat, header, columnKey));
             });
         }
         return [window.MapeiaAIStockCapture.clean(row)];
@@ -318,7 +355,7 @@ window.MapeiaAIStockCapture.inferHeader = function (header, values) {
     if (/^(price|preco|valor|custo)$/.test(h)) return 'Preco';
     if (/^(price_of|availability|disponibilidade|situacao|status)$/.test(h)) return 'Disponibilidade';
     if (/^(ean|gtin|codigo_de_barras|codigo_barras|barras)$/.test(h)) return stats.numeric >= Math.max(1, stats.nonEmpty * 0.8) ? header : 'Marca';
-    if (/(estoque|stock|saldo|quantidade|quantity|qtd)/.test(h)) return stats.numeric > 0 ? 'Estoque' : 'Disponibilidade';
+    if (/(estoque|stock|saldo|quantidade|quantity|qtd|qty|inventory|inventario|balance|balanco|balanço)/.test(h)) return stats.numeric > 0 ? 'Estoque' : 'Disponibilidade';
     return '';
 };
 window.MapeiaAIStockCapture.sameColumnRatio = function (a, b) {
@@ -332,7 +369,7 @@ window.MapeiaAIStockCapture.sameColumnRatio = function (a, b) {
 window.MapeiaAIStockCapture.prepareColumns = function (headers, rows) {
     var candidates = [];
     for (var i = 0; i < headers.length; i++) {
-        var values = rows.map(function (row) { return window.MapeiaAIStockCapture.clean(row[i]); });
+        var values = rows.map(function (row) { return window.MapeiaAIStockCapture.cleanForKey(headers[i], row[i]); });
         var inferred = this.inferHeader(headers[i], values);
         if (!inferred) continue;
         var stats = this.columnStats(values);
@@ -353,13 +390,13 @@ window.MapeiaAIStockCapture.prepareColumns = function (headers, rows) {
     });
     if (!kept.length) {
         for (var all = 0; all < Math.min(headers.length, 12); all++) {
-            kept.push({ idx: all, header: headers[all] || ('Coluna ' + (all + 1)), values: rows.map(function (row) { return window.MapeiaAIStockCapture.clean(row[all]); }) });
+            kept.push({ idx: all, header: headers[all] || ('Coluna ' + (all + 1)), values: rows.map(function (row) { return window.MapeiaAIStockCapture.cleanForKey(headers[all], row[all]); }) });
         }
     }
     return {
         headers: kept.map(function (item) { return item.header; }),
         rows: rows.map(function (row) {
-            return kept.map(function (item) { return window.MapeiaAIStockCapture.clean(row[item.idx]); });
+            return kept.map(function (item) { return window.MapeiaAIStockCapture.cleanForKey(headers[item.idx], row[item.idx]); });
         }).filter(function (values) {
             return values.some(function (value) { return value.length > 0; });
         })
@@ -375,7 +412,7 @@ window.MapeiaAIStockCapture.qualityReport = function (headers, rows) {
         var values = rows.map(function (row) { return row[i] || ''; });
         var stats = this.columnStats(values);
         if (/(id|sku|codigo|referencia|model|modelo|ean|gtin|barras|name|nome|produto|descricao)/.test(h) && stats.unique > 2) hasIdentifier = true;
-        if (/(estoque|stock|saldo|quantidade|quantity|qtd)/.test(h) && stats.numeric > 0 && stats.status === 0) hasNumericStock = true;
+        if (/(estoque|stock|saldo|quantidade|quantity|qtd|qty|inventory|inventario|balance|balanco|balanço)/.test(h) && stats.numeric > 0 && stats.status === 0) hasNumericStock = true;
         if (/(disponibilidade|status|situacao|availability)/.test(h) || stats.status > 0) hasAvailability = true;
         if (/(preco|price|valor|custo)/.test(h) || stats.money > 0) hasPrice = true;
     }
