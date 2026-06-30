@@ -44,7 +44,7 @@ public class MainActivity extends Activity {
     private static final int AUTO_TARGET_PAGE_LENGTH = 200;
     private static final int STOCK_TARGET_PAGE_LENGTH = 500;
     private static final long AUTO_PAGE_SETTLE_MS = 650;
-    private static final long STOCK_PAGE_SETTLE_MS = 450;
+    private static final long STOCK_PAGE_SETTLE_MS = 900;
     private static final long AUTO_NEXT_PAGE_MS = 200;
     private static final long DETAIL_OPEN_WAIT_MS = 300;
     private static final long DETAIL_NEXT_ITEM_MS = 120;
@@ -61,6 +61,9 @@ public class MainActivity extends Activity {
     private int detailRecordCount = 0;
     private int stockFileCount = 0;
     private int stockRecordCount = 0;
+    private int stockExpectedTotal = 0;
+    private String stockCompletenessStatus = "not_started";
+    private String stockLastError = "";
     private boolean autoRunning = false;
 
     @Override
@@ -185,6 +188,9 @@ public class MainActivity extends Activity {
         detailRecordCount = 0;
         stockFileCount = 0;
         stockRecordCount = 0;
+        stockExpectedTotal = 0;
+        stockCompletenessStatus = "not_started";
+        stockLastError = "";
         autoRunning = false;
         captureDir = null;
         progressBar.setProgress(0);
@@ -328,8 +334,13 @@ public class MainActivity extends Activity {
             toast("Captura automática já está rodando.");
             return;
         }
+        stockExpectedTotal = 0;
+        stockRecordCount = 0;
+        stockFileCount = 0;
+        stockCompletenessStatus = "running";
+        stockLastError = "";
         setAutoPerformanceMode(true);
-        setStatus("Estoque básico rápido: vou salvar somente HTMLs leves da tabela, sem abrir detalhes.");
+        setStatus("Estoque básico rápido: vou salvar HTMLs leves e validar se todos os produtos foram capturados.");
         String js = "(function(){try{if(!(window.jQuery&&window.jQuery.fn&&window.jQuery.fn.dataTable)){return JSON.stringify({ok:false,reason:'datatable_not_found'});}var tables=window.jQuery.fn.dataTable.tables();if(!tables.length){return JSON.stringify({ok:false,reason:'table_not_found'});}var dt=window.jQuery(tables[0]).DataTable();try{dt.page.len(" + STOCK_TARGET_PAGE_LENGTH + ").draw(false);}catch(e){}return JSON.stringify({ok:true});}catch(e){return JSON.stringify({ok:false,reason:String(e)});}})()";
         webView.evaluateJavascript(js, value -> webView.postDelayed(this::readStockDatatablesInfoAndStart, STOCK_PAGE_SETTLE_MS));
     }
@@ -341,18 +352,22 @@ public class MainActivity extends Activity {
                 JSONObject data = new JSONObject(decodeJsValue(value));
                 if (!data.optBoolean("ok")) {
                     setAutoPerformanceMode(false);
+                    stockCompletenessStatus = "failed_no_datatable";
+                    stockLastError = data.optString("reason", "datatable_not_found");
                     setStatus("Não encontrei DataTables para estoque. Use Capturar página atual em HTML se a tela não for tabela paginada.");
                     return;
                 }
                 autoPages = Math.min(MAX_AUTO_PAGES, Math.max(1, data.optInt("pages", 1)));
                 autoIndex = 0;
                 autoRunning = true;
-                int total = data.optInt("total", 0);
+                stockExpectedTotal = Math.max(0, data.optInt("total", 0));
                 int pageLength = data.optInt("pageLength", 0);
-                setStatus("Estoque rápido detectado: " + autoPages + " página(s), " + total + " registro(s), até " + pageLength + " por página. Captura iniciada.");
+                setStatus("Estoque rápido detectado: " + autoPages + " página(s), esperado " + stockExpectedTotal + " produto(s), até " + pageLength + " por página. Captura iniciada.");
                 captureStockDataTablePage();
             } catch (Exception exc) {
                 setAutoPerformanceMode(false);
+                stockCompletenessStatus = "failed_start";
+                stockLastError = exc.getMessage();
                 setStatus("Não consegui iniciar estoque rápido: " + exc.getMessage());
             }
         });
@@ -363,7 +378,8 @@ public class MainActivity extends Activity {
             autoRunning = false;
             setAutoPerformanceMode(false);
             progressBar.setProgress(100);
-            setStatus("Estoque básico HTML finalizado: " + stockRecordCount + " registro(s). Toque em Gerar ZIP para MapeiaAI.");
+            updateStockCompletenessStatus();
+            setStatus(stockCompletionMessage() + " Toque em Gerar ZIP para MapeiaAI.");
             return;
         }
         String script = "(function(){try{var tables=window.jQuery.fn.dataTable.tables();var dt=window.jQuery(tables[0]).DataTable();dt.page(" + autoIndex + ").draw(false);return JSON.stringify({ok:true,page:" + autoIndex + "});}catch(e){return JSON.stringify({ok:false,error:String(e)});}})()";
@@ -383,10 +399,12 @@ public class MainActivity extends Activity {
             webView.evaluateJavascript(script, value -> {
                 try {
                     JSONObject data = new JSONObject(decodeJsValue(value));
+                    int total = data.optInt("total", 0);
+                    if (total > stockExpectedTotal) stockExpectedTotal = total;
                     if (data.optBoolean("ok")) {
                         String html = data.optString("html", "");
                         int count = data.optInt("count", 0);
-                        if (html.trim().length() > 0) {
+                        if (html.trim().length() > 0 && count > 0) {
                             File dir = ensureCaptureDir();
                             File out = new File(dir, nextStockBaseName(label) + ".html");
                             try (FileOutputStream fos = new FileOutputStream(out)) {
@@ -397,17 +415,47 @@ public class MainActivity extends Activity {
                             captureCount++;
                             int progress = autoPages > 0 ? Math.min(99, (int) (((autoIndex + 1) * 100.0f) / autoPages)) : Math.min(99, captureCount * 4);
                             progressBar.setProgress(progress);
-                            setStatus("Estoque salvo: " + count + " item(ns) em " + out.getName());
+                            setStatus("Estoque salvo: " + count + " item(ns) em " + out.getName() + ". Total capturado: " + stockRecordCount + "/" + stockExpectedTotal + ".");
+                        } else {
+                            stockLastError = "empty_html_or_zero_count";
+                            setStatus("Aviso: página de estoque sem linhas. Capturado: " + stockRecordCount + "/" + stockExpectedTotal + ".");
                         }
                     } else {
-                        setStatus("Aviso: estoque não capturado nesta página: " + data.optString("reason"));
+                        stockLastError = data.optString("reason", "stock_capture_failed");
+                        setStatus("Aviso: estoque não capturado nesta página: " + stockLastError + ". Capturado: " + stockRecordCount + "/" + stockExpectedTotal + ".");
                     }
                 } catch (Exception exc) {
+                    stockLastError = exc.getMessage();
                     setStatus("Aviso: erro ao salvar estoque: " + exc.getMessage());
                 }
                 if (afterStock != null) afterStock.run();
             });
         });
+    }
+
+    private void updateStockCompletenessStatus() {
+        if (stockExpectedTotal > 0 && stockRecordCount >= stockExpectedTotal) {
+            stockCompletenessStatus = "complete";
+            return;
+        }
+        if (stockRecordCount <= 0) {
+            stockCompletenessStatus = stockExpectedTotal > 0 ? "failed_zero_records" : "failed_no_total";
+            if (stockLastError.length() == 0) stockLastError = "no_products_captured";
+            return;
+        }
+        stockCompletenessStatus = "incomplete";
+        if (stockLastError.length() == 0) stockLastError = "captured_less_than_expected";
+    }
+
+    private String stockCompletionMessage() {
+        if ("complete".equals(stockCompletenessStatus)) {
+            return "VALIDADO: estoque completo, " + stockRecordCount + "/" + stockExpectedTotal + " produto(s) capturados.";
+        }
+        if (stockExpectedTotal > 0) {
+            int missing = Math.max(0, stockExpectedTotal - stockRecordCount);
+            return "ATENÇÃO: estoque incompleto, " + stockRecordCount + "/" + stockExpectedTotal + " produto(s). Faltando: " + missing + ". Motivo: " + stockLastError + ".";
+        }
+        return "ATENÇÃO: não consegui validar o total de produtos. Capturados: " + stockRecordCount + ". Motivo: " + stockLastError + ".";
     }
 
     private void runDetailCaptureForCurrentPage(String pageLabel, Runnable afterDetails) {
@@ -555,8 +603,13 @@ public class MainActivity extends Activity {
             zipDirectory(dir, zipFile);
             saveZipToDownloads(zipFile);
             progressBar.setProgress(100);
-            setStatus("ZIP gerado e salvo em Downloads: " + zipFile.getName() + "\nAnexe esse ZIP no MapeiaAI.");
-            toast("ZIP salvo em Downloads.");
+            if (stockFileCount > 0 && !"complete".equals(stockCompletenessStatus)) {
+                setStatus("ZIP gerado, mas a validação indica captura incompleta. " + stockCompletionMessage());
+                toast("ZIP gerado com alerta: estoque incompleto.");
+            } else {
+                setStatus("ZIP gerado e salvo em Downloads: " + zipFile.getName() + "\nAnexe esse ZIP no MapeiaAI.");
+                toast("ZIP salvo em Downloads.");
+            }
         } catch (Exception exc) {
             setStatus("Erro ao gerar ZIP: " + exc.getMessage());
             toast("Erro ao gerar ZIP.");
@@ -564,8 +617,9 @@ public class MainActivity extends Activity {
     }
 
     private void writeManifest(File dir) throws Exception {
+        if (stockFileCount > 0) updateStockCompletenessStatus();
         JSONObject manifest = new JSONObject();
-        manifest.put("schema_version", "mapeiaai_android_collector_v4_html_only_stock_capture");
+        manifest.put("schema_version", "mapeiaai_android_collector_v5_validated_stock_capture");
         manifest.put("generated_at", new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).format(new Date()));
         manifest.put("start_url", urlInput.getText().toString().trim());
         manifest.put("current_url", webView.getUrl());
@@ -574,10 +628,15 @@ public class MainActivity extends Activity {
         manifest.put("details_captured", detailRecordCount);
         manifest.put("stock_files", stockFileCount);
         manifest.put("stock_records", stockRecordCount);
+        manifest.put("stock_expected_total", stockExpectedTotal);
+        manifest.put("stock_missing_records", Math.max(0, stockExpectedTotal - stockRecordCount));
+        manifest.put("stock_capture_complete", "complete".equals(stockCompletenessStatus));
+        manifest.put("stock_completeness_status", stockCompletenessStatus);
+        manifest.put("stock_last_error", stockLastError);
         manifest.put("detail_capture_marker", GtinCaptureMarker.VERSION);
         manifest.put("auto_target_page_length", AUTO_TARGET_PAGE_LENGTH);
         manifest.put("stock_target_page_length", STOCK_TARGET_PAGE_LENGTH);
-        manifest.put("format", "html_only:full_page_html+detail_html+stock_basic_html");
+        manifest.put("format", "html_only:full_page_html+detail_html+stock_basic_html_validated");
         File out = new File(dir, "mapeiaai_android_manifest.json");
         try (FileOutputStream fos = new FileOutputStream(out)) {
             fos.write(manifest.toString(2).getBytes("UTF-8"));
