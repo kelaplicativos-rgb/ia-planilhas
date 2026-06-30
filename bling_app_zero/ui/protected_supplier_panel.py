@@ -7,6 +7,7 @@ from bling_app_zero.core.android_collector_link import android_collector_apk_sou
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.mobile_protected_capture import capture_url_on_mobile
 from bling_app_zero.core.protected_supplier_contract_collectors import build_contract_collector_zip
+from bling_app_zero.core.protected_supplier_zip_reader import read_protected_supplier_zip_bytes
 from bling_app_zero.core.source_contract_enrichment import enrich_source_with_requested_columns
 from bling_app_zero.engines.fast_site_scraper.constants import DISCOVERY_BUDGET_SECONDS, SAFE_CAPTURE_MAX_DEPTH, SAFE_CAPTURE_MAX_PAGES, SAFE_CAPTURE_MAX_PRODUCTS
 
@@ -27,6 +28,30 @@ def _valid_frame(df: object) -> bool:
 
 def _read_uploaded_capture(uploaded) -> pd.DataFrame:
     from bling_app_zero.core import files as files_module
+
+    name = str(getattr(uploaded, 'name', '') or '').lower()
+    try:
+        data = uploaded.getvalue()
+    except Exception:
+        data = b''
+
+    if name.endswith('.zip') and data:
+        protected_df = read_protected_supplier_zip_bytes(data)
+        if _valid_frame(protected_df):
+            add_audit_event(
+                'protected_supplier_full_zip_reader_loaded',
+                area='ORIGEM',
+                status='OK',
+                details={
+                    'file_name': str(getattr(uploaded, 'name', '') or ''),
+                    'rows': int(len(protected_df)),
+                    'columns': int(len(protected_df.columns)),
+                    'reader': 'protected_supplier_zip_reader',
+                    'responsible_file': RESPONSIBLE_FILE,
+                },
+            )
+            return protected_df.fillna('')
+
     return files_module.read_uploaded_file(uploaded).fillna('')
 
 
