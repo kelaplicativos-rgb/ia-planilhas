@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-DEFAULT_ANDROID_COLLECTOR_APK_URL = 'https://github.com/kelaplicativos-rgb/ia-planilhas/releases/latest/download/mapeiaai-coletor-android.apk'
+DEFAULT_ANDROID_COLLECTOR_APK_URL = 'https://github.com/kelaplicativos-rgb/ia-planilhas/releases/download/android-coletor-latest/mapeiaai-coletor-android.apk'
 ANDROID_COLLECTOR_SECRETS = (
     'MAPEIAAI_ANDROID_COLLECTOR_APK_URL',
     'MAPEIAAI_COLETOR_ANDROID_APK_URL',
@@ -34,7 +34,7 @@ def android_collector_apk_source() -> str:
     for name in ANDROID_COLLECTOR_SECRETS:
         if _secret_value(name):
             return name
-    return 'default_github_release_latest'
+    return 'default_github_release_android_coletor_latest'
 
 
 __all__ = [
