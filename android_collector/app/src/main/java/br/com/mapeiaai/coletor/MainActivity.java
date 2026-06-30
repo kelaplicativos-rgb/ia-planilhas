@@ -11,7 +11,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
-import android.view.View;
 import android.webkit.ValueCallback;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -24,17 +23,18 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
 import java.util.Date;
-import java.util.List;
 import java.util.Locale;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -51,6 +51,8 @@ public class MainActivity extends Activity {
     private int captureCount = 0;
     private int autoIndex = 0;
     private int autoPages = 0;
+    private int detailFileCount = 0;
+    private int detailRecordCount = 0;
     private boolean autoRunning = false;
 
     @Override
@@ -116,6 +118,11 @@ public class MainActivity extends Activity {
         autoButton.setOnClickListener(v -> startAutoDatatablesCapture());
         actions.addView(autoButton, new LinearLayout.LayoutParams(-1, -2));
 
+        Button detailButton = new Button(this);
+        detailButton.setText("Capturar detalhes da tabela atual");
+        detailButton.setOnClickListener(v -> runDetailCaptureForCurrentPage("detalhes_manual", () -> setStatus("Captura de detalhes finalizada. Toque em Gerar ZIP para MapeiaAI.")));
+        actions.addView(detailButton, new LinearLayout.LayoutParams(-1, -2));
+
         Button zipButton = new Button(this);
         zipButton.setText("Gerar ZIP para MapeiaAI");
         zipButton.setOnClickListener(v -> createZipForMapeiaAI());
@@ -160,6 +167,8 @@ public class MainActivity extends Activity {
         captureCount = 0;
         autoIndex = 0;
         autoPages = 0;
+        detailFileCount = 0;
+        detailRecordCount = 0;
         autoRunning = false;
         captureDir = null;
         progressBar.setProgress(0);
@@ -239,6 +248,12 @@ public class MainActivity extends Activity {
         return "mapeiaai_android_" + number + "_" + safeLabel;
     }
 
+    private String nextDetailBaseName(String label) {
+        String safeLabel = String.valueOf(label == null ? "pagina" : label).replaceAll("[^a-zA-Z0-9_-]", "_");
+        String number = String.format(Locale.US, "%03d", detailFileCount + 1);
+        return "mapeiaai_android_detail_" + number + "_" + safeLabel + "_detalhes";
+    }
+
     private void startAutoDatatablesCapture() {
         if (autoRunning) {
             toast("Captura automática já está rodando.");
@@ -274,11 +289,130 @@ public class MainActivity extends Activity {
         webView.evaluateJavascript(script, value -> webView.postDelayed(() -> {
             String label = "pagina_" + String.format(Locale.US, "%03d", autoIndex + 1);
             setStatus("Capturando " + label + " de " + autoPages + "...");
-            captureCurrentPage(label, () -> {
+            captureCurrentPage(label, () -> runDetailCaptureForCurrentPage(label, () -> {
                 autoIndex++;
                 webView.postDelayed(this::captureDataTablePage, 900);
-            });
+            }));
         }, 1800));
+    }
+
+    private void runDetailCaptureForCurrentPage(String pageLabel, Runnable afterDetails) {
+        if (webView.getUrl() == null || webView.getUrl().trim().length() == 0) {
+            if (afterDetails != null) afterDetails.run();
+            return;
+        }
+        loadDetailCaptureScript(() -> {
+            String init = "(function(){try{if(!window.MapeiaAIDetailCapture){return JSON.stringify({ok:false,reason:'detail_script_missing'});}return window.MapeiaAIDetailCapture.init();}catch(e){return JSON.stringify({ok:false,reason:String(e)});}})()";
+            webView.evaluateJavascript(init, value -> {
+                try {
+                    JSONObject data = new JSONObject(decodeJsValue(value));
+                    if (!data.optBoolean("ok")) {
+                        setStatus("Captura de detalhes indisponível nesta tela: " + data.optString("reason"));
+                        if (afterDetails != null) afterDetails.run();
+                        return;
+                    }
+                    JSONArray items = data.optJSONArray("items");
+                    int count = data.optInt("count", items == null ? 0 : items.length());
+                    if (items == null || count <= 0) {
+                        setStatus("Nenhum botão de detalhe encontrado nesta página. Mantive a captura da listagem.");
+                        if (afterDetails != null) afterDetails.run();
+                        return;
+                    }
+                    setStatus("Capturando detalhes de " + count + " produto(s) em " + pageLabel + "...");
+                    collectDetailItem(pageLabel, items, 0, new JSONArray(), afterDetails);
+                } catch (Exception exc) {
+                    setStatus("Não consegui iniciar detalhes: " + exc.getMessage());
+                    if (afterDetails != null) afterDetails.run();
+                }
+            });
+        });
+    }
+
+    private void loadDetailCaptureScript(Runnable afterLoad) {
+        try {
+            String script = readAssetText("mapeiaai_detail_capture.js");
+            webView.evaluateJavascript(script + "\ntrue;", value -> {
+                if (afterLoad != null) afterLoad.run();
+            });
+        } catch (Exception exc) {
+            setStatus("Script de detalhes não foi carregado: " + exc.getMessage());
+            if (afterLoad != null) afterLoad.run();
+        }
+    }
+
+    private String readAssetText(String name) throws Exception {
+        try (InputStream is = getAssets().open(name); ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = is.read(buffer)) > 0) {
+                bos.write(buffer, 0, read);
+            }
+            return bos.toString("UTF-8");
+        }
+    }
+
+    private void collectDetailItem(String pageLabel, JSONArray items, int index, JSONArray records, Runnable afterDetails) {
+        if (index >= items.length()) {
+            saveDetailRecordsHtml(pageLabel, records, afterDetails);
+            return;
+        }
+        JSONObject item = items.optJSONObject(index);
+        if (item == null) item = new JSONObject();
+        int detailIndex = item.optInt("index", index);
+        String itemJson = JSONObject.quote(item.toString());
+        String clickScript = "(function(){try{return window.MapeiaAIDetailCapture.click(" + detailIndex + ");}catch(e){return JSON.stringify({ok:false,reason:String(e)});}})()";
+        webView.evaluateJavascript(clickScript, clickValue -> webView.postDelayed(() -> {
+            String readScript = "(function(){try{return window.MapeiaAIDetailCapture.read(" + itemJson + ");}catch(e){return JSON.stringify({ok:false,reason:String(e)});}})()";
+            webView.evaluateJavascript(readScript, readValue -> {
+                try {
+                    JSONObject data = new JSONObject(decodeJsValue(readValue));
+                    JSONObject record = data.optJSONObject("record");
+                    if (data.optBoolean("ok") && record != null) {
+                        record.put("detail_index", index + 1);
+                        records.put(record);
+                    }
+                } catch (Exception ignored) {
+                    // Continua mesmo quando um detalhe individual falha.
+                }
+                setStatus("Detalhes capturados: " + records.length() + "/" + items.length());
+                closeDetailOverlay(() -> webView.postDelayed(() -> collectDetailItem(pageLabel, items, index + 1, records, afterDetails), 450));
+            });
+        }, 900));
+    }
+
+    private void closeDetailOverlay(Runnable afterClose) {
+        String closeScript = "(function(){try{var selectors=['.modal.show .btn-close','.modal.show [data-bs-dismiss=modal]','.modal.in .close','.modal .close','button[aria-label=Close]','button[aria-label=Fechar]'];for(var i=0;i<selectors.length;i++){var n=document.querySelector(selectors[i]);if(n){try{n.click();break;}catch(e){}}}try{document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',keyCode:27,which:27,bubbles:true}));}catch(e){}return true;}catch(e){return false;}})()";
+        webView.evaluateJavascript(closeScript, value -> {
+            if (afterClose != null) afterClose.run();
+        });
+    }
+
+    private void saveDetailRecordsHtml(String pageLabel, JSONArray records, Runnable afterDetails) {
+        if (records.length() == 0) {
+            if (afterDetails != null) afterDetails.run();
+            return;
+        }
+        String recordsJson = JSONObject.quote(records.toString());
+        String tableScript = "(function(){try{return window.MapeiaAIDetailCapture.tableHtml(" + recordsJson + ");}catch(e){return JSON.stringify({ok:false,reason:String(e)});}})()";
+        webView.evaluateJavascript(tableScript, value -> {
+            try {
+                JSONObject data = new JSONObject(decodeJsValue(value));
+                String html = data.optString("html", "");
+                if (data.optBoolean("ok") && html.trim().length() > 0) {
+                    File dir = ensureCaptureDir();
+                    File out = new File(dir, nextDetailBaseName(pageLabel) + ".html");
+                    try (FileOutputStream fos = new FileOutputStream(out)) {
+                        fos.write(html.getBytes("UTF-8"));
+                    }
+                    detailFileCount++;
+                    detailRecordCount += records.length();
+                    setStatus("Detalhes salvos: " + records.length() + " produto(s) em " + out.getName());
+                }
+            } catch (Exception exc) {
+                setStatus("Aviso: não consegui salvar HTML de detalhes: " + exc.getMessage());
+            }
+            if (afterDetails != null) afterDetails.run();
+        });
     }
 
     private void createZipForMapeiaAI() {
@@ -305,12 +439,15 @@ public class MainActivity extends Activity {
 
     private void writeManifest(File dir) throws Exception {
         JSONObject manifest = new JSONObject();
-        manifest.put("schema_version", "mapeiaai_android_collector_v1");
+        manifest.put("schema_version", "mapeiaai_android_collector_v2_detail_capture");
         manifest.put("generated_at", new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).format(new Date()));
         manifest.put("start_url", urlInput.getText().toString().trim());
         manifest.put("current_url", webView.getUrl());
         manifest.put("pages_captured", captureCount);
-        manifest.put("format", "mhtml+html");
+        manifest.put("detail_files", detailFileCount);
+        manifest.put("details_captured", detailRecordCount);
+        manifest.put("detail_capture_marker", GtinCaptureMarker.VERSION);
+        manifest.put("format", "mhtml+html+detail_html");
         File out = new File(dir, "mapeiaai_android_manifest.json");
         try (FileOutputStream fos = new FileOutputStream(out)) {
             fos.write(manifest.toString(2).getBytes("UTF-8"));
