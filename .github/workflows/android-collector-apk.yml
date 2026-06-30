@@ -31,6 +31,9 @@ jobs:
           curl -sL https://services.gradle.org/distributions/gradle-8.7-bin.zip -o /tmp/gradle.zip
           unzip -q /tmp/gradle.zip -d /tmp
 
+      - name: Run collector simulations
+        run: node android_collector/tests/stock_capture_filter_test.js
+
       - name: Build debug APK
         run: /tmp/gradle-8.7/bin/gradle -p android_collector assembleDebug --no-daemon --stacktrace
 
