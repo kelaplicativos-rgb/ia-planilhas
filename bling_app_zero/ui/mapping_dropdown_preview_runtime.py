@@ -10,7 +10,7 @@ import streamlit as st
 from bling_app_zero.core.audit import add_audit_event
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/mapping_dropdown_preview_runtime.py'
-PATCH_VERSION = 'dropdown_preview_source_or_model_v12_color_rank_unique_origin_green_autobind'
+PATCH_VERSION = 'dropdown_preview_source_or_model_v13_preserve_toggle_strict'
 MODEL_PRESERVE_TOGGLE_KEY = 'mapeiaai_model_preserve_data_toggle_v1'
 ORIGIN_REF_PREFIX = 'origem::'
 MODEL_REF_PREFIX = 'modelo::'
@@ -21,8 +21,7 @@ BLANKS = {'', 'nan', 'none', 'null', '<na>'}
 _CONTEXT: dict[str, Any] = {'source': None, 'target': None}
 SOURCE_KEYS = ('mapeiaai_universal_processed_df', 'mapeiaai_universal_source_df', 'df_origem_unificada', 'df_origem_site', 'df_source')
 MODEL_KEYS = ('mapeiaai_universal_model_df', 'home_modelo_universal_df', 'df_modelo_universal', 'modelo_universal_df')
-MANUAL_MODEL_FLOW_KEYS = ('mapear_planilha_sem_api_active',)
-MANUAL_MODEL_FLOW_VALUES = ('universal_model_mapping', 'mapear_planilha', 'modelo')
+MAPPING_TOGGLE_WIDGET_MARKER_KEY = 'mapeiaai_mapping_preserve_toggle_widget_marker_v1'
 
 
 def _norm(value: object) -> str:
@@ -105,21 +104,13 @@ def _model_frame(column: str = '') -> pd.DataFrame | None:
     return _first_session_frame(MODEL_KEYS, column)
 
 
-def _manual_model_flow_active() -> bool:
-    if any(bool(st.session_state.get(key)) for key in MANUAL_MODEL_FLOW_KEYS):
-        return True
-    for key in ('mapeiaai_flow_kind', 'flow_kind', 'home_active_operation_v2', 'flow_spine_operation', 'operacao_final'):
-        value = str(st.session_state.get(key) or '').strip().casefold()
-        if value in MANUAL_MODEL_FLOW_VALUES:
-            return True
-    return False
+def _model_preserve_toggle_enabled() -> bool:
+    return bool(st.session_state.get(MODEL_PRESERVE_TOGGLE_KEY, False))
 
 
 def _dual_enabled() -> bool:
     model = _model_frame()
-    if not _df_has_columns(model):
-        return False
-    return bool(st.session_state.get(MODEL_PRESERVE_TOGGLE_KEY, False)) or _manual_model_flow_active() or _df_has_columns(_CONTEXT.get('target'))
+    return bool(_df_has_columns(model) and _model_preserve_toggle_enabled())
 
 
 def _samples(df: Any, column: str, limit: int = 2) -> list[str]:
@@ -182,6 +173,11 @@ def _status_text(status: str, column: str) -> str:
 
 
 def _preview_for(kind: str, column: str, icon: str) -> str:
+    if kind == 'modelo' and not _dual_enabled():
+        status, actual_column, values = _column_state(_source_frame(column), column, limit=2)
+        if values:
+            return f'{icon} Origem > {actual_column or column}: {_short(values)}'
+        return f'{icon} Origem > {column}: {_status_text(status, actual_column or column)}'
     frame = _source_frame(column) if kind == 'origem' else _model_frame(column)
     status, actual_column, values = _column_state(frame, column, limit=2)
     label_kind = 'Origem' if kind == 'origem' else 'Modelo anexado'
@@ -198,6 +194,8 @@ def _preview_label(column: str, current_label: object, target_name: str = '') ->
     status, actual_column, values = _column_state(_source_frame(clean_column), clean_column, limit=2)
     if values:
         return f'{icon} Origem > {clean_column}: {_short(values)}'
+    if not _dual_enabled():
+        return f'{icon} Origem > {clean_column}: {_status_text(status, actual_column or clean_column)}'
     m_status, m_column, m_values = _column_state(_model_frame(clean_column), clean_column, limit=2)
     if m_values:
         return f'{icon} Modelo anexado > {clean_column}: {_short(m_values)}'
@@ -218,10 +216,23 @@ def _sort_dropdown_options_by_color(options: list[str], labels: dict[str, str]) 
 
 def _ranked_options(options: list[str], labels: dict[str, str], target_name: str, current_value: str = '') -> tuple[list[str], dict[str, str]]:
     if not _dual_enabled():
-        for option in list(labels):
-            if option not in {EMPTY_OPTION, WRITE_OPTION}:
-                labels[option] = _preview_label(str(option), labels[option], target_name)
-        return _sort_dropdown_options_by_color(list(options or []), labels), labels
+        clean_options: list[str] = []
+        clean_labels: dict[str, str] = {}
+        for option in list(options or []):
+            if str(option).startswith(MODEL_REF_PREFIX):
+                continue
+            if option in {EMPTY_OPTION, WRITE_OPTION}:
+                clean_options.append(option)
+                clean_labels[option] = labels.get(option, option)
+                continue
+            kind, column = _split_ref(option)
+            if kind == 'modelo':
+                continue
+            plain_option = column if kind == 'origem' and _is_ref(option) else str(option)
+            if plain_option not in clean_options:
+                clean_options.append(plain_option)
+                clean_labels[plain_option] = _preview_label(plain_option, labels.get(option, labels.get(plain_option, '🟡 ' + plain_option)), target_name)
+        return _sort_dropdown_options_by_color(clean_options, clean_labels), clean_labels
 
     source_columns = [str(option) for option in options if option not in {EMPTY_OPTION, WRITE_OPTION} and not _is_ref(option)]
     model_columns = [str(column) for column in getattr(_model_frame(), 'columns', [])]
@@ -279,7 +290,7 @@ def _auto_bind_unique_origin_green_matches(current: dict[str, str], target_colum
             preserved += 1
             continue
         origin_candidates = _origin_green_candidates_for_target(target_name, source_columns)
-        model_has_same_name = any(_norm(column) == _norm(target_name) for column in [str(column) for column in getattr(_model_frame(), 'columns', [])])
+        model_has_same_name = bool(_dual_enabled() and any(_norm(column) == _norm(target_name) for column in [str(column) for column in getattr(_model_frame(), 'columns', [])]))
         if len(origin_candidates) == 1:
             updated[target_name] = origin_candidates[0]
             applied += 1
@@ -319,6 +330,46 @@ def _clear_legacy_unscoped_mapping_values(mapping_state_key: str) -> int:
         st.session_state[mapping_state_key] = cleaned
         add_audit_event('mapping_dropdown_legacy_unscoped_values_cleared', area='MAPEAMENTO', status='OK', details={'changed_fields': int(changed), 'reason': 'origem_modelo_devem_ficar_separados_sem_mesclar_nomes_iguais', 'responsible_file': RESPONSIBLE_FILE})
     return changed
+
+
+def _clear_model_refs_when_toggle_disabled(mapping_state_key: str) -> int:
+    mapping = st.session_state.get(mapping_state_key)
+    if not isinstance(mapping, dict) or _dual_enabled():
+        return 0
+    changed = 0
+    cleaned: dict[str, str] = {}
+    for target, selected in dict(mapping).items():
+        text = str(selected or '').strip()
+        kind, column = _split_ref(text)
+        if kind == 'modelo':
+            cleaned[str(target)] = ''
+            changed += 1
+        elif kind == 'origem' and text.startswith(ORIGIN_REF_PREFIX):
+            cleaned[str(target)] = column
+            changed += 1
+        else:
+            cleaned[str(target)] = text
+    if changed:
+        st.session_state[mapping_state_key] = cleaned
+        add_audit_event('mapping_dropdown_model_refs_removed_toggle_off', area='MAPEAMENTO', status='OK', details={'changed_fields': int(changed), 'reason': 'toggle_preservar_dados_modelo_desligado_nao_exibe_nem_usa_campos_modelo', 'responsible_file': RESPONSIBLE_FILE})
+    return changed
+
+
+def _reset_mapping_widgets_when_toggle_changes(key_prefix: str, signature: str, enabled: bool) -> int:
+    marker = f'{MAPPING_TOGGLE_WIDGET_MARKER_KEY}_{key_prefix}_{_norm(signature)[:80]}'
+    previous = st.session_state.get(marker)
+    if previous is not None and bool(previous) == bool(enabled):
+        return 0
+    st.session_state[marker] = bool(enabled)
+    removed = 0
+    for key in list(st.session_state.keys()):
+        text = str(key)
+        if text.startswith(f'{key_prefix}_map_') or text.startswith(f'{key_prefix}_mapping_page_') or text.startswith(f'{key_prefix}_mapping_scroll_'):
+            st.session_state.pop(key, None)
+            removed += 1
+    if removed:
+        add_audit_event('mapping_dropdown_widgets_reset_after_preserve_toggle_change', area='MAPEAMENTO', status='OK', details={'removed_keys': int(removed), 'preserve_toggle_enabled': bool(enabled), 'responsible_file': RESPONSIBLE_FILE})
+    return removed
 
 
 def install_mapping_dropdown_preview_runtime() -> None:
@@ -361,6 +412,8 @@ def install_mapping_dropdown_preview_runtime() -> None:
         def confidence_flag_with_refs(target, source_column, source):
             kind, column = _split_ref(source_column)
             if kind == 'modelo':
+                if not _dual_enabled():
+                    return '🔴 modelo oculto'
                 if _norm(target) == _norm(column):
                     return '🟢 modelo anexado'
                 return '🟡 modelo anexado'
@@ -376,6 +429,9 @@ def install_mapping_dropdown_preview_runtime() -> None:
             selected = str(selected_value or '').strip()
             if selected and not shared_mapping.is_fixed_value(selected):
                 kind, column = _split_ref(selected)
+                if kind == 'modelo' and not _dual_enabled():
+                    shared_mapping.st.caption(f'🔴 **{target_name}**. Modelo anexado oculto porque o toggle Preservar dados do modelo está desligado.')
+                    return
                 frame = _source_frame(column) if kind == 'origem' else _model_frame(column)
                 status, actual_column, samples = _column_state(frame, column, limit=3)
                 icon = shared_mapping.confidence_flag(str(target_name or ''), selected, source).split()[0]
@@ -395,9 +451,14 @@ def install_mapping_dropdown_preview_runtime() -> None:
             previous_source, previous_target = _CONTEXT.get('source'), _CONTEXT.get('target')
             _CONTEXT['source'], _CONTEXT['target'] = source, target
             try:
-                if _dual_enabled():
+                dual = _dual_enabled()
+                _reset_mapping_widgets_when_toggle_changes(key_prefix, signature, dual)
+                if dual:
                     _clear_legacy_unscoped_mapping_values(mapping_state_key)
-                    st.caption('Modelo anexado preservado: dropdown ordenado por cor. Auto vinculo so aplica quando existir uma unica opcao 🟢 da Origem.')
+                    st.caption('Modelo anexado preservado: dropdown mostra Origem e Modelo anexado separados. Auto vinculo so aplica quando existir uma unica opcao 🟢 da Origem.')
+                else:
+                    _clear_model_refs_when_toggle_disabled(mapping_state_key)
+                    st.caption('Preservar dados do modelo desligado: dropdown mostra somente colunas da Origem.')
                 return render_base(source, target, signature=signature, mapping_state_key=mapping_state_key, engine_state_key=engine_state_key, key_prefix=key_prefix, ai_enabled=ai_enabled)
             finally:
                 _CONTEXT['source'], _CONTEXT['target'] = previous_source, previous_target
@@ -405,7 +466,7 @@ def install_mapping_dropdown_preview_runtime() -> None:
         shared_mapping.render_shared_contract_mapping = render_with_context
 
     shared_mapping._mapeiaai_dropdown_preview_runtime_version = PATCH_VERSION
-    add_audit_event('mapping_dropdown_preview_runtime_installed', area='MAPEAMENTO', status='OK', details={'version': PATCH_VERSION, 'dual_source_always_when_model_present': True, 'dropdown_color_rank': True, 'auto_green_unique_origin_only': True, 'model_green_visual_only': True, 'ambiguous_origin_green_requires_user_choice': True, 'unscoped_legacy_mapping_cleared': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('mapping_dropdown_preview_runtime_installed', area='MAPEAMENTO', status='OK', details={'version': PATCH_VERSION, 'model_options_only_when_preserve_toggle_on': True, 'dropdown_color_rank': True, 'auto_green_unique_origin_only': True, 'model_green_visual_only': True, 'ambiguous_origin_green_requires_user_choice': True, 'unscoped_legacy_mapping_cleared': True, 'stale_model_refs_cleared_when_toggle_off': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_mapping_dropdown_preview_runtime']
