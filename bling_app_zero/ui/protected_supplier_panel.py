@@ -118,16 +118,36 @@ def _try_public_site_engine(start_url: str, reason: str) -> pd.DataFrame | None:
     return None
 
 
-def _render_android_apk_link(*, compact: bool = False) -> None:
-    url = android_collector_apk_url()
-    source = android_collector_apk_source()
-    st.link_button('📲 Baixar coletor Android (APK)', url, use_container_width=True)
-    st.caption('Use no Android quando precisar capturar painel protegido sem computador.')
+def _render_collector_download_links(start_url: str, site_ok: bool) -> None:
+    android_url = android_collector_apk_url()
+    android_source = android_collector_apk_source()
+    with st.expander('🔗 Leitores automáticos para baixar', expanded=False):
+        st.link_button('📲 Baixar coletor Android (APK)', android_url, use_container_width=True)
+        desktop_zip = (
+            build_collector_zip(
+                UNIVERSAL_PROVIDER_KEY,
+                start_url=start_url,
+                pages=INTERNAL_MAX_CAPTURE_PAGES,
+                capture_format='mhtml',
+            )
+            if site_ok
+            else b''
+        )
+        st.download_button(
+            '💻 Baixar coletor para computador',
+            data=desktop_zip,
+            file_name='mapeiaai_coletor_painel_protegido.zip',
+            mime='application/zip',
+            disabled=not site_ok,
+            use_container_width=True,
+            key='mapeiaai_download_protected_supplier_collector_v3_grouped_links',
+        )
+        st.caption('Android usa APK. Computador usa o coletor ZIP. Ambos geram arquivo para anexar no MapeiaAI.')
     add_audit_event(
-        'protected_supplier_android_apk_link_rendered',
+        'protected_supplier_collector_links_grouped_rendered',
         area='ORIGEM',
         status='INFO',
-        details={'source': source, 'compact': compact, 'responsible_file': RESPONSIBLE_FILE},
+        details={'android_source': android_source, 'site_ok': site_ok, 'responsible_file': RESPONSIBLE_FILE},
     )
 
 
@@ -147,9 +167,7 @@ def _return_loaded_capture(df: pd.DataFrame, *, source: str, file_name: str = ''
 
 def render_protected_supplier_source_panel() -> pd.DataFrame | None:
     st.markdown('#### 🔐 Painel protegido com login')
-    st.caption('Informe apenas o site. No celular, use “Coletar no sistema” ou baixe o coletor Android em APK.')
-
-    _render_android_apk_link()
+    st.caption('Informe apenas o site. Use “Coletar no sistema” ou baixe um dos leitores automáticos.')
 
     start_url = st.text_input('Site do painel de produtos', value=str(st.session_state.get(PROTECTED_URL_KEY) or '').strip(), placeholder='https://fornecedor.com.br/admin/produtos', key=PROTECTED_URL_KEY)
     site_ok = bool(str(start_url or '').strip())
@@ -169,7 +187,7 @@ def render_protected_supplier_source_panel() -> pd.DataFrame | None:
                 st.session_state[PROTECTED_MOBILE_DF_KEY] = fallback_df.copy().fillna('')
                 st.success('Busca pública inteligente concluída automaticamente.')
             else:
-                st.warning('Não consegui concluir automaticamente. O link já ficou preparado no modo Site público; use o Plano B se necessário.')
+                st.warning('Não consegui concluir automaticamente. O link já ficou preparado no modo Site público; use um dos leitores automáticos se necessário.')
         else:
             st.warning(result.message)
         if not result.ok:
@@ -183,15 +201,11 @@ def render_protected_supplier_source_panel() -> pd.DataFrame | None:
     if last_message:
         st.caption(last_message)
 
-    with st.expander('💻 Plano B para computador', expanded=False):
-        zip_bytes = build_collector_zip(UNIVERSAL_PROVIDER_KEY, start_url=start_url, pages=INTERNAL_MAX_CAPTURE_PAGES, capture_format='mhtml') if site_ok else b''
-        st.download_button('⬇️ Baixar coletor automático', data=zip_bytes, file_name='mapeiaai_coletor_painel_protegido.zip', mime='application/zip', disabled=not site_ok, use_container_width=True, key='mapeiaai_download_protected_supplier_collector_v2')
-        st.caption('Use apenas quando não conseguir capturar pelo celular ou quando o fornecedor bloquear o navegador seguro.')
-        _render_android_apk_link(compact=True)
+    _render_collector_download_links(start_url, site_ok)
 
     uploaded = st.file_uploader('Anexar captura gerada pelo coletor', type=None, key=PROTECTED_UPLOAD_KEY)
     if uploaded is None:
-        st.info('No celular, tente primeiro “Coletar no sistema”.')
+        st.info('No celular, tente primeiro “Coletar no sistema”. Se precisar, baixe o coletor Android em APK nos links acima.')
         return None
 
     try:
