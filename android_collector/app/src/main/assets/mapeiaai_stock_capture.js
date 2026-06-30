@@ -2,12 +2,8 @@ window.MapeiaAIStockCapture = window.MapeiaAIStockCapture || {};
 (function () {
     var M = window.MapeiaAIStockCapture;
 
-    M.detailStockLimit = 1600;
-    M.detailUrlLimitPerRow = 5;
     M.numericPattern = /^-?\d+([,.]\d+)?$/;
-    M.moneyPattern = /R\$\s*\d|^\d{1,6}([,.]\d{2})$/;
-    M.stockKeyPattern = /estoque|stock|saldo|quantidade|quantity|qtd|qty|inventory|inventario|inventário|balance|balanco|balanço|available|availability|warehouse|deposito|depósito/i;
-    M.identifierHeaderPattern = /^(id|product_id|produto_id|sku|codigo|referencia|model|modelo|mpn|ean|gtin|codigo_de_barras|codigo_barras|barras|name|nome|produto|descricao|description)$/;
+    M.moneyPattern = /R\$\s*[\d\.]+,\d{2}|R\$\s*\d+/gi;
 
     M.decodeEntities = function (value) {
         return String(value == null ? '' : value)
@@ -25,21 +21,12 @@ window.MapeiaAIStockCapture = window.MapeiaAIStockCapture || {};
             .replace(/<script[\s\S]*?<\/script>/gi, ' ')
             .replace(/<style[\s\S]*?<\/style>/gi, ' ')
             .replace(/<[^>]*>/g, ' ')
-            .replace(/\b(data-[a-z0-9_-]+|class|style|title|href|src|alt|aria-[a-z0-9_-]+)\s*=\s*"[^"]*"/gi, ' ')
-            .replace(/\b(data-[a-z0-9_-]+|class|style|title|href|src|alt|aria-[a-z0-9_-]+)\s*=\s*'[^']*'/gi, ' ')
-            .replace(/\b(data-[a-z0-9_-]+|class|style|title|href|src|alt|aria-[a-z0-9_-]+)\s*=\s*[^\s>]+/gi, ' ')
-            .replace(/[<>]/g, ' ')
-            .replace(/^[\s"'=\/]+|[\s"'=\/]+$/g, '')
             .replace(/\s+/g, ' ')
             .trim();
     };
 
     M.normalize = function (value) {
         return this.clean(value).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    };
-
-    M.headerKey = function (header) {
-        return this.normalize(header).replace(/\s+/g, '_');
     };
 
     M.escapeHtml = function (value) {
@@ -51,122 +38,227 @@ window.MapeiaAIStockCapture = window.MapeiaAIStockCapture || {};
             .replace(/'/g, '&#39;');
     };
 
-    M.isStatusValue = function (value) {
-        return /^(disponivel|indisponivel|baixo|esgotado|sem estoque|em estoque|ativo|inativo)$/.test(this.normalize(value));
-    };
-
-    M.isSafeStockNumber = function (value) {
-        var v = this.clean(value);
-        if (!this.numericPattern.test(v)) return false;
-        if (/^\d{8,14}$/.test(v.replace(/\D/g, ''))) return false;
-        return true;
-    };
-
     M.normalizeNumber = function (value) {
         var v = String(value == null ? '' : value).replace(',', '.').replace(/[^0-9.\-]/g, '');
         if (!this.numericPattern.test(v)) return '';
         return v;
     };
 
-    M.extractNumberNearStockWord = function (value) {
-        var raw = this.decodeEntities(value);
-        var patterns = [
-            /(?:estoque|saldo|stock|quantity|quantidade|qtd|inventory|invent[aá]rio|balance|dispon[ií]vel|available|warehouse|dep[oó]sito)[^0-9-]{0,80}(-?\d+([,.]\d+)?)/i,
-            /(-?\d+([,.]\d+)?)\s*(?:unid|unidade|unidades|pe[cç]as|pcs|em estoque|dispon[ií]veis)/i,
-            /(?:stockQuantity|inventoryLevel|availableQuantity|quantityAvailable|saldoAtual|estoqueAtual|stock_quantity|stock_qty|available_stock|inventory_quantity|quantity_available)\s*[:=]\s*["']?(-?\d+([,.]\d+)?)/i
-        ];
-        for (var i = 0; i < patterns.length; i++) {
-            var found = raw.match(patterns[i]);
-            if (found && found[1] != null) return this.normalizeNumber(found[1]);
+    M.firstNonEmpty = function () {
+        for (var i = 0; i < arguments.length; i++) {
+            var v = this.clean(arguments[i]);
+            if (v) return v;
         }
         return '';
     };
 
-    M.extractHiddenStock = function (value) {
-        var raw = this.decodeEntities(value);
-        var visible = this.normalize(raw.replace(/<[^>]*>/g, ' '));
-        if (/\b(esgotado|sem estoque|indisponivel)\b/.test(visible)) return '0';
-        var numericOnly = this.clean(raw);
-        if (this.isSafeStockNumber(numericOnly)) return this.normalizeNumber(numericOnly);
-        var attrRe = /(?:title|data-original-title|data-bs-original-title|data-title|data-stock|data-estoque|data-quantity|data-quantidade|data-qtd|data-qty|data-saldo|data-inventory|data-balance|aria-label|value)\s*=\s*(["'])(.*?)\1/gi;
-        var match;
-        while ((match = attrRe.exec(raw)) !== null) {
-            var attrValue = this.clean(match[2]);
-            var attrNorm = this.normalize(attrValue);
-            if (/\b(esgotado|sem estoque|indisponivel)\b/.test(attrNorm)) return '0';
-            var attrNumber = this.extractNumberNearStockWord(attrValue);
-            if (attrNumber !== '') return attrNumber;
-        }
-        var found = this.extractNumberNearStockWord(raw);
-        if (found !== '') return found;
-        return '';
+    M.absoluteUrl = function (url) {
+        if (!url) return '';
+        var cleaned = this.decodeEntities(String(url)).trim();
+        if (!cleaned || /^#/i.test(cleaned)) return '';
+        try { return new URL(cleaned, window.location.href).href; } catch (e) { return cleaned; }
     };
 
-    M.cleanForKey = function (key, value) {
-        if (this.stockKeyPattern.test(String(key || ''))) {
-            var hidden = this.extractHiddenStock(value);
-            if (hidden !== '') return hidden;
-        }
-        return this.clean(value);
-    };
-
-    M.getByPath = function (obj, path) {
-        if (!obj || !path || typeof path !== 'string') return '';
-        if (path === '_' || path === 'function') return '';
-        var current = obj;
-        var parts = path.replace(/\[(\w+)\]/g, '.$1').split('.');
-        for (var i = 0; i < parts.length; i++) {
-            var key = parts[i];
-            if (!key) continue;
-            if (current == null || typeof current !== 'object' || !(key in current)) return '';
-            current = current[key];
-        }
-        return current == null || typeof current === 'object' ? '' : current;
+    M.getAttrValues = function (html, attrNames) {
+        var raw = this.decodeEntities(html || '');
+        var values = [];
+        attrNames.forEach(function (attr) {
+            var re = new RegExp(attr + '\\s*=\\s*(["\\'])(.*?)\\1', 'gi');
+            var match;
+            while ((match = re.exec(raw)) !== null) values.push(match[2]);
+        });
+        return values;
     };
 
     M.flatten = function (value, prefix, out) {
         out = out || {};
         if (value == null) return out;
         if (typeof value !== 'object') {
-            if (prefix) out[prefix] = this.cleanForKey(prefix, value);
+            if (prefix) out[prefix] = value;
             return out;
         }
         if (Array.isArray(value)) {
             out[prefix || 'valor'] = value.map(function (item) {
-                return M.cleanForKey(prefix || 'valor', typeof item === 'object' ? JSON.stringify(item) : item);
+                return typeof item === 'object' ? JSON.stringify(item) : String(item == null ? '' : item);
             }).filter(Boolean).join(' | ');
             return out;
         }
         Object.keys(value).forEach(function (key) {
             var next = prefix ? prefix + '.' + key : key;
             var item = value[key];
-            if (item != null && typeof item === 'object' && !Array.isArray(item)) {
-                M.flatten(item, next, out);
-            } else {
-                out[next] = M.cleanForKey(next, Array.isArray(item) ? item.join(' | ') : item);
-            }
+            if (item != null && typeof item === 'object' && !Array.isArray(item)) M.flatten(item, next, out);
+            else out[next] = Array.isArray(item) ? item.join(' | ') : item;
         });
         return out;
     };
 
-    M.headersFromDom = function (table) {
-        return Array.prototype.slice.call((table || document).querySelectorAll('thead th, thead td')).map(function (cell) {
-            return M.clean(cell.textContent);
-        });
+    M.findValue = function (flat, patterns) {
+        flat = flat || {};
+        var keys = Object.keys(flat);
+        for (var p = 0; p < patterns.length; p++) {
+            for (var i = 0; i < keys.length; i++) {
+                var nk = M.normalize(keys[i]).replace(/[^a-z0-9_\.]/g, '_');
+                if (patterns[p].test(nk)) return flat[keys[i]];
+            }
+        }
+        return '';
     };
 
-    M.domRows = function (table, headers) {
-        var rows = Array.prototype.slice.call((table || document).querySelectorAll('tbody tr')).filter(function (row) {
-            return !!M.clean(row.textContent);
+    M.extractImageUrl = function (html) {
+        var raw = this.decodeEntities(html || '');
+        var attrs = this.getAttrValues(raw, ['data-original-title', 'title', 'data-bs-original-title']).join(' ');
+        var source = attrs + ' ' + raw;
+        var img = source.match(/<img[^>]+src=['"]([^'"]+)['"]/i);
+        if (img && img[1]) return this.absoluteUrl(img[1]);
+        var href = source.match(/href=['"]([^'"]+\.(?:jpg|jpeg|png|webp|gif)(?:\?[^'"]*)?)['"]/i);
+        if (href && href[1]) return this.absoluteUrl(href[1]);
+        var src = source.match(/src=['"]([^'"]+\.(?:jpg|jpeg|png|webp|gif)(?:\?[^'"]*)?)['"]/i);
+        if (src && src[1]) return this.absoluteUrl(src[1]);
+        var url = source.match(/https?:\/\/[^\s'"<>]+\.(?:jpg|jpeg|png|webp|gif)(?:\?[^\s'"<>]*)?/i);
+        if (url && url[0]) return this.absoluteUrl(url[0]);
+        return '';
+    };
+
+    M.extractProductId = function (html, flat) {
+        var raw = this.decodeEntities(html || '');
+        var idFromButton = raw.match(/data-id=['"]?(\d+)['"]?/i);
+        if (idFromButton) return idFromButton[1];
+        var direct = this.findValue(flat, [/^(id|product_id|produto_id)$/i, /(^|\.)id$/i]);
+        return this.clean(direct).replace(/[^0-9A-Za-z_\-.]/g, '');
+    };
+
+    M.extractAvailability = function (html) {
+        var text = this.normalize(html);
+        if (/esgotado|sem previsao|sem estoque|indisponivel/.test(text)) return 'Esgotado';
+        if (/baixo/.test(text)) return 'Baixo';
+        if (/disponivel|em estoque/.test(text)) return 'Disponível';
+        return '';
+    };
+
+    M.extractStock = function (html) {
+        var raw = this.decodeEntities(html || '');
+        var attrs = this.getAttrValues(raw, ['data-original-title', 'title', 'data-bs-original-title', 'data-title', 'data-stock', 'data-estoque', 'data-quantity', 'data-quantidade', 'data-qtd', 'data-qty', 'aria-label', 'value']).join(' | ');
+        var combined = attrs + ' | ' + raw;
+        var normalized = this.normalize(combined);
+        var unitMatch = combined.match(/(-?\d+([,.]\d+)?)\s*(?:unid|unidade|unidades|pe[cç]as|pcs)\b/i);
+        if (unitMatch) return this.normalizeNumber(unitMatch[1]);
+        var stockMatch = combined.match(/(?:estoque|saldo|stock|quantity|quantidade|qtd|qty|inventory|available)[^0-9-]{0,80}(-?\d+([,.]\d+)?)/i);
+        if (stockMatch) return this.normalizeNumber(stockMatch[1]);
+        var rawNumber = this.clean(combined);
+        if (this.numericPattern.test(rawNumber) && !/^\d{8,14}$/.test(rawNumber.replace(/\D/g, ''))) return this.normalizeNumber(rawNumber);
+        if (/esgotado|sem previsao|sem estoque|indisponivel/.test(normalized)) return '0';
+        return '';
+    };
+
+    M.extractPrices = function (html) {
+        var raw = this.decodeEntities(html || '');
+        var matches = raw.match(this.moneyPattern) || [];
+        matches = matches.map(function (v) { return M.clean(v).replace(/\s+/g, ' '); }).filter(Boolean);
+        if (!matches.length) return { de: '', final: '' };
+        return { de: matches.length > 1 ? matches[0] : '', final: matches[matches.length - 1] };
+    };
+
+    M.extractBadges = function (html) {
+        var raw = this.decodeEntities(html || '');
+        var badges = [];
+        var re = /<span[^>]*class=['"][^'"]*badge[^'"]*['"][^>]*>([\s\S]*?)<\/span>/gi;
+        var match;
+        while ((match = re.exec(raw)) !== null) {
+            var text = this.clean(match[1]);
+            var norm = this.normalize(text);
+            if (!text || /disponivel|esgotado|baixo|sem previsao|mercado livre/.test(norm)) continue;
+            badges.push(text);
+        }
+        var unique = {};
+        return badges.filter(function (b) { var k = M.normalize(b); if (unique[k]) return false; unique[k] = true; return true; }).join(' | ');
+    };
+
+    M.extractDetailUrl = function (html) {
+        var raw = this.decodeEntities(html || '');
+        var hrefs = this.getAttrValues(raw, ['href', 'data-href', 'data-url']);
+        for (var i = 0; i < hrefs.length; i++) {
+            var url = this.absoluteUrl(hrefs[i]);
+            if (/products?|produtos?|items?|detalhe|edit|show|admin/i.test(url) && !/\.(jpg|jpeg|png|webp|gif|svg|css|js)(\?|$)/i.test(url)) return url;
+        }
+        return '';
+    };
+
+    M.mapKnownHeader = function (header) {
+        var h = this.normalize(header);
+        if (/^sku$|codigo|referencia/.test(h)) return 'SKU';
+        if (/foto|imagem|image|photo/.test(h)) return 'Imagem URL';
+        if (/titulo|title|nome|produto|descricao|description|name/.test(h)) return 'Título';
+        if (/modelo|model|mpn/.test(h)) return 'Modelo';
+        if (/marca|brand/.test(h)) return 'Marca';
+        if (/preco|price|valor|custo/.test(h)) return 'Preço';
+        if (/estoque|stock|saldo|quantidade|quantity|qtd|qty|inventory|availability|disponibilidade|situacao|status/.test(h)) return 'Estoque';
+        if (/acao|acoes|actions|integracao|integra/.test(h)) return 'Ações';
+        if (/id|product_id|produto_id/.test(h)) return 'product_id';
+        return header || '';
+    };
+
+    M.parseDomRow = function (row, headers) {
+        var cells = Array.prototype.slice.call(row.children || []);
+        var data = { product_id: '', sku: '', imagem_url: '', titulo: '', modelo: '', marca: '', preco_de: '', preco_final: '', disponibilidade: '', estoque: '', badges: '', integracao: '', detalhe_url: '' };
+        cells.forEach(function (cell, idx) {
+            var header = M.mapKnownHeader(headers[idx] || ('Coluna ' + (idx + 1)));
+            var html = cell.innerHTML || cell.textContent || '';
+            var text = M.clean(cell.textContent || html);
+            if (header === 'SKU') data.sku = text;
+            else if (header === 'Imagem URL') data.imagem_url = M.extractImageUrl(html);
+            else if (header === 'Título') { data.titulo = text.replace(/\bKIT\b$/i, '').trim(); data.badges = M.firstNonEmpty(data.badges, M.extractBadges(html)); }
+            else if (header === 'Modelo') data.modelo = text;
+            else if (header === 'Marca') data.marca = text;
+            else if (header === 'Preço') { var p = M.extractPrices(html); data.preco_de = p.de; data.preco_final = p.final || text; }
+            else if (header === 'Estoque') { data.estoque = M.extractStock(html); data.disponibilidade = M.extractAvailability(html); }
+            else if (header === 'Ações') { data.product_id = M.firstNonEmpty(data.product_id, M.extractProductId(html, {})); data.detalhe_url = M.firstNonEmpty(data.detalhe_url, M.extractDetailUrl(html)); }
+            else if (/integra/i.test(header)) data.integracao = text;
+            data.product_id = M.firstNonEmpty(data.product_id, M.extractProductId(html, {}));
+            if (!data.imagem_url) data.imagem_url = M.extractImageUrl(html);
         });
-        return rows.map(function (row) {
-            var cells = Array.prototype.slice.call(row.children || []);
-            return headers.map(function (header, idx) {
-                return M.cleanForKey(header, cells[idx] ? cells[idx].innerHTML || cells[idx].textContent : '');
-            });
-        }).filter(function (values) {
-            return values.some(function (value) { return value.length > 0; });
-        });
+        return data;
+    };
+
+    M.parseObjectRow = function (row) {
+        var flat = this.flatten(row, '', {});
+        var rawAll = JSON.stringify(row || {});
+        var sku = this.findValue(flat, [/^sku$/i, /codigo/i, /referencia/i]);
+        var imageHtml = this.findValue(flat, [/photo|foto|image|imagem|thumbnail|picture|avatar/i]);
+        var title = this.findValue(flat, [/^name$/i, /titulo/i, /title/i, /descricao/i, /description/i, /produto/i]);
+        var model = this.findValue(flat, [/^model$/i, /modelo/i, /mpn/i]);
+        var brand = this.findValue(flat, [/brand_name/i, /^brand$/i, /marca/i]);
+        var priceHtml = this.findValue(flat, [/price/i, /preco/i, /valor/i, /custo/i]);
+        var stockHtml = this.findValue(flat, [/inventory/i, /estoque/i, /stock/i, /saldo/i, /availability/i, /disponibilidade/i, /quantidade/i, /quantity/i, /qtd/i]);
+        var actionsHtml = this.findValue(flat, [/action/i, /acoes/i, /view/i, /edit/i]);
+        var integration = this.findValue(flat, [/integration/i, /integracao/i, /integra/i]);
+        var prices = this.extractPrices(priceHtml || rawAll);
+        return {
+            product_id: this.firstNonEmpty(this.extractProductId(actionsHtml || rawAll, flat), this.findValue(flat, [/^(id|product_id|produto_id)$/i])),
+            sku: this.clean(sku),
+            imagem_url: this.extractImageUrl(imageHtml || rawAll),
+            titulo: this.clean(title),
+            modelo: this.clean(model),
+            marca: this.clean(brand),
+            preco_de: prices.de,
+            preco_final: prices.final || this.clean(priceHtml),
+            disponibilidade: this.extractAvailability(stockHtml || rawAll),
+            estoque: this.extractStock(stockHtml || rawAll),
+            badges: this.extractBadges(title || rawAll),
+            integracao: this.clean(integration),
+            detalhe_url: this.extractDetailUrl(actionsHtml || rawAll)
+        };
+    };
+
+    M.headersFromDom = function (table) {
+        return Array.prototype.slice.call((table || document).querySelectorAll('thead th, thead td')).map(function (cell) { return M.clean(cell.textContent); });
+    };
+
+    M.domData = function () {
+        var table = document.querySelector('table.datatable, table.dataTable, table');
+        if (!table) return { rows: [], total: 0, method: 'dom_no_table' };
+        var headers = this.headersFromDom(table);
+        var bodyRows = Array.prototype.slice.call(table.querySelectorAll('tbody tr')).filter(function (tr) { return M.clean(tr.textContent); });
+        return { rows: bodyRows.map(function (tr) { return M.parseDomRow(tr, headers); }), total: bodyRows.length, method: 'dom_visible_rows' };
     };
 
     M.dataTableContext = function () {
@@ -176,58 +268,21 @@ window.MapeiaAIStockCapture = window.MapeiaAIStockCapture || {};
         var table = tables[0];
         var dt = window.jQuery(table).DataTable();
         var info = dt.page.info ? dt.page.info() : {};
-        var headers = this.headersFromDom(table);
         var settings = dt.settings && dt.settings().length ? dt.settings()[0] : null;
-        var columns = settings && settings.aoColumns ? settings.aoColumns.map(function (column) {
-            return column.mData || column.data || column.sName || column.name || column.sTitle || column.title || '';
-        }) : [];
-        if (!headers.length && columns.length) {
-            headers = columns.map(function (column, idx) { return M.clean(column) || ('Coluna ' + (idx + 1)); });
-        }
-        return { table: table, dt: dt, settings: settings, headers: headers, columns: columns, info: info };
+        return { table: table, dt: dt, info: info, settings: settings };
     };
 
     M.appendParam = function (params, key, value) {
         if (value == null) return;
-        if (Array.isArray(value)) {
-            for (var i = 0; i < value.length; i++) this.appendParam(params, key + '[' + i + ']', value[i]);
-            return;
-        }
-        if (typeof value === 'object') {
-            Object.keys(value).forEach(function (child) {
-                M.appendParam(params, key ? key + '[' + child + ']' : child, value[child]);
-            });
-            return;
-        }
+        if (Array.isArray(value)) { for (var i = 0; i < value.length; i++) this.appendParam(params, key + '[' + i + ']', value[i]); return; }
+        if (typeof value === 'object') { Object.keys(value).forEach(function (child) { M.appendParam(params, key ? key + '[' + child + ']' : child, value[child]); }); return; }
         params.push(encodeURIComponent(key) + '=' + encodeURIComponent(String(value)));
     };
 
     M.encodeParams = function (data) {
         var params = [];
-        Object.keys(data || {}).forEach(function (key) {
-            M.appendParam(params, key, data[key]);
-        });
+        Object.keys(data || {}).forEach(function (key) { M.appendParam(params, key, data[key]); });
         return params.join('&');
-    };
-
-    M.syncAjax = function (config, data) {
-        var body = this.encodeParams(data || {});
-        var url = config.url;
-        var method = config.method || 'GET';
-        var xhr = new XMLHttpRequest();
-        if (method === 'GET') {
-            url += (url.indexOf('?') >= 0 ? '&' : '?') + body;
-            xhr.open('GET', url, false);
-        } else {
-            xhr.open(method, url, false);
-            xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8');
-        }
-        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
-        var csrf = document.querySelector('meta[name="csrf-token"], meta[name="csrf_token"]');
-        if (csrf && csrf.content) xhr.setRequestHeader('X-CSRF-TOKEN', csrf.content);
-        xhr.send(method === 'GET' ? null : body);
-        if (xhr.status < 200 || xhr.status >= 300) throw new Error('ajax_status_' + xhr.status);
-        return JSON.parse(xhr.responseText || '{}');
     };
 
     M.ajaxConfig = function (ctx) {
@@ -236,24 +291,30 @@ window.MapeiaAIStockCapture = window.MapeiaAIStockCapture || {};
         var ajax = settings.ajax || settings.oInit && settings.oInit.ajax || settings.sAjaxSource || '';
         var url = '';
         var method = settings.sServerMethod || 'GET';
-        if (typeof ajax === 'string') {
-            url = ajax;
-        } else if (ajax && typeof ajax === 'object') {
-            url = ajax.url || ajax.sUrl || '';
-            method = ajax.type || ajax.method || method;
-        }
+        if (typeof ajax === 'string') url = ajax;
+        else if (ajax && typeof ajax === 'object') { url = ajax.url || ajax.sUrl || ''; method = ajax.type || ajax.method || method; }
         if (!url) return null;
         return { url: new URL(url, window.location.href).href, method: String(method || 'GET').toUpperCase() };
     };
 
     M.lastAjaxParams = function (ctx) {
-        try {
-            if (ctx && ctx.dt && ctx.dt.ajax && ctx.dt.ajax.params) {
-                var params = ctx.dt.ajax.params();
-                if (params) return JSON.parse(JSON.stringify(params));
-            }
-        } catch (e) {}
+        try { if (ctx && ctx.dt && ctx.dt.ajax && ctx.dt.ajax.params) { var params = ctx.dt.ajax.params(); if (params) return JSON.parse(JSON.stringify(params)); } } catch (e) {}
         return {};
+    };
+
+    M.syncAjax = function (config, data) {
+        var body = this.encodeParams(data || {});
+        var url = config.url;
+        var method = config.method || 'GET';
+        var xhr = new XMLHttpRequest();
+        if (method === 'GET') { url += (url.indexOf('?') >= 0 ? '&' : '?') + body; xhr.open('GET', url, false); }
+        else { xhr.open(method, url, false); xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8'); }
+        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+        var csrf = document.querySelector('meta[name="csrf-token"], meta[name="csrf_token"]');
+        if (csrf && csrf.content) xhr.setRequestHeader('X-CSRF-TOKEN', csrf.content);
+        xhr.send(method === 'GET' ? null : body);
+        if (xhr.status < 200 || xhr.status >= 300) throw new Error('ajax_status_' + xhr.status);
+        return JSON.parse(xhr.responseText || '{}');
     };
 
     M.extractResponseRows = function (json) {
@@ -266,454 +327,105 @@ window.MapeiaAIStockCapture = window.MapeiaAIStockCapture || {};
         return Number(json.recordsFiltered || json.recordsTotal || json.total || json.count || fallback || 0) || 0;
     };
 
-    M.serverSideAllRows = function (ctx) {
+    M.dataTablesData = function () {
+        var ctx = this.dataTableContext();
+        if (!ctx) return null;
+        var config = this.ajaxConfig(ctx);
+        var rows = [];
+        var total = Number(ctx.info.recordsTotal || ctx.info.recordsDisplay || 0) || 0;
+        var method = 'datatable_current_page';
         try {
-            var info = ctx.info || {};
-            if (Number(info.page || 0) > 0 && Number(info.recordsTotal || info.recordsDisplay || 0) > Number(info.length || 0)) {
-                return { rawRows: [], total: Number(info.recordsTotal || info.recordsDisplay || 0) || 0, method: 'skipped_after_ajax_all_pages' };
+            if (config) {
+                var base = this.lastAjaxParams(ctx);
+                var requestedLength = Math.max(50, Math.min(500, Number(ctx.info.length || 50) || 50));
+                var start = 0;
+                var guard = 0;
+                method = 'ajax_all_pages';
+                while (guard < 250) {
+                    var params = JSON.parse(JSON.stringify(base || {}));
+                    params.start = start;
+                    params.length = requestedLength;
+                    params.draw = (Number(params.draw || 0) || 0) + guard + 1;
+                    var json = this.syncAjax(config, params);
+                    var part = this.extractResponseRows(json);
+                    total = Math.max(total, this.extractResponseTotal(json, total));
+                    if (!part || !part.length) break;
+                    rows = rows.concat(part);
+                    if (total > 0 && rows.length >= total) break;
+                    if (part.length < requestedLength) break;
+                    start += part.length;
+                    guard++;
+                }
             }
-            var config = this.ajaxConfig(ctx);
-            if (!config) return null;
-            var base = this.lastAjaxParams(ctx);
-            var expected = Number(info.recordsTotal || info.recordsDisplay || 0) || 0;
-            var currentLength = Number(info.length || 0) || 75;
-            var requestedLength = Math.max(75, Math.min(500, currentLength > 0 ? currentLength : 500));
-            var allRows = [];
-            var total = expected;
-            var seenStart = {};
-            for (var start = 0, guard = 0; guard < 200; guard++) {
-                if (seenStart[start]) break;
-                seenStart[start] = true;
-                var params = JSON.parse(JSON.stringify(base || {}));
-                params.start = start;
-                params.length = requestedLength;
-                params.draw = (Number(params.draw || 0) || 0) + guard + 1;
-                var json = this.syncAjax(config, params);
-                var rows = this.extractResponseRows(json);
-                total = Math.max(total, this.extractResponseTotal(json, total));
-                if (!rows || !rows.length) break;
-                allRows = allRows.concat(rows);
-                if (total > 0 && allRows.length >= total) break;
-                if (rows.length < requestedLength && (!total || allRows.length >= total)) break;
-                start += rows.length;
-            }
-            if (!allRows.length) return null;
-            return { rawRows: allRows, total: total || allRows.length, method: 'ajax_all_pages' };
-        } catch (e) {
-            return { rawRows: [], total: 0, method: 'ajax_failed', error: String(e && e.message ? e.message : e) };
-        }
+        } catch (e) { rows = []; method = 'ajax_failed_' + String(e && e.message ? e.message : e); }
+        if (!rows.length) { try { rows = ctx.dt.rows({ page: 'current' }).data().toArray(); } catch (ignore) { rows = []; } }
+        return { rows: rows.map(function (row) { return M.parseObjectRow(row); }), total: total || rows.length, method: method };
     };
 
-    M.valueFromObject = function (row, flat, header, columnKey) {
-        var direct = this.getByPath(row, columnKey);
-        if (direct) return direct;
-        if (flat[header]) return flat[header];
-        var target = this.normalize(columnKey || header);
-        var keys = Object.keys(flat || {});
-        for (var i = 0; i < keys.length; i++) {
-            if (this.normalize(keys[i]) === target && flat[keys[i]]) return flat[keys[i]];
-        }
-        return '';
-    };
-
-    M.rowsToValues = function (rawRows, headers, columns) {
-        rawRows = rawRows || [];
-        headers = headers || [];
-        columns = columns || [];
-        var objectRows = rawRows.filter(function (row) { return row && typeof row === 'object' && !Array.isArray(row); });
-        if (objectRows.length) {
-            var seen = {};
-            headers = [];
-            objectRows.forEach(function (row) {
-                var flat = M.flatten(row, '', {});
-                Object.keys(flat).forEach(function (key) {
-                    if (!seen[key]) {
-                        seen[key] = true;
-                        headers.push(key);
-                    }
-                });
-            });
-        }
-        var rows = rawRows.map(function (row) {
-            if (Array.isArray(row)) {
-                if (!headers.length) headers = row.map(function (_, idx) { return 'Coluna ' + (idx + 1); });
-                return headers.map(function (header, idx) { return M.cleanForKey(header, row[idx]); });
-            }
-            if (row && typeof row === 'object') {
-                var flat = M.flatten(row, '', {});
-                if (!headers.length) headers = Object.keys(flat);
-                return headers.map(function (header, idx) {
-                    var columnKey = columns[idx] && typeof columns[idx] === 'string' ? columns[idx] : '';
-                    return M.cleanForKey(header, M.valueFromObject(row, flat, header, columnKey));
-                });
-            }
-            return [M.clean(row)];
-        }).filter(function (values) {
-            return values.some(function (value) { return value.length > 0; });
+    M.mergeFallback = function (primary, fallback) {
+        if (!primary || !primary.length) return fallback || [];
+        if (!fallback || !fallback.length) return primary;
+        var bySku = {};
+        fallback.forEach(function (r) { if (r.sku) bySku[M.normalize(r.sku)] = r; });
+        return primary.map(function (row, idx) {
+            var fb = bySku[M.normalize(row.sku || '')] || fallback[idx] || {};
+            Object.keys(row).forEach(function (key) { if (!row[key] && fb[key]) row[key] = fb[key]; });
+            return row;
         });
-        return { headers: headers, rows: rows };
     };
 
-    M.dataTablesPayload = function () {
-        try {
-            var ctx = this.dataTableContext();
-            if (!ctx) return null;
-            var ajaxAll = this.serverSideAllRows(ctx);
-            if (ajaxAll && ajaxAll.method === 'skipped_after_ajax_all_pages') {
-                return { headers: ctx.headers, rows: [], rawRows: [], total: ajaxAll.total, pageLength: ctx.info.length || 0, method: ajaxAll.method, error: '' };
-            }
-            var rawRows = ajaxAll && ajaxAll.rawRows && ajaxAll.rawRows.length ? ajaxAll.rawRows : ctx.dt.rows({ page: 'current' }).data().toArray();
-            var converted = this.rowsToValues(rawRows, ctx.headers, ctx.columns);
-            var total = ajaxAll && ajaxAll.total ? ajaxAll.total : (ctx.info.recordsTotal || ctx.info.recordsDisplay || converted.rows.length);
-            var method = ajaxAll && ajaxAll.rawRows && ajaxAll.rawRows.length ? ajaxAll.method : 'current_page';
-            var error = ajaxAll && ajaxAll.error ? ajaxAll.error : '';
-            return { headers: converted.headers, rows: converted.rows, rawRows: rawRows, total: total, pageLength: ctx.info.length || converted.rows.length, method: method, error: error };
-        } catch (e) {
-            return null;
-        }
-    };
-
-    M.columnStats = function (values) {
-        var nonEmpty = values.filter(function (value) { return M.clean(value).length > 0; });
-        var unique = {};
-        nonEmpty.forEach(function (value) { unique[M.normalize(value)] = true; });
-        var numeric = nonEmpty.filter(function (value) { return M.isSafeStockNumber(value); }).length;
-        var money = nonEmpty.filter(function (value) { return M.moneyPattern.test(M.clean(value)); }).length;
-        var status = nonEmpty.filter(function (value) { return M.isStatusValue(value); }).length;
-        var alpha = nonEmpty.filter(function (value) { return /[A-Za-zÀ-ÿ]{2,}/.test(M.clean(value)); }).length;
-        return { total: values.length, nonEmpty: nonEmpty.length, unique: Object.keys(unique).length, numeric: numeric, money: money, status: status, alpha: alpha };
-    };
-
-    M.isInternalHeader = function (header) {
-        var h = this.headerKey(header);
-        return /^info[_\.]/.test(h) || /^color([_\.]|$)/.test(h) || /^api_mercado_livre/.test(h) || /mercado_livre_category/.test(h) || /rgb$/.test(h);
-    };
-
-    M.isBrokenIdentifier = function (header, values) {
-        var h = this.headerKey(header);
-        if (!/(^|_)(sku|codigo|referencia|ean|gtin|barras|id)($|_)/.test(h)) return false;
-        var stats = this.columnStats(values);
-        if (!stats.nonEmpty) return true;
-        if (stats.unique <= 2 && stats.total >= 20) return true;
-        if (/(ean|gtin|barras)/.test(h) && stats.alpha > 0 && stats.numeric === 0) return true;
-        return false;
-    };
-
-    M.inferHeader = function (header, values) {
-        var h = this.headerKey(header);
-        var stats = this.columnStats(values);
-        if (this.isBrokenIdentifier(header, values)) return '';
-        if (this.isInternalHeader(header)) return '';
-        if (stats.status >= Math.max(1, stats.nonEmpty * 0.7)) return 'Disponibilidade';
-        if (stats.money >= Math.max(1, stats.nonEmpty * 0.7)) return 'Preco';
-        if (/^(id|product_id|produto_id)$/.test(h)) return 'id';
-        if (/^(sku|codigo|referencia|model|modelo|mpn)$/.test(h)) return h === 'model' ? 'model' : header;
-        if (/^(name|nome|produto|descricao|description)$/.test(h)) return h === 'name' ? 'name' : header;
-        if (/^(brand|marca)$/.test(h)) return 'Marca';
-        if (/^(price|preco|valor|custo)$/.test(h)) return 'Preco';
-        if (/^(price_of|availability|disponibilidade|situacao|status)$/.test(h)) return 'Disponibilidade';
-        if (/^(ean|gtin|codigo_de_barras|codigo_barras|barras)$/.test(h)) return stats.numeric >= Math.max(1, stats.nonEmpty * 0.8) ? header : 'Marca';
-        if (/(estoque|stock|saldo|quantidade|quantity|qtd|qty|inventory|inventario|balance|balanco|balanço|warehouse|deposito|depósito)/.test(h)) return stats.numeric > 0 ? 'Estoque' : 'Disponibilidade';
-        return '';
-    };
-
-    M.sameColumnRatio = function (a, b) {
-        var total = Math.max(a.length, b.length, 1);
-        var same = 0;
-        for (var i = 0; i < total; i++) {
-            if (this.normalize(a[i] || '') === this.normalize(b[i] || '')) same++;
-        }
-        return same / total;
-    };
-
-    M.prepareColumns = function (headers, rows) {
-        var candidates = [];
-        for (var i = 0; i < headers.length; i++) {
-            var values = rows.map(function (row) { return M.cleanForKey(headers[i], row[i]); });
-            var inferred = this.inferHeader(headers[i], values);
-            if (!inferred) continue;
-            var stats = this.columnStats(values);
-            if (!stats.nonEmpty) continue;
-            if (/^Marca$/.test(inferred) && stats.numeric > 0 && stats.alpha === 0) continue;
-            candidates.push({ idx: i, header: inferred, values: values, stats: stats });
-        }
-        var kept = [];
-        var seenHeader = {};
-        candidates.forEach(function (candidate) {
-            var key = M.normalize(candidate.header);
-            if ((key === 'marca' || key === 'preco' || key === 'disponibilidade' || key === 'estoque') && seenHeader[key]) return;
-            for (var k = 0; k < kept.length; k++) {
-                if (M.sameColumnRatio(candidate.values, kept[k].values) >= 0.98) return;
-            }
-            seenHeader[key] = true;
-            kept.push(candidate);
-        });
-        if (!kept.length) {
-            for (var all = 0; all < Math.min(headers.length, 12); all++) {
-                kept.push({ idx: all, header: headers[all] || ('Coluna ' + (all + 1)), values: rows.map(function (row) { return M.cleanForKey(headers[all], row[all]); }) });
-            }
-        }
-        return {
-            headers: kept.map(function (item) { return item.header; }),
-            rows: rows.map(function (row) {
-                return kept.map(function (item) { return M.cleanForKey(headers[item.idx], row[item.idx]); });
-            }).filter(function (values) {
-                return values.some(function (value) { return value.length > 0; });
-            })
-        };
-    };
-
-    M.qualityReport = function (headers, rows) {
-        var hasIdentifier = false;
-        var hasNumericStock = false;
-        var hasAvailability = false;
-        var hasPrice = false;
-        for (var i = 0; i < headers.length; i++) {
-            var h = this.headerKey(headers[i]);
-            var values = rows.map(function (row) { return row[i] || ''; });
-            var stats = this.columnStats(values);
-            if (this.identifierHeaderPattern.test(h) && stats.unique > 2) hasIdentifier = true;
-            if (/(estoque|stock|saldo|quantidade|quantity|qtd|qty|inventory|inventario|balance|balanco|balanço|warehouse|deposito|depósito)/.test(h) && stats.numeric > 0 && stats.status === 0) hasNumericStock = true;
-            if (/^(disponibilidade|status|situacao|availability)$/.test(h) || stats.status > 0) hasAvailability = true;
-            if (/(preco|price|valor|custo)/.test(h) || stats.money > 0) hasPrice = true;
-        }
+    M.qualityReport = function (rows) {
+        var hasIdentifier = rows.some(function (r) { return !!(r.product_id || r.sku || r.modelo); });
+        var hasNumericStock = rows.some(function (r) { return M.numericPattern.test(String(r.estoque || '')); });
+        var hasAvailability = rows.some(function (r) { return !!r.disponibilidade; });
+        var hasPrice = rows.some(function (r) { return !!r.preco_final; });
+        var hasImages = rows.some(function (r) { return !!r.imagem_url; });
         var warnings = [];
         if (!hasIdentifier) warnings.push('missing_product_identifier');
         if (!hasNumericStock) warnings.push('missing_numeric_stock');
-        return { status: warnings.length ? warnings.join('+') : 'ok', hasIdentifier: hasIdentifier, hasNumericStock: hasNumericStock, hasAvailability: hasAvailability, hasPrice: hasPrice };
+        if (!hasPrice) warnings.push('missing_price');
+        if (!hasImages) warnings.push('missing_images');
+        return { status: warnings.length ? warnings.join('+') : 'ok', hasIdentifier: hasIdentifier, hasNumericStock: hasNumericStock, hasAvailability: hasAvailability, hasPrice: hasPrice, hasImages: hasImages };
     };
 
-    M.absoluteUrl = function (url) {
-        if (!url) return '';
-        var cleaned = this.decodeEntities(String(url)).trim();
-        if (!cleaned || /^javascript:/i.test(cleaned) || /^#/i.test(cleaned) || /^mailto:/i.test(cleaned)) return '';
-        try { return new URL(cleaned, window.location.href).href; } catch (e) { return ''; }
-    };
-
-    M.urlLooksLikeProductDetail = function (url) {
-        if (!url) return false;
-        if (!/^https?:/i.test(url)) return false;
-        if (url.indexOf(location.origin) !== 0) return false;
-        if (/\.(png|jpe?g|gif|webp|svg|css|js|pdf|zip)(\?|$)/i.test(url)) return false;
-        return /(product|products|produto|produtos|item|items|edit|editar|show|detalhe|detalhes|admin)/i.test(url);
-    };
-
-    M.findUrlsInText = function (text, out) {
-        out = out || [];
-        var raw = this.decodeEntities(text || '');
-        var hrefRe = /(?:href|data-href|data-url|url|link|edit_url|show_url|route)\s*=\s*(["'])(.*?)\1/gi;
-        var match;
-        while ((match = hrefRe.exec(raw)) !== null) {
-            var href = this.absoluteUrl(match[2]);
-            if (this.urlLooksLikeProductDetail(href)) out.push(href);
-        }
-        var rawUrlRe = /https?:\/\/[^\s"'<>]+|\/(?:admin\/)?(?:products?|produtos?|items?)\/[^\s"'<>]+/gi;
-        while ((match = rawUrlRe.exec(raw)) !== null) {
-            var url = this.absoluteUrl(match[0]);
-            if (this.urlLooksLikeProductDetail(url)) out.push(url);
-        }
-        return out;
-    };
-
-    M.extractDetailUrlsFromRow = function (rawRow, flat, values, headers) {
-        var urls = [];
-        var seen = {};
-        var add = function (url) {
-            url = M.absoluteUrl(url);
-            if (!M.urlLooksLikeProductDetail(url) || seen[url]) return;
-            seen[url] = true;
-            urls.push(url);
-        };
-        try { this.findUrlsInText(JSON.stringify(rawRow || {}), urls); } catch (e) {}
-        Object.keys(flat || {}).forEach(function (key) {
-            if (/(url|link|href|action|acoes|ações|edit|editar|show|ver|detail|detalhe)/i.test(key)) {
-                M.findUrlsInText(flat[key], urls).forEach(add);
-            }
+    M.renderHtml = function (rows, sourceTotal, method, quality) {
+        var headers = ['product_id', 'SKU', 'Imagem URL', 'Título', 'Modelo', 'Marca', 'Preço De', 'Preço Final', 'Disponibilidade', 'Estoque', 'Badges', 'Integração', 'Detalhe URL'];
+        var html = '<!doctype html><html><head><meta charset="utf-8"><title>MapeiaAI produtos e estoque</title>';
+        html += '<meta name="mapeiaai_capture_type" content="stock_products_full_html">';
+        html += '<meta name="source_url" content="' + this.escapeHtml(window.location.href) + '">';
+        html += '<meta name="source_total" content="' + this.escapeHtml(sourceTotal || rows.length) + '">';
+        html += '<meta name="capture_method" content="' + this.escapeHtml(method) + '">';
+        html += '<meta name="stock_quality_status" content="' + this.escapeHtml(quality.status) + '">';
+        html += '<meta name="stock_has_identifier" content="' + String(quality.hasIdentifier) + '">';
+        html += '<meta name="stock_has_numeric_stock" content="' + String(quality.hasNumericStock) + '">';
+        html += '<meta name="stock_has_availability" content="' + String(quality.hasAvailability) + '">';
+        html += '<meta name="stock_has_price" content="' + String(quality.hasPrice) + '">';
+        html += '<meta name="stock_has_images" content="' + String(quality.hasImages) + '">';
+        html += '</head><body><h1>MapeiaAI - Produtos e Estoque</h1>';
+        html += '<p>Origem: ' + this.escapeHtml(window.location.href) + '</p>';
+        html += '<p>Qualidade: ' + this.escapeHtml(quality.status) + '</p>';
+        html += '<table><thead><tr>' + headers.map(function (h) { return '<th>' + M.escapeHtml(h) + '</th>'; }).join('') + '</tr></thead><tbody>';
+        rows.forEach(function (r) {
+            var values = [r.product_id, r.sku, r.imagem_url, r.titulo, r.modelo, r.marca, r.preco_de, r.preco_final, r.disponibilidade, r.estoque, r.badges, r.integracao, r.detalhe_url];
+            html += '<tr>' + values.map(function (v) { return '<td>' + M.escapeHtml(v) + '</td>'; }).join('') + '</tr>';
         });
-        urls.forEach(add);
-        var idValue = '';
-        var keys = Object.keys(flat || {});
-        for (var i = 0; i < keys.length; i++) {
-            var k = M.headerKey(keys[i]);
-            if (/^(id|product_id|produto_id)$/.test(k) && flat[keys[i]]) { idValue = flat[keys[i]]; break; }
-        }
-        if (!idValue && values && headers) {
-            for (var h = 0; h < headers.length; h++) {
-                if (/^(id|product_id|produto_id)$/.test(M.headerKey(headers[h])) && values[h]) { idValue = values[h]; break; }
-            }
-        }
-        if (idValue) {
-            var cleanId = encodeURIComponent(String(idValue).replace(/[^a-zA-Z0-9_\-.]/g, ''));
-            var base = location.origin;
-            ['/admin/products/' + cleanId + '/edit', '/admin/products/' + cleanId, '/admin/produtos/' + cleanId + '/edit', '/admin/produtos/' + cleanId].forEach(function (path) { add(base + path); });
-        }
-        return urls.slice(0, this.detailUrlLimitPerRow);
-    };
-
-    M.syncFetchText = function (url) {
-        try {
-            var xhr = new XMLHttpRequest();
-            xhr.open('GET', url, false);
-            xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
-            var csrf = document.querySelector('meta[name="csrf-token"], meta[name="csrf_token"]');
-            if (csrf && csrf.content) xhr.setRequestHeader('X-CSRF-TOKEN', csrf.content);
-            xhr.send(null);
-            if (xhr.status >= 200 && xhr.status < 300) return xhr.responseText || '';
-        } catch (e) {}
-        return '';
-    };
-
-    M.extractStockFromDom = function (doc) {
-        if (!doc) return '';
-        var selectors = [
-            'input[name*="stock" i]', 'input[id*="stock" i]', 'input[name*="estoque" i]', 'input[id*="estoque" i]',
-            'input[name*="quantity" i]', 'input[id*="quantity" i]', 'input[name*="quantidade" i]', 'input[id*="quantidade" i]',
-            'input[name*="qtd" i]', 'input[id*="qtd" i]', 'input[name*="qty" i]', 'input[id*="qty" i]',
-            'input[name*="saldo" i]', 'input[id*="saldo" i]', 'input[name*="inventory" i]', 'input[id*="inventory" i]',
-            'textarea[name*="stock" i]', 'textarea[name*="estoque" i]', 'select[name*="stock" i]', 'select[name*="estoque" i]'
-        ];
-        for (var s = 0; s < selectors.length; s++) {
-            var nodes;
-            try { nodes = Array.prototype.slice.call(doc.querySelectorAll(selectors[s])); } catch (e) { nodes = []; }
-            for (var i = 0; i < nodes.length; i++) {
-                var node = nodes[i];
-                var value = node.value || node.getAttribute('value') || node.textContent || '';
-                if (this.isSafeStockNumber(value)) return this.normalizeNumber(value);
-            }
-        }
-        var labels = Array.prototype.slice.call(doc.querySelectorAll('label, th, td, div, span, p'));
-        for (var j = 0; j < Math.min(labels.length, 1200); j++) {
-            var text = this.clean(labels[j].textContent || '');
-            if (!this.stockKeyPattern.test(text)) continue;
-            var n = this.extractNumberNearStockWord(text);
-            if (n !== '') return n;
-            var next = labels[j].nextElementSibling ? this.clean(labels[j].nextElementSibling.textContent || labels[j].nextElementSibling.value || '') : '';
-            if (this.isSafeStockNumber(next)) return this.normalizeNumber(next);
-        }
-        return '';
-    };
-
-    M.extractStockFromHtml = function (html) {
-        if (!html) return '';
-        var statusText = this.normalize(html.replace(/<[^>]*>/g, ' '));
-        if (/\b(esgotado|sem estoque|indisponivel)\b/.test(statusText)) return '0';
-        try {
-            if (window.DOMParser) {
-                var doc = new DOMParser().parseFromString(html, 'text/html');
-                var domStock = this.extractStockFromDom(doc);
-                if (domStock !== '') return domStock;
-            }
-        } catch (e) {}
-        var hidden = this.extractNumberNearStockWord(html);
-        if (hidden !== '') return hidden;
-        var scriptPatterns = [
-            /["'](?:stock|estoque|saldo|quantity|quantidade|qtd|qty|inventory|available_stock|stock_quantity|quantity_available)["']\s*:\s*["']?(-?\d+([,.]\d+)?)/ig,
-            /(?:stock|estoque|saldo|quantity|quantidade|qtd|qty|inventory|available_stock|stock_quantity|quantity_available)\s*=\s*["']?(-?\d+([,.]\d+)?)/ig
-        ];
-        for (var p = 0; p < scriptPatterns.length; p++) {
-            var match;
-            while ((match = scriptPatterns[p].exec(html)) !== null) {
-                var value = this.normalizeNumber(match[1]);
-                if (value !== '') return value;
-            }
-        }
-        return '';
-    };
-
-    M.needsDeepStock = function (headers, rows) {
-        var prepared = this.prepareColumns(headers, rows);
-        var quality = this.qualityReport(prepared.headers, prepared.rows);
-        return !quality.hasNumericStock;
-    };
-
-    M.enrichRowsWithDetailStock = function (headers, rows, rawRows) {
-        var report = { used: false, attempted: 0, found: 0, errors: 0, limited: false };
-        if (!rawRows || !rawRows.length || !rows || !rows.length) return { headers: headers, rows: rows, report: report };
-        if (!this.needsDeepStock(headers, rows)) return { headers: headers, rows: rows, report: report };
-        var newHeaders = headers.slice();
-        newHeaders.push('Estoque');
-        var newRows = [];
-        var cache = {};
-        var max = Math.min(rows.length, this.detailStockLimit);
-        report.used = true;
-        report.limited = rows.length > max;
-        for (var i = 0; i < rows.length; i++) {
-            var value = '';
-            if (i < max) {
-                var flat = rawRows[i] && typeof rawRows[i] === 'object' && !Array.isArray(rawRows[i]) ? this.flatten(rawRows[i], '', {}) : {};
-                var urls = this.extractDetailUrlsFromRow(rawRows[i], flat, rows[i], headers);
-                for (var u = 0; u < urls.length; u++) {
-                    var url = urls[u];
-                    if (!(url in cache)) {
-                        report.attempted++;
-                        var html = this.syncFetchText(url);
-                        cache[url] = html ? this.extractStockFromHtml(html) : '';
-                        if (html && cache[url] === '') report.errors++;
-                    }
-                    if (cache[url] !== '') {
-                        value = cache[url];
-                        break;
-                    }
-                }
-                if (value !== '') report.found++;
-            }
-            newRows.push(rows[i].concat([value]));
-        }
-        return { headers: newHeaders, rows: newRows, report: report };
+        html += '</tbody></table></body></html>';
+        return html;
     };
 
     M.tableHtml = function () {
         try {
-            var table = document.querySelector('table');
-            var payload = this.dataTablesPayload();
-            var headers = payload && payload.headers ? payload.headers : this.headersFromDom(table || document);
-            if (!headers.length && table) {
-                var firstRow = table.querySelector('tbody tr');
-                if (firstRow) headers = Array.prototype.slice.call(firstRow.children || []).map(function (_, idx) { return 'Coluna ' + (idx + 1); });
-            }
-            var rows = payload && payload.rows && payload.rows.length ? payload.rows : this.domRows(table || document, headers);
-            if (!headers.length || !rows.length) {
-                return JSON.stringify({ ok: false, reason: 'no_rows_found', total: payload ? payload.total : 0, headers: headers, ajax_error: payload ? payload.error : '', method: payload ? payload.method : '' });
-            }
-            var enriched = this.enrichRowsWithDetailStock(headers, rows, payload ? payload.rawRows : []);
-            headers = enriched.headers;
-            rows = enriched.rows;
-            var prepared = this.prepareColumns(headers, rows);
-            var outHeaders = prepared.headers;
-            var bodyRows = prepared.rows;
-            if (!bodyRows.length) {
-                return JSON.stringify({ ok: false, reason: 'no_basic_rows_found', total: payload ? payload.total : rows.length, headers: headers, ajax_error: payload ? payload.error : '', method: payload ? payload.method : '' });
-            }
-            var quality = this.qualityReport(outHeaders, bodyRows);
-            var html = '<!doctype html><html><head><meta charset="utf-8"><title>MapeiaAI estoque rapido</title>';
-            html += '<meta name="mapeiaai_capture_type" content="stock_basic_html_only">';
-            html += '<meta name="source_url" content="' + this.escapeHtml(window.location.href) + '">';
-            html += '<meta name="source_total" content="' + this.escapeHtml(payload ? payload.total : bodyRows.length) + '">';
-            html += '<meta name="capture_method" content="' + this.escapeHtml(payload ? payload.method : 'dom') + '">';
-            html += '<meta name="stock_quality_status" content="' + this.escapeHtml(quality.status) + '">';
-            html += '<meta name="stock_has_identifier" content="' + String(quality.hasIdentifier) + '">';
-            html += '<meta name="stock_has_numeric_stock" content="' + String(quality.hasNumericStock) + '">';
-            html += '<meta name="stock_has_availability" content="' + String(quality.hasAvailability) + '">';
-            html += '<meta name="stock_has_price" content="' + String(quality.hasPrice) + '">';
-            html += '<meta name="stock_detail_fetch_used" content="' + String(enriched.report.used) + '">';
-            html += '<meta name="stock_detail_fetch_attempted" content="' + String(enriched.report.attempted) + '">';
-            html += '<meta name="stock_detail_fetch_found" content="' + String(enriched.report.found) + '">';
-            html += '<meta name="stock_detail_fetch_limited" content="' + String(enriched.report.limited) + '">';
-            html += '</head><body>';
-            html += '<h1>MapeiaAI - Controle de estoque rapido</h1>';
-            html += '<p>Origem: ' + this.escapeHtml(window.location.href) + '</p>';
-            html += '<p>Qualidade estoque: ' + this.escapeHtml(quality.status) + '</p>';
-            html += '<p>Busca detalhada estoque: usada=' + this.escapeHtml(String(enriched.report.used)) + ', tentativas=' + this.escapeHtml(String(enriched.report.attempted)) + ', encontrados=' + this.escapeHtml(String(enriched.report.found)) + '</p>';
-            html += '<table><thead><tr>';
-            html += outHeaders.map(function (header) { return '<th>' + M.escapeHtml(header) + '</th>'; }).join('');
-            html += '</tr></thead><tbody>';
-            bodyRows.forEach(function (values) {
-                html += '<tr>' + values.map(function (value) { return '<td>' + M.escapeHtml(value) + '</td>'; }).join('') + '</tr>';
-            });
-            html += '</tbody></table></body></html>';
-            return JSON.stringify({ ok: true, count: bodyRows.length, columns: outHeaders.length, total: payload ? payload.total : bodyRows.length, method: payload ? payload.method : 'dom', quality_status: quality.status, has_identifier: quality.hasIdentifier, has_numeric_stock: quality.hasNumericStock, has_availability: quality.hasAvailability, has_price: quality.hasPrice, detail_fetch: enriched.report, html: html });
+            var dom = this.domData();
+            var dt = this.dataTablesData();
+            var rows = dt && dt.rows && dt.rows.length ? this.mergeFallback(dt.rows, dom.rows) : dom.rows;
+            rows = rows.filter(function (r) { return r && (r.sku || r.titulo || r.modelo || r.product_id); });
+            var total = dt && dt.total ? dt.total : (dom.total || rows.length);
+            var method = dt && dt.rows && dt.rows.length ? dt.method : dom.method;
+            var quality = this.qualityReport(rows);
+            if (!rows.length) return JSON.stringify({ ok: false, reason: 'no_rows_found', total: total, method: method, quality_status: quality.status });
+            return JSON.stringify({ ok: true, count: rows.length, columns: 13, total: total, method: method, quality_status: quality.status, has_identifier: quality.hasIdentifier, has_numeric_stock: quality.hasNumericStock, has_availability: quality.hasAvailability, has_price: quality.hasPrice, has_images: quality.hasImages, html: this.renderHtml(rows, total, method, quality) });
         } catch (e) {
-            return JSON.stringify({ ok: false, reason: String(e) });
+            return JSON.stringify({ ok: false, reason: String(e && e.message ? e.message : e) });
         }
     };
 })();
