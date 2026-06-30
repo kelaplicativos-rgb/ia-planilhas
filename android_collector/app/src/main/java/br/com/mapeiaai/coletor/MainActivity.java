@@ -42,6 +42,11 @@ import java.util.zip.ZipOutputStream;
 public class MainActivity extends Activity {
     private static final int WRITE_REQUEST_CODE = 9101;
     private static final int MAX_AUTO_PAGES = 500;
+    private static final int AUTO_TARGET_PAGE_LENGTH = 200;
+    private static final long AUTO_PAGE_SETTLE_MS = 650;
+    private static final long AUTO_NEXT_PAGE_MS = 200;
+    private static final long DETAIL_OPEN_WAIT_MS = 300;
+    private static final long DETAIL_NEXT_ITEM_MS = 120;
 
     private EditText urlInput;
     private TextView statusText;
@@ -71,6 +76,7 @@ public class MainActivity extends Activity {
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
         settings.setLoadsImagesAutomatically(true);
+        settings.setBlockNetworkImage(false);
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(true);
         settings.setBuiltInZoomControls(true);
@@ -114,7 +120,7 @@ public class MainActivity extends Activity {
         actions.addView(captureButton, new LinearLayout.LayoutParams(-1, -2));
 
         Button autoButton = new Button(this);
-        autoButton.setText("Capturar tabela automática");
+        autoButton.setText("Capturar tabela automática TURBO");
         autoButton.setOnClickListener(v -> startAutoDatatablesCapture());
         actions.addView(autoButton, new LinearLayout.LayoutParams(-1, -2));
 
@@ -172,6 +178,14 @@ public class MainActivity extends Activity {
         autoRunning = false;
         captureDir = null;
         progressBar.setProgress(0);
+        setAutoPerformanceMode(false);
+    }
+
+    private void setAutoPerformanceMode(boolean enabled) {
+        if (webView == null) return;
+        WebSettings settings = webView.getSettings();
+        settings.setLoadsImagesAutomatically(!enabled);
+        settings.setBlockNetworkImage(enabled);
     }
 
     private File ensureCaptureDir() {
@@ -187,6 +201,10 @@ public class MainActivity extends Activity {
     }
 
     private void captureCurrentPage(String label, Runnable afterCapture) {
+        captureCurrentPage(label, afterCapture, true);
+    }
+
+    private void captureCurrentPage(String label, Runnable afterCapture, boolean includeArchive) {
         if (webView.getUrl() == null || webView.getUrl().trim().length() == 0) {
             toast("Abra um site antes de capturar.");
             if (afterCapture != null) afterCapture.run();
@@ -198,13 +216,18 @@ public class MainActivity extends Activity {
                 if (afterCapture != null) afterCapture.run();
                 return;
             }
-            saveCurrentWebArchive(label, () -> saveCurrentHtmlSnapshot(label, () -> {
+            Runnable afterSave = () -> {
                 captureCount++;
                 int progress = autoRunning && autoPages > 0 ? Math.min(99, (int) (((autoIndex + 1) * 100.0f) / autoPages)) : Math.min(99, captureCount * 4);
                 progressBar.setProgress(progress);
                 setStatus("Captura salva. Total na sessão: " + captureCount + " página(s).");
                 if (afterCapture != null) afterCapture.run();
-            }));
+            };
+            if (includeArchive) {
+                saveCurrentWebArchive(label, () -> saveCurrentHtmlSnapshot(label, afterSave));
+            } else {
+                saveCurrentHtmlSnapshot(label, afterSave);
+            }
         });
     }
 
@@ -259,20 +282,31 @@ public class MainActivity extends Activity {
             toast("Captura automática já está rodando.");
             return;
         }
-        String js = "(function(){try{if(!(window.jQuery&&window.jQuery.fn&&window.jQuery.fn.dataTable)){return JSON.stringify({ok:false,reason:'datatable_not_found'});}var tables=window.jQuery.fn.dataTable.tables();if(!tables.length){return JSON.stringify({ok:false,reason:'table_not_found'});}var dt=window.jQuery(tables[0]).DataTable();var info=dt.page.info();return JSON.stringify({ok:true,pages:info.pages,total:info.recordsTotal||info.recordsDisplay||0});}catch(e){return JSON.stringify({ok:false,reason:String(e)});}})()";
+        setAutoPerformanceMode(true);
+        setStatus("Modo TURBO ligado: imagens bloqueadas, HTML leve e tabela ampliada para acelerar a coleta.");
+        String js = "(function(){try{if(!(window.jQuery&&window.jQuery.fn&&window.jQuery.fn.dataTable)){return JSON.stringify({ok:false,reason:'datatable_not_found'});}var tables=window.jQuery.fn.dataTable.tables();if(!tables.length){return JSON.stringify({ok:false,reason:'table_not_found'});}var dt=window.jQuery(tables[0]).DataTable();try{dt.page.len(" + AUTO_TARGET_PAGE_LENGTH + ").draw(false);}catch(e){}return JSON.stringify({ok:true});}catch(e){return JSON.stringify({ok:false,reason:String(e)});}})()";
+        webView.evaluateJavascript(js, value -> webView.postDelayed(this::readAutoDatatablesInfoAndStart, AUTO_PAGE_SETTLE_MS));
+    }
+
+    private void readAutoDatatablesInfoAndStart() {
+        String js = "(function(){try{if(!(window.jQuery&&window.jQuery.fn&&window.jQuery.fn.dataTable)){return JSON.stringify({ok:false,reason:'datatable_not_found'});}var tables=window.jQuery.fn.dataTable.tables();if(!tables.length){return JSON.stringify({ok:false,reason:'table_not_found'});}var dt=window.jQuery(tables[0]).DataTable();var info=dt.page.info();return JSON.stringify({ok:true,pages:info.pages,total:info.recordsTotal||info.recordsDisplay||0,pageLength:info.length||0});}catch(e){return JSON.stringify({ok:false,reason:String(e)});}})()";
         webView.evaluateJavascript(js, value -> {
             try {
                 JSONObject data = new JSONObject(decodeJsValue(value));
                 if (!data.optBoolean("ok")) {
+                    setAutoPerformanceMode(false);
                     setStatus("Não encontrei DataTables. Use Capturar página atual ou navegue até a tela correta de produtos.");
                     return;
                 }
                 autoPages = Math.min(MAX_AUTO_PAGES, Math.max(1, data.optInt("pages", 1)));
                 autoIndex = 0;
                 autoRunning = true;
-                setStatus("Tabela detectada: " + autoPages + " página(s). Captura automática iniciada.");
+                int total = data.optInt("total", 0);
+                int pageLength = data.optInt("pageLength", 0);
+                setStatus("Tabela TURBO detectada: " + autoPages + " página(s), " + total + " registro(s), até " + pageLength + " por página. Captura iniciada.");
                 captureDataTablePage();
             } catch (Exception exc) {
+                setAutoPerformanceMode(false);
                 setStatus("Não consegui iniciar captura automática: " + exc.getMessage());
             }
         });
@@ -281,19 +315,20 @@ public class MainActivity extends Activity {
     private void captureDataTablePage() {
         if (!autoRunning || autoIndex >= autoPages) {
             autoRunning = false;
+            setAutoPerformanceMode(false);
             progressBar.setProgress(100);
-            setStatus("Captura automática finalizada. Toque em Gerar ZIP para MapeiaAI.");
+            setStatus("Captura automática TURBO finalizada. Toque em Gerar ZIP para MapeiaAI.");
             return;
         }
         String script = "(function(){try{var tables=window.jQuery.fn.dataTable.tables();var dt=window.jQuery(tables[0]).DataTable();dt.page(" + autoIndex + ").draw(false);return JSON.stringify({ok:true,page:" + autoIndex + "});}catch(e){return JSON.stringify({ok:false,error:String(e)});}})()";
         webView.evaluateJavascript(script, value -> webView.postDelayed(() -> {
             String label = "pagina_" + String.format(Locale.US, "%03d", autoIndex + 1);
-            setStatus("Capturando " + label + " de " + autoPages + "...");
+            setStatus("Capturando " + label + " de " + autoPages + " em modo TURBO...");
             captureCurrentPage(label, () -> runDetailCaptureForCurrentPage(label, () -> {
                 autoIndex++;
-                webView.postDelayed(this::captureDataTablePage, 900);
-            }));
-        }, 1800));
+                webView.postDelayed(this::captureDataTablePage, AUTO_NEXT_PAGE_MS);
+            }), false);
+        }, AUTO_PAGE_SETTLE_MS));
     }
 
     private void runDetailCaptureForCurrentPage(String pageLabel, Runnable afterDetails) {
@@ -318,7 +353,7 @@ public class MainActivity extends Activity {
                         if (afterDetails != null) afterDetails.run();
                         return;
                     }
-                    setStatus("Capturando detalhes de " + count + " produto(s) em " + pageLabel + "...");
+                    setStatus("Capturando detalhes TURBO de " + count + " produto(s) em " + pageLabel + "...");
                     collectDetailItem(pageLabel, items, 0, new JSONArray(), afterDetails);
                 } catch (Exception exc) {
                     setStatus("Não consegui iniciar detalhes: " + exc.getMessage());
@@ -375,9 +410,9 @@ public class MainActivity extends Activity {
                     // Continua mesmo quando um detalhe individual falha.
                 }
                 setStatus("Detalhes capturados: " + records.length() + "/" + items.length());
-                closeDetailOverlay(() -> webView.postDelayed(() -> collectDetailItem(pageLabel, items, index + 1, records, afterDetails), 450));
+                closeDetailOverlay(() -> webView.postDelayed(() -> collectDetailItem(pageLabel, items, index + 1, records, afterDetails), DETAIL_NEXT_ITEM_MS));
             });
-        }, 900));
+        }, DETAIL_OPEN_WAIT_MS));
     }
 
     private void closeDetailOverlay(Runnable afterClose) {
@@ -439,7 +474,7 @@ public class MainActivity extends Activity {
 
     private void writeManifest(File dir) throws Exception {
         JSONObject manifest = new JSONObject();
-        manifest.put("schema_version", "mapeiaai_android_collector_v2_detail_capture");
+        manifest.put("schema_version", "mapeiaai_android_collector_v3_turbo_capture");
         manifest.put("generated_at", new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).format(new Date()));
         manifest.put("start_url", urlInput.getText().toString().trim());
         manifest.put("current_url", webView.getUrl());
@@ -447,7 +482,8 @@ public class MainActivity extends Activity {
         manifest.put("detail_files", detailFileCount);
         manifest.put("details_captured", detailRecordCount);
         manifest.put("detail_capture_marker", GtinCaptureMarker.VERSION);
-        manifest.put("format", "mhtml+html+detail_html");
+        manifest.put("auto_target_page_length", AUTO_TARGET_PAGE_LENGTH);
+        manifest.put("format", "manual:mhtml+html; auto:html+detail_html");
         File out = new File(dir, "mapeiaai_android_manifest.json");
         try (FileOutputStream fos = new FileOutputStream(out)) {
             fos.write(manifest.toString(2).getBytes("UTF-8"));
