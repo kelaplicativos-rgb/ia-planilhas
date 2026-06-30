@@ -17,7 +17,9 @@ window.MapeiaAIStockCapture.escapeHtml = function (value) {
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
 };
-window.MapeiaAIStockCapture.basicColumnPattern = /sku|codigo|referencia|produto|nome|descricao|ean|gtin|barras|estoque|saldo|quantidade|qtd|preco|valor|custo|situacao|status|ativo|variacao|grade|cor|tamanho|local|deposito|armazem|loja|fornecedor|marca/i;
+window.MapeiaAIStockCapture.basicColumnPattern = /sku|codigo|referencia|produto|nome|descricao|ean|gtin|barras|estoque|stock|saldo|quantidade|quantity|qtd|preco|price|valor|custo|situacao|status|ativo|disponivel|availability|variacao|grade|cor|tamanho|local|deposito|armazem|loja|fornecedor|marca/i;
+window.MapeiaAIStockCapture.numericStockPattern = /^-?\d+([,.]\d+)?$/;
+window.MapeiaAIStockCapture.statusPattern = /^(disponivel|disponível|indisponivel|indisponível|baixo|esgotado|sem estoque|em estoque|ativo|inativo)$/i;
 window.MapeiaAIStockCapture.getByPath = function (obj, path) {
     if (!obj || !path || typeof path !== 'string') return '';
     if (path === '_' || path === 'function') return '';
@@ -39,7 +41,9 @@ window.MapeiaAIStockCapture.flatten = function (value, prefix, out) {
         return out;
     }
     if (Array.isArray(value)) {
-        out[prefix || 'valor'] = value.map(function (item) { return window.MapeiaAIStockCapture.clean(typeof item === 'object' ? JSON.stringify(item) : item); }).filter(Boolean).join(' | ');
+        out[prefix || 'valor'] = value.map(function (item) {
+            return window.MapeiaAIStockCapture.clean(typeof item === 'object' ? JSON.stringify(item) : item);
+        }).filter(Boolean).join(' | ');
         return out;
     }
     Object.keys(value).forEach(function (key) {
@@ -129,7 +133,22 @@ window.MapeiaAIStockCapture.rowsToValues = function (rawRows, headers, columns) 
     rawRows = rawRows || [];
     headers = headers || [];
     columns = columns || [];
-    return rawRows.map(function (row) {
+    var objectRows = rawRows.filter(function (row) { return row && typeof row === 'object' && !Array.isArray(row); });
+    if (objectRows.length) {
+        var keySeen = {};
+        var objectHeaders = [];
+        objectRows.forEach(function (row) {
+            var flat = window.MapeiaAIStockCapture.flatten(row, '', {});
+            Object.keys(flat).forEach(function (key) {
+                if (!keySeen[key]) {
+                    keySeen[key] = true;
+                    objectHeaders.push(key);
+                }
+            });
+        });
+        if (objectHeaders.length > headers.length) headers = objectHeaders;
+    }
+    var rows = rawRows.map(function (row) {
         if (Array.isArray(row)) {
             if (!headers.length) headers = row.map(function (_, idx) { return 'Coluna ' + (idx + 1); });
             return headers.map(function (_, idx) { return window.MapeiaAIStockCapture.clean(row[idx]); });
@@ -137,20 +156,16 @@ window.MapeiaAIStockCapture.rowsToValues = function (rawRows, headers, columns) 
         if (row && typeof row === 'object') {
             var flat = window.MapeiaAIStockCapture.flatten(row, '', {});
             if (!headers.length) headers = Object.keys(flat);
-            var values = headers.map(function (header, idx) {
+            return headers.map(function (header, idx) {
                 var columnKey = columns[idx] && typeof columns[idx] === 'string' ? columns[idx] : '';
                 return window.MapeiaAIStockCapture.clean(window.MapeiaAIStockCapture.getByPath(row, columnKey) || window.MapeiaAIStockCapture.bestObjectValue(flat, header, columnKey));
             });
-            if (!values.some(Boolean)) {
-                headers = Object.keys(flat);
-                values = headers.map(function (key) { return flat[key]; });
-            }
-            return values;
         }
         return [window.MapeiaAIStockCapture.clean(row)];
     }).filter(function (values) {
         return values.some(function (value) { return value.length > 0; });
     });
+    return { headers: headers, rows: rows };
 };
 window.MapeiaAIStockCapture.extractResponseRows = function (json) {
     if (!json) return [];
@@ -205,10 +220,13 @@ window.MapeiaAIStockCapture.syncAjax = function (config, data) {
 };
 window.MapeiaAIStockCapture.serverSideAllRows = function (ctx) {
     try {
+        var info = ctx.info || {};
+        if (Number(info.page || 0) > 0 && Number(info.recordsTotal || info.recordsDisplay || 0) > Number(info.length || 0)) {
+            return { rawRows: [], total: Number(info.recordsTotal || info.recordsDisplay || 0) || 0, method: 'skipped_after_ajax_all_pages' };
+        }
         var config = this.ajaxConfig(ctx);
         if (!config) return null;
         var base = this.lastAjaxParams(ctx);
-        var info = ctx.info || {};
         var expected = Number(info.recordsTotal || info.recordsDisplay || 0) || 0;
         var currentLength = Number(info.length || 0) || 75;
         var requestedLength = Math.max(75, Math.min(500, currentLength > 0 ? currentLength : 500));
@@ -242,15 +260,27 @@ window.MapeiaAIStockCapture.dataTablesPayload = function () {
         var ctx = this.dataTableContext();
         if (!ctx) return null;
         var ajaxAll = this.serverSideAllRows(ctx);
+        if (ajaxAll && ajaxAll.method === 'skipped_after_ajax_all_pages') {
+            return { headers: ctx.headers, rows: [], total: ajaxAll.total, pageLength: ctx.info.length || 0, method: ajaxAll.method, error: '' };
+        }
         var rawRows = ajaxAll && ajaxAll.rawRows && ajaxAll.rawRows.length ? ajaxAll.rawRows : ctx.dt.rows({ page: 'current' }).data().toArray();
-        var rows = this.rowsToValues(rawRows, ctx.headers, ctx.columns);
-        var total = ajaxAll && ajaxAll.total ? ajaxAll.total : (ctx.info.recordsTotal || ctx.info.recordsDisplay || rows.length);
+        var converted = this.rowsToValues(rawRows, ctx.headers, ctx.columns);
+        var total = ajaxAll && ajaxAll.total ? ajaxAll.total : (ctx.info.recordsTotal || ctx.info.recordsDisplay || converted.rows.length);
         var method = ajaxAll && ajaxAll.rawRows && ajaxAll.rawRows.length ? ajaxAll.method : 'current_page';
         var error = ajaxAll && ajaxAll.error ? ajaxAll.error : '';
-        return { headers: ctx.headers, rows: rows, total: total, pageLength: ctx.info.length || rows.length, method: method, error: error };
+        return { headers: converted.headers, rows: converted.rows, total: total, pageLength: ctx.info.length || converted.rows.length, method: method, error: error };
     } catch (e) {
         return null;
     }
+};
+window.MapeiaAIStockCapture.isStatusColumn = function (header, values) {
+    var normalized = this.normalize(header);
+    if (normalized.indexOf('estoque') < 0 && normalized.indexOf('stock') < 0) return false;
+    var nonEmpty = values.filter(Boolean);
+    if (!nonEmpty.length) return false;
+    var numeric = nonEmpty.filter(function (value) { return window.MapeiaAIStockCapture.numericStockPattern.test(value); }).length;
+    var status = nonEmpty.filter(function (value) { return window.MapeiaAIStockCapture.statusPattern.test(value); }).length;
+    return status > 0 && numeric === 0;
 };
 window.MapeiaAIStockCapture.tableHtml = function () {
     try {
@@ -264,7 +294,7 @@ window.MapeiaAIStockCapture.tableHtml = function () {
         var rows = payload && payload.rows && payload.rows.length ? payload.rows : this.domRows(table || document, headers);
 
         if (!headers.length || !rows.length) {
-            return JSON.stringify({ ok: false, reason: 'no_rows_found', total: payload ? payload.total : 0, headers: headers, ajax_error: payload ? payload.error : '' });
+            return JSON.stringify({ ok: false, reason: 'no_rows_found', total: payload ? payload.total : 0, headers: headers, ajax_error: payload ? payload.error : '', method: payload ? payload.method : '' });
         }
 
         var keep = [];
@@ -273,7 +303,7 @@ window.MapeiaAIStockCapture.tableHtml = function () {
             if (this.basicColumnPattern.test(normalized)) keep.push(i);
         }
         if (!keep.length) {
-            for (var all = 0; all < Math.min(headers.length, 40); all++) keep.push(all);
+            for (var all = 0; all < Math.min(headers.length, 80); all++) keep.push(all);
         }
 
         var outHeaders = keep.map(function (idx) { return headers[idx] || ('Coluna ' + (idx + 1)); });
@@ -283,8 +313,13 @@ window.MapeiaAIStockCapture.tableHtml = function () {
             return values.some(function (value) { return value.length > 0; });
         });
 
+        for (var h = 0; h < outHeaders.length; h++) {
+            var colValues = bodyRows.map(function (row) { return row[h] || ''; });
+            if (this.isStatusColumn(outHeaders[h], colValues)) outHeaders[h] = 'Disponibilidade';
+        }
+
         if (!bodyRows.length) {
-            return JSON.stringify({ ok: false, reason: 'no_basic_rows_found', total: payload ? payload.total : rows.length, headers: headers, ajax_error: payload ? payload.error : '' });
+            return JSON.stringify({ ok: false, reason: 'no_basic_rows_found', total: payload ? payload.total : rows.length, headers: headers, ajax_error: payload ? payload.error : '', method: payload ? payload.method : '' });
         }
 
         var html = '<!doctype html><html><head><meta charset="utf-8"><title>MapeiaAI estoque rapido</title>';
