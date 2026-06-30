@@ -2,6 +2,13 @@ window.MapeiaAIStockCapture = window.MapeiaAIStockCapture || {};
 (function () {
     var M = window.MapeiaAIStockCapture;
 
+    M.detailStockLimit = 1600;
+    M.detailUrlLimitPerRow = 5;
+    M.numericPattern = /^-?\d+([,.]\d+)?$/;
+    M.moneyPattern = /R\$\s*\d|^\d{1,6}([,.]\d{2})$/;
+    M.stockKeyPattern = /estoque|stock|saldo|quantidade|quantity|qtd|qty|inventory|inventario|inventário|balance|balanco|balanço|available|availability|warehouse|deposito|depósito/i;
+    M.identifierHeaderPattern = /^(id|product_id|produto_id|sku|codigo|referencia|model|modelo|mpn|ean|gtin|codigo_de_barras|codigo_barras|barras|name|nome|produto|descricao|description)$/;
+
     M.decodeEntities = function (value) {
         return String(value == null ? '' : value)
             .replace(/&nbsp;/g, ' ')
@@ -15,6 +22,8 @@ window.MapeiaAIStockCapture = window.MapeiaAIStockCapture || {};
 
     M.clean = function (value) {
         return this.decodeEntities(value)
+            .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+            .replace(/<style[\s\S]*?<\/style>/gi, ' ')
             .replace(/<[^>]*>/g, ' ')
             .replace(/\b(data-[a-z0-9_-]+|class|style|title|href|src|alt|aria-[a-z0-9_-]+)\s*=\s*"[^"]*"/gi, ' ')
             .replace(/\b(data-[a-z0-9_-]+|class|style|title|href|src|alt|aria-[a-z0-9_-]+)\s*=\s*'[^']*'/gi, ' ')
@@ -29,6 +38,10 @@ window.MapeiaAIStockCapture = window.MapeiaAIStockCapture || {};
         return this.clean(value).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     };
 
+    M.headerKey = function (header) {
+        return this.normalize(header).replace(/\s+/g, '_');
+    };
+
     M.escapeHtml = function (value) {
         return this.clean(value)
             .replace(/&/g, '&amp;')
@@ -38,46 +51,54 @@ window.MapeiaAIStockCapture = window.MapeiaAIStockCapture || {};
             .replace(/'/g, '&#39;');
     };
 
-    M.numericPattern = /^-?\d+([,.]\d+)?$/;
-    M.moneyPattern = /R\$\s*\d|^\d{1,6}([,.]\d{2})$/;
-    M.stockKeyPattern = /estoque|stock|saldo|quantidade|quantity|qtd|qty|inventory|inventario|inventário|balance|balanco|balanço|available|availability/i;
-    M.identifierHeaderPattern = /^(id|product_id|produto_id|sku|codigo|referencia|model|modelo|mpn|ean|gtin|codigo_de_barras|codigo_barras|barras|name|nome|produto|descricao|description)$/;
-
     M.isStatusValue = function (value) {
         return /^(disponivel|indisponivel|baixo|esgotado|sem estoque|em estoque|ativo|inativo)$/.test(this.normalize(value));
     };
 
-    M.headerKey = function (header) {
-        return this.normalize(header).replace(/\s+/g, '_');
+    M.isSafeStockNumber = function (value) {
+        var v = this.clean(value);
+        if (!this.numericPattern.test(v)) return false;
+        if (/^\d{8,14}$/.test(v.replace(/\D/g, ''))) return false;
+        return true;
+    };
+
+    M.normalizeNumber = function (value) {
+        var v = String(value == null ? '' : value).replace(',', '.').replace(/[^0-9.\-]/g, '');
+        if (!this.numericPattern.test(v)) return '';
+        return v;
+    };
+
+    M.extractNumberNearStockWord = function (value) {
+        var raw = this.decodeEntities(value);
+        var patterns = [
+            /(?:estoque|saldo|stock|quantity|quantidade|qtd|inventory|invent[aá]rio|balance|dispon[ií]vel|available|warehouse|dep[oó]sito)[^0-9-]{0,80}(-?\d+([,.]\d+)?)/i,
+            /(-?\d+([,.]\d+)?)\s*(?:unid|unidade|unidades|pe[cç]as|pcs|em estoque|dispon[ií]veis)/i,
+            /(?:stockQuantity|inventoryLevel|availableQuantity|quantityAvailable|saldoAtual|estoqueAtual|stock_quantity|stock_qty|available_stock|inventory_quantity|quantity_available)\s*[:=]\s*["']?(-?\d+([,.]\d+)?)/i
+        ];
+        for (var i = 0; i < patterns.length; i++) {
+            var found = raw.match(patterns[i]);
+            if (found && found[1] != null) return this.normalizeNumber(found[1]);
+        }
+        return '';
     };
 
     M.extractHiddenStock = function (value) {
         var raw = this.decodeEntities(value);
         var visible = this.normalize(raw.replace(/<[^>]*>/g, ' '));
         if (/\b(esgotado|sem estoque|indisponivel)\b/.test(visible)) return '0';
-
         var numericOnly = this.clean(raw);
-        if (this.numericPattern.test(numericOnly)) return numericOnly.replace(',', '.');
-
-        var attrRe = /(?:title|data-original-title|data-bs-original-title|data-title|data-stock|data-estoque|data-quantity|data-quantidade|data-qtd|data-qty|data-saldo|data-inventory|data-balance|aria-label)\s*=\s*(["'])(.*?)\1/gi;
+        if (this.isSafeStockNumber(numericOnly)) return this.normalizeNumber(numericOnly);
+        var attrRe = /(?:title|data-original-title|data-bs-original-title|data-title|data-stock|data-estoque|data-quantity|data-quantidade|data-qtd|data-qty|data-saldo|data-inventory|data-balance|aria-label|value)\s*=\s*(["'])(.*?)\1/gi;
         var match;
         while ((match = attrRe.exec(raw)) !== null) {
             var attrValue = this.clean(match[2]);
             var attrNorm = this.normalize(attrValue);
             if (/\b(esgotado|sem estoque|indisponivel)\b/.test(attrNorm)) return '0';
-            var attrNumber = attrValue.match(/-?\d+([,.]\d+)?/);
-            if (attrNumber) return attrNumber[0].replace(',', '.');
+            var attrNumber = this.extractNumberNearStockWord(attrValue);
+            if (attrNumber !== '') return attrNumber;
         }
-
-        var patterns = [
-            /(?:estoque|saldo|stock|quantity|quantidade|qtd|inventory|invent[aá]rio|balance|dispon[ií]vel|available)[^0-9-]{0,50}(-?\d+([,.]\d+)?)/i,
-            /(-?\d+([,.]\d+)?)\s*(?:unid|unidade|unidades|pe[cç]as|pcs|em estoque|dispon[ií]veis)/i,
-            /(?:stockQuantity|inventoryLevel|availableQuantity|quantityAvailable|saldoAtual|estoqueAtual)\s*[:=]\s*["']?(-?\d+([,.]\d+)?)/i
-        ];
-        for (var i = 0; i < patterns.length; i++) {
-            var found = raw.match(patterns[i]);
-            if (found && found[1] != null) return String(found[1]).replace(',', '.');
-        }
+        var found = this.extractNumberNearStockWord(raw);
+        if (found !== '') return found;
         return '';
     };
 
@@ -339,14 +360,14 @@ window.MapeiaAIStockCapture = window.MapeiaAIStockCapture || {};
             if (!ctx) return null;
             var ajaxAll = this.serverSideAllRows(ctx);
             if (ajaxAll && ajaxAll.method === 'skipped_after_ajax_all_pages') {
-                return { headers: ctx.headers, rows: [], total: ajaxAll.total, pageLength: ctx.info.length || 0, method: ajaxAll.method, error: '' };
+                return { headers: ctx.headers, rows: [], rawRows: [], total: ajaxAll.total, pageLength: ctx.info.length || 0, method: ajaxAll.method, error: '' };
             }
             var rawRows = ajaxAll && ajaxAll.rawRows && ajaxAll.rawRows.length ? ajaxAll.rawRows : ctx.dt.rows({ page: 'current' }).data().toArray();
             var converted = this.rowsToValues(rawRows, ctx.headers, ctx.columns);
             var total = ajaxAll && ajaxAll.total ? ajaxAll.total : (ctx.info.recordsTotal || ctx.info.recordsDisplay || converted.rows.length);
             var method = ajaxAll && ajaxAll.rawRows && ajaxAll.rawRows.length ? ajaxAll.method : 'current_page';
             var error = ajaxAll && ajaxAll.error ? ajaxAll.error : '';
-            return { headers: converted.headers, rows: converted.rows, total: total, pageLength: ctx.info.length || converted.rows.length, method: method, error: error };
+            return { headers: converted.headers, rows: converted.rows, rawRows: rawRows, total: total, pageLength: ctx.info.length || converted.rows.length, method: method, error: error };
         } catch (e) {
             return null;
         }
@@ -356,7 +377,7 @@ window.MapeiaAIStockCapture = window.MapeiaAIStockCapture || {};
         var nonEmpty = values.filter(function (value) { return M.clean(value).length > 0; });
         var unique = {};
         nonEmpty.forEach(function (value) { unique[M.normalize(value)] = true; });
-        var numeric = nonEmpty.filter(function (value) { return M.numericPattern.test(M.clean(value)); }).length;
+        var numeric = nonEmpty.filter(function (value) { return M.isSafeStockNumber(value); }).length;
         var money = nonEmpty.filter(function (value) { return M.moneyPattern.test(M.clean(value)); }).length;
         var status = nonEmpty.filter(function (value) { return M.isStatusValue(value); }).length;
         var alpha = nonEmpty.filter(function (value) { return /[A-Za-zÀ-ÿ]{2,}/.test(M.clean(value)); }).length;
@@ -392,7 +413,7 @@ window.MapeiaAIStockCapture = window.MapeiaAIStockCapture || {};
         if (/^(price|preco|valor|custo)$/.test(h)) return 'Preco';
         if (/^(price_of|availability|disponibilidade|situacao|status)$/.test(h)) return 'Disponibilidade';
         if (/^(ean|gtin|codigo_de_barras|codigo_barras|barras)$/.test(h)) return stats.numeric >= Math.max(1, stats.nonEmpty * 0.8) ? header : 'Marca';
-        if (/(estoque|stock|saldo|quantidade|quantity|qtd|qty|inventory|inventario|balance|balanco|balanço)/.test(h)) return stats.numeric > 0 ? 'Estoque' : 'Disponibilidade';
+        if (/(estoque|stock|saldo|quantidade|quantity|qtd|qty|inventory|inventario|balance|balanco|balanço|warehouse|deposito|depósito)/.test(h)) return stats.numeric > 0 ? 'Estoque' : 'Disponibilidade';
         return '';
     };
 
@@ -452,7 +473,7 @@ window.MapeiaAIStockCapture = window.MapeiaAIStockCapture || {};
             var values = rows.map(function (row) { return row[i] || ''; });
             var stats = this.columnStats(values);
             if (this.identifierHeaderPattern.test(h) && stats.unique > 2) hasIdentifier = true;
-            if (/(estoque|stock|saldo|quantidade|quantity|qtd|qty|inventory|inventario|balance|balanco|balanço)/.test(h) && stats.numeric > 0 && stats.status === 0) hasNumericStock = true;
+            if (/(estoque|stock|saldo|quantidade|quantity|qtd|qty|inventory|inventario|balance|balanco|balanço|warehouse|deposito|depósito)/.test(h) && stats.numeric > 0 && stats.status === 0) hasNumericStock = true;
             if (/^(disponibilidade|status|situacao|availability)$/.test(h) || stats.status > 0) hasAvailability = true;
             if (/(preco|price|valor|custo)/.test(h) || stats.money > 0) hasPrice = true;
         }
@@ -460,6 +481,185 @@ window.MapeiaAIStockCapture = window.MapeiaAIStockCapture || {};
         if (!hasIdentifier) warnings.push('missing_product_identifier');
         if (!hasNumericStock) warnings.push('missing_numeric_stock');
         return { status: warnings.length ? warnings.join('+') : 'ok', hasIdentifier: hasIdentifier, hasNumericStock: hasNumericStock, hasAvailability: hasAvailability, hasPrice: hasPrice };
+    };
+
+    M.absoluteUrl = function (url) {
+        if (!url) return '';
+        var cleaned = this.decodeEntities(String(url)).trim();
+        if (!cleaned || /^javascript:/i.test(cleaned) || /^#/i.test(cleaned) || /^mailto:/i.test(cleaned)) return '';
+        try { return new URL(cleaned, window.location.href).href; } catch (e) { return ''; }
+    };
+
+    M.urlLooksLikeProductDetail = function (url) {
+        if (!url) return false;
+        if (!/^https?:/i.test(url)) return false;
+        if (url.indexOf(location.origin) !== 0) return false;
+        if (/\.(png|jpe?g|gif|webp|svg|css|js|pdf|zip)(\?|$)/i.test(url)) return false;
+        return /(product|products|produto|produtos|item|items|edit|editar|show|detalhe|detalhes|admin)/i.test(url);
+    };
+
+    M.findUrlsInText = function (text, out) {
+        out = out || [];
+        var raw = this.decodeEntities(text || '');
+        var hrefRe = /(?:href|data-href|data-url|url|link|edit_url|show_url|route)\s*=\s*(["'])(.*?)\1/gi;
+        var match;
+        while ((match = hrefRe.exec(raw)) !== null) {
+            var href = this.absoluteUrl(match[2]);
+            if (this.urlLooksLikeProductDetail(href)) out.push(href);
+        }
+        var rawUrlRe = /https?:\/\/[^\s"'<>]+|\/(?:admin\/)?(?:products?|produtos?|items?)\/[^\s"'<>]+/gi;
+        while ((match = rawUrlRe.exec(raw)) !== null) {
+            var url = this.absoluteUrl(match[0]);
+            if (this.urlLooksLikeProductDetail(url)) out.push(url);
+        }
+        return out;
+    };
+
+    M.extractDetailUrlsFromRow = function (rawRow, flat, values, headers) {
+        var urls = [];
+        var seen = {};
+        var add = function (url) {
+            url = M.absoluteUrl(url);
+            if (!M.urlLooksLikeProductDetail(url) || seen[url]) return;
+            seen[url] = true;
+            urls.push(url);
+        };
+        try { this.findUrlsInText(JSON.stringify(rawRow || {}), urls); } catch (e) {}
+        Object.keys(flat || {}).forEach(function (key) {
+            if (/(url|link|href|action|acoes|ações|edit|editar|show|ver|detail|detalhe)/i.test(key)) {
+                M.findUrlsInText(flat[key], urls).forEach(add);
+            }
+        });
+        urls.forEach(add);
+        var idValue = '';
+        var keys = Object.keys(flat || {});
+        for (var i = 0; i < keys.length; i++) {
+            var k = M.headerKey(keys[i]);
+            if (/^(id|product_id|produto_id)$/.test(k) && flat[keys[i]]) { idValue = flat[keys[i]]; break; }
+        }
+        if (!idValue && values && headers) {
+            for (var h = 0; h < headers.length; h++) {
+                if (/^(id|product_id|produto_id)$/.test(M.headerKey(headers[h])) && values[h]) { idValue = values[h]; break; }
+            }
+        }
+        if (idValue) {
+            var cleanId = encodeURIComponent(String(idValue).replace(/[^a-zA-Z0-9_\-.]/g, ''));
+            var base = location.origin;
+            ['/admin/products/' + cleanId + '/edit', '/admin/products/' + cleanId, '/admin/produtos/' + cleanId + '/edit', '/admin/produtos/' + cleanId].forEach(function (path) { add(base + path); });
+        }
+        return urls.slice(0, this.detailUrlLimitPerRow);
+    };
+
+    M.syncFetchText = function (url) {
+        try {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', url, false);
+            xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+            var csrf = document.querySelector('meta[name="csrf-token"], meta[name="csrf_token"]');
+            if (csrf && csrf.content) xhr.setRequestHeader('X-CSRF-TOKEN', csrf.content);
+            xhr.send(null);
+            if (xhr.status >= 200 && xhr.status < 300) return xhr.responseText || '';
+        } catch (e) {}
+        return '';
+    };
+
+    M.extractStockFromDom = function (doc) {
+        if (!doc) return '';
+        var selectors = [
+            'input[name*="stock" i]', 'input[id*="stock" i]', 'input[name*="estoque" i]', 'input[id*="estoque" i]',
+            'input[name*="quantity" i]', 'input[id*="quantity" i]', 'input[name*="quantidade" i]', 'input[id*="quantidade" i]',
+            'input[name*="qtd" i]', 'input[id*="qtd" i]', 'input[name*="qty" i]', 'input[id*="qty" i]',
+            'input[name*="saldo" i]', 'input[id*="saldo" i]', 'input[name*="inventory" i]', 'input[id*="inventory" i]',
+            'textarea[name*="stock" i]', 'textarea[name*="estoque" i]', 'select[name*="stock" i]', 'select[name*="estoque" i]'
+        ];
+        for (var s = 0; s < selectors.length; s++) {
+            var nodes;
+            try { nodes = Array.prototype.slice.call(doc.querySelectorAll(selectors[s])); } catch (e) { nodes = []; }
+            for (var i = 0; i < nodes.length; i++) {
+                var node = nodes[i];
+                var value = node.value || node.getAttribute('value') || node.textContent || '';
+                if (this.isSafeStockNumber(value)) return this.normalizeNumber(value);
+            }
+        }
+        var labels = Array.prototype.slice.call(doc.querySelectorAll('label, th, td, div, span, p'));
+        for (var j = 0; j < Math.min(labels.length, 1200); j++) {
+            var text = this.clean(labels[j].textContent || '');
+            if (!this.stockKeyPattern.test(text)) continue;
+            var n = this.extractNumberNearStockWord(text);
+            if (n !== '') return n;
+            var next = labels[j].nextElementSibling ? this.clean(labels[j].nextElementSibling.textContent || labels[j].nextElementSibling.value || '') : '';
+            if (this.isSafeStockNumber(next)) return this.normalizeNumber(next);
+        }
+        return '';
+    };
+
+    M.extractStockFromHtml = function (html) {
+        if (!html) return '';
+        var statusText = this.normalize(html.replace(/<[^>]*>/g, ' '));
+        if (/\b(esgotado|sem estoque|indisponivel)\b/.test(statusText)) return '0';
+        try {
+            if (window.DOMParser) {
+                var doc = new DOMParser().parseFromString(html, 'text/html');
+                var domStock = this.extractStockFromDom(doc);
+                if (domStock !== '') return domStock;
+            }
+        } catch (e) {}
+        var hidden = this.extractNumberNearStockWord(html);
+        if (hidden !== '') return hidden;
+        var scriptPatterns = [
+            /["'](?:stock|estoque|saldo|quantity|quantidade|qtd|qty|inventory|available_stock|stock_quantity|quantity_available)["']\s*:\s*["']?(-?\d+([,.]\d+)?)/ig,
+            /(?:stock|estoque|saldo|quantity|quantidade|qtd|qty|inventory|available_stock|stock_quantity|quantity_available)\s*=\s*["']?(-?\d+([,.]\d+)?)/ig
+        ];
+        for (var p = 0; p < scriptPatterns.length; p++) {
+            var match;
+            while ((match = scriptPatterns[p].exec(html)) !== null) {
+                var value = this.normalizeNumber(match[1]);
+                if (value !== '') return value;
+            }
+        }
+        return '';
+    };
+
+    M.needsDeepStock = function (headers, rows) {
+        var prepared = this.prepareColumns(headers, rows);
+        var quality = this.qualityReport(prepared.headers, prepared.rows);
+        return !quality.hasNumericStock;
+    };
+
+    M.enrichRowsWithDetailStock = function (headers, rows, rawRows) {
+        var report = { used: false, attempted: 0, found: 0, errors: 0, limited: false };
+        if (!rawRows || !rawRows.length || !rows || !rows.length) return { headers: headers, rows: rows, report: report };
+        if (!this.needsDeepStock(headers, rows)) return { headers: headers, rows: rows, report: report };
+        var newHeaders = headers.slice();
+        newHeaders.push('Estoque');
+        var newRows = [];
+        var cache = {};
+        var max = Math.min(rows.length, this.detailStockLimit);
+        report.used = true;
+        report.limited = rows.length > max;
+        for (var i = 0; i < rows.length; i++) {
+            var value = '';
+            if (i < max) {
+                var flat = rawRows[i] && typeof rawRows[i] === 'object' && !Array.isArray(rawRows[i]) ? this.flatten(rawRows[i], '', {}) : {};
+                var urls = this.extractDetailUrlsFromRow(rawRows[i], flat, rows[i], headers);
+                for (var u = 0; u < urls.length; u++) {
+                    var url = urls[u];
+                    if (!(url in cache)) {
+                        report.attempted++;
+                        var html = this.syncFetchText(url);
+                        cache[url] = html ? this.extractStockFromHtml(html) : '';
+                        if (html && cache[url] === '') report.errors++;
+                    }
+                    if (cache[url] !== '') {
+                        value = cache[url];
+                        break;
+                    }
+                }
+                if (value !== '') report.found++;
+            }
+            newRows.push(rows[i].concat([value]));
+        }
+        return { headers: newHeaders, rows: newRows, report: report };
     };
 
     M.tableHtml = function () {
@@ -475,6 +675,9 @@ window.MapeiaAIStockCapture = window.MapeiaAIStockCapture || {};
             if (!headers.length || !rows.length) {
                 return JSON.stringify({ ok: false, reason: 'no_rows_found', total: payload ? payload.total : 0, headers: headers, ajax_error: payload ? payload.error : '', method: payload ? payload.method : '' });
             }
+            var enriched = this.enrichRowsWithDetailStock(headers, rows, payload ? payload.rawRows : []);
+            headers = enriched.headers;
+            rows = enriched.rows;
             var prepared = this.prepareColumns(headers, rows);
             var outHeaders = prepared.headers;
             var bodyRows = prepared.rows;
@@ -492,10 +695,15 @@ window.MapeiaAIStockCapture = window.MapeiaAIStockCapture || {};
             html += '<meta name="stock_has_numeric_stock" content="' + String(quality.hasNumericStock) + '">';
             html += '<meta name="stock_has_availability" content="' + String(quality.hasAvailability) + '">';
             html += '<meta name="stock_has_price" content="' + String(quality.hasPrice) + '">';
+            html += '<meta name="stock_detail_fetch_used" content="' + String(enriched.report.used) + '">';
+            html += '<meta name="stock_detail_fetch_attempted" content="' + String(enriched.report.attempted) + '">';
+            html += '<meta name="stock_detail_fetch_found" content="' + String(enriched.report.found) + '">';
+            html += '<meta name="stock_detail_fetch_limited" content="' + String(enriched.report.limited) + '">';
             html += '</head><body>';
             html += '<h1>MapeiaAI - Controle de estoque rapido</h1>';
             html += '<p>Origem: ' + this.escapeHtml(window.location.href) + '</p>';
             html += '<p>Qualidade estoque: ' + this.escapeHtml(quality.status) + '</p>';
+            html += '<p>Busca detalhada estoque: usada=' + this.escapeHtml(String(enriched.report.used)) + ', tentativas=' + this.escapeHtml(String(enriched.report.attempted)) + ', encontrados=' + this.escapeHtml(String(enriched.report.found)) + '</p>';
             html += '<table><thead><tr>';
             html += outHeaders.map(function (header) { return '<th>' + M.escapeHtml(header) + '</th>'; }).join('');
             html += '</tr></thead><tbody>';
@@ -503,7 +711,7 @@ window.MapeiaAIStockCapture = window.MapeiaAIStockCapture || {};
                 html += '<tr>' + values.map(function (value) { return '<td>' + M.escapeHtml(value) + '</td>'; }).join('') + '</tr>';
             });
             html += '</tbody></table></body></html>';
-            return JSON.stringify({ ok: true, count: bodyRows.length, columns: outHeaders.length, total: payload ? payload.total : bodyRows.length, method: payload ? payload.method : 'dom', quality_status: quality.status, has_identifier: quality.hasIdentifier, has_numeric_stock: quality.hasNumericStock, has_availability: quality.hasAvailability, has_price: quality.hasPrice, html: html });
+            return JSON.stringify({ ok: true, count: bodyRows.length, columns: outHeaders.length, total: payload ? payload.total : bodyRows.length, method: payload ? payload.method : 'dom', quality_status: quality.status, has_identifier: quality.hasIdentifier, has_numeric_stock: quality.hasNumericStock, has_availability: quality.hasAvailability, has_price: quality.hasPrice, detail_fetch: enriched.report, html: html });
         } catch (e) {
             return JSON.stringify({ ok: false, reason: String(e) });
         }
