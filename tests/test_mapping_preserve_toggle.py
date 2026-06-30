@@ -80,6 +80,16 @@ class TestMappingPreserveToggle(unittest.TestCase):
         self.session[preserve_runtime.MODEL_PRESERVE_TOGGLE_KEY] = True
         self.assertEqual(preserve_runtime._model_copy_targets(mapping, ['Nome']), {'Nome': 'Nome'})
 
+    def test_preserve_output_never_adds_source_columns(self) -> None:
+        self.session[preserve_runtime.MODEL_PRESERVE_TOGGLE_KEY] = True
+        df_model = pd.DataFrame({'SKU': ['ABC'], 'Nome': ['Produto modelo']})
+        df_source = pd.DataFrame({'SKU': ['ABC'], 'Nome': ['Produto origem'], 'Arquivo origem': ['pagina.html'], 'Página origem': ['1']})
+        output = preserve_runtime._merge_preserving_model(df_source, df_model, {'SKU': 'SKU', 'Nome': 'Nome'})
+
+        self.assertEqual(list(output.columns), ['SKU', 'Nome'])
+        self.assertNotIn('Arquivo origem', output.columns)
+        self.assertNotIn('Página origem', output.columns)
+
 
 if __name__ == '__main__':
     unittest.main()
