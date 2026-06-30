@@ -2,6 +2,9 @@ window.MapeiaAIDetailCapture = window.MapeiaAIDetailCapture || {};
 window.MapeiaAIDetailCapture.clean = function (value) {
     return String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
 };
+window.MapeiaAIDetailCapture.normalize = function (value) {
+    return this.clean(value).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+};
 window.MapeiaAIDetailCapture.digits = function (value) {
     return this.clean(value).replace(/\D+/g, '');
 };
@@ -9,7 +12,24 @@ window.MapeiaAIDetailCapture.validGtin = function (value) {
     var d = this.digits(value);
     if (!/^(\d{8}|\d{12}|\d{13}|\d{14})$/.test(d)) return '';
     if (/^(\d)\1+$/.test(d)) return '';
-    return d;
+    var total = 0;
+    var body = d.slice(0, -1).split('').reverse();
+    for (var i = 0; i < body.length; i++) {
+        total += parseInt(body[i], 10) * (i % 2 === 0 ? 3 : 1);
+    }
+    var expected = (10 - (total % 10)) % 10;
+    return expected === parseInt(d.slice(-1), 10) ? d : '';
+};
+window.MapeiaAIDetailCapture.firstValidGtin = function (values) {
+    for (var i = 0; i < values.length; i++) {
+        var raw = this.clean(values[i]);
+        var matches = raw.match(/\b\d{8}\b|\b\d{12}\b|\b\d{13}\b|\b\d{14}\b/g) || [];
+        for (var j = 0; j < matches.length; j++) {
+            var valid = this.validGtin(matches[j]);
+            if (valid) return valid;
+        }
+    }
+    return '';
 };
 window.MapeiaAIDetailCapture.escapeHtml = function (value) {
     return this.clean(value)
@@ -23,7 +43,7 @@ window.MapeiaAIDetailCapture.headersForRow = function (row) {
     var table = row && row.closest ? row.closest('table') : null;
     if (!table) return [];
     return Array.prototype.map.call(table.querySelectorAll('thead th, thead td'), function (cell) {
-        return window.MapeiaAIDetailCapture.clean(cell.textContent).toLowerCase();
+        return window.MapeiaAIDetailCapture.normalize(cell.textContent);
     });
 };
 window.MapeiaAIDetailCapture.cellByHeader = function (row, names) {
@@ -31,21 +51,34 @@ window.MapeiaAIDetailCapture.cellByHeader = function (row, names) {
     var cells = Array.prototype.slice.call(row.children || []);
     for (var i = 0; i < headers.length && i < cells.length; i++) {
         for (var j = 0; j < names.length; j++) {
-            if (headers[i].indexOf(names[j]) >= 0) return this.clean(cells[i].textContent);
+            if (headers[i].indexOf(this.normalize(names[j])) >= 0) return this.clean(cells[i].textContent);
         }
     }
     return '';
 };
 window.MapeiaAIDetailCapture.clickableForRow = function (row) {
-    var nodes = Array.prototype.slice.call(row.querySelectorAll('button, a, [onclick], [data-id], [data-product-id], [data-produto-id]'));
+    var nodes = Array.prototype.slice.call(row.querySelectorAll('button, a, [role="button"], [onclick], [data-id], [data-product-id], [data-produto-id], [data-bs-target], [data-target]'));
+    var strongHints = ['getproduct', 'produto', 'product', 'detalhe', 'detail', 'editar', 'edit', 'visualizar', 'view', 'integr', 'mercado', 'ean', 'gtin', 'codigo', 'barcode'];
     for (var i = 0; i < nodes.length; i++) {
         var node = nodes[i];
-        var raw = [node.getAttribute('onclick'), node.getAttribute('data-id'), node.getAttribute('data-product-id'), node.getAttribute('data-produto-id'), node.textContent, node.className].join(' ').toLowerCase();
-        if (raw.indexOf('getproduct') >= 0 || raw.indexOf('integr') >= 0 || raw.indexOf('mercado') >= 0 || raw.indexOf('ean') >= 0 || raw.indexOf('codigo') >= 0) {
-            return node;
+        var raw = this.normalize([
+            node.getAttribute('onclick'),
+            node.getAttribute('href'),
+            node.getAttribute('title'),
+            node.getAttribute('aria-label'),
+            node.getAttribute('data-id'),
+            node.getAttribute('data-product-id'),
+            node.getAttribute('data-produto-id'),
+            node.getAttribute('data-bs-target'),
+            node.getAttribute('data-target'),
+            node.textContent,
+            node.className
+        ].join(' '));
+        for (var j = 0; j < strongHints.length; j++) {
+            if (raw.indexOf(strongHints[j]) >= 0) return node;
         }
     }
-    return null;
+    return nodes.length === 1 ? nodes[0] : null;
 };
 window.MapeiaAIDetailCapture.init = function () {
     var rows = Array.prototype.slice.call(document.querySelectorAll('table tbody tr'));
@@ -57,12 +90,13 @@ window.MapeiaAIDetailCapture.init = function () {
         if (!action) continue;
         var idx = String(items.length);
         action.setAttribute('data-mapeiaai-detail-index', idx);
-        var sku = this.cellByHeader(row, ['sku', 'código', 'codigo', 'referência', 'referencia']) || this.clean(row.getAttribute('data-sku'));
-        var name = this.cellByHeader(row, ['produto', 'nome', 'título', 'titulo', 'descrição', 'descricao']);
-        var key = sku || name || this.clean(row.textContent).slice(0, 120);
+        var sku = this.cellByHeader(row, ['sku', 'codigo', 'código', 'referencia', 'referência', 'modelo']) || this.clean(row.getAttribute('data-sku'));
+        var name = this.cellByHeader(row, ['produto', 'nome', 'titulo', 'título', 'descricao', 'descrição']);
+        var gtin = this.firstValidGtin([row.textContent]);
+        var key = sku || gtin || name || this.clean(row.textContent).slice(0, 120);
         if (key && seen[key]) continue;
         if (key) seen[key] = true;
-        items.push({ index: items.length, sku: sku, name: name, row_text: this.clean(row.textContent).slice(0, 800) });
+        items.push({ index: items.length, sku: sku, name: name, gtin: gtin, row_text: this.clean(row.textContent).slice(0, 1200) });
     }
     return JSON.stringify({ ok: true, count: items.length, items: items });
 };
@@ -82,22 +116,41 @@ window.MapeiaAIDetailCapture.field = function (selectors) {
     }
     return '';
 };
+window.MapeiaAIDetailCapture.fieldByLabel = function (labels) {
+    var nodes = Array.prototype.slice.call(document.querySelectorAll('label, th, td, dt, span, div'));
+    for (var i = 0; i < nodes.length; i++) {
+        var label = this.normalize(nodes[i].textContent);
+        for (var j = 0; j < labels.length; j++) {
+            if (label === this.normalize(labels[j]) || label.indexOf(this.normalize(labels[j]) + ':') === 0) {
+                var control = null;
+                var forId = nodes[i].getAttribute && nodes[i].getAttribute('for');
+                if (forId) control = document.getElementById(forId);
+                if (!control && nodes[i].nextElementSibling) control = nodes[i].nextElementSibling;
+                if (!control && nodes[i].parentElement) control = nodes[i].parentElement.querySelector('input, textarea, select, td:nth-child(2), dd');
+                var value = control ? (control.value != null ? control.value : control.textContent) : nodes[i].textContent.replace(/^[^:]+:/, '');
+                value = this.clean(value);
+                if (value && this.normalize(value) !== label) return value;
+            }
+        }
+    }
+    return '';
+};
 window.MapeiaAIDetailCapture.read = function (itemJson) {
     var item = {};
     try { item = JSON.parse(itemJson || '{}'); } catch (e) { item = {}; }
-    var rawEan = this.field(['#EAN', '#ean', 'input[name="ean"]', 'input[name="EAN"]', 'input[name="gtin"]', 'input[name="barcode"]']);
-    var gtin = this.validGtin(rawEan);
-    var skuText = this.field(['#sku', '#sku-link', '[data-field="sku"]']);
+    var rawEan = this.field(['#EAN', '#ean', '#gtin', '#barcode', '#codigo_barras', '#codBarras', 'input[name="ean"]', 'input[name="EAN"]', 'input[name="gtin"]', 'input[name="GTIN"]', 'input[name="barcode"]', 'input[name="codigo_barras"]', 'input[name="codBarras"]']) || this.fieldByLabel(['ean', 'gtin', 'codigo de barras', 'código de barras', 'barcode']);
+    var gtin = this.validGtin(rawEan) || this.firstValidGtin([rawEan, document.body ? document.body.textContent : '', item.gtin, item.row_text]);
+    var skuText = this.field(['#sku', '#sku-link', '#codigo', '#referencia', '[data-field="sku"]', 'input[name="sku"]', 'input[name="codigo"]', 'input[name="referencia"]']) || this.fieldByLabel(['sku', 'codigo', 'código', 'referencia', 'referência']);
     var record = {
         sku: this.clean(skuText || item.sku),
-        id: this.field(['#id', 'input[name="id"]']),
-        name: this.field(['#name', 'input[name="name"]', 'textarea[name="name"]']) || this.clean(item.name),
-        description: this.field(['#description', 'textarea[name="description"]', 'textarea[name="descricao"]']),
-        price: this.field(['#price_cost', '#price', 'input[name="price"]', 'input[name="preco"]']),
-        brand: this.field(['#brand', '#marca', 'input[name="brand"]', 'input[name="marca"]']),
-        category: this.field(['#nameCategoria', '#cadCategoria', 'input[name="categoria"]']),
+        id: this.field(['#id', 'input[name="id"]']) || this.fieldByLabel(['id', 'id produto']),
+        name: this.field(['#name', '#nome', '#produto', 'input[name="name"]', 'input[name="nome"]', 'textarea[name="name"]', 'textarea[name="nome"]']) || this.fieldByLabel(['nome', 'produto', 'descricao', 'descrição']) || this.clean(item.name),
+        description: this.field(['#description', '#descricao', 'textarea[name="description"]', 'textarea[name="descricao"]']) || this.fieldByLabel(['descricao complementar', 'descrição complementar', 'descricao produto', 'descrição produto']),
+        price: this.field(['#price_cost', '#price', '#preco', '#valor', 'input[name="price"]', 'input[name="preco"]', 'input[name="valor"]']) || this.fieldByLabel(['preco', 'preço', 'valor', 'preco custo', 'preço custo']),
+        brand: this.field(['#brand', '#marca', 'input[name="brand"]', 'input[name="marca"]']) || this.fieldByLabel(['marca', 'brand']),
+        category: this.field(['#nameCategoria', '#cadCategoria', '#categoria', 'input[name="categoria"]']) || this.fieldByLabel(['categoria', 'departamento']),
         ean: gtin,
-        raw_ean: rawEan
+        raw_ean: rawEan || item.gtin || ''
     };
     return JSON.stringify({ ok: true, record: record });
 };
