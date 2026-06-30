@@ -141,7 +141,7 @@ def _best_merge_key(base: pd.DataFrame, mapped: pd.DataFrame, current_key: str) 
 
     current_key = str(current_key or '').strip()
     if current_key in common:
-        overlap, usable, _priority, _pos = stats(current_key)
+        overlap, _usable, _priority, _pos = stats(current_key)
         if overlap > 0:
             return current_key
     ranked = sorted(common, key=stats, reverse=True)
@@ -156,32 +156,12 @@ def _best_merge_key(base: pd.DataFrame, mapped: pd.DataFrame, current_key: str) 
     return best if best_usable > 0 else ''
 
 
-def _ordered_union_columns(*frames: pd.DataFrame) -> list[str]:
-    columns: list[str] = []
-    seen: set[str] = set()
-    for frame in frames:
-        if not isinstance(frame, pd.DataFrame):
-            continue
-        for column in [str(col) for col in frame.columns]:
-            key = _plain_key(column)
-            if key in seen:
-                continue
-            seen.add(key)
-            columns.append(column)
-    return columns
-
-
 def _align_to_columns(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     out = frame.copy().fillna('') if isinstance(frame, pd.DataFrame) else pd.DataFrame()
     for column in columns:
         if column not in out.columns:
             out[column] = ''
     return out.loc[:, columns].fillna('').reset_index(drop=True)
-
-
-def _append_missing_columns(base: pd.DataFrame, mapped: pd.DataFrame) -> pd.DataFrame:
-    output_columns = _ordered_union_columns(base, mapped)
-    return _align_to_columns(base, output_columns)
 
 
 def _apply_model_choices_to_base(base: pd.DataFrame, mapping: Mapping[str, str] | None) -> pd.DataFrame:
@@ -204,10 +184,10 @@ def _merge_preserving_model(df_source: pd.DataFrame, df_model: pd.DataFrame, map
         st.session_state[PRESERVE_MODEL_ENABLED_KEY] = False
         if stale_model_choice and not toggle_enabled:
             add_audit_event('model_preserve_ignored_stale_model_choice_toggle_off', area='UNIVERSAL', status='OK', details={'reason': 'toggle_preservar_dados_modelo_desligado', 'model_choice_ignored': True, 'responsible_file': RESPONSIBLE_FILE})
-        return mapped
+        return _align_to_columns(mapped, model_columns)
 
     st.session_state[PRESERVE_MODEL_ENABLED_KEY] = True
-    output_columns = _ordered_union_columns(df_model.copy().fillna(''), mapped)
+    output_columns = list(model_columns)
     base = _align_to_columns(df_model.copy().fillna(''), output_columns)
     mapped_aligned = _align_to_columns(mapped, output_columns)
     base = _apply_model_choices_to_base(base, mapping)
@@ -218,14 +198,14 @@ def _merge_preserving_model(df_source: pd.DataFrame, df_model: pd.DataFrame, map
     key_column = _best_merge_key(base, mapped_aligned, selected_key)
     if not key_column:
         add_audit_event('model_preserve_merge_no_key', area='UNIVERSAL', status='AVISO', details={'selected_key': selected_key, 'model_choice_enabled': bool(model_choice_enabled), 'columns_output': output_columns, 'reason': 'sem_chave_comum_segura; modelo_preservado_sem_cortar_colunas', 'responsible_file': RESPONSIBLE_FILE})
-        return base
+        return _align_to_columns(base, output_columns)
     if key_column != selected_key:
         st.session_state[PRESERVE_MODEL_KEY_COLUMN_KEY] = key_column
         add_audit_event('model_preserve_merge_key_auto_adjusted', area='UNIVERSAL', status='OK', details={'selected_key': selected_key, 'chosen_key': key_column, 'reason': 'melhor_chave_com_sobreposicao_real', 'responsible_file': RESPONSIBLE_FILE})
 
-    update_columns = _origin_update_targets(mapping, list(mapped.columns))
+    update_columns = _origin_update_targets(mapping, list(mapped_aligned.columns))
     if not update_columns:
-        return base
+        return _align_to_columns(base, output_columns)
 
     index_by_key: dict[str, list[int]] = {}
     for idx, value in enumerate(base[key_column].tolist()):
@@ -265,7 +245,6 @@ def _merge_preserving_model(df_source: pd.DataFrame, df_model: pd.DataFrame, map
         appended_rows += 1
 
     mapped_columns = [str(column) for column in getattr(mapped, 'columns', [])]
-    extra_model_columns = [column for column in model_columns if _plain_key(column) not in {_plain_key(mapped_column) for mapped_column in mapped_columns}]
     add_audit_event(
         'model_preserve_merge_runtime_applied',
         area='UNIVERSAL',
@@ -286,12 +265,11 @@ def _merge_preserving_model(df_source: pd.DataFrame, df_model: pd.DataFrame, map
             'columns_model': model_columns,
             'columns_mapped': mapped_columns,
             'columns_output': output_columns,
-            'extra_model_columns_preserved': extra_model_columns,
-            'preserve_union_model_and_mapped_columns': True,
+            'strict_no_generated_columns': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
-    return out.fillna('')
+    return _align_to_columns(out.fillna(''), output_columns)
 
 
 def _install_green_mapping_guard() -> None:
@@ -313,7 +291,7 @@ def install_model_preserve_merge_runtime() -> None:
     final_output_engine.build_universal_output = lambda df_source, df_model, mapping=None: _merge_preserving_model(df_source, df_model, mapping)
     ui_root._apply_model_preserve = lambda df_source, df_model, mapping=None, original_builder=None: _merge_preserving_model(df_source, df_model, mapping)
     _install_green_mapping_guard()
-    add_audit_event('model_preserve_merge_runtime_installed', area='UNIVERSAL', status='OK', details={'preserve_all_against_blank_source': True, 'duplicate_key_update': True, 'best_key_selection': True, 'model_choice_requires_preserve_toggle': True, 'dual_source_mapping': True, 'dropdown_preview_runtime': True, 'preserve_union_model_and_mapped_columns': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('model_preserve_merge_runtime_installed', area='UNIVERSAL', status='OK', details={'preserve_all_against_blank_source': True, 'duplicate_key_update': True, 'best_key_selection': True, 'model_choice_requires_preserve_toggle': True, 'dual_source_mapping': True, 'dropdown_preview_runtime': True, 'strict_no_generated_columns': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_model_preserve_merge_runtime']
