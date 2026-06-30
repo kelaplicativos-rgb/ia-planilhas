@@ -31,6 +31,42 @@ window.MapeiaAIDetailCapture.firstValidGtin = function (values) {
     }
     return '';
 };
+window.MapeiaAIDetailCapture.absoluteUrl = function (value) {
+    value = this.clean(value).replace(/^url\(["']?/, '').replace(/["']?\)$/, '');
+    if (!value || value === '#' || /^javascript:/i.test(value) || /^data:/i.test(value) || /^blob:/i.test(value)) return '';
+    try { return new URL(value, window.location.href).href; } catch (e) { return ''; }
+};
+window.MapeiaAIDetailCapture.imageCandidates = function (root) {
+    root = root || document;
+    var urls = [];
+    var seen = {};
+    var push = function (raw) {
+        raw = window.MapeiaAIDetailCapture.clean(raw);
+        if (!raw) return;
+        if (raw.indexOf(',') >= 0 && raw.indexOf(' ') >= 0) {
+            raw.split(',').forEach(function (part) { push(part.split(/\s+/)[0]); });
+            return;
+        }
+        var url = window.MapeiaAIDetailCapture.absoluteUrl(raw.split(/\s+/)[0]);
+        if (!url || seen[url]) return;
+        var normalized = window.MapeiaAIDetailCapture.normalize(url);
+        if (/(logo|favicon|sprite|placeholder|avatar|icon|whatsapp|facebook|instagram|youtube)/.test(normalized)) return;
+        seen[url] = true;
+        urls.push(url);
+    };
+    var nodes = Array.prototype.slice.call(root.querySelectorAll('img, source, a[href], [data-src], [data-original], [data-lazy], [data-image], [data-img], [data-url], [style*="background"]'));
+    for (var i = 0; i < nodes.length; i++) {
+        var node = nodes[i];
+        ['src', 'data-src', 'data-original', 'data-lazy', 'data-image', 'data-img', 'data-url', 'href'].forEach(function (attr) {
+            if (node.getAttribute) push(node.getAttribute(attr));
+        });
+        if (node.getAttribute) push(node.getAttribute('srcset'));
+        var style = node.getAttribute ? node.getAttribute('style') || '' : '';
+        var matches = style.match(/url\([^)]+\)/g) || [];
+        matches.forEach(push);
+    }
+    return urls.slice(0, 12);
+};
 window.MapeiaAIDetailCapture.escapeHtml = function (value) {
     return this.clean(value)
         .replace(/&/g, '&amp;')
@@ -93,10 +129,11 @@ window.MapeiaAIDetailCapture.init = function () {
         var sku = this.cellByHeader(row, ['sku', 'codigo', 'código', 'referencia', 'referência', 'modelo']) || this.clean(row.getAttribute('data-sku'));
         var name = this.cellByHeader(row, ['produto', 'nome', 'titulo', 'título', 'descricao', 'descrição']);
         var gtin = this.firstValidGtin([row.textContent]);
+        var imageUrls = this.imageCandidates(row).join('|');
         var key = sku || gtin || name || this.clean(row.textContent).slice(0, 120);
         if (key && seen[key]) continue;
         if (key) seen[key] = true;
-        items.push({ index: items.length, sku: sku, name: name, gtin: gtin, row_text: this.clean(row.textContent).slice(0, 1200) });
+        items.push({ index: items.length, sku: sku, name: name, gtin: gtin, image_urls: imageUrls, row_text: this.clean(row.textContent).slice(0, 1200) });
     }
     return JSON.stringify({ ok: true, count: items.length, items: items });
 };
@@ -141,6 +178,17 @@ window.MapeiaAIDetailCapture.read = function (itemJson) {
     var rawEan = this.field(['#EAN', '#ean', '#gtin', '#barcode', '#codigo_barras', '#codBarras', 'input[name="ean"]', 'input[name="EAN"]', 'input[name="gtin"]', 'input[name="GTIN"]', 'input[name="barcode"]', 'input[name="codigo_barras"]', 'input[name="codBarras"]']) || this.fieldByLabel(['ean', 'gtin', 'codigo de barras', 'código de barras', 'barcode']);
     var gtin = this.validGtin(rawEan) || this.firstValidGtin([rawEan, document.body ? document.body.textContent : '', item.gtin, item.row_text]);
     var skuText = this.field(['#sku', '#sku-link', '#codigo', '#referencia', '[data-field="sku"]', 'input[name="sku"]', 'input[name="codigo"]', 'input[name="referencia"]']) || this.fieldByLabel(['sku', 'codigo', 'código', 'referencia', 'referência']);
+    var detailRoot = document.querySelector('.modal.show, .modal.in, .offcanvas.show, [role="dialog"]') || document;
+    var detailImages = this.imageCandidates(detailRoot);
+    var rowImages = this.clean(item.image_urls).split('|').filter(function (url) { return !!url; });
+    var imageSeen = {};
+    var imageUrls = [];
+    detailImages.concat(rowImages).forEach(function (url) {
+        if (url && !imageSeen[url]) {
+            imageSeen[url] = true;
+            imageUrls.push(url);
+        }
+    });
     var record = {
         sku: this.clean(skuText || item.sku),
         id: this.field(['#id', 'input[name="id"]']) || this.fieldByLabel(['id', 'id produto']),
@@ -149,6 +197,7 @@ window.MapeiaAIDetailCapture.read = function (itemJson) {
         price: this.field(['#price_cost', '#price', '#preco', '#valor', 'input[name="price"]', 'input[name="preco"]', 'input[name="valor"]']) || this.fieldByLabel(['preco', 'preço', 'valor', 'preco custo', 'preço custo']),
         brand: this.field(['#brand', '#marca', 'input[name="brand"]', 'input[name="marca"]']) || this.fieldByLabel(['marca', 'brand']),
         category: this.field(['#nameCategoria', '#cadCategoria', '#categoria', 'input[name="categoria"]']) || this.fieldByLabel(['categoria', 'departamento']),
+        images: imageUrls.slice(0, 12).join('|'),
         ean: gtin,
         raw_ean: rawEan || item.gtin || ''
     };
@@ -157,11 +206,12 @@ window.MapeiaAIDetailCapture.read = function (itemJson) {
 window.MapeiaAIDetailCapture.tableHtml = function (recordsJson) {
     var records = [];
     try { records = JSON.parse(recordsJson || '[]'); } catch (e) { records = []; }
-    var headers = ['SKU', 'Codigo produto *', 'Código produto', 'ID Produto', 'Nome', 'Produto', 'Descrição Produto', 'Descrição complementar', 'GTIN', 'GTIN **', 'GTIN/EAN**', 'EAN', 'Preço', 'Marca', 'Categoria'];
+    var headers = ['SKU', 'Codigo produto *', 'Código produto', 'ID Produto', 'Nome', 'Produto', 'Descrição Produto', 'Descrição complementar', 'GTIN', 'GTIN **', 'GTIN/EAN**', 'EAN', 'Preço', 'Marca', 'Categoria', 'Imagens', 'Imagem', 'URL Imagem'];
     var html = '<!doctype html><html><head><meta charset="utf-8"><title>MapeiaAI detalhes EAN</title></head><body>';
     html += '<table><thead><tr>' + headers.map(function (h) { return '<th>' + window.MapeiaAIDetailCapture.escapeHtml(h) + '</th>'; }).join('') + '</tr></thead><tbody>';
     records.forEach(function (r) {
         var code = r.sku || r.id || '';
+        var firstImage = window.MapeiaAIDetailCapture.clean(r.images).split('|')[0] || '';
         var row = {
             'SKU': code,
             'Codigo produto *': code,
@@ -177,7 +227,10 @@ window.MapeiaAIDetailCapture.tableHtml = function (recordsJson) {
             'EAN': r.ean || r.raw_ean || '',
             'Preço': r.price || '',
             'Marca': r.brand || '',
-            'Categoria': r.category || ''
+            'Categoria': r.category || '',
+            'Imagens': r.images || '',
+            'Imagem': firstImage,
+            'URL Imagem': firstImage
         };
         html += '<tr>' + headers.map(function (h) { return '<td>' + window.MapeiaAIDetailCapture.escapeHtml(row[h]) + '</td>'; }).join('') + '</tr>';
     });
