@@ -13,6 +13,9 @@ on:
       - 'android_collector/**'
       - '.github/workflows/android-apk-build.yml'
 
+permissions:
+  contents: write
+
 jobs:
   build-apk:
     name: Build MapeiaAI Android Collector APK
@@ -40,10 +43,11 @@ jobs:
         working-directory: android_collector
         run: gradle assembleDebug --no-daemon --stacktrace
 
-      - name: Rename APK
+      - name: Prepare APK artifacts
         run: |
           mkdir -p artifacts
           cp android_collector/app/build/outputs/apk/debug/*.apk artifacts/mapeiaai-coletor-android-debug.apk
+          cp artifacts/mapeiaai-coletor-android-debug.apk artifacts/mapeiaai-coletor-android.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -52,3 +56,13 @@ jobs:
           path: artifacts/mapeiaai-coletor-android-debug.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish latest APK release
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-coletor-latest
+          name: MapeiaAI Coletor Android - APK mais recente
+          body: APK debug mais recente do MapeiaAI Coletor Android, gerado automaticamente pelo GitHub Actions.
+          files: artifacts/mapeiaai-coletor-android.apk
+          make_latest: false
