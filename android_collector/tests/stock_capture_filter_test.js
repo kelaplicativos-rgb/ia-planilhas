@@ -9,6 +9,10 @@ function prepare(headers, rows) {
   return capture.prepareColumns(headers, rows).headers;
 }
 
+function preparedRows(headers, rows) {
+  return capture.prepareColumns(headers, rows).rows;
+}
+
 function quality(headers, rows) {
   const prepared = capture.prepareColumns(headers, rows);
   return capture.qualityReport(prepared.headers, prepared.rows);
@@ -47,5 +51,15 @@ const stockRows = [
 ];
 assert.deepStrictEqual(prepare(stockHeaders, stockRows), ['id', 'name', 'model', 'Marca', 'Preco', 'Estoque']);
 assert.strictEqual(quality(stockHeaders, stockRows).hasNumericStock, true);
+
+const hiddenHeaders = ['id', 'name', 'model', 'brand', 'price', 'inventory'];
+const hiddenRows = [
+  ['OOM-1', 'Produto 1', 'P1', 'Marca A', 'R$ 10,00', '<span class="badge" title="8">Disponível</span>'],
+  ['OOM-2', 'Produto 2', 'P2', 'Marca B', 'R$ 20,00', '<span data-original-title="2 unidades em estoque">Baixo</span>'],
+  ['OOM-3', 'Produto 3', 'P3', 'Marca C', 'R$ 30,00', '<span class="badge">Esgotado</span>'],
+];
+assert.deepStrictEqual(prepare(hiddenHeaders, hiddenRows), ['id', 'name', 'model', 'Marca', 'Preco', 'Estoque']);
+assert.deepStrictEqual(preparedRows(hiddenHeaders, hiddenRows).map((row) => row[5]), ['8', '2', '0']);
+assert.strictEqual(quality(hiddenHeaders, hiddenRows).hasNumericStock, true);
 
 console.log('stock_capture_filter_test: ok');
