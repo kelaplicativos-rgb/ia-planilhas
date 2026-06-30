@@ -10,7 +10,7 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.html_product_extractor import clean_text, normalize_key
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/zip_multi_source_runtime.py'
-PATCH_ATTR = '_mapeiaai_zip_multi_source_runtime_v1'
+PATCH_ATTR = '_mapeiaai_zip_multi_source_runtime_v2_model_safe'
 SUPPORTED_INNER_SUFFIXES = ('.csv', '.xlsx', '.xls', '.xlsm', '.xlsb', '.txt', '.tsv', '.html', '.htm', '.mht', '.mhtml', '.xml')
 KEY_PRIORITY = (
     'sku', 'codigo produto', 'codigo produto *', 'código produto', 'codigo', 'código',
@@ -20,6 +20,25 @@ KEY_PRIORITY = (
 
 def _valid_frame(df: object) -> bool:
     return isinstance(df, pd.DataFrame) and len(df.columns) > 0
+
+
+def _normalized_frame_signature(df: pd.DataFrame) -> tuple[tuple[str, ...], tuple[tuple[str, ...], ...]]:
+    if not _valid_frame(df):
+        return (), ()
+    frame = df.copy().fillna('').astype(str).reset_index(drop=True)
+    columns = tuple(str(column).strip() for column in frame.columns)
+    rows = tuple(tuple(str(value).strip() for value in row) for row in frame.loc[:, list(frame.columns)].itertuples(index=False, name=None))
+    return columns, rows
+
+
+def _all_frames_are_equivalent(frames: list[pd.DataFrame]) -> bool:
+    valid = [frame for frame in frames if _valid_frame(frame)]
+    if len(valid) <= 1:
+        return False
+    first = _normalized_frame_signature(valid[0])
+    if not first[0]:
+        return False
+    return all(_normalized_frame_signature(frame) == first for frame in valid[1:])
 
 
 def _key_column(df: pd.DataFrame) -> str:
@@ -69,6 +88,7 @@ def _merge_frames(frames: list[pd.DataFrame], names: list[str]) -> pd.DataFrame:
             'rows_before_dedupe': before,
             'rows_after_dedupe': int(len(merged)),
             'key_column': key_col,
+            'adds_provenance_columns': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -110,6 +130,21 @@ def install_zip_multi_source_runtime() -> bool:
             return pd.DataFrame()
 
         if len(frames) > 1:
+            if _all_frames_are_equivalent(frames):
+                add_audit_event(
+                    'zip_multi_source_equivalent_files_model_safe',
+                    area='ORIGEM',
+                    status='OK',
+                    details={
+                        'files': names,
+                        'rows': int(len(frames[0])),
+                        'columns': list(map(str, frames[0].columns)),
+                        'reason': 'ZIP contem o mesmo modelo em formatos diferentes; nao adicionar Arquivo origem/Pagina origem.',
+                        'adds_provenance_columns': False,
+                        'responsible_file': RESPONSIBLE_FILE,
+                    },
+                )
+                return frames[0].copy().fillna('').astype(str).reset_index(drop=True)
             return _merge_frames(frames, names)
         if len(frames) == 1:
             return frames[0].reset_index(drop=True)
@@ -129,6 +164,7 @@ def install_zip_multi_source_runtime() -> bool:
         details={
             'merge_html_mhtml_pages': True,
             'dedupe_by': KEY_PRIORITY,
+            'model_zip_equivalent_files_do_not_receive_provenance_columns': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
