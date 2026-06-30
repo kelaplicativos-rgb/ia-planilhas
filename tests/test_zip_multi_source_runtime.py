@@ -19,6 +19,12 @@ HTML_PAGE_2 = '''
 </tbody></table></body></html>
 '''
 
+DETAILS_HTML = '''
+<html><body><table><thead><tr><th>SKU</th><th>ID Produto</th><th>GTIN</th><th>GTIN/EAN**</th></tr></thead><tbody>
+<tr><td>OOM-0001</td><td>10</td><td>7891234567895</td><td>7891234567895</td></tr>
+</tbody></table></body></html>
+'''
+
 MODEL_CSV = 'ID Produto,Código SKU*,GTIN/EAN**,Nome do Produto,Depósito*,Movimentação de Estoque*,Tipo de lançamento*,Preço de Compra*,Preço de Custo,Observação\nLinha de exemplo,FL458,1234567891023,Bolsa pequena,Depósito Geral,250,Entrada,760,850,\n'
 
 
@@ -39,6 +45,21 @@ class TestZipMultiSourceRuntime(unittest.TestCase):
         self.assertEqual(df.loc[df['SKU'] == 'OOM-0002', 'Balanço (OBRIGATÓRIO)'].iloc[0], '50')
         self.assertIn('Arquivo origem', df.columns)
         self.assertIn('Página origem', df.columns)
+
+    def test_zip_with_detail_html_fills_gtin_on_existing_sku(self) -> None:
+        install_zip_multi_source_runtime()
+        from bling_app_zero.core import files as files_module
+
+        buffer = BytesIO()
+        with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr('pagina_001.html', HTML_PAGE_1)
+            zf.writestr('detalhes_001.html', DETAILS_HTML)
+        df = files_module._read_zip_bytes(buffer.getvalue(), 'capturas_com_detalhes.zip')
+
+        self.assertEqual(len(df), 1)
+        self.assertEqual(df.loc[0, 'SKU'], 'OOM-0001')
+        self.assertEqual(df.loc[0, 'GTIN'], '7891234567895')
+        self.assertEqual(df.loc[0, 'GTIN **'], '7891234567895')
 
     def test_zip_with_same_model_in_multiple_files_does_not_generate_columns(self) -> None:
         install_zip_multi_source_runtime()
