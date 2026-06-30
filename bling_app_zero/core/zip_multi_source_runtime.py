@@ -10,7 +10,7 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.html_product_extractor import clean_text, normalize_key
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/zip_multi_source_runtime.py'
-PATCH_ATTR = '_mapeiaai_zip_multi_source_runtime_v2_model_safe'
+PATCH_ATTR = '_mapeiaai_zip_multi_source_runtime_v3_model_safe_detail_coalesce'
 SUPPORTED_INNER_SUFFIXES = ('.csv', '.xlsx', '.xls', '.xlsm', '.xlsb', '.txt', '.tsv', '.html', '.htm', '.mht', '.mhtml', '.xml')
 KEY_PRIORITY = (
     'sku', 'codigo produto', 'codigo produto *', 'código produto', 'codigo', 'código',
@@ -58,6 +58,45 @@ def _key_column(df: pd.DataFrame) -> str:
     return ''
 
 
+def _blank(value: object) -> bool:
+    text = clean_text(value).casefold()
+    return text in {'', 'nan', 'none', 'null', '<na>'}
+
+
+def _merge_cell(current: object, candidate: object) -> str:
+    current_text = clean_text(current)
+    candidate_text = clean_text(candidate)
+    if not current_text and candidate_text:
+        return candidate_text
+    return current_text
+
+
+def _coalesce_duplicate_rows_by_key(df: pd.DataFrame, key_col: str) -> tuple[pd.DataFrame, int]:
+    if not key_col or key_col not in df.columns:
+        return df, 0
+    with_key = df[df[key_col].map(lambda value: bool(clean_text(value)))].copy().fillna('').astype(str)
+    without_key = df[~df[key_col].map(lambda value: bool(clean_text(value)))].copy().fillna('').astype(str)
+    if with_key.empty:
+        return df, 0
+
+    merged_rows: list[dict[str, str]] = []
+    coalesced = 0
+    for _key, group in with_key.groupby(key_col, sort=False, dropna=False):
+        rows = group.to_dict('records')
+        base = {column: clean_text(rows[0].get(column, '')) for column in df.columns}
+        if len(rows) > 1:
+            coalesced += len(rows) - 1
+        for row in rows[1:]:
+            for column in df.columns:
+                base[column] = _merge_cell(base.get(column, ''), row.get(column, ''))
+        merged_rows.append(base)
+
+    merged = pd.DataFrame(merged_rows, columns=list(df.columns)).fillna('').astype(str)
+    if not without_key.empty:
+        merged = pd.concat([merged, without_key.loc[:, list(df.columns)]], ignore_index=True, sort=False).fillna('').astype(str)
+    return merged.reset_index(drop=True), coalesced
+
+
 def _merge_frames(frames: list[pd.DataFrame], names: list[str]) -> pd.DataFrame:
     prepared: list[pd.DataFrame] = []
     for index, frame in enumerate(frames):
@@ -74,11 +113,9 @@ def _merge_frames(frames: list[pd.DataFrame], names: list[str]) -> pd.DataFrame:
     merged = pd.concat(prepared, ignore_index=True, sort=False).fillna('').astype(str)
     key_col = _key_column(merged)
     before = int(len(merged))
+    coalesced_duplicates = 0
     if key_col:
-        non_empty = merged[key_col].map(lambda value: bool(clean_text(value)))
-        with_key = merged[non_empty].drop_duplicates(subset=[key_col], keep='first')
-        without_key = merged[~non_empty]
-        merged = pd.concat([with_key, without_key], ignore_index=True, sort=False).fillna('').astype(str)
+        merged, coalesced_duplicates = _coalesce_duplicate_rows_by_key(merged, key_col)
     add_audit_event(
         'zip_multi_source_frames_merged',
         area='ORIGEM',
@@ -87,8 +124,10 @@ def _merge_frames(frames: list[pd.DataFrame], names: list[str]) -> pd.DataFrame:
             'frames': len(prepared),
             'rows_before_dedupe': before,
             'rows_after_dedupe': int(len(merged)),
+            'coalesced_duplicate_rows': int(coalesced_duplicates),
             'key_column': key_col,
             'adds_provenance_columns': True,
+            'detail_rows_fill_blank_values': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
@@ -164,6 +203,7 @@ def install_zip_multi_source_runtime() -> bool:
         details={
             'merge_html_mhtml_pages': True,
             'dedupe_by': KEY_PRIORITY,
+            'detail_rows_fill_blank_values': True,
             'model_zip_equivalent_files_do_not_receive_provenance_columns': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
