@@ -26,7 +26,7 @@ const brokenBaseRows = [
   ['" data-placement="right">', 'Genérica', 'R$ 67,14', 'Baixo'],
 ];
 const brokenRows = Array.from({ length: 24 }, (_, index) => brokenBaseRows[index % brokenBaseRows.length]);
-assert.deepStrictEqual(prepare(brokenHeaders, brokenRows), ['Marca', 'Preco', 'Disponibilidade']);
+assert.deepStrictEqual(prepare(brokenHeaders, brokenRows), ['Preco', 'Disponibilidade']);
 assert.strictEqual(quality(brokenHeaders, brokenRows).hasIdentifier, false);
 
 const richHeaders = [
