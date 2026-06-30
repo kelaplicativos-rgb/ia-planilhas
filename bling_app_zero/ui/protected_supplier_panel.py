@@ -6,7 +6,8 @@ import streamlit as st
 from bling_app_zero.core.android_collector_link import android_collector_apk_source, android_collector_apk_url
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.mobile_protected_capture import capture_url_on_mobile
-from bling_app_zero.core.protected_supplier_collectors import build_collector_zip
+from bling_app_zero.core.protected_supplier_contract_collectors import build_contract_collector_zip
+from bling_app_zero.core.source_contract_enrichment import enrich_source_with_requested_columns
 from bling_app_zero.engines.fast_site_scraper.constants import DISCOVERY_BUDGET_SECONDS, SAFE_CAPTURE_MAX_DEPTH, SAFE_CAPTURE_MAX_PAGES, SAFE_CAPTURE_MAX_PRODUCTS
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/protected_supplier_panel.py'
@@ -41,6 +42,10 @@ def _model_columns(model: pd.DataFrame | None) -> list[str]:
     if not isinstance(model, pd.DataFrame):
         return []
     return [str(column).strip() for column in model.columns if str(column).strip()]
+
+
+def _requested_columns() -> list[str]:
+    return _model_columns(_current_model_df())
 
 
 def _remember_public_site_url(start_url: str) -> None:
@@ -121,14 +126,16 @@ def _try_public_site_engine(start_url: str, reason: str) -> pd.DataFrame | None:
 def _render_collector_download_links(start_url: str, site_ok: bool) -> None:
     android_url = android_collector_apk_url()
     android_source = android_collector_apk_source()
+    requested_columns = _requested_columns()
     with st.expander('🔗 Leitores automáticos para baixar', expanded=False):
         st.link_button('📲 Baixar coletor Android (APK)', android_url, use_container_width=True)
         desktop_zip = (
-            build_collector_zip(
+            build_contract_collector_zip(
                 UNIVERSAL_PROVIDER_KEY,
                 start_url=start_url,
                 pages=INTERNAL_MAX_CAPTURE_PAGES,
                 capture_format='mhtml',
+                requested_columns=requested_columns,
             )
             if site_ok
             else b''
@@ -140,24 +147,27 @@ def _render_collector_download_links(start_url: str, site_ok: bool) -> None:
             mime='application/zip',
             disabled=not site_ok,
             use_container_width=True,
-            key='mapeiaai_download_protected_supplier_collector_v3_grouped_links',
+            key='mapeiaai_download_protected_supplier_collector_v4_contract_links',
         )
-        st.caption('Android usa APK. Computador usa o coletor ZIP. Ambos geram arquivo para anexar no MapeiaAI.')
+        st.caption('Android usa APK. Computador usa ZIP. O MapeiaAI cruza a captura com todas as colunas do modelo anexado.')
     add_audit_event(
         'protected_supplier_collector_links_grouped_rendered',
         area='ORIGEM',
         status='INFO',
-        details={'android_source': android_source, 'site_ok': site_ok, 'responsible_file': RESPONSIBLE_FILE},
+        details={'android_source': android_source, 'site_ok': site_ok, 'requested_columns': len(requested_columns), 'responsible_file': RESPONSIBLE_FILE},
     )
 
 
 def _return_loaded_capture(df: pd.DataFrame, *, source: str, file_name: str = '') -> pd.DataFrame:
+    requested_columns = _requested_columns()
     clean = df.copy().fillna('').astype(str)
+    if requested_columns:
+        clean = enrich_source_with_requested_columns(clean, requested_columns, source=source)
     add_audit_event(
         'protected_supplier_upload_loaded' if source == 'upload' else 'protected_supplier_mobile_capture_loaded',
         area='ORIGEM',
         status='OK',
-        details={'provider_key': UNIVERSAL_PROVIDER_KEY, 'file_name': file_name, 'rows': int(len(clean)), 'columns': int(len(clean.columns)), 'source': source, 'responsible_file': RESPONSIBLE_FILE},
+        details={'provider_key': UNIVERSAL_PROVIDER_KEY, 'file_name': file_name, 'rows': int(len(clean)), 'columns': int(len(clean.columns)), 'source': source, 'requested_columns': len(requested_columns), 'contract_enrichment_applied': bool(requested_columns), 'responsible_file': RESPONSIBLE_FILE},
     )
     st.success(f'Captura carregada: {len(clean)} produto(s) x {len(clean.columns)} coluna(s).')
     with st.expander('Prévia da captura', expanded=False):
