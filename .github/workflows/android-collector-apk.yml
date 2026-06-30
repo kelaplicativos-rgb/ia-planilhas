@@ -28,11 +28,11 @@ jobs:
 
       - name: Download Gradle
         run: |
-          curl -sL https://services.gradle.org/distributions/gradle-8.10.2-bin.zip -o /tmp/gradle.zip
+          curl -sL https://services.gradle.org/distributions/gradle-8.7-bin.zip -o /tmp/gradle.zip
           unzip -q /tmp/gradle.zip -d /tmp
 
       - name: Build debug APK
-        run: /tmp/gradle-8.10.2/bin/gradle -p android_collector assembleDebug --no-daemon --stacktrace
+        run: /tmp/gradle-8.7/bin/gradle -p android_collector assembleDebug --no-daemon --stacktrace
 
       - name: Prepare APK
         run: |
