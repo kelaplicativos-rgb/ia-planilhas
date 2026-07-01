@@ -10,7 +10,7 @@ import streamlit as st
 from bling_app_zero.core.audit import add_audit_event
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/mapping_dropdown_preview_runtime.py'
-PATCH_VERSION = 'dropdown_preview_source_or_model_v13_preserve_toggle_strict'
+PATCH_VERSION = 'dropdown_preview_source_or_model_v14_price_calc_origin_ref'
 MODEL_PRESERVE_TOGGLE_KEY = 'mapeiaai_model_preserve_data_toggle_v1'
 ORIGIN_REF_PREFIX = 'origem::'
 MODEL_REF_PREFIX = 'modelo::'
@@ -22,6 +22,9 @@ _CONTEXT: dict[str, Any] = {'source': None, 'target': None}
 SOURCE_KEYS = ('mapeiaai_universal_processed_df', 'mapeiaai_universal_source_df', 'df_origem_unificada', 'df_origem_site', 'df_source')
 MODEL_KEYS = ('mapeiaai_universal_model_df', 'home_modelo_universal_df', 'df_modelo_universal', 'modelo_universal_df')
 MAPPING_TOGGLE_WIDGET_MARKER_KEY = 'mapeiaai_mapping_preserve_toggle_widget_marker_v1'
+PRICE_COLUMN_KEY = 'mapeiaai_shared_price_column'
+PRICE_TARGET_COLUMN_KEY = 'mapeiaai_shared_price_target_column'
+PRICE_AUTOMAP_KEY = 'mapeiaai_shared_price_automap_enabled'
 
 
 def _norm(value: object) -> str:
@@ -372,6 +375,32 @@ def _reset_mapping_widgets_when_toggle_changes(key_prefix: str, signature: str, 
     return removed
 
 
+def _price_calculator_origin_hint(current: dict[str, str], source: Any, target: Any) -> dict[str, str]:
+    updated = dict(current or {})
+    if not bool(st.session_state.get(PRICE_AUTOMAP_KEY)):
+        return updated
+    calculated_source = str(st.session_state.get(PRICE_COLUMN_KEY) or '').strip()
+    target_column = str(st.session_state.get(PRICE_TARGET_COLUMN_KEY) or '').strip()
+    if not calculated_source or not isinstance(source, pd.DataFrame):
+        return updated
+    actual_source = _matching_column(source, calculated_source)
+    if not actual_source:
+        return updated
+    target_columns = [str(column) for column in getattr(target, 'columns', [])]
+    if not target_column or target_column not in target_columns:
+        calculated_key = _norm(calculated_source)
+        target_column = next((column for column in target_columns if _norm(column) == calculated_key), '')
+    if not target_column:
+        return updated
+    updated[target_column] = _ref('origem', actual_source)
+    st.caption(f'🟢 Calculadora marketplace: **{target_column}** receberá automaticamente **Origem > {actual_source}**.')
+    try:
+        add_audit_event('mapping_dropdown_price_calculator_origin_ref_applied', area='MAPEAMENTO', status='OK', details={'target_column': target_column, 'source_column': actual_source, 'preserve_toggle_enabled': bool(_dual_enabled()), 'source_origin': 'origem', 'responsible_file': RESPONSIBLE_FILE})
+    except Exception:
+        pass
+    return updated
+
+
 def install_mapping_dropdown_preview_runtime() -> None:
     _restore_dataframe_preview_if_previous_patch_expanded_it()
     try:
@@ -398,12 +427,12 @@ def install_mapping_dropdown_preview_runtime() -> None:
         original_price_hint = getattr(shared_mapping, '_mapeiaai_original_apply_price_calculator_mapping_hint', None) or shared_mapping._apply_price_calculator_mapping_hint
         setattr(shared_mapping, '_mapeiaai_original_apply_price_calculator_mapping_hint', original_price_hint)
 
-        def price_calculator_hint_visual_only_when_dual(current, source, target):
+        def price_calculator_hint_origin_first(current, source, target):
             if _dual_enabled():
-                return dict(current or {})
+                return _price_calculator_origin_hint(dict(current or {}), source, target)
             return original_price_hint(current, source, target)
 
-        shared_mapping._apply_price_calculator_mapping_hint = price_calculator_hint_visual_only_when_dual
+        shared_mapping._apply_price_calculator_mapping_hint = price_calculator_hint_origin_first
 
     if hasattr(shared_mapping, 'confidence_flag'):
         original_confidence = getattr(shared_mapping, '_mapeiaai_original_confidence_flag', None) or shared_mapping.confidence_flag
@@ -466,7 +495,7 @@ def install_mapping_dropdown_preview_runtime() -> None:
         shared_mapping.render_shared_contract_mapping = render_with_context
 
     shared_mapping._mapeiaai_dropdown_preview_runtime_version = PATCH_VERSION
-    add_audit_event('mapping_dropdown_preview_runtime_installed', area='MAPEAMENTO', status='OK', details={'version': PATCH_VERSION, 'model_options_only_when_preserve_toggle_on': True, 'dropdown_color_rank': True, 'auto_green_unique_origin_only': True, 'model_green_visual_only': True, 'ambiguous_origin_green_requires_user_choice': True, 'unscoped_legacy_mapping_cleared': True, 'stale_model_refs_cleared_when_toggle_off': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('mapping_dropdown_preview_runtime_installed', area='MAPEAMENTO', status='OK', details={'version': PATCH_VERSION, 'model_options_only_when_preserve_toggle_on': True, 'dropdown_color_rank': True, 'auto_green_unique_origin_only': True, 'model_green_visual_only': True, 'ambiguous_origin_green_requires_user_choice': True, 'unscoped_legacy_mapping_cleared': True, 'stale_model_refs_cleared_when_toggle_off': True, 'price_calculator_origin_ref_when_preserve_toggle_on': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_mapping_dropdown_preview_runtime']
