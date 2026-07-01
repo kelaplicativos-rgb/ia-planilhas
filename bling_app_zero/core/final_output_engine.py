@@ -247,7 +247,7 @@ def build_final_output(
     if bool(rules_config.get('enabled')):
         output, smart_rules_report = apply_universal_smart_rules(output, rules_config)
 
-    output = sanitize_final_dataframe(output, operation=operation, contract_columns=list(contract_columns), run_download_features=False)
+    output = sanitize_final_dataframe(output, operation=operation, contract_columns=list(contract_columns), run_download_features=True)
 
     if _category_finalizer_allowed(source, rules_config) and _has_category_column(output):
         output, category_report = finalize_categories_for_output(
@@ -265,7 +265,7 @@ def build_final_output(
         return FinalOutputCommandResult(FinalOutputState(request=request, result=result), output=None, csv_bytes=b'', smartcore_result=smartcore_result, errors=identity_errors, smart_rules_report=smart_rules_report)
 
     try:
-        csv_data = final_csv_bytes(output, operation=operation, contract_columns=list(contract_columns), run_download_features=False)
+        csv_data = final_csv_bytes(output, operation=operation, contract_columns=list(contract_columns), run_download_features=True)
     except Exception as exc:
         csv_error = (str(exc),)
         result = FinalOutputResult(status=STATUS_ERROR, file_name=file_name, errors=csv_error, message='Saída final bloqueada por erro físico de CSV.')
