@@ -19,6 +19,7 @@ BAD_IMAGE_TERMS = (
     'favicon', 'sprite', 'icon', 'icone', 'whatsapp', 'instagram', 'facebook', 'youtube',
     'loading', 'blank', 'default', 'avatar', 'marca-dagua', 'watermark'
 )
+TRUNCATED_URL_MARKERS = ('…', '%e2%80%a6', '&hellip;', '...')
 
 
 @dataclass(frozen=True)
@@ -118,6 +119,8 @@ def _clean_image_url(value: object) -> str:
     if not url.lower().startswith(('http://', 'https://')):
         return ''
     low = url.lower()
+    if any(marker in low for marker in TRUNCATED_URL_MARKERS):
+        return ''
     if any(term in low for term in BAD_IMAGE_TERMS):
         return ''
     return url
