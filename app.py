@@ -38,6 +38,7 @@ from bling_app_zero.ui.model_preserve_merge_runtime import install_model_preserv
 from bling_app_zero.ui.oauth_link_guard import install_oauth_link_guard
 from bling_app_zero.ui.preventive_bootstrap import install_preventive_bootstrap
 from bling_app_zero.ui.protected_supplier_runtime import install_protected_supplier_runtime
+from bling_app_zero.ui.shared_mapping_contract_runtime import install_shared_mapping_contract_runtime
 from bling_app_zero.ui.sidebar_tools import render_sidebar_tools
 from bling_app_zero.ui.site_checkpoint_finalizer_runtime import install_site_checkpoint_finalizer_runtime
 from bling_app_zero.ui.source_upload_recovery_runtime import install_source_upload_recovery_runtime
@@ -162,6 +163,7 @@ def main() -> None:
     install_bling_connected_entry_runtime()
     install_source_upload_recovery_runtime()
     install_mapping_pagination_runtime()
+    install_shared_mapping_contract_runtime()
     install_oauth_link_guard()
     install_model_preserve_merge_runtime()
     _install_bling_api_verified_media_checkpoint('after_runtime_patches')
