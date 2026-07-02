@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.universal.internal_columns import clean_model_columns, strip_generated_internal_columns
 from bling_app_zero.universal.output_builder import build_universal_output as _raw_build_universal_output
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/model_preserve_merge_runtime.py'
@@ -158,10 +159,11 @@ def _best_merge_key(base: pd.DataFrame, mapped: pd.DataFrame, current_key: str) 
 
 def _align_to_columns(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     out = frame.copy().fillna('') if isinstance(frame, pd.DataFrame) else pd.DataFrame()
-    for column in columns:
+    safe_columns = clean_model_columns(columns)
+    for column in safe_columns:
         if column not in out.columns:
             out[column] = ''
-    return out.loc[:, columns].fillna('').reset_index(drop=True)
+    return out.loc[:, safe_columns].fillna('').reset_index(drop=True)
 
 
 def _apply_model_choices_to_base(base: pd.DataFrame, mapping: Mapping[str, str] | None) -> pd.DataFrame:
@@ -172,14 +174,21 @@ def _apply_model_choices_to_base(base: pd.DataFrame, mapping: Mapping[str, str] 
     return out
 
 
+def _clean_mapping_targets(mapping: Mapping[str, str] | None, columns: list[str]) -> dict[str, str]:
+    allowed = set(clean_model_columns(columns))
+    return {str(target): str(value or '') for target, value in dict(mapping or {}).items() if str(target) in allowed}
+
+
 def _merge_preserving_model(df_source: pd.DataFrame, df_model: pd.DataFrame, mapping: Mapping[str, str] | None) -> pd.DataFrame:
-    origin_mapping = _mapping_for_origin_builder(mapping)
-    mapped = _raw_build_universal_output(df_source, df_model, origin_mapping).copy().fillna('')
-    model_columns = [str(column) for column in getattr(df_model, 'columns', [])]
+    df_model_safe = strip_generated_internal_columns(df_model)
+    model_columns = clean_model_columns(getattr(df_model_safe, 'columns', []))
+    safe_mapping = _clean_mapping_targets(mapping, model_columns)
+    origin_mapping = _mapping_for_origin_builder(safe_mapping)
+    mapped = _raw_build_universal_output(df_source, df_model_safe, origin_mapping).copy().fillna('')
     toggle_enabled = _preserve_toggle_enabled()
     stale_model_choice = any(_split_ref(value)[0] == 'modelo' for value in dict(mapping or {}).values())
-    model_choice_enabled = bool(toggle_enabled and _has_model_copy_choice(mapping, model_columns))
-    preserve_enabled = bool(toggle_enabled and _df_has_values(df_model))
+    model_choice_enabled = bool(toggle_enabled and _has_model_copy_choice(safe_mapping, model_columns))
+    preserve_enabled = bool(toggle_enabled and _df_has_values(df_model_safe))
     if not preserve_enabled:
         st.session_state[PRESERVE_MODEL_ENABLED_KEY] = False
         if stale_model_choice and not toggle_enabled:
@@ -188,9 +197,9 @@ def _merge_preserving_model(df_source: pd.DataFrame, df_model: pd.DataFrame, map
 
     st.session_state[PRESERVE_MODEL_ENABLED_KEY] = True
     output_columns = list(model_columns)
-    base = _align_to_columns(df_model.copy().fillna(''), output_columns)
+    base = _align_to_columns(df_model_safe.copy().fillna(''), output_columns)
     mapped_aligned = _align_to_columns(mapped, output_columns)
-    base = _apply_model_choices_to_base(base, mapping)
+    base = _apply_model_choices_to_base(base, safe_mapping)
     if base.empty:
         return mapped_aligned
 
@@ -203,7 +212,7 @@ def _merge_preserving_model(df_source: pd.DataFrame, df_model: pd.DataFrame, map
         st.session_state[PRESERVE_MODEL_KEY_COLUMN_KEY] = key_column
         add_audit_event('model_preserve_merge_key_auto_adjusted', area='UNIVERSAL', status='OK', details={'selected_key': selected_key, 'chosen_key': key_column, 'reason': 'melhor_chave_com_sobreposicao_real', 'responsible_file': RESPONSIBLE_FILE})
 
-    update_columns = _origin_update_targets(mapping, list(mapped_aligned.columns))
+    update_columns = _origin_update_targets(safe_mapping, list(mapped_aligned.columns))
     if not update_columns:
         return _align_to_columns(base, output_columns)
 
@@ -291,7 +300,7 @@ def install_model_preserve_merge_runtime() -> None:
     final_output_engine.build_universal_output = lambda df_source, df_model, mapping=None: _merge_preserving_model(df_source, df_model, mapping)
     ui_root._apply_model_preserve = lambda df_source, df_model, mapping=None, original_builder=None: _merge_preserving_model(df_source, df_model, mapping)
     _install_green_mapping_guard()
-    add_audit_event('model_preserve_merge_runtime_installed', area='UNIVERSAL', status='OK', details={'preserve_all_against_blank_source': True, 'duplicate_key_update': True, 'best_key_selection': True, 'model_choice_requires_preserve_toggle': True, 'dual_source_mapping': True, 'dropdown_preview_runtime': True, 'strict_no_generated_columns': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('model_preserve_merge_runtime_installed', area='UNIVERSAL', status='OK', details={'preserve_all_against_blank_source': True, 'duplicate_key_update': True, 'best_key_selection': True, 'model_choice_requires_preserve_toggle': True, 'dual_source_mapping': True, 'dropdown_preview_runtime': True, 'strict_no_generated_columns': True, 'generated_internal_columns_blocked': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_model_preserve_merge_runtime']
