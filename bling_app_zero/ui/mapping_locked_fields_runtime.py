@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import unicodedata
 from typing import Any
@@ -25,6 +26,142 @@ def _norm(value: object) -> str:
     text = str(value or '').lower()
     text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
     return re.sub(r'[^a-z0-9]+', '', text)
+
+
+def _word_tuple(value: object) -> tuple[str, ...]:
+    text = str(value or '').strip().casefold()
+    text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
+    return tuple(part for part in re.split(r'[^a-z0-9]+', text) if part)
+
+
+def _short_hash(value: str, size: int = 8) -> str:
+    return hashlib.sha256(str(value or '').encode('utf-8')).hexdigest()[:size]
+
+
+def _shared_short_hash(shared_mapping: Any, value: str, size: int = 8) -> str:
+    func = getattr(shared_mapping, 'short_hash', None)
+    if callable(func):
+        try:
+            return str(func(value, size=size))
+        except TypeError:
+            return str(func(value))[:size]
+        except Exception:
+            pass
+    return _short_hash(value, size=size)
+
+
+def _shared_mapping_widget_key(shared_mapping: Any, key_prefix: str, signature: str, index: int, target_name: str) -> str:
+    func = getattr(shared_mapping, 'mapping_widget_key', None)
+    if callable(func):
+        try:
+            return str(func(key_prefix, signature, index, target_name))
+        except Exception:
+            pass
+    return f'{key_prefix}_map_{index}_{_shared_short_hash(shared_mapping, signature + target_name)}'
+
+
+def _shared_fixed_widget_key(shared_mapping: Any, key_prefix: str, signature: str, index: int, target_name: str) -> str:
+    func = getattr(shared_mapping, 'fixed_widget_key', None)
+    if callable(func):
+        try:
+            return str(func(key_prefix, signature, index, target_name))
+        except Exception:
+            pass
+    return f'{_shared_mapping_widget_key(shared_mapping, key_prefix, signature, index, target_name)}_fixed_value'
+
+
+def _shared_auto_green_state_key(shared_mapping: Any, mapping_state_key: str, signature: str) -> str:
+    func = getattr(shared_mapping, '_auto_green_state_key', None)
+    if callable(func):
+        try:
+            return str(func(mapping_state_key, signature))
+        except Exception:
+            pass
+    return f'{mapping_state_key}_auto_green_{_shared_short_hash(shared_mapping, signature, size=10)}'
+
+
+def _is_fixed_mapping_value(shared_mapping: Any, value: object) -> bool:
+    func = getattr(shared_mapping, 'is_fixed_value', None)
+    if callable(func):
+        try:
+            return bool(func(value))
+        except Exception:
+            pass
+    return str(value or '').startswith(FIXED_VALUE_PREFIX)
+
+
+def _exact_green_matches(source: pd.DataFrame, target: pd.DataFrame) -> list[tuple[int, str, str]]:
+    if not isinstance(source, pd.DataFrame) or not isinstance(target, pd.DataFrame):
+        return []
+    source_columns = [str(column) for column in source.columns]
+    target_columns = [str(column) for column in target.columns]
+    by_key: dict[tuple[str, ...], list[str]] = {}
+    for source_column in source_columns:
+        key = _word_tuple(source_column)
+        if key:
+            by_key.setdefault(key, []).append(source_column)
+    matches: list[tuple[int, str, str]] = []
+    for index, target_name in enumerate(target_columns):
+        candidates = by_key.get(_word_tuple(target_name), [])
+        if len(candidates) == 1:
+            matches.append((index, target_name, candidates[0]))
+    return matches
+
+
+def _sync_auto_green_widget_values(
+    st: Any,
+    shared_mapping: Any,
+    source: pd.DataFrame,
+    target: pd.DataFrame,
+    *,
+    signature: str,
+    mapping_state_key: str,
+    key_prefix: str,
+) -> None:
+    """Quando o toggle verde é ligado, sincroniza também os selectbox.
+
+    O mapeamento original já preenchia `mapping_state_key`, mas os widgets
+    antigos do Streamlit podiam continuar com "(deixar vazio)" e sobrescrever
+    o resultado no fim da renderização. Esta rotina pré-semeia os valores dos
+    selectbox antes de chamar o renderer original.
+    """
+    if not isinstance(source, pd.DataFrame) or not isinstance(target, pd.DataFrame):
+        return
+    source_columns = [str(column) for column in source.columns]
+    target_columns = [str(column) for column in target.columns]
+    auto_green_key = _shared_auto_green_state_key(shared_mapping, mapping_state_key, signature)
+    sync_key = f'{auto_green_key}_widget_sync_v1'
+    if not bool(st.session_state.get(auto_green_key)):
+        st.session_state.pop(sync_key, None)
+        return
+    auto_signature = f'{signature}:{len(target_columns)}:{len(source_columns)}:{_shared_short_hash(shared_mapping, "|".join(target_columns + source_columns), 12)}'
+    if st.session_state.get(sync_key) == auto_signature:
+        return
+
+    current = dict(st.session_state.get(mapping_state_key) or {})
+    applied = 0
+    skipped_fixed = 0
+    for index, target_name, source_column in _exact_green_matches(source, target):
+        current_value = str(current.get(target_name, '') or '')
+        if _is_fixed_mapping_value(shared_mapping, current_value):
+            skipped_fixed += 1
+            continue
+        widget_key = _shared_mapping_widget_key(shared_mapping, key_prefix, signature, index, target_name)
+        fixed_key = _shared_fixed_widget_key(shared_mapping, key_prefix, signature, index, target_name)
+        st.session_state[widget_key] = source_column
+        st.session_state.pop(fixed_key, None)
+        applied += 1
+    st.session_state[sync_key] = auto_signature
+    _audit(
+        'auto_green_exact_widget_sync_applied',
+        details={
+            'applied_fields': int(applied),
+            'skipped_fixed_fields': int(skipped_fixed),
+            'mapping_state_key': mapping_state_key,
+            'auto_green_key': auto_green_key,
+            'unique_exact_origin_only': True,
+        },
+    )
 
 
 def _is_import_alert_field(field: object) -> bool:
@@ -186,6 +323,16 @@ def install() -> None:
             st.session_state[mapping_state_key] = current
             _render_suggested_summary(st, suggested)
 
+        _sync_auto_green_widget_values(
+            st,
+            shared_mapping,
+            source,
+            target,
+            signature=signature,
+            mapping_state_key=mapping_state_key,
+            key_prefix=key_prefix,
+        )
+
         edited = original(
             source,
             target,
@@ -200,7 +347,7 @@ def install() -> None:
 
     shared_mapping.render_shared_contract_mapping = render_shared_contract_mapping_suggested
     shared_mapping._mapeiaai_locked_fields_runtime_patched = True
-    _audit('mapping_locked_fields_runtime_installed', details={'strategy': 'rule_suggestions_respect_existing_blank_mapping'})
+    _audit('mapping_locked_fields_runtime_installed', details={'strategy': 'rule_suggestions_respect_existing_blank_mapping_and_auto_green_widget_sync'})
 
 
 __all__ = ['install']
