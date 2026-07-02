@@ -11,7 +11,7 @@ from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/universal_category_simple_apply_runtime.py'
 PATCH_ATTR = '_mapeiaai_universal_category_simple_apply_runtime_v1'
-CATEGORY_CONFIDENCE_MIN = 0.80
+CATEGORY_CONFIDENCE_MIN = 1.00
 CATEGORY_APPLIED_DF_KEY = 'mapeiaai_universal_category_applied_df_v1'
 CATEGORY_APPLIED_SIGNATURE_KEY = 'mapeiaai_universal_category_applied_signature_v1'
 CATEGORY_APPLIED_STATS_KEY = 'mapeiaai_universal_category_applied_stats_v1'
