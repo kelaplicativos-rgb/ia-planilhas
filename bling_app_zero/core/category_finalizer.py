@@ -17,7 +17,7 @@ from bling_app_zero.core.category_intelligence import (
 )
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/category_finalizer.py'
-CATEGORY_CONFIDENCE_MIN = 0.80
+CATEGORY_CONFIDENCE_MIN = 1.00
 MAX_REASON_SAMPLE = 80
 GUARD_BLOCKING_STATUSES = {'CATEGORY_BLOCKED', 'CATEGORY_FORCED'}
 
