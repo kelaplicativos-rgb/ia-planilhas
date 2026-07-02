@@ -9,7 +9,7 @@ from bling_app_zero.core.user_rules import get_user_rules
 RESPONSIBLE_FILE = 'bling_app_zero/core/provisional_category.py'
 
 DEFAULT_PROVISIONAL_CATEGORY = 'Produtos não classificados'
-DEFAULT_CATEGORY_CONFIDENCE_MIN = 0.80
+DEFAULT_CATEGORY_CONFIDENCE_MIN = 1.00
 
 CATEGORY_FIELD_CANDIDATES = (
     'Categoria',
@@ -259,7 +259,7 @@ def _category_confidence_min() -> float:
         value = DEFAULT_CATEGORY_CONFIDENCE_MIN
     if value > 1:
         value = value / 100
-    return min(0.99, max(0.50, value))
+    return min(1.00, max(0.50, value))
 
 
 def category_from_intelligence(row: Any, payload: dict[str, Any] | None = None, meta: dict[str, Any] | None = None) -> tuple[str, str, float, str]:
