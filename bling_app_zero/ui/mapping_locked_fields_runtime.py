@@ -118,19 +118,19 @@ def _sync_auto_green_widget_values(
     mapping_state_key: str,
     key_prefix: str,
 ) -> None:
-    """Quando o toggle verde é ligado, sincroniza também os selectbox.
+    """Quando o toggle verde é ligado, aplica em todo o contrato, não só na página atual.
 
-    O mapeamento original já preenchia `mapping_state_key`, mas os widgets
-    antigos do Streamlit podiam continuar com "(deixar vazio)" e sobrescrever
-    o resultado no fim da renderização. Esta rotina pré-semeia os valores dos
-    selectbox antes de chamar o renderer original.
+    O renderer original pagina os campos de 10 em 10. Por isso esta rotina grava
+    primeiro no estado global `mapping_state_key` para todos os campos do modelo
+    e, além disso, pré-semeia os widgets existentes/futuros dos selectbox. Assim
+    páginas 2, 3, 4... já nascem vinculadas quando o usuário navegar até elas.
     """
     if not isinstance(source, pd.DataFrame) or not isinstance(target, pd.DataFrame):
         return
     source_columns = [str(column) for column in source.columns]
     target_columns = [str(column) for column in target.columns]
     auto_green_key = _shared_auto_green_state_key(shared_mapping, mapping_state_key, signature)
-    sync_key = f'{auto_green_key}_widget_sync_v1'
+    sync_key = f'{auto_green_key}_widget_sync_v2_all_pages'
     if not bool(st.session_state.get(auto_green_key)):
         st.session_state.pop(sync_key, None)
         return
@@ -141,26 +141,33 @@ def _sync_auto_green_widget_values(
     current = dict(st.session_state.get(mapping_state_key) or {})
     applied = 0
     skipped_fixed = 0
+    synced_widgets = 0
     for index, target_name, source_column in _exact_green_matches(source, target):
         current_value = str(current.get(target_name, '') or '')
         if _is_fixed_mapping_value(shared_mapping, current_value):
             skipped_fixed += 1
             continue
+        current[target_name] = source_column
         widget_key = _shared_mapping_widget_key(shared_mapping, key_prefix, signature, index, target_name)
         fixed_key = _shared_fixed_widget_key(shared_mapping, key_prefix, signature, index, target_name)
         st.session_state[widget_key] = source_column
         st.session_state.pop(fixed_key, None)
         applied += 1
+        synced_widgets += 1
+    st.session_state[mapping_state_key] = current
     st.session_state[sync_key] = auto_signature
     _audit(
-        'auto_green_exact_bind_applied',
+        'auto_green_exact_bind_applied_all_pages',
         details={
             'applied_fields': int(applied),
+            'synced_widgets': int(synced_widgets),
             'skipped_fixed_fields': int(skipped_fixed),
+            'total_target_fields': int(len(target_columns)),
             'mapping_state_key': mapping_state_key,
             'auto_green_key': auto_green_key,
             'unique_exact_origin_only': True,
             'synced_selectbox_widgets': True,
+            'all_mapping_pages': True,
         },
     )
 
@@ -348,7 +355,7 @@ def install() -> None:
 
     shared_mapping.render_shared_contract_mapping = render_shared_contract_mapping_suggested
     shared_mapping._mapeiaai_locked_fields_runtime_patched = True
-    _audit('mapping_locked_fields_runtime_installed', details={'strategy': 'rule_suggestions_respect_existing_blank_mapping_and_auto_green_widget_sync'})
+    _audit('mapping_locked_fields_runtime_installed', details={'strategy': 'rule_suggestions_respect_existing_blank_mapping_and_auto_green_widget_sync_all_pages'})
 
 
 __all__ = ['install']
