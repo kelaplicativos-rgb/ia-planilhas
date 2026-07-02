@@ -31,6 +31,7 @@ from bling_app_zero.ui.alerts import enforce_attention_alert_policy
 from bling_app_zero.ui.bling_api_source_first_policy import install_bling_api_source_first_policy
 from bling_app_zero.ui.bling_connected_entry_runtime import install_bling_connected_entry_runtime
 from bling_app_zero.ui.blingfix_runtime_patches import install_blingfix_runtime_patches
+from bling_app_zero.ui.category_no_blank_runtime_patch import install_category_no_blank_runtime_patch
 from bling_app_zero.ui.final_bling_operation_selector_runtime import install_final_bling_operation_selector_runtime
 from bling_app_zero.ui.home import render_home
 from bling_app_zero.ui.layout import inject_streamlit_toolbar_fix
@@ -168,10 +169,12 @@ def main() -> None:
     install_shared_mapping_contract_runtime()
     install_category_leaf_runtime_patch()
     install_universal_category_simple_apply_runtime()
+    install_category_no_blank_runtime_patch()
     install_oauth_link_guard()
     install_model_preserve_merge_runtime()
     install_category_leaf_runtime_patch()
     install_universal_category_simple_apply_runtime()
+    install_category_no_blank_runtime_patch()
     _install_bling_api_verified_media_checkpoint('after_runtime_patches')
     install_official_bling_oauth_patch()
     bling_oauth.process_oauth_callback()
