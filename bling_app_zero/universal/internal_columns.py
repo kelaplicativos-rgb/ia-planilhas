@@ -42,10 +42,24 @@ def is_generated_internal_column(column: object) -> bool:
     return _column_key(column) in GENERATED_INTERNAL_COLUMN_KEYS
 
 
-def clean_model_columns(columns: Iterable[object]) -> list[str]:
+def _iter_columns(columns: Iterable[object] | None) -> list[object]:
+    """Converte colunas em lista sem avaliar pandas.Index como booleano.
+
+    pandas.Index não pode ser usado em expressões como `columns or []` porque
+    isso dispara ValueError: The truth value of a Index is ambiguous.
+    """
+    if columns is None:
+        return []
+    try:
+        return list(columns)
+    except TypeError:
+        return [columns]
+
+
+def clean_model_columns(columns: Iterable[object] | None) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
-    for column in columns or []:
+    for column in _iter_columns(columns):
         name = str(column)
         if is_generated_internal_column(name):
             continue
@@ -59,7 +73,7 @@ def clean_model_columns(columns: Iterable[object]) -> list[str]:
 def strip_generated_internal_columns(df: pd.DataFrame | None) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame):
         return pd.DataFrame()
-    columns = clean_model_columns(getattr(df, 'columns', []))
+    columns = clean_model_columns(getattr(df, 'columns', None))
     return df.loc[:, [column for column in columns if column in df.columns]].copy()
 
 
