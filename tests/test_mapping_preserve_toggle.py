@@ -60,6 +60,30 @@ class TestMappingPreserveToggle(unittest.TestCase):
         self.assertIn('modelo::ID Produto', options)
         self.assertIn('Modelo anexado', labels['modelo::ID Produto'])
 
+    def test_toggle_on_hides_generated_model_columns_from_dropdown(self) -> None:
+        self.session[dropdown_runtime.MODEL_PRESERVE_TOGGLE_KEY] = True
+        dropdown_runtime._CONTEXT['target'] = pd.DataFrame(
+            {
+                'ID Produto': ['123'],
+                'Nome': ['Produto modelo'],
+                'Arquivo origem': ['modelo.csv'],
+                'Página origem': ['1'],
+                'categoria_sugerida_ia': ['Interna'],
+            }
+        )
+
+        options, _labels = dropdown_runtime._ranked_options(
+            ['Nome', dropdown_runtime.EMPTY_OPTION, dropdown_runtime.WRITE_OPTION],
+            {'Nome': '🟢 Nome', dropdown_runtime.EMPTY_OPTION: dropdown_runtime.EMPTY_OPTION, dropdown_runtime.WRITE_OPTION: dropdown_runtime.WRITE_OPTION},
+            'Nome',
+            '',
+        )
+
+        self.assertIn('modelo::Nome', options)
+        self.assertNotIn('modelo::Arquivo origem', options)
+        self.assertNotIn('modelo::Página origem', options)
+        self.assertNotIn('modelo::categoria_sugerida_ia', options)
+
     def test_toggle_off_clears_stale_model_refs_and_unwraps_origin_refs(self) -> None:
         self.session['mapping'] = {
             'ID Produto': 'modelo::ID Produto',
@@ -73,6 +97,20 @@ class TestMappingPreserveToggle(unittest.TestCase):
         self.assertEqual(self.session['mapping']['ID Produto'], '')
         self.assertEqual(self.session['mapping']['Nome'], 'Nome')
         self.assertEqual(self.session['mapping']['Observação'], '__mapeiaai_fixed_value__:OK')
+
+    def test_auto_bind_plain_origin_when_toggle_off(self) -> None:
+        updated, applied = dropdown_runtime._auto_bind_unique_origin_green_matches({}, ['Nome'], ['Nome'])
+
+        self.assertEqual(applied, 1)
+        self.assertEqual(updated['Nome'], 'Nome')
+
+    def test_auto_bind_origin_ref_when_toggle_on(self) -> None:
+        self.session[dropdown_runtime.MODEL_PRESERVE_TOGGLE_KEY] = True
+
+        updated, applied = dropdown_runtime._auto_bind_unique_origin_green_matches({}, ['Nome'], ['Nome'])
+
+        self.assertEqual(applied, 1)
+        self.assertEqual(updated['Nome'], 'origem::Nome')
 
     def test_output_preserve_ignores_model_choices_when_toggle_off(self) -> None:
         mapping = {'Nome': 'modelo::Nome'}
@@ -89,6 +127,29 @@ class TestMappingPreserveToggle(unittest.TestCase):
         self.assertEqual(list(output.columns), ['SKU', 'Nome'])
         self.assertNotIn('Arquivo origem', output.columns)
         self.assertNotIn('Página origem', output.columns)
+
+    def test_preserve_output_removes_generated_columns_from_model_contract(self) -> None:
+        self.session[preserve_runtime.MODEL_PRESERVE_TOGGLE_KEY] = True
+        df_model = pd.DataFrame(
+            {
+                'SKU': ['ABC'],
+                'Nome': ['Produto modelo'],
+                'Arquivo origem': ['modelo.csv'],
+                'Página origem': ['1'],
+                'categoria_sugerida_ia': ['Interna'],
+            }
+        )
+        df_source = pd.DataFrame({'SKU': ['ABC'], 'Nome': ['Produto origem']})
+        output = preserve_runtime._merge_preserving_model(
+            df_source,
+            df_model,
+            {'SKU': 'SKU', 'Nome': 'Nome', 'Arquivo origem': 'Arquivo origem', 'Página origem': 'Página origem'},
+        )
+
+        self.assertEqual(list(output.columns), ['SKU', 'Nome'])
+        self.assertNotIn('Arquivo origem', output.columns)
+        self.assertNotIn('Página origem', output.columns)
+        self.assertNotIn('categoria_sugerida_ia', output.columns)
 
 
 if __name__ == '__main__':
