@@ -20,7 +20,6 @@ from bling_app_zero.core.category_intelligence import (
 )
 
 RESPONSIBLE_FILE = 'bling_app_zero/core/openai_category_fallback.py'
-MAX_AI_ROWS = 120
 AI_BATCH_SIZE = 30
 AI_CONFIDENCE_ACCEPTED = 1.0
 
@@ -52,11 +51,11 @@ def _safe_catalog(catalog: Sequence[str] = DEFAULT_CATEGORY_CATALOG) -> list[str
 
 def _category_from_ai_item(item: dict[str, Any], catalog: Sequence[str]) -> tuple[str, float, str]:
     category = str(item.get('category') or item.get('categoria') or '').strip()
-    if not category or category == REVIEW_CATEGORY:
-        return '', 0.0, str(item.get('reason') or item.get('motivo') or 'sem categoria segura')[:220]
+    if not category or category in {REVIEW_CATEGORY, PROVISIONAL_CATEGORY}:
+        return '', 0.0, str(item.get('reason') or item.get('motivo') or 'sem categoria real segura')[:220]
     canonical, _changed, reason = canonicalize_category(category, catalog)
     if not canonical or canonical in {PROVISIONAL_CATEGORY, REVIEW_CATEGORY}:
-        return '', 0.0, f'OpenAI retornou categoria fora do catálogo: {category[:80]}'
+        return '', 0.0, f'OpenAI retornou categoria fora do catálogo real: {category[:80]}'
     try:
         confidence = float(item.get('confidence') or item.get('confianca') or 0)
     except Exception:
@@ -78,22 +77,24 @@ def _call_openai_for_batch(items: list[dict[str, Any]], catalog: Sequence[str]) 
 
     instructions = (
         'Você é a IA real de categorização do MapeiaAI. Classifique produtos de loja de eletrônicos e utilidades. '
-        'Use somente uma categoria existente no catálogo recebido. Nunca invente categoria nova. '
-        'Retorne confidence 1.0 apenas quando a categoria estiver totalmente segura pelo título/descrição. '
+        'Use somente uma categoria real existente no catálogo recebido. Nunca invente categoria nova. '
+        'Retorne confidence 1.0 apenas quando a categoria real estiver totalmente segura pelo título/descrição/dados da linha. '
         'Se houver dúvida, retorne category "REVISAR MANUALMENTE" e confidence 0. '
+        'Não retorne "Produtos não classificados"; esse fallback é aplicado pelo sistema quando não houver categoria real segura. '
         'Responda JSON no formato {"items":[{"row":1,"category":"...","confidence":1.0,"reason":"..."}]}.'
     )
     payload = {
         'catalog': list(catalog),
         'rules': [
-            'Escolher somente categoria do catálogo.',
+            'Escolher somente categoria real do catálogo.',
             'Não usar nome/modelo do produto como categoria.',
             'Não usar categoria genérica quando houver dúvida.',
             'confidence 1.0 significa certeza máxima; abaixo disso será rejeitado.',
+            'Sem certeza real: retornar REVISAR MANUALMENTE.',
         ],
         'items': items,
     }
-    result = call_openai_json('openai_category_fallback_v1', instructions, payload, settings=settings)
+    result = call_openai_json('openai_category_fallback_v2_all_rows', instructions, payload, settings=settings)
     if not result.ok:
         _audit('openai_category_fallback_failed', status='AVISO', rows=len(items), error=str(result.error or result.message)[:220])
         return {}
@@ -126,6 +127,10 @@ def _needs_openai_fallback(row: pd.Series) -> bool:
     return not category or category == REVIEW_CATEGORY or action == 'REVISAR' or confidence < AI_CONFIDENCE_ACCEPTED
 
 
+def _row_text_payload(row: pd.Series) -> str:
+    return normalize_text(' '.join(str(row.get(col, '')) for col in list(row.index)[:120]))[:1400]
+
+
 def classify_dataframe_with_openai(df: pd.DataFrame, *, category_catalog: Sequence[str] = DEFAULT_CATEGORY_CATALOG) -> tuple[pd.DataFrame, dict[str, int]]:
     analyzed, stats = classify_dataframe(df, category_catalog=category_catalog)
     if not isinstance(analyzed, pd.DataFrame) or analyzed.empty:
@@ -133,16 +138,19 @@ def classify_dataframe_with_openai(df: pd.DataFrame, *, category_catalog: Sequen
 
     candidates = analyzed[analyzed.apply(_needs_openai_fallback, axis=1)]
     if candidates.empty:
-        return analyzed, {**dict(stats or {}), 'openai_fallback_candidates': 0, 'openai_fallback_applied': 0}
+        return analyzed, {**dict(stats or {}), 'openai_fallback_candidates': 0, 'openai_fallback_applied': 0, 'openai_fallback_skipped_no_text': 0}
 
     catalog = _safe_catalog(category_catalog)
     name_col = detect_product_name_column(analyzed)
     desc_col = detect_product_description_column(analyzed)
     items: list[dict[str, Any]] = []
-    for idx, row in candidates.head(MAX_AI_ROWS).iterrows():
+    skipped_no_text = 0
+    for idx, row in candidates.iterrows():
         title = _row_value(row, name_col)
         description = _row_value(row, desc_col)
-        if not title and not description:
+        row_text = _row_text_payload(row)
+        if not title and not description and not row_text:
+            skipped_no_text += 1
             continue
         items.append({
             'row': int(idx),
@@ -151,12 +159,14 @@ def classify_dataframe_with_openai(df: pd.DataFrame, *, category_catalog: Sequen
             'current_category': str(row.get('categoria_atual_ia', '') or '')[:120],
             'local_suggestion': str(row.get('categoria_sugerida_ia', '') or '')[:120],
             'local_confidence': str(row.get('confianca_categoria_ia', '') or ''),
-            'row_text': normalize_text(' '.join(str(row.get(col, '')) for col in list(row.index)[:80]))[:1000],
+            'row_text': row_text,
         })
 
     accepted: dict[int, CategorySuggestion] = {}
+    batches = 0
     for start in range(0, len(items), AI_BATCH_SIZE):
         batch = items[start:start + AI_BATCH_SIZE]
+        batches += 1
         accepted.update(_call_openai_for_batch(batch, catalog))
 
     for idx, suggestion in accepted.items():
@@ -170,9 +180,11 @@ def classify_dataframe_with_openai(df: pd.DataFrame, *, category_catalog: Sequen
     updated_stats = dict(stats or {})
     updated_stats['openai_fallback_candidates'] = int(len(candidates))
     updated_stats['openai_fallback_sent'] = int(len(items))
+    updated_stats['openai_fallback_batches'] = int(batches)
+    updated_stats['openai_fallback_skipped_no_text'] = int(skipped_no_text)
     updated_stats['openai_fallback_applied'] = int(len(accepted))
     updated_stats['revisar'] = int((analyzed['acao_categoria_ia'] == 'REVISAR').sum()) if 'acao_categoria_ia' in analyzed.columns else int(updated_stats.get('revisar', 0) or 0)
-    _audit('openai_category_fallback_completed', candidates=int(len(candidates)), sent=int(len(items)), accepted=int(len(accepted)))
+    _audit('openai_category_fallback_completed_all_candidates', candidates=int(len(candidates)), sent=int(len(items)), batches=int(batches), accepted=int(len(accepted)), skipped_no_text=int(skipped_no_text), no_row_limit=True)
     return analyzed, updated_stats
 
 
