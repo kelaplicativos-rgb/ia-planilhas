@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from bling_app_zero.ai.ai_dataframe_tools import normalize_column_name
+from bling_app_zero.universal.internal_columns import clean_model_columns
 
 MODEL_TYPE_CADASTRO = 'cadastro'
 MODEL_TYPE_ESTOQUE = 'estoque'
@@ -40,7 +41,7 @@ class ModelDetection:
 def _columns(df_model: pd.DataFrame | None) -> list[str]:
     if not isinstance(df_model, pd.DataFrame):
         return []
-    return [str(column) for column in df_model.columns]
+    return clean_model_columns(str(column) for column in df_model.columns)
 
 
 def _score_columns(columns: list[str]) -> dict[str, int]:
