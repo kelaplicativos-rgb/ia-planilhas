@@ -202,6 +202,30 @@ def _alert_next_to_ball(label: object) -> str:
     return text
 
 
+def _manual_options_first(shared_mapping: Any, options: list[Any]) -> list[str]:
+    """Mantém ações manuais sempre no topo do dropdown.
+
+    O usuário usa muito `(deixar vazio)` e `escrever valor fixo/manual`. Quando
+    existem muitas colunas verdes/amarelas, essas ações ficavam no meio/baixo do
+    selectbox e exigiam rolagem. Aqui elas sempre entram como as duas primeiras
+    opções, antes de qualquer coluna da origem.
+    """
+    empty_option = str(getattr(shared_mapping, 'EMPTY_OPTION', '(deixar vazio)'))
+    write_option = str(getattr(shared_mapping, 'WRITE_OPTION', '✍️ escrever valor fixo/manual'))
+    raw_options = [str(option) for option in list(options or [])]
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for special in (empty_option, write_option):
+        if special not in seen:
+            ordered.append(special)
+            seen.add(special)
+    for option in raw_options:
+        if option not in seen:
+            ordered.append(option)
+            seen.add(option)
+    return ordered
+
+
 def _patch_visual_import_alerts(shared_mapping: Any) -> None:
     if getattr(shared_mapping, '_mapeiaai_import_alert_visual_patched', False):
         return
@@ -234,8 +258,10 @@ def _patch_visual_import_alerts(shared_mapping: Any) -> None:
             source_profiles: dict[str, dict[str, float]] | None = None,
         ) -> tuple[list[str], dict[str, str]]:
             options, labels = original_ranked_options(target_name, current_value, source_columns, suggestions_index, source_profiles)
+            options = _manual_options_first(shared_mapping, list(options or []))
+            labels = dict(labels or {})
             if _is_import_alert_field(target_name):
-                labels = {str(option): _alert_next_to_ball(label) for option, label in dict(labels or {}).items()}
+                labels = {str(option): _alert_next_to_ball(label) for option, label in labels.items()}
             return options, labels
 
         shared_mapping._ranked_source_options = ranked_source_options_with_visual_alert
@@ -246,6 +272,7 @@ def _patch_visual_import_alerts(shared_mapping: Any) -> None:
         details={
             'alert_mark': ALERT_MARK,
             'visual_only': True,
+            'manual_options_first': True,
             'patched_guard': callable(original_guard),
             'patched_confidence_flag': callable(original_confidence_flag),
             'patched_ranked_options': callable(original_ranked_options),
@@ -355,7 +382,7 @@ def install() -> None:
 
     shared_mapping.render_shared_contract_mapping = render_shared_contract_mapping_suggested
     shared_mapping._mapeiaai_locked_fields_runtime_patched = True
-    _audit('mapping_locked_fields_runtime_installed', details={'strategy': 'rule_suggestions_respect_existing_blank_mapping_and_auto_green_widget_sync_all_pages'})
+    _audit('mapping_locked_fields_runtime_installed', details={'strategy': 'rule_suggestions_respect_existing_blank_mapping_and_auto_green_widget_sync_all_pages_manual_options_first'})
 
 
 __all__ = ['install']
