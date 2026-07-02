@@ -20,6 +20,7 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.brand_runtime_patch import install_brand_runtime_patch
 from bling_app_zero.core.cache_control import clear_cache_once_per_version
 from bling_app_zero.core.cache_schema_guard import enforce_cache_schema_guard, render_cache_schema_notice
+from bling_app_zero.core.category_leaf_runtime_patch import install_category_leaf_runtime_patch
 from bling_app_zero.core.mapping_widget_state import restore_mapping_widget_state_from_snapshot
 from bling_app_zero.core.mhtml_capture_runtime import install_mhtml_capture_runtime
 from bling_app_zero.core.official_bling_oauth_patch import install_official_bling_oauth_patch
@@ -165,9 +166,11 @@ def main() -> None:
     install_source_upload_recovery_runtime()
     install_mapping_pagination_runtime()
     install_shared_mapping_contract_runtime()
+    install_category_leaf_runtime_patch()
     install_universal_category_simple_apply_runtime()
     install_oauth_link_guard()
     install_model_preserve_merge_runtime()
+    install_category_leaf_runtime_patch()
     install_universal_category_simple_apply_runtime()
     _install_bling_api_verified_media_checkpoint('after_runtime_patches')
     install_official_bling_oauth_patch()
