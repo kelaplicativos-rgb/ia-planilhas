@@ -8,7 +8,7 @@ import streamlit as st
 
 from bling_app_zero.adapters.streamlit_mapping_bridge import build_and_sync_mapping
 from bling_app_zero.core.audit import add_audit_event
-from bling_app_zero.core.category_intelligence import DEFAULT_CATEGORY_CATALOG, apply_category_suggestions, classify_dataframe
+from bling_app_zero.core.category_intelligence import apply_category_suggestions, classify_dataframe
 from bling_app_zero.core.files import read_uploaded_file
 from bling_app_zero.core.final_template_exporter import template_contract_columns
 from bling_app_zero.core.modelo_compactado_universal import resolver_modelo
@@ -66,16 +66,12 @@ NO_API_KEYS = (
     'bling_api_final_action', 'bling_api_manual_mapping_required', 'bling_api_must_run_ai_check',
 )
 TECHNICAL_COLUMNS = {'arquivo', 'status'}
-UNIVERSAL_CATEGORY_SEARCH_KEY = 'mapeiaai_universal_category_review_search_v1'
-UNIVERSAL_CATEGORY_ACTION_KEY = 'mapeiaai_universal_category_review_action_v1'
-UNIVERSAL_CATEGORY_VALUE_KEY = 'mapeiaai_universal_category_review_category_v1'
-UNIVERSAL_CATEGORY_ATTENTION_KEY = 'mapeiaai_universal_category_review_attention_v1'
-UNIVERSAL_CATEGORY_EDITOR_KEY = 'mapeiaai_universal_category_review_editor_v1'
-UNIVERSAL_CATEGORY_APPLY_KEY = 'mapeiaai_universal_category_review_apply_v1'
-UNIVERSAL_CATEGORY_MANUAL_MAP_KEY = 'mapeiaai_universal_category_manual_map_v1'
-PRODUCT_COLUMNS = ('Nome', 'Descrição', 'Descricao', 'Produto', 'Título', 'Titulo', 'name', 'produto')
-CODE_COLUMNS = ('Código', 'Codigo', 'SKU', 'GTIN', 'EAN', 'ID', 'Id')
 CATEGORY_COL = 'Categoria do produto'
+CATEGORY_CONFIDENCE_MIN = 0.80
+CATEGORY_APPLIED_DF_KEY = 'mapeiaai_universal_category_applied_df_v1'
+CATEGORY_APPLIED_SIGNATURE_KEY = 'mapeiaai_universal_category_applied_signature_v1'
+CATEGORY_APPLIED_STATS_KEY = 'mapeiaai_universal_category_applied_stats_v1'
+CATEGORY_APPLY_BUTTON_KEY = 'mapeiaai_universal_category_apply_suggested_v1'
 
 
 def _audit(event: str, **details: object) -> None:
@@ -85,11 +81,7 @@ def _audit(event: str, **details: object) -> None:
 def _universal_api_send_allowed() -> bool:
     flow_kind = str(st.session_state.get('mapeiaai_flow_kind') or st.session_state.get('flow_kind') or '').strip()
     entry_path = str(st.session_state.get('mapeiaai_home_entry_path') or '').strip()
-    return bool(
-        st.session_state.get(UNIVERSAL_API_SEND_KEY)
-        or flow_kind == 'universal_model_mapping_api'
-        or entry_path == 'mapear_modelo_com_api'
-    )
+    return bool(st.session_state.get(UNIVERSAL_API_SEND_KEY) or flow_kind == 'universal_model_mapping_api' or entry_path == 'mapear_modelo_com_api')
 
 
 def _force_plain_context() -> None:
@@ -138,6 +130,10 @@ def _name_and_bytes(uploaded_file) -> tuple[str, bytes]:
 
 def _has_valid_columns(df: pd.DataFrame | None) -> bool:
     return isinstance(df, pd.DataFrame) and bool(len(df.columns))
+
+
+def _valid_df(value: object) -> bool:
+    return isinstance(value, pd.DataFrame) and not value.empty and len(value.columns) > 0
 
 
 def _is_status_frame(df: pd.DataFrame | None) -> bool:
@@ -228,56 +224,52 @@ def _flow_signature(model: pd.DataFrame, source: pd.DataFrame, ai_enabled: bool,
     return f'{_df_signature(source)}:{_df_signature(model)}:ai={int(ai_enabled)}:rules={int(rules_enabled)}:rules_cfg={_rules_signature(rules_config)}'
 
 
+def _category_signature(df: pd.DataFrame) -> str:
+    return f'{_df_signature(df)}:category_confidence={CATEGORY_CONFIDENCE_MIN}'
+
+
+def _clear_category_state() -> None:
+    for key in (CATEGORY_APPLIED_DF_KEY, CATEGORY_APPLIED_SIGNATURE_KEY, CATEGORY_APPLIED_STATS_KEY):
+        st.session_state.pop(key, None)
+
+
+def _category_already_applied(base: pd.DataFrame) -> bool:
+    stored = st.session_state.get(CATEGORY_APPLIED_DF_KEY)
+    return bool(_valid_df(base) and _valid_df(stored) and len(stored) == len(base) and str(st.session_state.get(CATEGORY_APPLIED_SIGNATURE_KEY) or '') == _category_signature(base))
+
+
+def _stored_category_df(base: pd.DataFrame) -> pd.DataFrame | None:
+    if not _category_already_applied(base):
+        return None
+    stored = st.session_state.get(CATEGORY_APPLIED_DF_KEY)
+    return stored.copy().fillna('') if isinstance(stored, pd.DataFrame) else None
+
+
 def _clear_after_model() -> None:
     for key in (
-        UNIVERSAL_SOURCE_KEY,
-        UNIVERSAL_PROCESSED_KEY,
-        UNIVERSAL_MAPPING_KEY,
-        UNIVERSAL_OUTPUT_KEY,
-        UNIVERSAL_SIGNATURE_KEY,
-        UNIVERSAL_ENGINE_KEY,
-        UNIVERSAL_MAPPING_CONFIRMED_KEY,
-        UNIVERSAL_RULES_CONFIG_KEY,
-        UNIVERSAL_CATEGORY_MANUAL_MAP_KEY,
-        'df_origem_unificada',
-        'df_origem_arquivo',
-        'df_origem_site',
-        'df_origem_site_como_planilha',
-        'df_origem_site_como_planilha_universal',
-        'neutral_mapping_state_v1',
-        'neutral_mapping_report_v1',
+        UNIVERSAL_SOURCE_KEY, UNIVERSAL_PROCESSED_KEY, UNIVERSAL_MAPPING_KEY, UNIVERSAL_OUTPUT_KEY,
+        UNIVERSAL_SIGNATURE_KEY, UNIVERSAL_ENGINE_KEY, UNIVERSAL_MAPPING_CONFIRMED_KEY, UNIVERSAL_RULES_CONFIG_KEY,
+        'df_origem_unificada', 'df_origem_arquivo', 'df_origem_site', 'df_origem_site_como_planilha',
+        'df_origem_site_como_planilha_universal', 'neutral_mapping_state_v1', 'neutral_mapping_report_v1',
     ):
         st.session_state.pop(key, None)
+    _clear_category_state()
     clear_shared_mapping_widgets('mapeiaai_universal')
 
 
 def _clear_after_source() -> None:
     for key in (
-        UNIVERSAL_PROCESSED_KEY,
-        UNIVERSAL_MAPPING_KEY,
-        UNIVERSAL_OUTPUT_KEY,
-        UNIVERSAL_SIGNATURE_KEY,
-        UNIVERSAL_ENGINE_KEY,
-        UNIVERSAL_MAPPING_CONFIRMED_KEY,
-        UNIVERSAL_RULES_CONFIG_KEY,
-        UNIVERSAL_CATEGORY_MANUAL_MAP_KEY,
-        'neutral_mapping_state_v1',
-        'neutral_mapping_report_v1',
+        UNIVERSAL_PROCESSED_KEY, UNIVERSAL_MAPPING_KEY, UNIVERSAL_OUTPUT_KEY, UNIVERSAL_SIGNATURE_KEY,
+        UNIVERSAL_ENGINE_KEY, UNIVERSAL_MAPPING_CONFIRMED_KEY, UNIVERSAL_RULES_CONFIG_KEY,
+        'neutral_mapping_state_v1', 'neutral_mapping_report_v1',
     ):
         st.session_state.pop(key, None)
+    _clear_category_state()
     clear_shared_mapping_widgets('mapeiaai_universal')
 
 
 def _clear_after_options() -> None:
-    for key in (
-        UNIVERSAL_MAPPING_KEY,
-        UNIVERSAL_OUTPUT_KEY,
-        UNIVERSAL_SIGNATURE_KEY,
-        UNIVERSAL_ENGINE_KEY,
-        UNIVERSAL_MAPPING_CONFIRMED_KEY,
-        'neutral_mapping_state_v1',
-        'neutral_mapping_report_v1',
-    ):
+    for key in (UNIVERSAL_MAPPING_KEY, UNIVERSAL_OUTPUT_KEY, UNIVERSAL_SIGNATURE_KEY, UNIVERSAL_ENGINE_KEY, UNIVERSAL_MAPPING_CONFIRMED_KEY, 'neutral_mapping_state_v1', 'neutral_mapping_report_v1'):
         st.session_state.pop(key, None)
     clear_shared_mapping_widgets('mapeiaai_universal')
 
@@ -318,8 +310,8 @@ def _infer_step() -> str:
 
 
 def _render_step_bar(current: str) -> None:
-    labels = []
     current_idx = STEP_ORDER.index(current) if current in STEP_ORDER else 0
+    labels = []
     for idx, step in enumerate(STEP_ORDER):
         marker = '🟢' if idx < current_idx else ('🔵' if idx == current_idx else '⚪')
         labels.append(f'{marker} {STEP_LABELS[step]}')
@@ -349,9 +341,8 @@ def _render_model_step() -> pd.DataFrame | None:
         uploaded = st.file_uploader('Planilha modelo final', type=None, key='mapeiaai_universal_model_upload')
         df = _read_model_upload(uploaded)
         if isinstance(df, pd.DataFrame):
-            current_sig = _df_signature(_current_df(UNIVERSAL_MODEL_KEY))
-            new_sig = _df_signature(df)
-            if current_sig != 'none' and current_sig != new_sig:
+            previous = _current_df(UNIVERSAL_MODEL_KEY)
+            if _df_signature(previous) not in {'none', _df_signature(df)}:
                 _clear_after_model()
             _store_df(UNIVERSAL_MODEL_KEY, df)
             st.session_state['home_modelo_universal_df'] = df.copy().fillna('')
@@ -393,13 +384,7 @@ def _first_site_df_for_universal() -> pd.DataFrame | None:
             return df.copy().fillna('')
     except Exception:
         pass
-    for key in (
-        'df_origem_site_como_planilha_universal',
-        'df_origem_site_como_planilha',
-        'df_site_bruto_universal',
-        'df_site_bruto',
-        'df_origem_site',
-    ):
+    for key in ('df_origem_site_como_planilha_universal', 'df_origem_site_como_planilha', 'df_site_bruto_universal', 'df_site_bruto', 'df_origem_site'):
         value = st.session_state.get(key)
         if isinstance(value, pd.DataFrame) and not value.empty:
             return value.copy().fillna('')
@@ -430,7 +415,6 @@ def _render_source_site(model: pd.DataFrame | None = None) -> pd.DataFrame | Non
     except Exception as exc:
         st.error(f'Não consegui abrir a origem nova por site: {exc}')
         return _current_df(UNIVERSAL_SOURCE_KEY)
-
     df_site = _first_site_df_for_universal()
     if isinstance(df_site, pd.DataFrame) and not df_site.empty:
         return _store_universal_site_source(df_site)
@@ -511,224 +495,56 @@ def _render_price_group(source: pd.DataFrame, model: pd.DataFrame) -> tuple[pd.D
 
 def _render_category_config() -> tuple[bool, float]:
     st.markdown('### Categorização')
-    enabled = st.toggle('Categorização inteligente', value=bool(st.session_state.get(UNIVERSAL_CATEGORY_ENABLED_KEY)), key='mapeiaai_universal_toggle_category')
+    enabled = st.toggle('Categorização automática', value=bool(st.session_state.get(UNIVERSAL_CATEGORY_ENABLED_KEY)), key='mapeiaai_universal_toggle_category')
     st.session_state[UNIVERSAL_CATEGORY_ENABLED_KEY] = bool(enabled)
     if not enabled:
+        _clear_category_state()
         st.caption('Desligado. As categorias serão mantidas como vieram da origem/mapeamento.')
-        return False, 0.80
-    confidence = st.slider('Confiança mínima para sugerir/aplicar categoria', 0.50, 0.99, 0.80, 0.01, key='mapeiaai_universal_category_confidence_min')
-    st.caption('Confira as categorias abaixo. Edite “Categoria corrigida” e clique em “Aplicar correções manuais de categoria” antes de avançar.')
-    return True, float(confidence)
-
-
-def _first_existing_column(df: pd.DataFrame, candidates: tuple[str, ...]) -> str:
-    for column in candidates:
-        if column in df.columns:
-            return column
-    return ''
-
-
-def _row_text(row: pd.Series, columns: tuple[str, ...]) -> str:
-    values: list[str] = []
-    for column in columns:
-        if column in row.index:
-            value = str(row.get(column) or '').strip()
-            if value:
-                values.append(value)
-    return ' · '.join(values)
-
-
-def _manual_category_map() -> dict[int, str]:
-    raw = st.session_state.get(UNIVERSAL_CATEGORY_MANUAL_MAP_KEY)
-    if not isinstance(raw, dict):
-        return {}
-    cleaned: dict[int, str] = {}
-    for key, value in raw.items():
-        try:
-            row_index = int(key)
-        except Exception:
-            continue
-        category = str(value or '').strip()
-        if category:
-            cleaned[row_index] = category
-    return cleaned
+        return False, CATEGORY_CONFIDENCE_MIN
+    st.caption('Ligado. O sistema sugere as categorias e só grava na planilha quando você clicar no botão abaixo.')
+    return True, CATEGORY_CONFIDENCE_MIN
 
 
 def _apply_manual_category_map(df: pd.DataFrame) -> pd.DataFrame:
-    output = df.copy().fillna('')
-    manual_map = _manual_category_map()
-    if not manual_map:
-        return output
-    if CATEGORY_COL not in output.columns:
-        output[CATEGORY_COL] = ''
-    for row_index, category in manual_map.items():
-        if 0 <= row_index < len(output):
-            output.at[output.index[row_index], CATEGORY_COL] = category
-    return output
+    return df.copy().fillna('') if isinstance(df, pd.DataFrame) else df
 
 
-def _build_category_review_preview(df: pd.DataFrame) -> pd.DataFrame:
-    if not isinstance(df, pd.DataFrame) or df.empty:
-        return pd.DataFrame()
-    category_col = CATEGORY_COL if CATEGORY_COL in df.columns else None
-    product_col = _first_existing_column(df, PRODUCT_COLUMNS)
-    code_col = _first_existing_column(df, CODE_COLUMNS)
-    manual_map = _manual_category_map()
-    rows: list[dict[str, object]] = []
-    for position, (_idx, row) in enumerate(df.fillna('').iterrows()):
-        current = str(row.get('categoria_atual_ia') or (row.get(category_col) if category_col else '') or '').strip()
-        suggested = str(row.get('categoria_sugerida_ia') or (row.get(category_col) if category_col else '') or '').strip()
-        action = str(row.get('acao_categoria_ia') or 'MANTER').strip() or 'MANTER'
-        final_category = manual_map.get(position) or suggested or current
-        rows.append(
-            {
-                '__row_index': int(position),
-                'linha': int(position) + 1,
-                'Produto': str(row.get(product_col) or _row_text(row, PRODUCT_COLUMNS) or '').strip(),
-                'Código/SKU': str(row.get(code_col) or _row_text(row, CODE_COLUMNS) or '').strip(),
-                'Categoria atual': current,
-                'Categoria sugerida': suggested,
-                'Categoria corrigida': final_category,
-                'Ação': 'CORRIGIDO MANUALMENTE' if position in manual_map else action,
-                'Confiança': row.get('confianca_categoria_ia', ''),
-                'Motivo': str(row.get('motivo_categoria_ia') or '').strip(),
-            }
-        )
-    return pd.DataFrame(rows)
+def _manual_category_map() -> dict[int, str]:
+    return {}
 
 
-def _filter_category_review(preview: pd.DataFrame) -> pd.DataFrame:
-    if not isinstance(preview, pd.DataFrame) or preview.empty:
-        return preview
-    with st.container(border=True):
-        st.markdown('**Preview de produtos e categorias**')
-        left, middle, right = st.columns([2, 1, 1])
-        search = left.text_input('Filtrar por produto, código ou categoria', key=UNIVERSAL_CATEGORY_SEARCH_KEY, placeholder='Ex.: power bank, cabo, fonte, adaptador...')
-        actions = ['Todas'] + sorted({str(v) for v in preview['Ação'].fillna('').astype(str) if str(v).strip()})
-        action = middle.selectbox('Ação', actions, key=UNIVERSAL_CATEGORY_ACTION_KEY)
-        categories = sorted({str(v).strip() for v in preview['Categoria corrigida'].fillna('').astype(str) if str(v).strip()})
-        category = right.selectbox('Categoria', ['Todas'] + categories, key=UNIVERSAL_CATEGORY_VALUE_KEY)
-        attention_only = st.checkbox('Mostrar somente corrigidos/revisar', value=False, key=UNIVERSAL_CATEGORY_ATTENTION_KEY)
-
-    filtered = preview.copy().fillna('')
-    if search.strip():
-        token = search.strip().casefold()
-        haystack = filtered.drop(columns=['__row_index'], errors='ignore').astype(str).agg(' '.join, axis=1).str.casefold()
-        filtered = filtered[haystack.str.contains(token, regex=False, na=False)]
-    if action != 'Todas':
-        filtered = filtered[filtered['Ação'].astype(str) == action]
-    if category != 'Todas':
-        filtered = filtered[filtered['Categoria corrigida'].astype(str) == category]
-    if attention_only:
-        filtered = filtered[filtered['Ação'].astype(str).ne('MANTER')]
-    return filtered
-
-
-def _category_options(preview: pd.DataFrame) -> list[str]:
-    options = list(DEFAULT_CATEGORY_CATALOG)
-    if isinstance(preview, pd.DataFrame) and not preview.empty:
-        for column in ('Categoria atual', 'Categoria sugerida', 'Categoria corrigida'):
-            if column in preview.columns:
-                options.extend([str(v).strip() for v in preview[column].fillna('').astype(str) if str(v).strip()])
-    return sorted(dict.fromkeys(options))
-
-
-def _editor_row_to_base_index(row: pd.Series, max_rows: int) -> int | None:
-    candidates: list[tuple[object, bool]] = []
-    if '__row_index' in row.index:
-        candidates.append((row.get('__row_index'), False))
-    if 'linha' in row.index:
-        candidates.append((row.get('linha'), True))
-    for value, one_based in candidates:
-        try:
-            if value is None or pd.isna(value):
-                continue
-        except Exception:
-            pass
-        try:
-            number = int(float(str(value).strip()))
-        except Exception:
-            continue
-        index = number - 1 if one_based else number
-        if 0 <= index < max_rows:
-            return index
-    return None
-
-
-def _render_universal_category_review(df: pd.DataFrame) -> pd.DataFrame:
-    if not isinstance(df, pd.DataFrame) or df.empty:
-        return df
-    base = _apply_manual_category_map(df)
-    preview = _build_category_review_preview(base)
-    if preview.empty:
-        return base
-    filtered = _filter_category_review(preview)
-    st.caption(f'Mostrando {len(filtered)} de {len(preview)} produto(s). Edite apenas “Categoria corrigida” e clique no botão de aplicar.')
-    if filtered.empty:
-        st.info('Nenhum produto encontrado com estes filtros.')
-        return base
-    edited = st.data_editor(
-        filtered,
-        key=UNIVERSAL_CATEGORY_EDITOR_KEY,
-        use_container_width=True,
-        hide_index=True,
-        height=430,
-        disabled=[col for col in filtered.columns if col != 'Categoria corrigida'],
-        column_order=['linha', 'Produto', 'Código/SKU', 'Categoria atual', 'Categoria sugerida', 'Categoria corrigida', 'Ação', 'Confiança', 'Motivo'],
-        column_config={
-            'Categoria corrigida': st.column_config.SelectboxColumn('Categoria corrigida', options=_category_options(preview), required=True),
-            'linha': st.column_config.NumberColumn('Linha', disabled=True),
-            'Produto': st.column_config.TextColumn('Produto', disabled=True),
-            'Código/SKU': st.column_config.TextColumn('Código/SKU', disabled=True),
-            'Categoria atual': st.column_config.TextColumn('Categoria atual', disabled=True),
-            'Categoria sugerida': st.column_config.TextColumn('Categoria sugerida', disabled=True),
-            'Ação': st.column_config.TextColumn('Ação', disabled=True),
-            'Confiança': st.column_config.TextColumn('Confiança', disabled=True),
-            'Motivo': st.column_config.TextColumn('Motivo', disabled=True),
-        },
-    )
-    output = base.copy().fillna('')
-    if CATEGORY_COL not in output.columns:
-        output[CATEGORY_COL] = ''
-    pending_map = _manual_category_map()
-    manual_changes = 0
-    for _, row in edited.iterrows():
-        row_index = _editor_row_to_base_index(row, len(output))
-        if row_index is None:
-            continue
-        new_category = str(row.get('Categoria corrigida') or '').strip()
-        if not new_category:
-            continue
-        old_category = str(output.at[output.index[row_index], CATEGORY_COL] or '').strip()
-        if new_category != old_category:
-            output.at[output.index[row_index], CATEGORY_COL] = new_category
-            pending_map[row_index] = new_category
-            manual_changes += 1
-    if st.button('✅ Aplicar correções manuais de categoria', use_container_width=True, key=UNIVERSAL_CATEGORY_APPLY_KEY):
-        if manual_changes:
-            st.session_state[UNIVERSAL_CATEGORY_MANUAL_MAP_KEY] = dict(pending_map)
-            st.success(f'{manual_changes} categoria(s) corrigida(s) manualmente e gravada(s) para o mapeamento.')
-            _audit('universal_category_preview_manual_edits_applied', manual_changes=manual_changes, rows=int(len(output)), manual_map_size=len(pending_map), dedicated_apply_button=True)
-            safe_rerun('universal_category_manual_edits_applied')
-        else:
-            st.info('Nenhuma categoria manual diferente foi informada neste filtro.')
-    if manual_changes:
-        st.caption('Há correções manuais pendentes nesta prévia. Use o botão acima para fixar antes de avançar.')
-    return output
-
-
-def _apply_category_group(source: pd.DataFrame, confidence_min: float) -> pd.DataFrame:
+def _apply_category_group(source: pd.DataFrame, confidence_min: float = CATEGORY_CONFIDENCE_MIN) -> pd.DataFrame:
+    if not _valid_df(source):
+        return source
+    base = source.copy().fillna('')
+    stored = _stored_category_df(base)
+    if isinstance(stored, pd.DataFrame):
+        stats = st.session_state.get(CATEGORY_APPLIED_STATS_KEY)
+        applied = int((stats or {}).get('applied', 0)) if isinstance(stats, Mapping) else 0
+        st.success(f'Categorização sugerida aplicada na planilha: {len(stored)} produto(s), {applied} categoria(s) preenchida(s)/corrigida(s).')
+        return stored
     try:
-        analyzed, stats = classify_dataframe(source)
-        output, applied = apply_category_suggestions(analyzed, confidence_min=float(confidence_min), keep_helper_columns=True)
+        analyzed, stats = classify_dataframe(base)
+        output, applied = apply_category_suggestions(analyzed, confidence_min=CATEGORY_CONFIDENCE_MIN, keep_helper_columns=False, fallback_unclassified=False)
     except Exception as exc:
         st.warning(f'Categorização não aplicada: {exc}')
         _audit('mapear_planilha_grupo_categoria_toggle', enabled=True, grouped_toggle=True, applied=False, error=str(exc)[:220])
-        return source
-    st.success(f'Categorização analisada: {stats.get("total", 0)} produto(s), {applied} categoria(s) aplicada(s).')
-    reviewed = _render_universal_category_review(output)
-    _audit('mapear_planilha_grupo_categoria_toggle', enabled=True, grouped_toggle=True, applied=True, rows=int(len(reviewed)), preview_filter=True, manual_review_enabled=True, manual_map_size=len(_manual_category_map()))
-    return reviewed
+        return base
+    total = int(stats.get('total', len(base)) or len(base))
+    revisar = int(stats.get('revisar', 0) or 0)
+    st.success(f'Categorização pronta: {total} produto(s), {applied} categoria(s) sugerida(s) para aplicar.')
+    if revisar:
+        st.info(f'{revisar} produto(s) ficaram sem sugestão segura e serão mantidos como estão.')
+    if st.button('✅ Aplicar categorização sugerida na planilha', use_container_width=True, key=CATEGORY_APPLY_BUTTON_KEY):
+        st.session_state[CATEGORY_APPLIED_DF_KEY] = output.copy().fillna('')
+        st.session_state[CATEGORY_APPLIED_SIGNATURE_KEY] = _category_signature(base)
+        st.session_state[CATEGORY_APPLIED_STATS_KEY] = {**dict(stats or {}), 'applied': int(applied)}
+        _audit('universal_category_suggested_applied_to_sheet', rows=int(len(output)), columns=int(len(output.columns)), applied_count=int(applied), confidence_min=CATEGORY_CONFIDENCE_MIN, slider_removed=True, manual_grid_removed=True, only_apply_button=True)
+        st.success('Categorização aplicada na planilha. Continue para o mapeamento.')
+        safe_rerun('universal_category_suggested_applied_to_sheet')
+        return output
+    st.info('Clique em **Aplicar categorização sugerida na planilha** para gravar as categorias antes de avançar.')
+    return base
 
 
 def _render_rules_group(source: pd.DataFrame, model: pd.DataFrame) -> tuple[Mapping[str, Any] | None, bool]:
@@ -759,12 +575,7 @@ def _render_ai_tools(source: pd.DataFrame, model: pd.DataFrame, enabled: bool) -
 
 def _render_mapping_ai_toggle() -> bool:
     st.markdown('### 4. Mapeamento')
-    mapping_ai = render_mapping_auto_decision_toggle(
-        widget_key='mapeiaai_universal_toggle_mapping_auto',
-        source='universal_flow',
-        default=False,
-        label='Mapeamento automático com IA',
-    )
+    mapping_ai = render_mapping_auto_decision_toggle(widget_key='mapeiaai_universal_toggle_mapping_auto', source='universal_flow', default=False, label='Mapeamento automático com IA')
     st.session_state['mapeiaai_universal_toggle_mapping_ai'] = bool(mapping_ai)
     _audit('mapear_planilha_grupo_mapeamento_toggle', enabled=bool(mapping_ai), grouped_toggle=True)
     return bool(mapping_ai)
@@ -782,22 +593,26 @@ def _render_bling_destination_notice() -> None:
 
 def _render_options_step(model: pd.DataFrame, source: pd.DataFrame) -> None:
     st.markdown('### 3. Opcionais')
-    st.caption('Esta tela aplica opcionais e permite conferir/corrigir categorias antes do mapeamento.')
+    st.caption('Aplique preço, categorização automática e regras antes do mapeamento.')
     processed = source.copy().fillna('')
     processed, price_enabled = _render_price_group(processed, model)
     category_enabled, category_confidence = _render_category_config()
+    category_base = processed.copy().fillna('')
+    category_ready = True
     if category_enabled:
-        processed = _apply_category_group(processed, category_confidence)
+        processed = _apply_category_group(category_base, category_confidence)
+        category_ready = _category_already_applied(category_base)
     rules_config, rules_enabled = _render_rules_group(processed, model)
-    if st.button('Aplicar opcionais e ir para mapeamento ➡️', use_container_width=True, key='mapeiaai_universal_apply_options'):
-        processed = _apply_manual_category_map(processed) if category_enabled else processed
+    if category_enabled and not category_ready:
+        st.warning('Para avançar, clique primeiro em **Aplicar categorização sugerida na planilha**.')
+    if st.button('Aplicar opcionais e ir para mapeamento ➡️', use_container_width=True, key='mapeiaai_universal_apply_options', disabled=bool(category_enabled and not category_ready)):
         _store_df(UNIVERSAL_PROCESSED_KEY, processed)
         st.session_state[UNIVERSAL_PRICE_ENABLED_KEY] = bool(price_enabled)
         st.session_state[UNIVERSAL_CATEGORY_ENABLED_KEY] = bool(category_enabled)
         st.session_state[UNIVERSAL_RULES_ENABLED_KEY] = bool(rules_enabled)
         st.session_state[UNIVERSAL_RULES_CONFIG_KEY] = dict(rules_config or {})
         _clear_after_options()
-        _audit('universal_options_applied_before_mapping', rows=int(len(processed)), columns=int(len(processed.columns)), price_enabled=price_enabled, category_enabled=category_enabled, rules_enabled=rules_enabled, category_preview_reviewed=category_enabled, manual_category_map_size=len(_manual_category_map()))
+        _audit('universal_options_applied_before_mapping', rows=int(len(processed)), columns=int(len(processed.columns)), price_enabled=price_enabled, category_enabled=category_enabled, rules_enabled=rules_enabled, category_simple_apply_button=True, manual_category_grid_removed=True)
         _set_step(STEP_MAPPING, 'options_applied')
 
 
@@ -813,25 +628,8 @@ def _render_mapping_step(model: pd.DataFrame, processed: pd.DataFrame) -> None:
         st.session_state.pop(UNIVERSAL_MAPPING_CONFIRMED_KEY, None)
         clear_shared_mapping_widgets('mapeiaai_universal')
     _render_ai_tools(processed, model, mapping_ai)
-    mapping = render_shared_contract_mapping(
-        processed,
-        model,
-        signature=signature,
-        mapping_state_key=UNIVERSAL_MAPPING_KEY,
-        engine_state_key=UNIVERSAL_ENGINE_KEY,
-        key_prefix='mapeiaai_universal',
-        ai_enabled=mapping_ai,
-    )
-    mapping, _mapping_rows = build_and_sync_mapping(
-        processed,
-        model,
-        mapping,
-        operation='universal',
-        signature=signature,
-        engine=str(st.session_state.get(UNIVERSAL_ENGINE_KEY) or 'local'),
-        mapping_state_key=UNIVERSAL_MAPPING_KEY,
-        engine_state_key=UNIVERSAL_ENGINE_KEY,
-    )
+    mapping = render_shared_contract_mapping(processed, model, signature=signature, mapping_state_key=UNIVERSAL_MAPPING_KEY, engine_state_key=UNIVERSAL_ENGINE_KEY, key_prefix='mapeiaai_universal', ai_enabled=mapping_ai)
+    mapping, _mapping_rows = build_and_sync_mapping(processed, model, mapping, operation='universal', signature=signature, engine=str(st.session_state.get(UNIVERSAL_ENGINE_KEY) or 'local'), mapping_state_key=UNIVERSAL_MAPPING_KEY, engine_state_key=UNIVERSAL_ENGINE_KEY)
     st.session_state[UNIVERSAL_MAPPING_KEY] = dict(mapping or {})
     st.info('Quando o mapeamento estiver correto, avance. A planilha final só será montada na próxima tela.')
     if st.button('Confirmar mapeamento e ir para montagem ➡️', use_container_width=True, key='mapeiaai_universal_confirm_mapping'):
@@ -857,31 +655,12 @@ def _render_build_step(model: pd.DataFrame, processed: pd.DataFrame) -> None:
     if not run_now and not output_ready:
         st.info('A planilha ainda não foi montada. Clique no botão acima para processar somente nesta etapa.')
         return
-    output = render_shared_final_csv(
-        processed,
-        model,
-        mapping,
-        key_prefix='mapeiaai_universal',
-        file_name='mapeiaai_planilha_final_mapeada.csv',
-        run_smart_features=rules_enabled,
-        smart_rules_config=rules_config if isinstance(rules_config, Mapping) else None,
-    )
+    output = render_shared_final_csv(processed, model, mapping, key_prefix='mapeiaai_universal', file_name='mapeiaai_planilha_final_mapeada.csv', run_smart_features=rules_enabled, smart_rules_config=rules_config if isinstance(rules_config, Mapping) else None)
     if isinstance(output, pd.DataFrame):
         st.session_state[UNIVERSAL_OUTPUT_KEY] = output
         render_congratulations_success(area='UNIVERSAL', context='download_final_planilha_mapeada')
         _render_bling_destination_notice()
-        _audit(
-            'mapear_planilha_preview_download_pronto',
-            rows=int(len(output)),
-            columns=int(len(output.columns)),
-            csv=True,
-            unified_origin=True,
-            price_enabled=bool(st.session_state.get(UNIVERSAL_PRICE_ENABLED_KEY)),
-            category_enabled=bool(st.session_state.get(UNIVERSAL_CATEGORY_ENABLED_KEY)),
-            rules_enabled=rules_enabled,
-            api_send_allowed=_universal_api_send_allowed(),
-            one_step_per_screen=True,
-        )
+        _audit('mapear_planilha_preview_download_pronto', rows=int(len(output)), columns=int(len(output.columns)), csv=True, unified_origin=True, price_enabled=bool(st.session_state.get(UNIVERSAL_PRICE_ENABLED_KEY)), category_enabled=bool(st.session_state.get(UNIVERSAL_CATEGORY_ENABLED_KEY)), rules_enabled=rules_enabled, api_send_allowed=_universal_api_send_allowed(), one_step_per_screen=True)
 
 
 def render_universal_flow() -> None:
@@ -894,53 +673,42 @@ def render_universal_flow() -> None:
         st.caption('Bling conectado: o fluxo agora roda uma etapa por tela para evitar Running... em cada ação.')
     else:
         st.caption('Sem API: uma etapa por tela. A planilha final só é montada depois do mapeamento confirmado.')
-
     current_step = _infer_step()
     st.session_state[UNIVERSAL_STEP_KEY] = current_step
     _render_step_bar(current_step)
     _render_back_button(current_step)
-
     model = _current_df(UNIVERSAL_MODEL_KEY)
     source = _current_df(UNIVERSAL_SOURCE_KEY)
     processed = _current_df(UNIVERSAL_PROCESSED_KEY)
     _summary_card('Modelo', model)
     _summary_card('Origem', source)
     _summary_card('Dados preparados', processed)
-
     if current_step == STEP_MODEL:
         _render_model_step()
         return
-
     if not isinstance(model, pd.DataFrame):
         st.warning('Anexe o modelo antes de continuar.')
         _set_step(STEP_MODEL, 'missing_model')
         return
-
     if current_step == STEP_SOURCE:
         _render_source_step(model)
         return
-
     if not isinstance(source, pd.DataFrame):
         st.warning('Carregue a origem antes de continuar.')
         _set_step(STEP_SOURCE, 'missing_source')
         return
-
     if current_step == STEP_OPTIONS:
         _render_options_step(model, source)
         return
-
     if not isinstance(processed, pd.DataFrame):
         _store_df(UNIVERSAL_PROCESSED_KEY, source)
         processed = source.copy().fillna('')
-
     if current_step == STEP_MAPPING:
         _render_mapping_step(model, processed)
         return
-
     if current_step == STEP_BUILD:
         _render_build_step(model, processed)
         return
-
     if current_step == STEP_DONE:
         _render_build_step(model, processed)
         return
