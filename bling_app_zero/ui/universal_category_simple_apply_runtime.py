@@ -6,7 +6,8 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
-from bling_app_zero.core.category_intelligence import apply_category_suggestions, classify_dataframe
+from bling_app_zero.core.category_intelligence import apply_category_suggestions
+from bling_app_zero.core.openai_category_fallback import classify_dataframe_with_openai
 from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/universal_category_simple_apply_runtime.py'
@@ -67,7 +68,7 @@ def _first_existing_column(df: pd.DataFrame, candidates: tuple[str, ...]) -> str
     return ''
 
 
-def _render_category_live_preview(df: pd.DataFrame, *, applied: int, total: int, revisar: int) -> None:
+def _render_category_live_preview(df: pd.DataFrame, *, applied: int, total: int, revisar: int, openai_applied: int = 0) -> None:
     if not _valid_df(df):
         return
     category_col = CATEGORY_COL if CATEGORY_COL in df.columns else _first_existing_column(df, ('Categoria', 'categoria', 'Categoria Produto', 'Nome da categoria', 'category'))
@@ -83,7 +84,8 @@ def _render_category_live_preview(df: pd.DataFrame, *, applied: int, total: int,
         return
     preview = df.loc[:, columns].head(20).copy().fillna('')
     st.markdown('##### Resultado ao vivo')
-    st.success(f'Categorização automática pronta: {total} produto(s), {applied} categoria(s) sugerida(s) com confiança máxima 1.00.')
+    extra = f' OpenAI real recuperou {openai_applied} categoria(s).' if openai_applied else ''
+    st.success(f'Categorização automática pronta: {total} produto(s), {applied} categoria(s) sugerida(s) com confiança máxima 1.00.{extra}')
     if revisar:
         st.info(f'{revisar} produto(s) sem sugestão máxima serão mantidos como estão.')
     st.dataframe(preview, use_container_width=True, hide_index=True, height=min(520, 72 + (len(preview) * 35)))
@@ -118,7 +120,7 @@ def install_universal_category_simple_apply_runtime() -> bool:
             _clear_category_state()
             st.caption('Desligado. As categorias serão mantidas como vieram da origem/mapeamento.')
             return False, CATEGORY_CONFIDENCE_MIN
-        st.caption('Ligado. O sistema mostra o resultado ao vivo e só grava na planilha quando você clicar no botão abaixo.')
+        st.caption('Ligado. O sistema usa categorização local e OpenAI real quando a sugestão local não atingir 1.00. Só grava quando você clicar no botão abaixo.')
         return True, CATEGORY_CONFIDENCE_MIN
 
     def apply_category_group_simple(source: pd.DataFrame, confidence_min: float = CATEGORY_CONFIDENCE_MIN) -> pd.DataFrame:
@@ -132,12 +134,13 @@ def install_universal_category_simple_apply_runtime() -> bool:
             applied = int((stats or {}).get('applied', 0)) if isinstance(stats, Mapping) else 0
             total = int((stats or {}).get('total', len(stored)) if isinstance(stats, Mapping) else len(stored))
             revisar = int((stats or {}).get('revisar', 0)) if isinstance(stats, Mapping) else 0
-            _render_category_live_preview(stored, applied=applied, total=total, revisar=revisar)
+            openai_applied = int((stats or {}).get('openai_fallback_applied', 0)) if isinstance(stats, Mapping) else 0
+            _render_category_live_preview(stored, applied=applied, total=total, revisar=revisar, openai_applied=openai_applied)
             st.success(f'Categorização sugerida aplicada na planilha: {len(stored)} produto(s), {applied} categoria(s) preenchida(s)/corrigida(s).')
             return stored
 
         try:
-            analyzed, stats = classify_dataframe(base)
+            analyzed, stats = classify_dataframe_with_openai(base)
             output, applied = apply_category_suggestions(
                 analyzed,
                 confidence_min=CATEGORY_CONFIDENCE_MIN,
@@ -151,7 +154,8 @@ def install_universal_category_simple_apply_runtime() -> bool:
 
         total = int(stats.get('total', len(base)) or len(base))
         revisar = int(stats.get('revisar', 0) or 0)
-        _render_category_live_preview(output, applied=int(applied), total=total, revisar=revisar)
+        openai_applied = int(stats.get('openai_fallback_applied', 0) or 0)
+        _render_category_live_preview(output, applied=int(applied), total=total, revisar=revisar, openai_applied=openai_applied)
 
         if st.button('✅ Aplicar categorização sugerida na planilha', use_container_width=True, key=CATEGORY_APPLY_BUTTON_KEY):
             st.session_state[CATEGORY_APPLIED_DF_KEY] = output.copy().fillna('')
@@ -167,6 +171,8 @@ def install_universal_category_simple_apply_runtime() -> bool:
                 manual_grid_removed=True,
                 only_apply_button=True,
                 live_preview=True,
+                openai_fallback=True,
+                openai_fallback_applied=openai_applied,
             )
             st.success('Categorização aplicada na planilha. Continue para o mapeamento.')
             safe_rerun('universal_category_suggested_applied_to_sheet')
@@ -206,6 +212,7 @@ def install_universal_category_simple_apply_runtime() -> bool:
                 category_simple_apply_button=True,
                 manual_category_grid_removed=True,
                 category_live_preview=True,
+                openai_category_fallback=True,
             )
             flow._set_step(flow.STEP_MAPPING, 'options_applied')
 
@@ -226,6 +233,7 @@ def install_universal_category_simple_apply_runtime() -> bool:
             'button_label': 'Aplicar categorização sugerida na planilha',
             'confidence_min_fixed': CATEGORY_CONFIDENCE_MIN,
             'live_preview': True,
+            'openai_category_fallback': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
