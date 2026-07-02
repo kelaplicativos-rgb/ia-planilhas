@@ -153,13 +153,14 @@ def _sync_auto_green_widget_values(
         applied += 1
     st.session_state[sync_key] = auto_signature
     _audit(
-        'auto_green_exact_widget_sync_applied',
+        'auto_green_exact_bind_applied',
         details={
             'applied_fields': int(applied),
             'skipped_fixed_fields': int(skipped_fixed),
             'mapping_state_key': mapping_state_key,
             'auto_green_key': auto_green_key,
             'unique_exact_origin_only': True,
+            'synced_selectbox_widgets': True,
         },
     )
 
