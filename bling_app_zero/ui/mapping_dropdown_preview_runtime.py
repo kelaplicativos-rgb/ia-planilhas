@@ -8,9 +8,10 @@ import pandas as pd
 import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
+from bling_app_zero.universal.internal_columns import clean_model_columns, strip_generated_internal_columns
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/mapping_dropdown_preview_runtime.py'
-PATCH_VERSION = 'dropdown_preview_source_or_model_v15_manual_options_first'
+PATCH_VERSION = 'dropdown_preview_source_or_model_v16_no_generated_model_targets'
 MODEL_PRESERVE_TOGGLE_KEY = 'mapeiaai_model_preserve_data_toggle_v1'
 ORIGIN_REF_PREFIX = 'origem::'
 MODEL_REF_PREFIX = 'modelo::'
@@ -102,9 +103,14 @@ def _source_frame(column: str = '') -> pd.DataFrame | None:
 
 def _model_frame(column: str = '') -> pd.DataFrame | None:
     frame = _CONTEXT.get('target')
+    if isinstance(frame, pd.DataFrame):
+        frame = strip_generated_internal_columns(frame)
     if isinstance(frame, pd.DataFrame) and _df_has_columns(frame) and (not column or _matching_column(frame, column)):
         return frame
-    return _first_session_frame(MODEL_KEYS, column)
+    session_frame = _first_session_frame(MODEL_KEYS, column)
+    if isinstance(session_frame, pd.DataFrame):
+        session_frame = strip_generated_internal_columns(session_frame)
+    return session_frame
 
 
 def _model_preserve_toggle_enabled() -> bool:
@@ -238,7 +244,7 @@ def _ranked_options(options: list[str], labels: dict[str, str], target_name: str
         return _sort_dropdown_options_by_color(clean_options, clean_labels), clean_labels
 
     source_columns = [str(option) for option in options if option not in {EMPTY_OPTION, WRITE_OPTION} and not _is_ref(option)]
-    model_columns = [str(column) for column in getattr(_model_frame(), 'columns', [])]
+    model_columns = clean_model_columns(str(column) for column in getattr(_model_frame(), 'columns', []))
     new_options: list[str] = []
     new_labels: dict[str, str] = {}
 
@@ -277,7 +283,7 @@ def _origin_green_candidates_for_target(target_name: str, source_columns: list[s
     out: list[str] = []
     for column in [str(column) for column in source_columns]:
         if _norm(column) == target_key:
-            out.append(_ref('origem', column))
+            out.append(_ref('origem', column) if _dual_enabled() else column)
     return list(dict.fromkeys(out))
 
 
@@ -287,13 +293,14 @@ def _auto_bind_unique_origin_green_matches(current: dict[str, str], target_colum
     ambiguous = 0
     model_green_only = 0
     preserved = 0
-    for target_name in [str(column) for column in target_columns]:
+    model_columns = clean_model_columns(str(column) for column in getattr(_model_frame(), 'columns', []))
+    for target_name in clean_model_columns(str(column) for column in target_columns):
         current_value = str(updated.get(target_name, '') or '').strip()
         if current_value:
             preserved += 1
             continue
         origin_candidates = _origin_green_candidates_for_target(target_name, source_columns)
-        model_has_same_name = bool(_dual_enabled() and any(_norm(column) == _norm(target_name) for column in [str(column) for column in getattr(_model_frame(), 'columns', [])]))
+        model_has_same_name = bool(_dual_enabled() and any(_norm(column) == _norm(target_name) for column in model_columns))
         if len(origin_candidates) == 1:
             updated[target_name] = origin_candidates[0]
             applied += 1
@@ -302,7 +309,7 @@ def _auto_bind_unique_origin_green_matches(current: dict[str, str], target_colum
         elif model_has_same_name:
             model_green_only += 1
     try:
-        add_audit_event('mapping_auto_bind_unique_origin_green_applied', area='MAPEAMENTO', status='OK', details={'applied': int(applied), 'ambiguous_origin_green_fields': int(ambiguous), 'model_green_only_not_autobound': int(model_green_only), 'preserved_existing_choices': int(preserved), 'rule': 'apenas_um_candidato_verde_da_origem_autovincula', 'responsible_file': RESPONSIBLE_FILE})
+        add_audit_event('mapping_auto_bind_unique_origin_green_applied', area='MAPEAMENTO', status='OK', details={'applied': int(applied), 'ambiguous_origin_green_fields': int(ambiguous), 'model_green_only_not_autobound': int(model_green_only), 'preserved_existing_choices': int(preserved), 'rule': 'apenas_um_candidato_verde_da_origem_autovincula', 'plain_origin_when_model_toggle_off': True, 'responsible_file': RESPONSIBLE_FILE})
     except Exception:
         pass
     return updated, applied
@@ -358,6 +365,19 @@ def _clear_model_refs_when_toggle_disabled(mapping_state_key: str) -> int:
     return changed
 
 
+def _prune_mapping_to_target_columns(mapping_state_key: str, target: pd.DataFrame) -> int:
+    mapping = st.session_state.get(mapping_state_key)
+    if not isinstance(mapping, dict):
+        return 0
+    allowed = set(clean_model_columns(str(column) for column in getattr(target, 'columns', [])))
+    cleaned = {str(target_name): str(value or '') for target_name, value in dict(mapping).items() if str(target_name) in allowed}
+    changed = len(cleaned) != len(mapping)
+    if changed:
+        st.session_state[mapping_state_key] = cleaned
+        add_audit_event('mapping_dropdown_generated_target_columns_pruned', area='MAPEAMENTO', status='OK', details={'removed_fields': int(len(mapping) - len(cleaned)), 'strict_no_generated_columns': True, 'responsible_file': RESPONSIBLE_FILE})
+    return int(len(mapping) - len(cleaned)) if changed else 0
+
+
 def _reset_mapping_widgets_when_toggle_changes(key_prefix: str, signature: str, enabled: bool) -> int:
     marker = f'{MAPPING_TOGGLE_WIDGET_MARKER_KEY}_{key_prefix}_{_norm(signature)[:80]}'
     previous = st.session_state.get(marker)
@@ -386,7 +406,7 @@ def _price_calculator_origin_hint(current: dict[str, str], source: Any, target: 
     actual_source = _matching_column(source, calculated_source)
     if not actual_source:
         return updated
-    target_columns = [str(column) for column in getattr(target, 'columns', [])]
+    target_columns = clean_model_columns(str(column) for column in getattr(target, 'columns', []))
     if not target_column or target_column not in target_columns:
         calculated_key = _norm(calculated_source)
         target_column = next((column for column in target_columns if _norm(column) == calculated_key), '')
@@ -477,10 +497,12 @@ def install_mapping_dropdown_preview_runtime() -> None:
     render_base = shared_mapping.render_shared_contract_mapping
     if not getattr(render_base, '_mapeiaai_dropdown_preview_render', False):
         def render_with_context(source, target, *, signature: str, mapping_state_key: str, engine_state_key: str, key_prefix: str = 'mapeiaai_shared', ai_enabled: bool = True):
+            safe_target = strip_generated_internal_columns(target)
             previous_source, previous_target = _CONTEXT.get('source'), _CONTEXT.get('target')
-            _CONTEXT['source'], _CONTEXT['target'] = source, target
+            _CONTEXT['source'], _CONTEXT['target'] = source, safe_target
             try:
                 dual = _dual_enabled()
+                _prune_mapping_to_target_columns(mapping_state_key, safe_target)
                 _reset_mapping_widgets_when_toggle_changes(key_prefix, signature, dual)
                 if dual:
                     _clear_legacy_unscoped_mapping_values(mapping_state_key)
@@ -488,14 +510,14 @@ def install_mapping_dropdown_preview_runtime() -> None:
                 else:
                     _clear_model_refs_when_toggle_disabled(mapping_state_key)
                     st.caption('Preservar dados do modelo desligado: dropdown mostra somente colunas da Origem.')
-                return render_base(source, target, signature=signature, mapping_state_key=mapping_state_key, engine_state_key=engine_state_key, key_prefix=key_prefix, ai_enabled=ai_enabled)
+                return render_base(source, safe_target, signature=signature, mapping_state_key=mapping_state_key, engine_state_key=engine_state_key, key_prefix=key_prefix, ai_enabled=ai_enabled)
             finally:
                 _CONTEXT['source'], _CONTEXT['target'] = previous_source, previous_target
         render_with_context._mapeiaai_dropdown_preview_render = True
         shared_mapping.render_shared_contract_mapping = render_with_context
 
     shared_mapping._mapeiaai_dropdown_preview_runtime_version = PATCH_VERSION
-    add_audit_event('mapping_dropdown_preview_runtime_installed', area='MAPEAMENTO', status='OK', details={'version': PATCH_VERSION, 'model_options_only_when_preserve_toggle_on': True, 'dropdown_color_rank': True, 'manual_options_first': True, 'auto_green_unique_origin_only': True, 'model_green_visual_only': True, 'ambiguous_origin_green_requires_user_choice': True, 'unscoped_legacy_mapping_cleared': True, 'stale_model_refs_cleared_when_toggle_off': True, 'price_calculator_origin_ref_when_preserve_toggle_on': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('mapping_dropdown_preview_runtime_installed', area='MAPEAMENTO', status='OK', details={'version': PATCH_VERSION, 'model_options_only_when_preserve_toggle_on': True, 'dropdown_color_rank': True, 'manual_options_first': True, 'auto_green_unique_origin_only': True, 'model_green_visual_only': True, 'ambiguous_origin_green_requires_user_choice': True, 'unscoped_legacy_mapping_cleared': True, 'stale_model_refs_cleared_when_toggle_off': True, 'price_calculator_origin_ref_when_preserve_toggle_on': True, 'generated_internal_model_columns_blocked': True, 'plain_origin_auto_green_when_preserve_toggle_off': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_mapping_dropdown_preview_runtime']
