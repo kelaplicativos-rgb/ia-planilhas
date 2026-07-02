@@ -12,10 +12,13 @@ from bling_app_zero.ui.home_wizard_rerun import safe_rerun
 RESPONSIBLE_FILE = 'bling_app_zero/ui/universal_category_simple_apply_runtime.py'
 PATCH_ATTR = '_mapeiaai_universal_category_simple_apply_runtime_v1'
 CATEGORY_CONFIDENCE_MIN = 1.00
+CATEGORY_COL = 'Categoria do produto'
 CATEGORY_APPLIED_DF_KEY = 'mapeiaai_universal_category_applied_df_v1'
 CATEGORY_APPLIED_SIGNATURE_KEY = 'mapeiaai_universal_category_applied_signature_v1'
 CATEGORY_APPLIED_STATS_KEY = 'mapeiaai_universal_category_applied_stats_v1'
 CATEGORY_APPLY_BUTTON_KEY = 'mapeiaai_universal_category_apply_suggested_v1'
+PRODUCT_COLUMNS = ('Nome', 'Descrição', 'Descricao', 'Produto', 'Título', 'Titulo', 'name', 'produto')
+CODE_COLUMNS = ('Código', 'Codigo', 'SKU', 'GTIN', 'EAN', 'ID', 'Id')
 
 
 def _valid_df(value: object) -> bool:
@@ -57,6 +60,35 @@ def _stored_category_df(flow: Any, base: pd.DataFrame) -> pd.DataFrame | None:
     return stored.copy().fillna('') if isinstance(stored, pd.DataFrame) else None
 
 
+def _first_existing_column(df: pd.DataFrame, candidates: tuple[str, ...]) -> str:
+    for column in candidates:
+        if column in df.columns:
+            return column
+    return ''
+
+
+def _render_category_live_preview(df: pd.DataFrame, *, applied: int, total: int, revisar: int) -> None:
+    if not _valid_df(df):
+        return
+    category_col = CATEGORY_COL if CATEGORY_COL in df.columns else _first_existing_column(df, ('Categoria', 'categoria', 'Categoria Produto', 'Nome da categoria', 'category'))
+    if not category_col:
+        return
+    product_col = _first_existing_column(df, PRODUCT_COLUMNS)
+    code_col = _first_existing_column(df, CODE_COLUMNS)
+    columns: list[str] = []
+    for column in (product_col, code_col, category_col):
+        if column and column in df.columns and column not in columns:
+            columns.append(column)
+    if not columns:
+        return
+    preview = df.loc[:, columns].head(20).copy().fillna('')
+    st.markdown('##### Resultado ao vivo')
+    st.success(f'Categorização automática pronta: {total} produto(s), {applied} categoria(s) sugerida(s) com confiança máxima 1.00.')
+    if revisar:
+        st.info(f'{revisar} produto(s) sem sugestão máxima serão mantidos como estão.')
+    st.dataframe(preview, use_container_width=True, hide_index=True, height=min(520, 72 + (len(preview) * 35)))
+
+
 def install_universal_category_simple_apply_runtime() -> bool:
     try:
         from bling_app_zero.ui import universal_flow as flow
@@ -86,7 +118,7 @@ def install_universal_category_simple_apply_runtime() -> bool:
             _clear_category_state()
             st.caption('Desligado. As categorias serão mantidas como vieram da origem/mapeamento.')
             return False, CATEGORY_CONFIDENCE_MIN
-        st.caption('Ligado. O sistema vai sugerir as categorias e só grava na planilha quando você clicar no botão abaixo.')
+        st.caption('Ligado. O sistema mostra o resultado ao vivo e só grava na planilha quando você clicar no botão abaixo.')
         return True, CATEGORY_CONFIDENCE_MIN
 
     def apply_category_group_simple(source: pd.DataFrame, confidence_min: float = CATEGORY_CONFIDENCE_MIN) -> pd.DataFrame:
@@ -98,6 +130,9 @@ def install_universal_category_simple_apply_runtime() -> bool:
         if isinstance(stored, pd.DataFrame):
             stats = st.session_state.get(CATEGORY_APPLIED_STATS_KEY)
             applied = int((stats or {}).get('applied', 0)) if isinstance(stats, Mapping) else 0
+            total = int((stats or {}).get('total', len(stored)) if isinstance(stats, Mapping) else len(stored))
+            revisar = int((stats or {}).get('revisar', 0)) if isinstance(stats, Mapping) else 0
+            _render_category_live_preview(stored, applied=applied, total=total, revisar=revisar)
             st.success(f'Categorização sugerida aplicada na planilha: {len(stored)} produto(s), {applied} categoria(s) preenchida(s)/corrigida(s).')
             return stored
 
@@ -116,9 +151,7 @@ def install_universal_category_simple_apply_runtime() -> bool:
 
         total = int(stats.get('total', len(base)) or len(base))
         revisar = int(stats.get('revisar', 0) or 0)
-        st.success(f'Categorização pronta: {total} produto(s), {applied} categoria(s) sugerida(s) para aplicar.')
-        if revisar:
-            st.info(f'{revisar} produto(s) ficaram sem sugestão segura e serão mantidos como estão.')
+        _render_category_live_preview(output, applied=int(applied), total=total, revisar=revisar)
 
         if st.button('✅ Aplicar categorização sugerida na planilha', use_container_width=True, key=CATEGORY_APPLY_BUTTON_KEY):
             st.session_state[CATEGORY_APPLIED_DF_KEY] = output.copy().fillna('')
@@ -133,6 +166,7 @@ def install_universal_category_simple_apply_runtime() -> bool:
                 slider_removed=True,
                 manual_grid_removed=True,
                 only_apply_button=True,
+                live_preview=True,
             )
             st.success('Categorização aplicada na planilha. Continue para o mapeamento.')
             safe_rerun('universal_category_suggested_applied_to_sheet')
@@ -171,6 +205,7 @@ def install_universal_category_simple_apply_runtime() -> bool:
                 rules_enabled=rules_enabled,
                 category_simple_apply_button=True,
                 manual_category_grid_removed=True,
+                category_live_preview=True,
             )
             flow._set_step(flow.STEP_MAPPING, 'options_applied')
 
@@ -190,6 +225,7 @@ def install_universal_category_simple_apply_runtime() -> bool:
             'manual_grid_removed': True,
             'button_label': 'Aplicar categorização sugerida na planilha',
             'confidence_min_fixed': CATEGORY_CONFIDENCE_MIN,
+            'live_preview': True,
             'responsible_file': RESPONSIBLE_FILE,
         },
     )
