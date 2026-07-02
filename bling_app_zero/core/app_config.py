@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-APP_VERSION = '3.9.35'
+APP_VERSION = "3.9.36"
 
 PAGE_CONFIG = dict(
-    page_title='MapeiaAI',
-    page_icon=':compass:',
-    layout='wide',
-    initial_sidebar_state='collapsed',
+    page_title="MapeiaAI",
+    page_icon=":compass:",
+    layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
-__all__ = ['APP_VERSION', 'PAGE_CONFIG']
+__all__ = ["APP_VERSION", "PAGE_CONFIG"]
