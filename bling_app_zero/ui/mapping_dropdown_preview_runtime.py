@@ -10,7 +10,7 @@ import streamlit as st
 from bling_app_zero.core.audit import add_audit_event
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/mapping_dropdown_preview_runtime.py'
-PATCH_VERSION = 'dropdown_preview_source_or_model_v14_price_calc_origin_ref'
+PATCH_VERSION = 'dropdown_preview_source_or_model_v15_manual_options_first'
 MODEL_PRESERVE_TOGGLE_KEY = 'mapeiaai_model_preserve_data_toggle_v1'
 ORIGIN_REF_PREFIX = 'origem::'
 MODEL_REF_PREFIX = 'modelo::'
@@ -207,11 +207,11 @@ def _preview_label(column: str, current_label: object, target_name: str = '') ->
 
 def _sort_dropdown_options_by_color(options: list[str], labels: dict[str, str]) -> list[str]:
     indexed = {option: index for index, option in enumerate(options)}
-    special = {EMPTY_OPTION, WRITE_OPTION}
+    special_order = {EMPTY_OPTION: 0, WRITE_OPTION: 1}
 
     def key(option: str) -> tuple[int, int, str]:
-        if option in special:
-            return (4, indexed.get(option, 9999), str(option).casefold())
+        if option in special_order:
+            return (-1, special_order[option], str(option).casefold())
         return (_color_rank(labels.get(option, option)), indexed.get(option, 9999), str(labels.get(option, option)).casefold())
 
     return sorted(options, key=key)
@@ -495,7 +495,7 @@ def install_mapping_dropdown_preview_runtime() -> None:
         shared_mapping.render_shared_contract_mapping = render_with_context
 
     shared_mapping._mapeiaai_dropdown_preview_runtime_version = PATCH_VERSION
-    add_audit_event('mapping_dropdown_preview_runtime_installed', area='MAPEAMENTO', status='OK', details={'version': PATCH_VERSION, 'model_options_only_when_preserve_toggle_on': True, 'dropdown_color_rank': True, 'auto_green_unique_origin_only': True, 'model_green_visual_only': True, 'ambiguous_origin_green_requires_user_choice': True, 'unscoped_legacy_mapping_cleared': True, 'stale_model_refs_cleared_when_toggle_off': True, 'price_calculator_origin_ref_when_preserve_toggle_on': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('mapping_dropdown_preview_runtime_installed', area='MAPEAMENTO', status='OK', details={'version': PATCH_VERSION, 'model_options_only_when_preserve_toggle_on': True, 'dropdown_color_rank': True, 'manual_options_first': True, 'auto_green_unique_origin_only': True, 'model_green_visual_only': True, 'ambiguous_origin_green_requires_user_choice': True, 'unscoped_legacy_mapping_cleared': True, 'stale_model_refs_cleared_when_toggle_off': True, 'price_calculator_origin_ref_when_preserve_toggle_on': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_mapping_dropdown_preview_runtime']
