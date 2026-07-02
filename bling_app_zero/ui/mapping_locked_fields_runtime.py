@@ -118,19 +118,12 @@ def _sync_auto_green_widget_values(
     mapping_state_key: str,
     key_prefix: str,
 ) -> None:
-    """Quando o toggle verde é ligado, aplica em todo o contrato, não só na página atual.
-
-    O renderer original pagina os campos de 10 em 10. Por isso esta rotina grava
-    primeiro no estado global `mapping_state_key` para todos os campos do modelo
-    e, além disso, pré-semeia os widgets existentes/futuros dos selectbox. Assim
-    páginas 2, 3, 4... já nascem vinculadas quando o usuário navegar até elas.
-    """
     if not isinstance(source, pd.DataFrame) or not isinstance(target, pd.DataFrame):
         return
     source_columns = [str(column) for column in source.columns]
     target_columns = [str(column) for column in target.columns]
     auto_green_key = _shared_auto_green_state_key(shared_mapping, mapping_state_key, signature)
-    sync_key = f'{auto_green_key}_widget_sync_v2_all_pages'
+    sync_key = f'{auto_green_key}_widget_sync_v3_unlocked_pages_only'
     if not bool(st.session_state.get(auto_green_key)):
         st.session_state.pop(sync_key, None)
         return
@@ -140,12 +133,10 @@ def _sync_auto_green_widget_values(
 
     current = dict(st.session_state.get(mapping_state_key) or {})
     applied = 0
-    skipped_fixed = 0
     synced_widgets = 0
     for index, target_name, source_column in _exact_green_matches(source, target):
         current_value = str(current.get(target_name, '') or '')
-        if _is_fixed_mapping_value(shared_mapping, current_value):
-            skipped_fixed += 1
+        if _is_fixed_mapping_value(shared_mapping, current_value) or current_value == source_column:
             continue
         current[target_name] = source_column
         widget_key = _shared_mapping_widget_key(shared_mapping, key_prefix, signature, index, target_name)
@@ -156,20 +147,7 @@ def _sync_auto_green_widget_values(
         synced_widgets += 1
     st.session_state[mapping_state_key] = current
     st.session_state[sync_key] = auto_signature
-    _audit(
-        'auto_green_exact_bind_applied_all_pages',
-        details={
-            'applied_fields': int(applied),
-            'synced_widgets': int(synced_widgets),
-            'skipped_fixed_fields': int(skipped_fixed),
-            'total_target_fields': int(len(target_columns)),
-            'mapping_state_key': mapping_state_key,
-            'auto_green_key': auto_green_key,
-            'unique_exact_origin_only': True,
-            'synced_selectbox_widgets': True,
-            'all_mapping_pages': True,
-        },
-    )
+    _audit('auto_green_exact_bind_applied_unlocked_pages_only', details={'applied_fields': int(applied), 'synced_widgets': int(synced_widgets), 'total_unlocked_target_fields': int(len(target_columns)), 'mapping_state_key': mapping_state_key, 'auto_green_key': auto_green_key})
 
 
 def _is_import_alert_field(field: object) -> bool:
@@ -203,13 +181,6 @@ def _alert_next_to_ball(label: object) -> str:
 
 
 def _manual_options_first(shared_mapping: Any, options: list[Any]) -> list[str]:
-    """Mantém ações manuais sempre no topo do dropdown.
-
-    O usuário usa muito `(deixar vazio)` e `escrever valor fixo/manual`. Quando
-    existem muitas colunas verdes/amarelas, essas ações ficavam no meio/baixo do
-    selectbox e exigiam rolagem. Aqui elas sempre entram como as duas primeiras
-    opções, antes de qualquer coluna da origem.
-    """
     empty_option = str(getattr(shared_mapping, 'EMPTY_OPTION', '(deixar vazio)'))
     write_option = str(getattr(shared_mapping, 'WRITE_OPTION', '✍️ escrever valor fixo/manual'))
     raw_options = [str(option) for option in list(options or [])]
@@ -235,8 +206,6 @@ def _patch_visual_import_alerts(shared_mapping: Any) -> None:
     original_ranked_options = getattr(shared_mapping, '_ranked_source_options', None)
 
     def render_bling_import_guard_visual_only(*_args: Any, **_kwargs: Any) -> None:
-        # Alerta agora é somente visual no farol/dropdown. Sem erro, sem aviso textual,
-        # sem bloquear e sem orientar o usuário a preencher: a decisão final é manual.
         return None
 
     if callable(original_guard):
@@ -267,17 +236,7 @@ def _patch_visual_import_alerts(shared_mapping: Any) -> None:
         shared_mapping._ranked_source_options = ranked_source_options_with_visual_alert
 
     shared_mapping._mapeiaai_import_alert_visual_patched = True
-    _audit(
-        'mapping_import_alert_visual_only_installed',
-        details={
-            'alert_mark': ALERT_MARK,
-            'visual_only': True,
-            'manual_options_first': True,
-            'patched_guard': callable(original_guard),
-            'patched_confidence_flag': callable(original_confidence_flag),
-            'patched_ranked_options': callable(original_ranked_options),
-        },
-    )
+    _audit('mapping_import_alert_visual_only_installed', details={'alert_mark': ALERT_MARK, 'visual_only': True, 'manual_options_first': True, 'patched_guard': callable(original_guard), 'patched_confidence_flag': callable(original_confidence_flag), 'patched_ranked_options': callable(original_ranked_options)})
 
 
 def _fixed_display(value: str) -> str:
@@ -287,7 +246,7 @@ def _fixed_display(value: str) -> str:
     return text or '(vazio)'
 
 
-def _locked_fields(st, key_prefix: str, target: pd.DataFrame) -> dict[str, dict[str, str]]:
+def _locked_fields(st: Any, key_prefix: str, target: pd.DataFrame) -> dict[str, dict[str, str]]:
     raw = st.session_state.get(f'{key_prefix}_locked_mapping_fields_v1') or st.session_state.get(LOCKED_MAPPING_FIELDS_KEY) or {}
     if not isinstance(raw, dict) or not isinstance(target, pd.DataFrame):
         return {}
@@ -299,25 +258,53 @@ def _locked_fields(st, key_prefix: str, target: pd.DataFrame) -> dict[str, dict[
             continue
         if isinstance(data, dict):
             value = str(data.get('value') or '')
-            reason = str(data.get('reason') or 'Sugestão das regras inteligentes')
+            reason = str(data.get('reason') or 'Regra inteligente')
             kind = str(data.get('kind') or 'rule')
         else:
             value = str(data or '')
-            reason = 'Sugestão das regras inteligentes'
+            reason = 'Regra inteligente'
             kind = 'rule'
-        out[field_name] = {'value': value, 'reason': reason, 'kind': kind}
+        if value:
+            out[field_name] = {'value': value, 'reason': reason, 'kind': kind}
     return out
 
 
-def _render_suggested_summary(st, suggested: dict[str, dict[str, str]]) -> None:
-    if not suggested:
+def _render_locked_summary(st: Any, locked: dict[str, dict[str, str]]) -> None:
+    if not locked:
         return
-    st.info('💡 Alguns campos receberam sugestão das Regras e recursos inteligentes, mas continuam editáveis. Você pode deixar vazio, trocar a origem ou escrever valor fixo.')
+    st.info('🔒 Campos controlados pelas Regras e recursos inteligentes ficam somente para visualização no mapeamento. O usuário não pode trocar, deixar vazio nem escrever outro valor nesses campos.')
     rows = []
-    for field, data in suggested.items():
-        rows.append({'Campo com sugestão': field, 'Origem/valor sugerido': _fixed_display(data.get('value', '')), 'Motivo': data.get('reason', '')})
-    with st.expander('Ver sugestões das regras inteligentes', expanded=False):
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=min(320, 80 + len(rows) * 35))
+    for field, data in locked.items():
+        rows.append({'Campo travado': field, 'Origem/valor aplicado': _fixed_display(data.get('value', '')), 'Motivo': data.get('reason', '')})
+    with st.expander('Ver campos travados pelas regras inteligentes', expanded=True):
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=min(360, 80 + len(rows) * 35))
+
+
+def _target_without_locked(target: pd.DataFrame, locked: dict[str, dict[str, str]]) -> pd.DataFrame:
+    if not isinstance(target, pd.DataFrame) or not locked:
+        return target
+    columns = [column for column in target.columns if str(column) not in locked]
+    return target.loc[:, columns].copy() if columns else pd.DataFrame(columns=[])
+
+
+def _clear_locked_widget_state(st: Any, shared_mapping: Any, target: pd.DataFrame, locked: dict[str, dict[str, str]], *, key_prefix: str, signature: str) -> None:
+    if not isinstance(target, pd.DataFrame) or not locked:
+        return
+    all_target_columns = [str(column) for column in target.columns]
+    for field in locked:
+        if field not in all_target_columns:
+            continue
+        index = all_target_columns.index(field)
+        st.session_state.pop(_shared_mapping_widget_key(shared_mapping, key_prefix, signature, index, field), None)
+        st.session_state.pop(_shared_fixed_widget_key(shared_mapping, key_prefix, signature, index, field), None)
+
+
+def _apply_locked_mapping_state(st: Any, mapping_state_key: str, locked: dict[str, dict[str, str]]) -> dict[str, str]:
+    current = dict(st.session_state.get(mapping_state_key) or {})
+    for field, data in locked.items():
+        current[str(field)] = str(data.get('value') or '')
+    st.session_state[mapping_state_key] = current
+    return current
 
 
 def install() -> None:
@@ -334,7 +321,7 @@ def install() -> None:
         return
     original = shared_mapping.render_shared_contract_mapping
 
-    def render_shared_contract_mapping_suggested(
+    def render_shared_contract_mapping_locked(
         source: pd.DataFrame,
         target: pd.DataFrame,
         *,
@@ -344,45 +331,47 @@ def install() -> None:
         key_prefix: str = 'mapeiaai_shared',
         ai_enabled: bool = True,
     ) -> dict[str, str]:
-        suggested = _locked_fields(st, key_prefix, target)
-        if suggested:
-            current = dict(st.session_state.get(mapping_state_key) or {})
-            # Só pré-preenche campos realmente inexistentes no estado.
-            # Se o campo já existe no mapeamento, inclusive vazio, isso é decisão do usuário/fluxo.
-            for field, data in suggested.items():
-                if field in current:
-                    continue
-                value = str(data.get('value') or '').strip()
-                if value:
-                    current[field] = value
-            st.session_state[mapping_state_key] = current
-            _render_suggested_summary(st, suggested)
+        locked = _locked_fields(st, key_prefix, target)
+        if locked:
+            _apply_locked_mapping_state(st, mapping_state_key, locked)
+            _clear_locked_widget_state(st, shared_mapping, target, locked, key_prefix=key_prefix, signature=signature)
+            _render_locked_summary(st, locked)
 
+        unlocked_target = _target_without_locked(target, locked)
         _sync_auto_green_widget_values(
             st,
             shared_mapping,
             source,
-            target,
+            unlocked_target,
             signature=signature,
             mapping_state_key=mapping_state_key,
             key_prefix=key_prefix,
         )
 
+        if isinstance(unlocked_target, pd.DataFrame) and len(unlocked_target.columns) == 0:
+            final_mapping = _apply_locked_mapping_state(st, mapping_state_key, locked)
+            _audit('mapping_rule_locked_fields_only_read_only', details={'locked_fields': list(locked.keys()), 'mapping_state_key': mapping_state_key})
+            return dict(final_mapping or {})
+
         edited = original(
             source,
-            target,
+            unlocked_target,
             signature=signature,
             mapping_state_key=mapping_state_key,
             engine_state_key=engine_state_key,
             key_prefix=key_prefix,
             ai_enabled=ai_enabled,
         )
-        _audit('mapping_rule_suggestions_applied_editable', details={'suggested_fields': list(suggested.keys()), 'mapping_state_key': mapping_state_key})
-        return dict(edited or {})
+        final_mapping = dict(edited or {})
+        for field, data in locked.items():
+            final_mapping[str(field)] = str(data.get('value') or '')
+        st.session_state[mapping_state_key] = final_mapping
+        _audit('mapping_rule_locked_fields_applied_read_only', details={'locked_fields': list(locked.keys()), 'unlocked_fields_count': int(len(unlocked_target.columns)) if isinstance(unlocked_target, pd.DataFrame) else 0, 'mapping_state_key': mapping_state_key, 'read_only': True, 'user_can_edit_locked_fields': False})
+        return dict(final_mapping or {})
 
-    shared_mapping.render_shared_contract_mapping = render_shared_contract_mapping_suggested
+    shared_mapping.render_shared_contract_mapping = render_shared_contract_mapping_locked
     shared_mapping._mapeiaai_locked_fields_runtime_patched = True
-    _audit('mapping_locked_fields_runtime_installed', details={'strategy': 'rule_suggestions_respect_existing_blank_mapping_and_auto_green_widget_sync_all_pages_manual_options_first'})
+    _audit('mapping_locked_fields_runtime_installed', details={'strategy': 'smart_rule_fields_are_read_only_and_removed_from_editable_selectboxes', 'user_can_edit_locked_fields': False})
 
 
 __all__ = ['install']
