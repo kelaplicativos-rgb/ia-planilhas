@@ -60,6 +60,44 @@ class TestMappingPreserveToggle(unittest.TestCase):
         self.assertIn('modelo::ID Produto', options)
         self.assertIn('Modelo anexado', labels['modelo::ID Produto'])
 
+    def test_toggle_on_keeps_gold_fixed_value_readable_in_dropdown(self) -> None:
+        self.session[dropdown_runtime.MODEL_PRESERVE_TOGGLE_KEY] = True
+        fixed = f'{dropdown_runtime.FIXED_VALUE_PREFIX}UN'
+
+        options, labels = dropdown_runtime._ranked_options(
+            [fixed, 'Nome', dropdown_runtime.EMPTY_OPTION, dropdown_runtime.WRITE_OPTION],
+            {
+                fixed: '🟠 Regra inteligente: FIXO: UN',
+                'Nome': '🟢 Nome',
+                dropdown_runtime.EMPTY_OPTION: dropdown_runtime.EMPTY_OPTION,
+                dropdown_runtime.WRITE_OPTION: dropdown_runtime.WRITE_OPTION,
+            },
+            'Unidade',
+            fixed,
+        )
+
+        self.assertIn(fixed, options)
+        self.assertNotIn(f'origem::{fixed}', options)
+        self.assertEqual(labels[fixed], '🟠 Valor fixo: UN')
+
+    def test_origin_dropdown_label_is_compact_after_origin_prefix(self) -> None:
+        self.session[dropdown_runtime.MODEL_PRESERVE_TOGGLE_KEY] = True
+
+        options, labels = dropdown_runtime._ranked_options(
+            ['Nome', dropdown_runtime.EMPTY_OPTION, dropdown_runtime.WRITE_OPTION],
+            {
+                'Nome': '🟢 Nome',
+                dropdown_runtime.EMPTY_OPTION: dropdown_runtime.EMPTY_OPTION,
+                dropdown_runtime.WRITE_OPTION: dropdown_runtime.WRITE_OPTION,
+            },
+            'Nome',
+            '',
+        )
+
+        self.assertIn('origem::Nome', options)
+        self.assertTrue(labels['origem::Nome'].startswith('🟢 Nome:'))
+        self.assertNotIn('Origem >', labels['origem::Nome'])
+
     def test_toggle_on_hides_generated_model_columns_from_dropdown(self) -> None:
         self.session[dropdown_runtime.MODEL_PRESERVE_TOGGLE_KEY] = True
         dropdown_runtime._CONTEXT['target'] = pd.DataFrame(
