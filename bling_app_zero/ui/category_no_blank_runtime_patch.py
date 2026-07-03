@@ -7,6 +7,7 @@ import streamlit as st
 
 from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.core.category_intelligence import PROVISIONAL_CATEGORY
+from bling_app_zero.ui.mapping_visibility_runtime import install_mapping_visibility_runtime
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/category_no_blank_runtime_patch.py'
 PATCH_ATTR = '_mapeiaai_category_no_blank_runtime_patch_v1'
@@ -38,6 +39,7 @@ def _count_unclassified(df: pd.DataFrame, category_col: str) -> int:
 
 
 def install_category_no_blank_runtime_patch() -> bool:
+    install_mapping_visibility_runtime()
     try:
         from bling_app_zero.ui import universal_category_simple_apply_runtime as runtime
     except Exception as exc:
@@ -88,7 +90,7 @@ def install_category_no_blank_runtime_patch() -> bool:
 
     runtime._render_category_live_preview = render_category_live_preview_no_blank
     setattr(runtime, PATCH_ATTR, True)
-    _audit('category_no_blank_runtime_patch_installed', fallback_unclassified_forced=True, preview_message_fixed=True)
+    _audit('category_no_blank_runtime_patch_installed', fallback_unclassified_forced=True, preview_message_fixed=True, mapping_visibility_runtime=True)
     return True
 
 
