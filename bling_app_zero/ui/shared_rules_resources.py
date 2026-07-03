@@ -174,7 +174,7 @@ def _build_locked_mapping_fields(source: pd.DataFrame, model: pd.DataFrame, conf
 
     if bool(config.get('fill_category_aliases')):
         category_source = _first_source_column(source, ('categoria do produto', 'categoria', 'category'))
-        _add_locks(locked, _target_columns(model, _is_category_column), category_source, 'Categoria preenchida pelas regras inteligentes', 'category')
+        _add_locks(locked, _target_columns(model, _is_category_column), category_source, 'Categoria existente da origem usada quando o campo final estiver vazio', 'category')
 
     if bool(config.get('apply_unit_default')):
         _add_locks(locked, _target_columns(model, _is_unit_column), _fixed(config.get('unit_value')), 'Unidade definida pelas regras inteligentes', 'unit')
@@ -244,7 +244,8 @@ def render_rules_resources_panel(
         validate_gtin = st.checkbox('Validar GTIN/EAN e limpar inválidos', value=bool(current.get('validate_gtin')), key=f'{key_prefix}_rules_validate_gtin')
 
         st.markdown('#### Categoria')
-        fill_category_aliases = st.checkbox('Preencher categoria vazia usando categoria da origem', value=bool(current.get('fill_category_aliases')), key=f'{key_prefix}_rules_fill_category_aliases')
+        fill_category_aliases = st.checkbox('Usar categoria já existente da origem para preencher vazios', value=bool(current.get('fill_category_aliases')), key=f'{key_prefix}_rules_fill_category_aliases')
+        st.caption('Esta regra não gera categoria nova. Para sugerir/corrigir categorias pelo sistema, use o toggle Categorização automática.')
 
         st.markdown('#### Valores padrão opcionais')
         apply_unit_default = st.checkbox('Unidade', value=bool(current.get('apply_unit_default')), key=f'{key_prefix}_rules_apply_unit_default')
@@ -304,6 +305,8 @@ def render_rules_resources_panel(
             'smart_mapping_suggestions': locked_fields,
             'locked_mapping_fields': locked_fields,
             'user_can_override_smart_rules_in_mapping': True,
+            'category_origin_alias_only': bool(fill_category_aliases),
+            'category_alias_does_not_generate_categories': True,
             'image_columns_detected': image_cols,
             'gtin_columns_detected': gtin_cols,
             'config': config,
