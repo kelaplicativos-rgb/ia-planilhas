@@ -1,6 +1,7 @@
 import pandas as pd
 
 from bling_app_zero.core.category_finalizer import finalize_categories_for_output
+from bling_app_zero.core.final_output_engine import build_final_output
 
 
 def _run(rows):
@@ -78,3 +79,33 @@ def test_repetidor_wifi_nao_vira_antena_tv():
     ])
     assert categories == ['Redes e internet']
     assert report['guard_fixed'] >= 1
+
+
+def test_regra_categoria_da_origem_nao_gera_categoria_automatica():
+    source = pd.DataFrame([
+        {'Descrição': 'Fone Bluetooth TWS Preto', 'Categoria': 'Categoria vinda da origem'},
+        {'Descrição': 'Power Bank 10000mAh', 'Categoria': ''},
+    ])
+    model = pd.DataFrame(columns=['Descrição', 'Categoria do produto'])
+    result = build_final_output(
+        source,
+        model,
+        {'Descrição': 'Descrição', 'Categoria do produto': ''},
+        operation='universal',
+        run_smart_features=True,
+        smart_rules_config={
+            'enabled': True,
+            'fill_category_aliases': True,
+            'clean_text': False,
+            'remove_empty_markers': False,
+            'normalize_images': False,
+            'dedupe_images': False,
+            'limit_images': False,
+            'validate_gtin': False,
+        },
+    )
+
+    assert result.output is not None
+    assert result.output['Categoria do produto'].tolist() == ['Categoria vinda da origem', '']
+    assert 'category_finalizer' not in (result.smart_rules_report or {})
+    assert 'Produtos não classificados' not in result.output['Categoria do produto'].tolist()
