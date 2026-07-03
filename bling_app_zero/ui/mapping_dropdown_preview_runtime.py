@@ -11,7 +11,7 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.universal.internal_columns import clean_model_columns, strip_generated_internal_columns
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/mapping_dropdown_preview_runtime.py'
-PATCH_VERSION = 'dropdown_preview_source_or_model_v16_no_generated_model_targets'
+PATCH_VERSION = 'dropdown_preview_source_or_model_v17_compact_gold_fixed_labels'
 MODEL_PRESERVE_TOGGLE_KEY = 'mapeiaai_model_preserve_data_toggle_v1'
 ORIGIN_REF_PREFIX = 'origem::'
 MODEL_REF_PREFIX = 'modelo::'
@@ -38,6 +38,17 @@ def _clean(value: object) -> str:
     text = str(value or '').replace('\t', ' ').replace('\n', ' ').strip()
     while '  ' in text:
         text = text.replace('  ', ' ')
+    return text
+
+
+def _is_fixed_value(value: object) -> bool:
+    return str(value or '').strip().startswith(FIXED_VALUE_PREFIX)
+
+
+def _fixed_display(value: object) -> str:
+    text = str(value or '').strip()
+    if text.startswith(FIXED_VALUE_PREFIX):
+        return text[len(FIXED_VALUE_PREFIX):].strip()
     return text
 
 
@@ -156,7 +167,7 @@ def _short(values: list[str], size: int = 72) -> str:
 
 def _icon(label: object) -> str:
     text = str(label or '').strip()
-    for mark in ('🟢', '🟡', '🔴', '⚪'):
+    for mark in ('🟢', '🟠', '🟡', '🔴', '⚪'):
         if text.startswith(mark):
             return mark
     return '🟡'
@@ -166,13 +177,15 @@ def _color_rank(label: object) -> int:
     icon = _icon(label)
     if icon == '🟢':
         return 0
-    if icon == '🟡':
+    if icon == '🟠':
         return 1
-    if icon == '⚪':
+    if icon == '🟡':
         return 2
-    if icon == '🔴':
+    if icon == '⚪':
         return 3
-    return 4
+    if icon == '🔴':
+        return 4
+    return 5
 
 
 def _status_text(status: str, column: str) -> str:
@@ -181,7 +194,27 @@ def _status_text(status: str, column: str) -> str:
     return 'nao existe' if status == 'missing' else ''
 
 
+def _compact_dropdown_label(label: object) -> str:
+    text = str(label or '').strip()
+    if not text or text in {EMPTY_OPTION, WRITE_OPTION}:
+        return text
+    for mark in ('🟢', '🟠', '🟡', '⚪', '🔴'):
+        prefix = f'{mark} Origem > '
+        if text.startswith(prefix):
+            return f'{mark} {text[len(prefix):].strip()}'
+    if text.startswith('Origem > '):
+        return text[len('Origem > '):].strip()
+    return text
+
+
+def _compact_labels(labels: dict[str, str]) -> dict[str, str]:
+    return {str(option): _compact_dropdown_label(label) for option, label in dict(labels or {}).items()}
+
+
 def _preview_for(kind: str, column: str, icon: str) -> str:
+    if kind == 'fixo':
+        fixed_value = _fixed_display(column)
+        return f'{icon} Valor fixo: {fixed_value}' if fixed_value else f'{icon} Valor fixo vazio'
     if kind == 'modelo' and not _dual_enabled():
         status, actual_column, values = _column_state(_source_frame(column), column, limit=2)
         if values:
@@ -198,6 +231,8 @@ def _preview_for(kind: str, column: str, icon: str) -> str:
 def _preview_label(column: str, current_label: object, target_name: str = '') -> str:
     icon = _icon(current_label)
     kind, clean_column = _split_ref(column)
+    if kind == 'fixo':
+        return _preview_for(kind, clean_column, icon)
     if _is_ref(column):
         return _preview_for(kind, clean_column, icon)
     status, actual_column, values = _column_state(_source_frame(clean_column), clean_column, limit=2)
@@ -241,12 +276,20 @@ def _ranked_options(options: list[str], labels: dict[str, str], target_name: str
             if plain_option not in clean_options:
                 clean_options.append(plain_option)
                 clean_labels[plain_option] = _preview_label(plain_option, labels.get(option, labels.get(plain_option, '🟡 ' + plain_option)), target_name)
-        return _sort_dropdown_options_by_color(clean_options, clean_labels), clean_labels
+        compact_labels = _compact_labels(clean_labels)
+        return _sort_dropdown_options_by_color(clean_options, compact_labels), compact_labels
 
-    source_columns = [str(option) for option in options if option not in {EMPTY_OPTION, WRITE_OPTION} and not _is_ref(option)]
+    raw_options = [str(option) for option in list(options or [])]
+    fixed_options = [option for option in raw_options if _is_fixed_value(option)]
+    source_columns = [option for option in raw_options if option not in {EMPTY_OPTION, WRITE_OPTION} and not _is_ref(option) and not _is_fixed_value(option)]
     model_columns = clean_model_columns(str(column) for column in getattr(_model_frame(), 'columns', []))
     new_options: list[str] = []
     new_labels: dict[str, str] = {}
+
+    for option in fixed_options:
+        if option not in new_options:
+            new_options.append(option)
+            new_labels[option] = _preview_label(option, labels.get(option, '🟠 ' + _fixed_display(option)), target_name)
 
     for column in source_columns:
         token = _ref('origem', column)
@@ -262,7 +305,10 @@ def _ranked_options(options: list[str], labels: dict[str, str], target_name: str
             new_labels[token] = _preview_label(token, icon + ' ' + column, target_name)
 
     current_value = str(current_value or '').strip()
-    if _is_ref(current_value) and current_value not in new_options:
+    if _is_fixed_value(current_value) and current_value not in new_options:
+        new_options.append(current_value)
+        new_labels[current_value] = _preview_label(current_value, '🟠 ' + _fixed_display(current_value), target_name)
+    elif _is_ref(current_value) and current_value not in new_options:
         kind, column = _split_ref(current_value)
         token = _ref(kind, column)
         new_options.append(token)
@@ -273,7 +319,8 @@ def _ranked_options(options: list[str], labels: dict[str, str], target_name: str
             new_options.append(special)
             new_labels[special] = special
 
-    return _sort_dropdown_options_by_color(new_options, new_labels), new_labels
+    compact_labels = _compact_labels(new_labels)
+    return _sort_dropdown_options_by_color(new_options, compact_labels), compact_labels
 
 
 def _origin_green_candidates_for_target(target_name: str, source_columns: list[str]) -> list[str]:
@@ -517,7 +564,7 @@ def install_mapping_dropdown_preview_runtime() -> None:
         shared_mapping.render_shared_contract_mapping = render_with_context
 
     shared_mapping._mapeiaai_dropdown_preview_runtime_version = PATCH_VERSION
-    add_audit_event('mapping_dropdown_preview_runtime_installed', area='MAPEAMENTO', status='OK', details={'version': PATCH_VERSION, 'model_options_only_when_preserve_toggle_on': True, 'dropdown_color_rank': True, 'manual_options_first': True, 'auto_green_unique_origin_only': True, 'model_green_visual_only': True, 'ambiguous_origin_green_requires_user_choice': True, 'unscoped_legacy_mapping_cleared': True, 'stale_model_refs_cleared_when_toggle_off': True, 'price_calculator_origin_ref_when_preserve_toggle_on': True, 'generated_internal_model_columns_blocked': True, 'plain_origin_auto_green_when_preserve_toggle_off': True, 'responsible_file': RESPONSIBLE_FILE})
+    add_audit_event('mapping_dropdown_preview_runtime_installed', area='MAPEAMENTO', status='OK', details={'version': PATCH_VERSION, 'model_options_only_when_preserve_toggle_on': True, 'dropdown_color_rank': True, 'gold_options_after_green': True, 'compact_origin_dropdown_labels': True, 'fixed_values_decoded_in_dropdown': True, 'manual_options_first': True, 'auto_green_unique_origin_only': True, 'model_green_visual_only': True, 'ambiguous_origin_green_requires_user_choice': True, 'unscoped_legacy_mapping_cleared': True, 'stale_model_refs_cleared_when_toggle_off': True, 'price_calculator_origin_ref_when_preserve_toggle_on': True, 'generated_internal_model_columns_blocked': True, 'plain_origin_auto_green_when_preserve_toggle_off': True, 'responsible_file': RESPONSIBLE_FILE})
 
 
 __all__ = ['install_mapping_dropdown_preview_runtime']
