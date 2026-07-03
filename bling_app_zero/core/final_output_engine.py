@@ -77,10 +77,10 @@ def _has_category_helper_columns(df: pd.DataFrame) -> bool:
 
 
 def _category_finalizer_allowed(source: pd.DataFrame, rules_config: Mapping[str, Any]) -> bool:
-    # Sem categorização inteligente/regras, categoria mapeada é decisão do usuário.
-    # Com helper da categorização ou regra de categoria ligada, o sistema pode aplicar
-    # o finalizador para manter a categoria conforme definido pelo próprio sistema.
-    return bool(_has_category_helper_columns(source) or (bool(rules_config.get('enabled')) and bool(rules_config.get('fill_category_aliases'))))
+    # A regra fill_category_aliases só aproveita categoria já existente na origem.
+    # Ela não pode liberar geração/correção automática. O finalizador só roda
+    # quando a etapa de Categorização automática produziu colunas auxiliares.
+    return bool(_has_category_helper_columns(source))
 
 
 def _first_source_category_column(source: pd.DataFrame) -> str | None:
@@ -281,7 +281,7 @@ def build_final_output(
         message='Modelo anexado preenchido com dados da origem.',
         warnings=tuple(),
     )
-    return FinalOutputCommandResult(FinalOutputState(request=request, result=result), output=output, csv_bytes=csv_data, smartcore_result=smartcore_result, smart_rules_report=smart_rules_report)
+    return FinalOutputCommandResult(FinalOutputState(request=request, result=result), output=output, csv_bytes=csv_data, smartcore_result=smartcore_result, errors=(), smart_rules_report=smart_rules_report)
 
 
 def build_final_output_report(result: FinalOutputCommandResult) -> dict[str, Any]:
