@@ -261,7 +261,7 @@ def render_rules_resources_panel(
         depth_value = st.text_input('Profundidade padrão', value=str(current.get('depth_value') or '16'), key=f'{key_prefix}_rules_depth_value')
 
         st.markdown('#### Garantias do fluxo universal')
-        st.caption('Campos tratados por estas regras serão bloqueados no mapeamento manual para evitar alteração acidental.')
+        st.caption('Campos tratados por estas regras aparecerão no mapeamento como opção dourada. O usuário pode manter a sugestão ou escolher qualquer outro campo.')
 
     config = {
         **default_smart_rules_config(),
@@ -290,7 +290,7 @@ def render_rules_resources_panel(
     locked_fields = _build_locked_mapping_fields(source, model, config)
     _store_locked_fields(key_prefix, locked_fields)
     if locked_fields:
-        st.info('Campos bloqueados no mapeamento por regras inteligentes: ' + ', '.join(locked_fields.keys()))
+        st.info('🟠 Sugestões douradas criadas pelas regras inteligentes no mapeamento: ' + ', '.join(locked_fields.keys()))
     st.session_state[state_key] = config
     st.session_state[previous_enabled_key] = True
     add_audit_event(
@@ -301,7 +301,9 @@ def render_rules_resources_panel(
             'responsible_file': RESPONSIBLE_FILE,
             'enabled': True,
             'all_rules_opt_in': True,
+            'smart_mapping_suggestions': locked_fields,
             'locked_mapping_fields': locked_fields,
+            'user_can_override_smart_rules_in_mapping': True,
             'image_columns_detected': image_cols,
             'gtin_columns_detected': gtin_cols,
             'config': config,
