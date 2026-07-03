@@ -8,7 +8,7 @@ from bling_app_zero.core.audit import add_audit_event
 from bling_app_zero.universal.internal_columns import is_generated_internal_column
 
 RESPONSIBLE_FILE = 'bling_app_zero/ui/mapping_visibility_runtime.py'
-PATCH_ATTR = '_mapeiaai_mapping_visibility_runtime_v1'
+PATCH_ATTR = '_mapeiaai_mapping_visibility_runtime_v2_gold_autonomy'
 
 
 def _audit(event: str, **details: object) -> None:
@@ -29,13 +29,16 @@ def _clean_columns(values: list[str]) -> list[str]:
     return [str(v) for v in list(values or []) if not is_generated_internal_column(v)]
 
 
-def install_mapping_visibility_runtime() -> bool:
+def _install_gold_smart_rule_options() -> None:
     try:
-        from bling_app_zero.ui import mapping_locked_fields_runtime
-        mapping_locked_fields_runtime.install()
+        from bling_app_zero.ui.mapping_smart_rules_autonomy_runtime import install_mapping_smart_rules_autonomy_runtime
+        install_mapping_smart_rules_autonomy_runtime()
     except Exception as exc:
-        _audit('mapping_locked_fields_install_warning', error=str(exc)[:220])
+        _audit('mapping_smart_rules_autonomy_install_warning', error=str(exc)[:220])
 
+
+def install_mapping_visibility_runtime() -> bool:
+    _install_gold_smart_rule_options()
     try:
         from bling_app_zero.ui import shared_mapping as sm
     except Exception as exc:
@@ -43,6 +46,7 @@ def install_mapping_visibility_runtime() -> bool:
         return False
 
     if getattr(sm, PATCH_ATTR, False):
+        _install_gold_smart_rule_options()
         return False
 
     original_render = sm.render_shared_contract_mapping
@@ -59,6 +63,7 @@ def install_mapping_visibility_runtime() -> bool:
         key_prefix: str = 'mapeiaai_shared',
         ai_enabled: bool = True,
     ) -> dict[str, str]:
+        _install_gold_smart_rule_options()
         clean_source = _clean_df(source)
         clean_target = _clean_df(target)
         try:
@@ -95,7 +100,7 @@ def install_mapping_visibility_runtime() -> bool:
 
     sm.render_shared_contract_mapping = render_without_internal_columns
     setattr(sm, PATCH_ATTR, True)
-    _audit('mapping_visibility_runtime_installed', hide_internal_columns=True, read_only_rule_fields=True)
+    _audit('mapping_visibility_runtime_installed', hide_internal_columns=True, gold_smart_rule_options=True, user_can_override_smart_rules=True)
     return True
 
 
