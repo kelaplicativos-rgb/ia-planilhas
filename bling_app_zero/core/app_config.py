@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-APP_VERSION = "3.9.45"
+APP_VERSION = "3.9.46"
 
 PAGE_CONFIG = dict(
     page_title="MapeiaAI",
