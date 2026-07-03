@@ -174,7 +174,7 @@ def _build_locked_mapping_fields(source: pd.DataFrame, model: pd.DataFrame, conf
 
     if bool(config.get('fill_category_aliases')):
         category_source = _first_source_column(source, ('categoria do produto', 'categoria', 'category'))
-        _add_locks(locked, _target_columns(model, _is_category_column), category_source, 'Categoria existente da origem usada quando o campo final estiver vazio', 'category')
+        _add_locks(locked, _target_columns(model, _is_category_column), category_source, 'Copiar categoria da origem se o campo final estiver vazio', 'category')
 
     if bool(config.get('apply_unit_default')):
         _add_locks(locked, _target_columns(model, _is_unit_column), _fixed(config.get('unit_value')), 'Unidade definida pelas regras inteligentes', 'unit')
@@ -244,8 +244,8 @@ def render_rules_resources_panel(
         validate_gtin = st.checkbox('Validar GTIN/EAN e limpar inválidos', value=bool(current.get('validate_gtin')), key=f'{key_prefix}_rules_validate_gtin')
 
         st.markdown('#### Categoria')
-        fill_category_aliases = st.checkbox('Usar categoria já existente da origem para preencher vazios', value=bool(current.get('fill_category_aliases')), key=f'{key_prefix}_rules_fill_category_aliases')
-        st.caption('Esta regra não gera categoria nova. Para sugerir/corrigir categorias pelo sistema, use o toggle Categorização automática.')
+        fill_category_aliases = st.checkbox('Copiar categoria da origem se estiver vazio', value=bool(current.get('fill_category_aliases')), key=f'{key_prefix}_rules_fill_category_aliases')
+        st.caption('Não cria categoria, não usa IA e não altera categorias já preenchidas. Só copia a categoria que já veio na origem.')
 
         st.markdown('#### Valores padrão opcionais')
         apply_unit_default = st.checkbox('Unidade', value=bool(current.get('apply_unit_default')), key=f'{key_prefix}_rules_apply_unit_default')
