@@ -15,13 +15,21 @@ def _audit(event: str, *, status: str = 'OK', details: dict[str, Any] | None = N
         pass
 
 
-def _install_mapping_locked_fields() -> None:
+def _install_mapping_visibility_runtime() -> None:
     try:
-        from bling_app_zero.ui.mapping_locked_fields_runtime import install
-        install()
-        _audit('universal_price_runtime_mapping_locked_fields_loaded', details={'locked_fields_runtime': True})
+        from bling_app_zero.ui.mapping_visibility_runtime import install_mapping_visibility_runtime
+        installed = install_mapping_visibility_runtime()
+        _audit(
+            'universal_price_runtime_mapping_visibility_loaded',
+            details={
+                'mapping_visibility_runtime': True,
+                'gold_smart_rule_options': True,
+                'user_can_override_smart_rules': True,
+                'installed_now': bool(installed),
+            },
+        )
     except Exception as exc:
-        _audit('universal_price_runtime_mapping_locked_fields_failed', status='AVISO', details={'error': str(exc)[:220]})
+        _audit('universal_price_runtime_mapping_visibility_failed', status='AVISO', details={'error': str(exc)[:220]})
 
 
 def _install_critical_mapping_visual_patch() -> None:
@@ -80,7 +88,7 @@ def _render_preview(st, df: pd.DataFrame, selected_cost_column: str, promo_colum
 
 
 def install() -> None:
-    _install_mapping_locked_fields()
+    _install_mapping_visibility_runtime()
     _install_critical_mapping_visual_patch()
     try:
         from bling_app_zero.ui import universal_flow
