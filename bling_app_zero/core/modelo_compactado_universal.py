@@ -5,6 +5,10 @@ from io import BytesIO
 from pathlib import Path, PurePosixPath
 import zipfile
 
+from bling_app_zero.core.excel_running_guard import install_excel_running_guard
+
+install_excel_running_guard()
+
 PLANILHAS_ACEITAS = {'.csv', '.xlsx', '.xlsm'}
 
 
