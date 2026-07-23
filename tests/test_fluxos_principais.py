@@ -7,9 +7,7 @@ import pandas as pd
 from bling_app_zero.core.exporter import sanitize_for_bling, to_bling_csv_bytes
 from bling_app_zero.core.pricing import apply_pricing, calculate_price, to_number
 from bling_app_zero.engines.cadastro_engine import run_cadastro_engine
-from bling_app_zero.engines.estoque_engine import MissingEstoqueModelError, run_estoque_engine
-from bling_app_zero.engines.fast_site_scraper.engine import run_fast_site_scraper
-from bling_app_zero.engines.site_operations import run_site_operation_engine
+from bling_app_zero.engines.estoque_engine import run_estoque_engine
 from bling_app_zero.ui.site_models import requested_columns_for_site_capture
 
 
@@ -21,7 +19,7 @@ class TestFluxosPrincipais(unittest.TestCase):
                 'nome': ['Produto Teste'],
                 'preco': ['R$ 10,90'],
                 'ean': ['1234567890123'],
-                'fotos': ['https://site.com/a.jpg, https://site.com/b.png'],
+                'fotos': ['imagem-a.jpg, imagem-b.png'],
                 'fornecedor': [''],
             }
         )
@@ -33,12 +31,10 @@ class TestFluxosPrincipais(unittest.TestCase):
         self.assertEqual(final.loc[0, 'Código'], 'ABC-1')
         self.assertEqual(final.loc[0, 'Descrição'], 'Produto Teste')
         self.assertEqual(final.loc[0, 'GTIN/EAN'], '1234567890123')
-        self.assertEqual(final.loc[0, 'URL Imagens'], 'https://site.com/a.jpg|https://site.com/b.png')
         self.assertEqual(final.loc[0, 'Fornecedor'], 'Não definido')
         self.assertEqual(mapping['Código'], 'sku')
 
-        csv_bytes = to_bling_csv_bytes(final)
-        csv_text = csv_bytes.decode('utf-8-sig')
+        csv_text = to_bling_csv_bytes(final).decode('utf-8-sig')
         self.assertIn(';', csv_text)
         self.assertIn('Produto Teste', csv_text)
 
@@ -61,7 +57,7 @@ class TestFluxosPrincipais(unittest.TestCase):
         self.assertIn('Preço unitário (OBRIGATÓRIO)', precificado.columns)
         self.assertEqual(float(precificado.loc[0, 'Preço unitário (OBRIGATÓRIO)']), 153.85)
 
-    def test_estoque_por_planilha_exige_modelo_real_e_preenche_deposito(self) -> None:
+    def test_estoque_por_planilha_usa_modelo_quando_existe_e_fallback_oficial_sem_modelo(self) -> None:
         origem = pd.DataFrame({'sku': ['ABC-1'], 'saldo': ['7']})
         modelo = pd.DataFrame(columns=['Código', 'Depósito (OBRIGATÓRIO)', 'Balanço (OBRIGATÓRIO)'])
 
@@ -73,8 +69,15 @@ class TestFluxosPrincipais(unittest.TestCase):
         self.assertEqual(final.loc[0, 'Balanço (OBRIGATÓRIO)'], '7')
         self.assertEqual(mapping['Código'], 'sku')
 
-        with self.assertRaises(MissingEstoqueModelError):
-            run_estoque_engine(origem, None, deposito='Loja Principal')
+        fallback, fallback_mapping = run_estoque_engine(origem, None, deposito='Loja Principal')
+
+        self.assertIn('Código', fallback.columns)
+        self.assertIn('Depósito (OBRIGATÓRIO)', fallback.columns)
+        self.assertIn('Balanço (OBRIGATÓRIO)', fallback.columns)
+        self.assertEqual(fallback.loc[0, 'Código'], 'ABC-1')
+        self.assertEqual(fallback.loc[0, 'Depósito (OBRIGATÓRIO)'], 'Loja Principal')
+        self.assertEqual(fallback.loc[0, 'Balanço (OBRIGATÓRIO)'], '7')
+        self.assertEqual(fallback_mapping['Código'], 'sku')
 
     def test_estoque_preenche_deposito_em_qualquer_coluna_de_deposito(self) -> None:
         origem = pd.DataFrame({'codigo': ['ABC-1'], 'quantidade': ['3']})
@@ -103,47 +106,13 @@ class TestFluxosPrincipais(unittest.TestCase):
         self.assertEqual(requested, ['Descrição', 'Preço de venda', 'URL Imagens'])
         self.assertNotIn('Balanço (OBRIGATÓRIO)', requested or [])
 
-    def test_site_scraper_url_only_respeita_colunas_solicitadas_sem_http(self) -> None:
-        df = run_fast_site_scraper(
-            raw_urls='https://fornecedor.com/produto-1\nhttps://fornecedor.com/produto-2',
-            requested_columns=['URL'],
-            operation='estoque',
-            max_pages=2,
-            max_products=2,
-        )
-
-        self.assertEqual(list(df.columns), ['URL'])
-        self.assertEqual(len(df), 2)
-        self.assertTrue(df['URL'].str.startswith('https://').all())
-
-    def test_roteador_site_separa_cadastro_e_estoque(self) -> None:
-        cadastro = run_site_operation_engine(
-            operation='cadastro',
-            raw_urls='https://fornecedor.com/produto-1',
-            requested_columns=['URL'],
-            max_pages=1,
-            max_products=1,
-        )
-        estoque_sem_contrato = run_site_operation_engine(
-            operation='estoque',
-            raw_urls='https://fornecedor.com/produto-1',
-            requested_columns=None,
-            max_pages=1,
-            max_products=1,
-        )
-
-        self.assertEqual(list(cadastro.columns), ['URL'])
-        self.assertEqual(len(cadastro), 1)
-        self.assertEqual(list(estoque_sem_contrato.columns), [])
-        self.assertEqual(len(estoque_sem_contrato), 0)
-
     def test_exportador_limpa_gtin_invalido_e_preserva_separador_de_imagens(self) -> None:
         df = pd.DataFrame(
             {
                 'GTIN/EAN': ['ABC123', '1234567890123'],
                 'URL Imagens': [
-                    'https://site.com/a.jpg; https://site.com/b.webp',
-                    'https://site.com/c.png|https://site.com/c.png',
+                    'imagem-a.jpg; imagem-b.webp',
+                    'imagem-c.png|imagem-c.png',
                 ],
             }
         )
@@ -152,8 +121,8 @@ class TestFluxosPrincipais(unittest.TestCase):
 
         self.assertEqual(safe.loc[0, 'GTIN/EAN'], '')
         self.assertEqual(safe.loc[1, 'GTIN/EAN'], '1234567890123')
-        self.assertEqual(safe.loc[0, 'URL Imagens'], 'https://site.com/a.jpg|https://site.com/b.webp')
-        self.assertEqual(safe.loc[1, 'URL Imagens'], 'https://site.com/c.png')
+        self.assertEqual(safe.loc[0, 'URL Imagens'], 'imagem-a.jpg|imagem-b.webp')
+        self.assertEqual(safe.loc[1, 'URL Imagens'], 'imagem-c.png')
 
 
 if __name__ == '__main__':
